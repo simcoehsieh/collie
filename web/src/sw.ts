@@ -3,7 +3,13 @@ import { precacheAndRoute, createHandlerBoundToURL } from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import { clientsClaim } from "workbox-core";
 
-import { decidePush, notificationPath, type NotifData, type PushPayload } from "./lib/push-decision";
+import {
+  decidePush,
+  enforcesUserVisible,
+  notificationPath,
+  type NotifData,
+  type PushPayload,
+} from "./lib/push-decision";
 import { openNotificationTarget, type OpenOutcome } from "./lib/notification-open";
 import { FONT_URLS, NAVIGATION_NETWORK_ONLY } from "./lib/sw-routes";
 
@@ -116,6 +122,23 @@ async function anyVisibleClient(): Promise<boolean> {
   return windows.some((c) => c.visibilityState === "visible");
 }
 
+/**
+ * Whether this device's push service revokes a subscription that answers a push with no
+ * notification — read off the live subscription's endpoint, because it is the push service that
+ * decides, not the browser the page happens to render in.
+ *
+ * A throw or a missing subscription resolves to `true` (show), which is the direction that fails
+ * safe: see `enforcesUserVisible`.
+ */
+async function mustShowNotification(): Promise<boolean> {
+  try {
+    const sub = await self.registration.pushManager.getSubscription();
+    return enforcesUserVisible(sub?.endpoint);
+  } catch {
+    return true;
+  }
+}
+
 async function handlePush(event: PushEvent): Promise<void> {
   let payload: PushPayload = {};
   try {
@@ -129,10 +152,16 @@ async function handlePush(event: PushEvent): Promise<void> {
     payload = { body: event.data?.text() };
   }
 
-  const decision = decidePush(payload, await anyVisibleClient());
+  // Both reads in one round trip: WebKit revokes a subscription whose handler fails to post a
+  // notification "in a timely manner", so the two questions that decide whether to post are asked
+  // together rather than one after the other.
+  const [visible, mustShow] = await Promise.all([anyVisibleClient(), mustShowNotification()]);
+  const decision = decidePush(payload, visible, mustShow);
   if (decision.kind === "suppress") return; // a visible Collie tab already surfaces it in-app
   if (decision.kind === "clear") {
-    // Retraction: close the slot and show nothing. Chrome's silent-push budget tolerates this.
+    // Retraction: close the slot and show nothing. Only reached on a push service that tolerates a
+    // silent push (Chrome's budget); Apple's does not, and `decidePush` turns this into a quiet
+    // replacement there instead — showNotification on the same tag closes the stale one for us.
     const stale = await self.registration.getNotifications({ tag: decision.tag });
     for (const n of stale) n.close();
     return;
