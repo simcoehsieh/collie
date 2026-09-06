@@ -27,6 +27,20 @@ only notification target is an iPhone.
 
 ## Taking upstream's changes
 
+The procedure below is automated by the **`collie-upstream-sync` skill**, which lives in this repo
+at [`.claude/skills/collie-upstream-sync/`](./.claude/skills/collie-upstream-sync/) and is symlinked
+into `~/.claude/skills/` and `~/.agents/skills/`, so any session — usually one in `ai-live` — can
+invoke it. It surveys the gap, reports what the new release adds, compares each fork patch against
+any upstream fix of the same bug, and asks before merging. Its survey step runs standalone:
+
+```bash
+python3 ~/git/collie/.claude/skills/collie-upstream-sync/scripts/survey.py
+```
+
+It lives here rather than in the shared skills repo because it describes *this fork* — its patches,
+its deployment, its verification. A procedure kept somewhere else is one that drifts from the thing
+it operates on. Doing it by hand instead:
+
 ```bash
 cd ~/git/collie
 git fetch upstream --tags
