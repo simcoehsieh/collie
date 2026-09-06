@@ -133,6 +133,16 @@ const SECURITY_HEADERS = {
 const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
 /**
+ * The HTTP methods that cannot change state, and therefore cannot be a CSRF vector.
+ *
+ * Load-bearing for the Origin rule below. CSRF is a claim about a request FORGED BY ANOTHER SITE
+ * causing a state change; a safe method causes none, and an attacker page that issues one still
+ * cannot read the answer, because this API sends no CORS headers. So the Origin requirement is a
+ * statement about the METHOD, not about the caller's permission level.
+ */
+const SAFE_METHOD = /^(GET|HEAD)$/i;
+
+/**
  * Whether a TCP peer address is loopback. Unlike the `Host` header — which the client writes —
  * this comes from the kernel and cannot be forged.
  *
@@ -3001,9 +3011,11 @@ async function uploadPane(
  *  - Same-origin only (Origin host must equal Host) — defeats cross-site requests/CSRF. Browsers
  *    omit Origin on same-origin GETs (so the snapshot poll passes); they send it on POSTs.
  *    localhost and explicitly-configured origins are also allowed.
- *  - Origin required for writes: a state-changing (`level === "write"`) request with no Origin is
- *    trusted only from loopback (curl on the host). Browsers always send Origin on fetch/SW POSTs,
- *    so a missing Origin on a remote write is a non-browser or Origin-stripped request — reject it.
+ *  - Origin required for UNSAFE writes: a `level === "write"` request whose METHOD can change state
+ *    (i.e. not GET/HEAD) and which carries no Origin is trusted only from loopback (curl on the
+ *    host). Browsers always send Origin on fetch/SW POSTs, so a missing Origin there is a
+ *    non-browser or Origin-stripped request — reject it. A write-GATED GET (`/api/dirs`) is exempt,
+ *    because browsers omit Origin on same-origin GETs and a safe method is not a CSRF vector.
  *  - Tailscale identity: when a trusted user is configured under `tailscale serve`, the request
  *    must carry a matching `Tailscale-User-Login`. A missing header is rejected too — serve injects
  *    none for tagged nodes. Under COLLIE_SKIP_SERVE=1 or COLLIE_TRUSTED_USER_OPTIONAL=1, only a
@@ -3035,8 +3047,17 @@ export function checkAccess(
       LOOPBACK_HOST.test(originHost) ||
       cfg.allowedOrigins.includes(origin);
     if (!allowed) return { ok: false, reason: "cross-origin rejected" };
-  } else if (level === "write" && !LOOPBACK_HOST.test(host)) {
-    // A write with no Origin header from a non-loopback Host isn't a real browser request — refuse.
+  } else if (level === "write" && !SAFE_METHOD.test(req.method) && !LOOPBACK_HOST.test(host)) {
+    // A state-changing request with no Origin from a non-loopback Host isn't a real browser
+    // request — refuse.
+    //
+    // THE METHOD CHECK IS NOT REDUNDANT WITH THE LEVEL. `GET /api/dirs` is gated on `write` on
+    // purpose (dirs.ts: a device that may not create a space has no use for the folder list), and
+    // browsers OMIT Origin on same-origin GETs — the same fact this function's own doc comment
+    // relies on to let the snapshot poll through. Without this clause the folder picker answered
+    // 403 "origin required" to every browser on a public host while passing every loopback test,
+    // because loopback is exempt. Permission level says WHO may ask; the method says whether a
+    // forged cross-site request could do damage. They are different questions.
     return { ok: false, reason: "origin required" };
   }
 

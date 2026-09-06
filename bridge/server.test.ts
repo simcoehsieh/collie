@@ -77,8 +77,8 @@ import type { StateEngine } from "./state-engine.ts";
 // A real Request, not a fake: checkAccess reads only headers, and Bun's Headers already does the
 // case-insensitive lookup (and keeps `host`, which a browser would strip) — so there is nothing left
 // for a hand-rolled stub to get subtly wrong.
-function req(headers: Record<string, string>): Request {
-  return new Request("http://collie.invalid/api/snapshot", { headers });
+function req(headers: Record<string, string>, method = "GET"): Request {
+  return new Request("http://collie.invalid/api/snapshot", { headers, method });
 }
 
 function cfg(overrides: Partial<Config> = {}): Config {
@@ -308,10 +308,50 @@ describe("checkAccess — Host-header validation (COLLIE_PUBLIC_HOSTS)", () => {
 
 describe("checkAccess — Origin required for writes", () => {
   test("write with no Origin from a non-loopback Host is rejected", () => {
-    expect(checkAccess(req({ host: "collie.example.ts.net" }), cfg(), "write")).toEqual({
+    // POST, because that is what a write IS on the wire. The method matters: the rule below exempts
+    // safe methods, and asserting this with a GET would have been asserting the opposite thing.
+    expect(checkAccess(req({ host: "collie.example.ts.net" }, "POST"), cfg(), "write")).toEqual({
       ok: false,
       reason: "origin required",
     });
+  });
+
+  // ── A WRITE-GATED GET IS NOT A CSRF VECTOR ──────────────────────────────────────────────────
+  // `GET /api/dirs` is gated on `write` deliberately (dirs.ts), and browsers OMIT Origin on
+  // same-origin GETs. Before this exemption the folder picker answered 403 "origin required" to
+  // every browser on a public host — while passing every loopback probe, because loopback is
+  // exempt from the rule. That asymmetry is why it survived: the failing path was the only one a
+  // real user could take.
+  test("a write-GATED GET with no Origin from a non-loopback Host is allowed", () => {
+    expect(checkAccess(req({ host: "collie.example.ts.net" }, "GET"), cfg(), "write")).toEqual({
+      ok: true,
+    });
+  });
+
+  test("HEAD is exempt for the same reason", () => {
+    expect(checkAccess(req({ host: "collie.example.ts.net" }, "HEAD"), cfg(), "write")).toEqual({
+      ok: true,
+    });
+  });
+
+  test("the exemption is by METHOD, so DELETE and PUT are still refused", () => {
+    for (const method of ["DELETE", "PUT", "PATCH"]) {
+      expect(checkAccess(req({ host: "collie.example.ts.net" }, method), cfg(), "write")).toEqual({
+        ok: false,
+        reason: "origin required",
+      });
+    }
+  });
+
+  test("a cross-origin GET is still rejected — the exemption is only for an ABSENT Origin", () => {
+    // The safe-method exemption must not become a hole for a request that names another site.
+    expect(
+      checkAccess(
+        req({ origin: "https://evil.example", host: "collie.example.ts.net" }, "GET"),
+        cfg(),
+        "write",
+      ),
+    ).toEqual({ ok: false, reason: "cross-origin rejected" });
   });
 
   test("write with no Origin from loopback is allowed (curl on the host)", () => {
@@ -1007,8 +1047,11 @@ describe("guard — the pairing gate composes with the header gate", () => {
   });
 
   test("the same-origin gate still runs first — a token is no substitute for an Origin", () => {
+    // POST: the Origin requirement applies to state-changing methods, so that is the only vehicle
+    // that can demonstrate the ordering this test is about. A GET would be exempt from the origin
+    // rule entirely and would prove nothing about which gate ran first.
     const denied = guard(
-      req({ host: "collie.ts.net", authorization: "Bearer tok-phone" }),
+      req({ host: "collie.ts.net", authorization: "Bearer tok-phone" }, "POST"),
       cfg(),
       "write",
       paired,

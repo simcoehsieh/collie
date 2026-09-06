@@ -107,3 +107,14 @@ textually clean: no file was touched by both sides.
   contested set comes from the effective diff so a second sync is not wrong, an unreadable upstream
   CHANGELOG is reported rather than read as "no changes", and tests run before the build that
   deploys them.
+- **The folder picker answered 403 to every browser, and only to browsers.** `GET /api/dirs` is
+  gated on write although it writes nothing, and the access gate refuses a write that arrives with
+  no `Origin` from a non-loopback Host — a rule written for POSTs, which browsers always give an
+  Origin. Browsers OMIT Origin on same-origin GETs, a fact the same function's doc comment already
+  relied on to let the snapshot poll through, so the picker was unreachable from the moment it
+  shipped. It survived every probe because loopback is exempt from that rule: the only failing path
+  was the only one a real user could take. The Origin requirement is now a statement about the
+  METHOD — a safe method cannot be forged into a state change, and an attacker page cannot read the
+  answer either, because this API sends no CORS headers. Two existing tests asserted the old rule
+  with a GET standing in for a write; they now use POST, which is what a write is on the wire and
+  what they meant all along.
