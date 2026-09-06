@@ -34,7 +34,7 @@ describe("ToastViewport — where a transient event floats", () => {
     const wrapper = screen.getByText("Connected").parentElement;
     expect(wrapper).toHaveClass("fixed", "inset-x-0", "bottom-0", "z-40");
     expect(wrapper).toHaveClass("mx-auto", "w-full", "max-w-screen-sm", "px-4");
-    expect(wrapper?.className).toContain("safe-area-inset-bottom");
+    expect(wrapper?.className).toContain("--safe-bottom");
   });
 
   it("never eats a tap meant for the content it is only visiting", () => {

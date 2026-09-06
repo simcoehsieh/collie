@@ -207,6 +207,8 @@ export const en = {
   "composer.controls.agent": "Agent",
   "composer.controls.displayAria": "Display settings",
   "composer.controls.display": "Display",
+  "composer.controls.collapseAria": "Hide the controls row",
+  "composer.controls.expandAria": "Show the controls row",
   "composer.sentPreview.label": "You sent:",
   "composer.placeholder.gone": "Pane is gone",
   "composer.placeholder.readOnly": "Read-only — not authorised",

@@ -13,6 +13,30 @@ stays true).
 
 ## On top of 1.5.2
 
+- The Controls row (Keys / Type / Quick / Agent / ⚙) can be put away, and the status band above it
+  is the handle — a surface that was already on screen in both states, so collapsing costs nothing
+  to reach. Measured on a 393x852 phone: the terminal mirror gains 40px (the row's 44px plus its
+  8px/6px margins, less the 18px the band grows by to stay tappable while it is the only way back).
+  Persisted with the other display prefs, so it survives a pane switch and a restart; default is
+  open, so an install that never touches it renders exactly what it always did. The band reads
+  leading-edge now — handle, machine, state as one group — because a right-aligned word with a lone
+  chevron at the far end reads as two unrelated things once the band grows to 32px.
+- A home-screen web app fills the screen again, and the fix is the viewport meta rather than any
+  CSS height. On iOS 26 `viewport-fit=cover` produced two answers at once: a layout viewport of 793
+  on an 852pt screen — already 852 minus a status bar, i.e. sized for an INSET web view — while the
+  page was still placed under the status bar and `env(safe-area-inset-top)` still reported 59. iOS
+  letterboxed the 59pt difference in page colour above the home indicator, and no CSS reaches it:
+  stretching the shell to `lvh` (852) put the composer off the bottom of the screen instead, which
+  is what proved whose 793 to believe. Cover is dropped and the status-bar style is `default`, so
+  the web view is inset for real, every `env()` reads 0 and the OS paints the bands it reserves.
+  The shell stays exactly `100dvh` — the invariant that keeps the Send button reachable.
+- …and the home indicator's band is a token, `--safe-bottom`, because with cover gone the platform
+  can no longer report it: every `env()` reads 0 by definition, while iOS 26 still runs the page to
+  the physical bottom edge, so the composer's last row came out under the indicator — invisible in a
+  screenshot, plainly cut on the glass. In standalone the reserve has a floor of 34px (Apple's own
+  portrait inset, and therefore what normal looks like); elsewhere `max()` leaves the platform's
+  number in charge. Every surface that reserved that band — composer, sheets, toasts, both footers,
+  zen — reads the one token now.
 - An iPhone's push subscription survives normal use: on a push service that revokes one for
   answering a push with silence (Apple's, after three), a retraction now replaces the alert with a
   quiet "Nothing needs you", and a visible tab shows the alert instead of suppressing it. Chrome and

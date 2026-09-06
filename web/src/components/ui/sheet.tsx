@@ -246,7 +246,7 @@ export function BottomSheet({
           // the finger, not animating), and a drag that continues into an open gets its own 180ms
           // transform transition above rather than restarting from the keyframe's own 100%.
           !peeking && !continuingFromPeek && "duration-200 animate-in slide-in-from-bottom",
-          "pb-[calc(env(safe-area-inset-bottom)_+_1rem)]",
+          "pb-[calc(var(--safe-bottom)_+_1rem)]",
           className,
         )}
       >
@@ -372,7 +372,7 @@ export function SideSheet({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</div>
         {footer && (
-          <div className="shrink-0 border-t border-rule px-3 py-2 pb-[calc(env(safe-area-inset-bottom)_+_0.5rem)]">
+          <div className="shrink-0 border-t border-rule px-3 py-2 pb-[calc(var(--safe-bottom)_+_0.5rem)]">
             {footer}
           </div>
         )}

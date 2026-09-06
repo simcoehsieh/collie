@@ -60,7 +60,7 @@ export function ToastViewport({ children, className }: ToastViewportProps) {
     <div
       className={cn(
         SHARED,
-        "fixed inset-x-0 bottom-0 pb-[calc(env(safe-area-inset-bottom)_+_0.75rem)]",
+        "fixed inset-x-0 bottom-0 pb-[calc(var(--safe-bottom)_+_0.75rem)]",
         className,
       )}
     >

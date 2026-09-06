@@ -639,6 +639,70 @@
   }
 }
 
+/* ── THE APP'S FULL-SCREEN BOX ───────────────────────────────────────────────────────────────────
+   Every shell that paints a whole screen (the router root, the boot splash, the error screens)
+   states its height here rather than in a `h-[100dvh]` utility, so there is ONE place to change
+   when a platform disagrees about what a screen is — and one has.
+
+   THE SHELL IS ALWAYS EXACTLY THE VIEWPORT, and after two wrong turns that is not a default, it is
+   the conclusion. On the operator's iPhone 15 Pro home-screen web app the page measured:
+
+     innerHeight 793 · clientHeight 793 · screen 393x852
+     dvh 793 · lvh 852 · svh 793 · env top 59 bottom 34
+
+   and a 59pt band of dead page colour stood above the home indicator. `lvh` looked like the number
+   that knew better, so the shell was given `100dvh` plus `lvh - svh`. It measured 852, and the
+   composer went OFF THE BOTTOM OF THE SCREEN — which is the proof that settles it: the page cannot
+   paint into that band. 793 is the whole of what the page is given, `dvh` was right all along, and
+   anything taller is content the operator cannot reach.
+
+   So the band is not the shell's to fill, and the cause is upstream of CSS — see index.html, where
+   `viewport-fit=cover` is now gone (and the status-bar style with it): the layout viewport was
+   already sized for an INSET web view (852 − 59 = 793) while cover was still asking for the page to
+   be placed under the status bar, and the letterbox is the difference between those two answers.
+   Without cover the web view is inset for real, every `env()` reads 0, and the OS paints the bands
+   it is reserving — which is the same chrome in the same place, drawn by its owner.
+
+   ANY future attempt here must keep one invariant: the shell may never be taller than the viewport
+   the browser reports, because the composer lives at its bottom edge and the document does not
+   scroll. A cosmetic band is a nuisance; an unreachable Send button is not. */
+.app-viewport {
+  height: 100dvh;
+}
+
+/* ── THE BOTTOM RESERVE ──────────────────────────────────────────────────────────────────────────
+   The band the home indicator sits in, as ONE token, because on this app's own target the platform
+   cannot report it.
+
+   `env(safe-area-inset-bottom)` is the right answer everywhere it has one — and without
+   `viewport-fit=cover` it has none BY DEFINITION: every inset reads 0, since the contract of the
+   default `viewport-fit` is that the viewport is already inside the safe area. iOS 26 does not
+   honour the bottom half of that contract. Measured on the operator's iPhone 15 Pro home-screen web
+   app after cover came off: `env` top 0 bottom 0, the letterbox gone — and the composer's last row
+   running under the home indicator, invisible in a screenshot (the framebuffer has the pixels) and
+   plainly cut on the glass. The page is inset from the status bar and placed hard against the
+   physical bottom edge.
+
+   So in STANDALONE the reserve has a floor of 34px — Apple's own bottom safe-area inset in portrait,
+   which is what every native app leaves and therefore what "normal" looks like. Outside standalone
+   the platform's number stands alone: a browser tab has its own toolbar over that band, and
+   `max()` keeps a real inset winning wherever one is reported (including a future iOS that reports
+   it here again).
+
+   THE FLOOR IS A CONSTANT AND THAT IS A LIABILITY, stated rather than hidden: it is right for an
+   iPhone with a home indicator and it is 34px of waste on a standalone install that has none. This
+   fork's only standalone client is that phone. If that stops being true, this has to become a
+   measurement rather than a number. */
+:root {
+  --safe-bottom: env(safe-area-inset-bottom);
+}
+
+@media (display-mode: standalone) {
+  :root {
+    --safe-bottom: max(env(safe-area-inset-bottom), 34px);
+  }
+}
+
 /* We don't use view transitions (removed). But React Router can still fire document.startViewTransition
    on a revalidation for a device carrying a stale persisted transition map from an older build (see
    router.tsx). Keep the whole document unnamed so any such stray transition captures nothing and swaps

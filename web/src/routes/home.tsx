@@ -142,7 +142,7 @@ export function HomeRoute() {
             with a stale-cache nudge). The pack line self-hides on a solo install. */}
         <PackFooterLink scope={data.scope} className="px-4 pt-3" />
         <UpdateBanner className="px-4 pt-3" />
-        <BuildStamp className="px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)_+_0.5rem)]" />
+        <BuildStamp className="px-4 pt-3 pb-[calc(var(--safe-bottom)_+_0.5rem)]" />
       </div>
 
       {/* Status overlay, anchored to the bottom of the viewport (no input here) — same slim line,
