@@ -188,7 +188,18 @@ export function mirrorFont(family: FontFamily): MirrorFont {
 // raw-terminal choice to buy nothing.
 const STORAGE_KEY = "collie:display-prefs:v4";
 export const FONT_MIN = 9;
-export const FONT_MAX = 16;
+// 24, not 16, and the extra eight are for the DESKTOP. 16 was a phone's ceiling — on a 393pt screen
+// nothing above it fits a useful number of columns — and it silently became the ceiling everywhere.
+// MEASURED on the operator's 1908px browser window: the pane view's content column is 1400px, the
+// reply field 1320px, and the mirror <pre> is full-bleed at 1384px — but a herdr pane is 84 columns
+// (read off the pane's own visible screen), so at the default 10px the terminal draws 504px of that
+// and the rest is empty. The mirror is not narrow; the terminal is. The only lever that fills the
+// width without touching the source pane is the glyph, and 84 columns reach the field's width at
+// about 26px. 24 gets to ~1210px, which is where the stepper stops.
+//
+// A wider herdr pane would fill it at 10px and is the other half of the same trade — and it is the
+// worse one HERE: this app's primary client is a phone, where 200-column lines wrap three ways.
+export const FONT_MAX = 24;
 /** The draft field's own range — see `draftFontSize` on {@link DisplayPrefs} for why it is narrower
  *  than the mirror's at both ends. */
 export const DRAFT_FONT_MIN = 13;

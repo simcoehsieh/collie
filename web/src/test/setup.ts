@@ -11,6 +11,79 @@ import { __resetDraftPrune } from "@/lib/drafts";
 // One MSW server for all tests; tests add per-case overrides with `server.use(...)`.
 export const server = setupServer(...handlers);
 
+// ── jsdom 29 defines Storage but never wires up the globals ──────────────────────────────────────
+// `globalThis.localStorage` is a plain `{}` here — no getItem, no setItem — while `Storage` itself is
+// a complete class whose methods brand-check their receiver, so `Object.create(Storage.prototype)`
+// throws on first use and there is no supported way to mint a real instance. Every call site in the
+// app guards its access, so nothing THREW: the tests that assert persistence simply failed, 133 of
+// them across 18 files, and the tree learned to read that number as weather. Two real costs — a
+// persistence regression could not be caught by any test in this repo, and a genuinely new failure
+// had to be found inside a wall of expected ones.
+//
+// So the prototype's methods are replaced with Map-backed ones (nothing else in the process holds a
+// real Storage instance, so there is nothing to break) and the two globals become plain objects on
+// that prototype.
+//
+// THE MEMBERS GO ON `Storage.prototype`, NOT ON THE INSTANCES, and that is the whole subtlety. This
+// suite simulates Safari private mode with `vi.spyOn(Storage.prototype, "setItem")`
+// (lib/drafts.test.ts); an own method on the instance shadows that spy, the throw never happens, and
+// a test whose entire purpose is proving the throw is survived passes without exercising it. Found
+// exactly that way — the first version of this shim took 133 failures to 1, and the 1 was this.
+//
+// The guard asks whether the GLOBAL is usable, not whether the prototype has methods: here it has
+// them and they are the reason a hand-made instance fails. A jsdom that wires the globals up gets
+// left alone.
+// SAFETY: the shim runs only when the global is NOT a working Storage — `"getItem" in localStorage`
+// walks the prototype chain, so a real jsdom instance answers true and is left alone, while the
+// plain `{}` this environment installs answers false. `"Storage" in globalThis` is what makes the
+// class references below safe.
+const storageIsWired = "Storage" in globalThis && "getItem" in globalThis.localStorage;
+
+if (!storageIsWired && "Storage" in globalThis) {
+  const backing = new WeakMap<Storage, Map<string, string>>();
+  const mapOf = (s: Storage): Map<string, string> => {
+    let m = backing.get(s);
+    if (!m) {
+      m = new Map<string, string>();
+      backing.set(s, m);
+    }
+    return m;
+  };
+  Object.assign(Storage.prototype, {
+    getItem(this: Storage, k: string): string | null {
+      return mapOf(this).get(String(k)) ?? null;
+    },
+    setItem(this: Storage, k: string, v: string): void {
+      mapOf(this).set(String(k), String(v));
+    },
+    removeItem(this: Storage, k: string): void {
+      mapOf(this).delete(String(k));
+    },
+    clear(this: Storage): void {
+      mapOf(this).clear();
+    },
+    key(this: Storage, i: number): string | null {
+      return [...mapOf(this).keys()][i] ?? null;
+    },
+  });
+  Object.defineProperty(Storage.prototype, "length", {
+    configurable: true,
+    get(this: Storage) {
+      return mapOf(this).size;
+    },
+  });
+  for (const name of ["localStorage", "sessionStorage"] as const) {
+    // SAFETY: every member the app and this suite touch has just been redefined above as an ordinary
+    // Map-backed function, so the object needs nothing from Storage but its prototype — which is
+    // exactly what `Object.create` gives it, and what makes the spies find their target.
+    const value = Object.create(Storage.prototype) as Storage;
+    Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+    if ("window" in globalThis) {
+      Object.defineProperty(window, name, { value, configurable: true, writable: true });
+    }
+  }
+}
+
 beforeAll(() => server.listen({ onUnhandledRequest: "warn" }));
 // The connection-health store is module-scoped and initialises its anchor to module-load time. Pin it
 // to "now" before every test so a component rendered minutes after the file loaded never reads a stale
