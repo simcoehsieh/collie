@@ -2,6 +2,7 @@ import { renderHook, act } from "@testing-library/react";
 import {
   applyDraftFontSize,
   DRAFT_FONT_MAX,
+  FONT_MAX,
   DRAFT_FONT_MIN,
   FONT_STACKS,
   fontStack,
@@ -19,7 +20,7 @@ describe("useDisplayPrefs", () => {
 
   it("returns defaults when localStorage is empty", () => {
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true });
+    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, controlsOpen: true });
   });
 
   it("persists wrap=true and reloads it on mount", () => {
@@ -39,7 +40,7 @@ describe("useDisplayPrefs", () => {
   it("loads persisted prefs from localStorage on mount", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ wrap: false, fontSize: 14, rawTerminal: true, tapToFocus: false }));
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: false, fontSize: 14, draftFontSize: 14, fontFamily: "system", rawTerminal: true, tapToFocus: false });
+    expect(result.current.prefs).toEqual({ wrap: false, fontSize: 14, draftFontSize: 14, fontFamily: "system", rawTerminal: true, tapToFocus: false, controlsOpen: true });
   });
 
   it("persists rawTerminal and reloads it on mount (the escape hatch survives a reload)", () => {
@@ -66,7 +67,7 @@ describe("useDisplayPrefs", () => {
   it("reads a pre-tapToFocus payload without discarding the prefs it does have", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ wrap: false, fontSize: 15, rawTerminal: true }));
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: false, fontSize: 15, draftFontSize: 14, fontFamily: "system", rawTerminal: true, tapToFocus: true });
+    expect(result.current.prefs).toEqual({ wrap: false, fontSize: 15, draftFontSize: 14, fontFamily: "system", rawTerminal: true, tapToFocus: true, controlsOpen: true });
   });
 
   it("persists fontFamily and reloads it on mount", () => {
@@ -124,10 +125,12 @@ describe("useDisplayPrefs", () => {
     expect(result.current.prefs.fontSize).toBe(9);
   });
 
-  it("setFontSize clamps above maximum to 16", () => {
+  it("setFontSize clamps above maximum", () => {
     const { result } = renderHook(() => useDisplayPrefs());
     act(() => result.current.setFontSize(99));
-    expect(result.current.prefs.fontSize).toBe(16);
+    // Against the CONSTANT, not a copy of its value: the ceiling moved once (16 → 24, for desktop)
+    // and a literal here would either move with it or start asserting the old design in its name.
+    expect(result.current.prefs.fontSize).toBe(FONT_MAX);
   });
 
   it("stepFontSize increments within range", () => {
@@ -138,8 +141,10 @@ describe("useDisplayPrefs", () => {
 
   it("stepFontSize does not exceed max", () => {
     const { result } = renderHook(() => useDisplayPrefs());
-    act(() => result.current.stepFontSize(10)); // 12 + 10 = 22 → clamp to 16
-    expect(result.current.prefs.fontSize).toBe(16);
+    act(() => result.current.stepFontSize(10)); // 10 + 10 = 20, still under the ceiling
+    expect(result.current.prefs.fontSize).toBe(20);
+    act(() => result.current.stepFontSize(10)); // …and the next one clamps
+    expect(result.current.prefs.fontSize).toBe(FONT_MAX);
   });
 
   it("stepFontSize does not go below min", () => {
@@ -231,12 +236,12 @@ describe("useDisplayPrefs — the rest", () => {
   it("falls back to defaults on malformed JSON", () => {
     localStorage.setItem(STORAGE_KEY, "not-json{{{");
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true });
+    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, controlsOpen: true });
   });
 
   it("falls back to defaults when stored value is not an object", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(42));
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true });
+    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, controlsOpen: true });
   });
 });

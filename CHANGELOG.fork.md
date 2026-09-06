@@ -13,6 +13,18 @@ stays true).
 
 ## On top of 1.5.2
 
+- The mirror's font ceiling goes 16 → 24, for the desktop. Measured in a 1908px browser window: the
+  pane view's column is 1400px and the reply field 1320px, but a herdr pane is 84 columns, so at the
+  default 10px the terminal draws 504px and the rest of the width has nothing in it. The mirror was
+  never narrow — the terminal is — and the only lever that fills the width without touching the
+  source pane is the glyph. 16 was a phone's ceiling that had quietly become everyone's.
+- **The test suite is green: 181 files, 5067 tests, zero failures.** jsdom 29 defines `Storage` but
+  never wires up `globalThis.localStorage`, so 133 tests across 18 files had been failing on it —
+  meaning no test in this repo could catch a persistence regression, and a real new failure had to be
+  spotted inside a wall of expected ones. `web/src/test/setup.ts` installs a Map-backed Storage whose
+  members live on `Storage.prototype`, because that is where this suite's own Safari-private-mode
+  spies go. Three assertions that had gone unrun since `controlsOpen` landed are corrected with it.
+
 - The Controls row (Keys / Type / Quick / Agent / ⚙) can be put away, and the status band above it
   is the handle — a surface that was already on screen in both states, so collapsing costs nothing
   to reach. Measured on a 393x852 phone: the terminal mirror gains 40px (the row's 44px plus its

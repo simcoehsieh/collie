@@ -122,10 +122,16 @@ cd web && bun run vitest run src/lib/push-decision.test.ts src/lib/  # the areas
 ```
 
 `CLAUDE.md` is explicit that the root typecheck does not cover `web/`'s test files and that the gap
-has shipped a broken tip once. Note also that the full `vitest` suite has ~133 pre-existing failures
-on this machine (`localStorage is not a function` — a vitest environment fault, unrelated to any
-change). Do not report those as regressions; compare against a clean tree before claiming the merge
-broke something.
+has shipped a broken tip once.
+
+**The suite is GREEN on this fork — 181 files, 5067 tests, zero failures.** It was not: jsdom 29
+never wires up `globalThis.localStorage`, and 133 tests across 18 files failed on it, which meant a
+persistence regression was untestable here and a real new failure had to be found inside a wall of
+expected ones. `web/src/test/setup.ts` now installs a Map-backed Storage (see its own header for the
+one subtlety — the members go on `Storage.prototype`, because that is where this suite's spies go).
+So **any** failure after a merge is now a finding: there is no expected-failure baseline left to
+excuse it with. If an upstream merge brings the count back, say so rather than filing it under
+weather.
 
 Only once those pass:
 
