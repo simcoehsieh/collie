@@ -8,7 +8,7 @@ vi.mock("@/lib/api", () => ({ fetchLaunchers: vi.fn() }));
 import { fetchLaunchers } from "@/lib/api";
 import type { Scope } from "@/lib/scope";
 import type { Launcher } from "@/lib/types";
-import { useLaunchers } from "./launchers";
+import { pinnedLauncher, useLaunchers } from "./launchers";
 
 const asked = vi.mocked(fetchLaunchers);
 
@@ -53,5 +53,38 @@ describe("useLaunchers", () => {
     const { result } = renderHook(() => useLaunchers());
     await waitFor(() => expect(asked).toHaveBeenCalled());
     expect(result.current).toEqual({ launchers: [], home: "" });
+  });
+});
+
+describe("pinnedLauncher", () => {
+  const rows: Launcher[] = [
+    { command: "claude", label: "claude" },
+    { command: "codex --profile work", label: "codex" },
+  ];
+
+  it("resolves the pinned row by its command", () => {
+    expect(pinnedLauncher(rows, "codex --profile work")).toEqual(rows[1]!);
+  });
+
+  it("an empty pin is the plain shell, which is the default", () => {
+    expect(pinnedLauncher(rows, "")).toBeUndefined();
+  });
+
+  it("a pin whose row has LEFT launchers.toml falls back to the shell", () => {
+    // The case the named function exists for. The alternative is a "+" that fails a create nobody
+    // remembers configuring — and on a pack, against a host whose config file is not the one the
+    // operator edited.
+    expect(pinnedLauncher(rows, "gemini")).toBeUndefined();
+  });
+
+  it("matches the command exactly — a label or a prefix is not an identity", () => {
+    // `POST /api/launch` matches on exact command equality (bridge/server.ts), so anything looser
+    // here would resolve to a row the bridge would then refuse.
+    expect(pinnedLauncher(rows, "codex")).toBeUndefined();
+    expect(pinnedLauncher(rows, "Claude")).toBeUndefined();
+  });
+
+  it("has nothing to resolve against an empty roster", () => {
+    expect(pinnedLauncher([], "claude")).toBeUndefined();
   });
 });

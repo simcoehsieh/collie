@@ -15,6 +15,26 @@ import type { Launcher } from "@/lib/types";
 // leaves the rows exactly as they were (empty on a first failed mount) and any later mount — the
 // switcher sheet reopened, the dashboard revisited — tries again.
 
+/**
+ * The launcher the tab strip's "+" is pinned to, or `undefined` for a plain shell.
+ *
+ * The pin is stored as a row's COMMAND (hooks/use-dash-prefs.ts says why), and this is the whole of
+ * what that costs: a lookup that fails is not an error, it is the shell. Two cases resolve to
+ * `undefined` and both are ordinary — the operator never pinned anything (`""`), and the row they
+ * pinned has since left `launchers.toml`. The second is the one worth having a named function for:
+ * the alternative is a "+" that fails a create nobody remembers configuring, on a host whose config
+ * file is not the one they edited.
+ *
+ * Pure, and exported for its own test — the rule matters more than the one line it takes.
+ */
+export function pinnedLauncher(
+  launchers: readonly Launcher[],
+  command: string,
+): Launcher | undefined {
+  if (command === "") return undefined;
+  return launchers.find((row) => row.command === command);
+}
+
 export interface LaunchersState {
   launchers: readonly Launcher[];
   home: string;

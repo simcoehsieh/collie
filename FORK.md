@@ -92,3 +92,17 @@ not also make the guard lie.
 - **`git status` is the pre-merge check**, which is why the build's temp artefact is ignored rather
   than tolerated: a tree that is always slightly dirty teaches you to skip looking at it.
 - Config lives outside the checkout, so no merge can touch it. Nothing here needs a local `.env`.
+
+## Running the bridge tests takes the live service down with them
+
+`bun test ./bridge` and the live bridge cannot both have the herdr socket. Measured 2026-09-06: with
+the suite running, every session-scoped route — `/api/config`, `/api/launchers`, `/api/dirs`, the
+pane family — hangs until Bun's 10s idle timeout, while `/api/snapshot` and `/api/health` (which
+never call `caller.resolve()`) stay fast. The bridge does not recover on its own.
+
+So: **`./bin/collie restart` after any bridge test run**, and do not run one while the phone is being
+used. `bridge/pack/harness.test.ts` is the worst of them — several minutes on its own — and it also
+carries one failure that is NOT yours: "an unpinned client certificate is refused before any handler
+runs" fails identically on an unmodified tree.
+
+The web suite (`cd web && bun run vitest run`) touches nothing and is safe to run at any time.

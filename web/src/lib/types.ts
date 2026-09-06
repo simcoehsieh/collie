@@ -944,6 +944,29 @@ export type WorktreeListResponse =
   | { ok: true; worktrees: WorktreeView[] }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
 
+/** One folder in the picker: what to draw, and what to ask for next. */
+export interface DirEntry {
+  name: string;
+  path: string;
+}
+
+/**
+ * GET /api/dirs — the folders under one directory, for the space picker.
+ *
+ * The refusals are PLAIN TEXT on the wire (bridge/dirs.ts says why), so there is no `ok: false`
+ * shape here: `req` turns a non-2xx into a thrown ApiError, and the picker's answer to all three is
+ * the same one — stay where you are.
+ */
+export interface DirsResponse {
+  ok: true;
+  /** The RESOLVED directory, never the string that was asked for. */
+  path: string;
+  parent: string | null;
+  home: string;
+  entries: DirEntry[];
+  truncated: boolean;
+}
+
 /** POST /api/workspace/:id/worktree[/open] — `alreadyOpen` is an answer, never a failure. */
 export type WorktreeOpenResponse =
   | { ok: true; pane: CreatedPane; alreadyOpen: boolean }

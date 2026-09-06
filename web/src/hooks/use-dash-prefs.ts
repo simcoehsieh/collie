@@ -29,6 +29,17 @@ export interface DashPrefs {
   recentOpen: boolean;
   /** Which way Recent runs. Attention sections are never affected. */
   recentDir: RecentDir;
+  /**
+   * What the tab strip's "+" opens: a launcher row's `command`, or `""` for a plain shell.
+   *
+   * `""` is the default and the shipped behaviour — an install with no launchers, or one that never
+   * touches the long-press, gets exactly the bare shell it always did. The value is the row's
+   * COMMAND rather than its label because the command is what `POST /api/launch` matches on, and a
+   * label the operator later renames must not silently point the "+" at a different row. A command
+   * that has since left `launchers.toml` resolves to nothing and falls back to the shell, which is
+   * the same answer as never having chosen.
+   */
+  newTabLauncher: string;
 }
 
 const STORAGE_KEY = "collie:dash-prefs:v1";
@@ -42,6 +53,7 @@ const DEFAULTS: DashPrefs = {
   launchOpen: null,
   recentOpen: true,
   recentDir: "newest",
+  newTabLauncher: "",
 };
 
 /**
@@ -68,6 +80,10 @@ export function coerceDashPrefs(raw: JsonValue | undefined): DashPrefs {
     launchOpen: asJsonBoolean(p.launchOpen) ?? DEFAULTS.launchOpen,
     recentOpen: asJsonBoolean(p.recentOpen) ?? DEFAULTS.recentOpen,
     recentDir: p.recentDir === "oldest" || p.recentDir === "newest" ? p.recentDir : DEFAULTS.recentDir,
+    // A string of unknown provenance, and it is NOT validated against the current launcher rows
+    // here: this store has never read that file and the rows are per-host anyway. An unknown
+    // command resolves to nothing at the call site and falls back to the shell.
+    newTabLauncher: typeof p.newTabLauncher === "string" ? p.newTabLauncher : DEFAULTS.newTabLauncher,
   };
 }
 
@@ -98,6 +114,8 @@ export interface UseDashPrefsReturn {
   setLaunchOpen: (open: boolean) => void;
   setRecentOpen: (open: boolean) => void;
   setRecentDir: (dir: RecentDir) => void;
+  /** Point the tab strip's "+" at a launcher row, or at a plain shell with `""`. */
+  setNewTabLauncher: (command: string) => void;
 }
 
 export function useDashPrefs(): UseDashPrefsReturn {
@@ -116,6 +134,18 @@ export function useDashPrefs(): UseDashPrefsReturn {
   const setLaunchOpen = useCallback((launchOpen: boolean) => update({ launchOpen }), [update]);
   const setRecentOpen = useCallback((recentOpen: boolean) => update({ recentOpen }), [update]);
   const setRecentDir = useCallback((recentDir: RecentDir) => update({ recentDir }), [update]);
+  const setNewTabLauncher = useCallback(
+    (newTabLauncher: string) => update({ newTabLauncher }),
+    [update],
+  );
 
-  return { prefs, setSpacesOpen, setShellsOpen, setLaunchOpen, setRecentOpen, setRecentDir };
+  return {
+    prefs,
+    setSpacesOpen,
+    setShellsOpen,
+    setLaunchOpen,
+    setRecentOpen,
+    setRecentDir,
+    setNewTabLauncher,
+  };
 }

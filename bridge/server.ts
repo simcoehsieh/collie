@@ -16,6 +16,7 @@ import { createOperatorKeys } from "./operator-keys.ts";
 import { createOperatorQuickReplies } from "./operator-quick-replies.ts";
 import { createOperatorFonts, resolveOperatorFont } from "./operator-fonts.ts";
 import { createOperatorLaunchers } from "./operator-launchers.ts";
+import { listDirs, type DirsBody } from "./dirs.ts";
 import {
   DEFAULT_PROMPT_TAIL_LINES,
   verifyExpectedPrompt,
@@ -789,6 +790,19 @@ export function startServer(opts: {
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
       return launchersRoute(operatorLaunchers, req.headers.get("accept-encoding"));
+    }
+    // The folder picker's one read. GATED ON WRITE although it writes nothing: the list exists only
+    // to fill in a space create, so a device that may not create one has no use for it, and the
+    // narrower gate costs nothing. `bridge/dirs.ts` holds the rest of the contract — directory names
+    // only, rooted at the operator's home, enforced on the resolved path.
+    if (pathname === "/api/dirs" && req.method === "GET") {
+      const denied = caller.gate("write");
+      if (denied) return denied;
+      // Resolved for its FORWARD, not its value: a `?host=` browse has to list the peer's disk, and
+      // that is what resolution does with it. The listing itself is local to whoever answers.
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      return dirsRoute(req);
     }
 
     // ── Worktrees: list / create / open / remove, all scoped to a space (ADR 0032) ──
@@ -2723,6 +2737,25 @@ async function openWorktree(
 // `launch` below: the route registration (gate, `?host=` forward) stays pinned by
 // server.test.ts's "every session-scoped route resolves through the gate" source read, and this
 // function is what answers once that has already happened.
+/**
+ * `GET /api/dirs?path=…` — the folders under one directory.
+ *
+ * Refusals are PLAIN TEXT rather than coded error bodies, which is the catalogue's own rule for
+ * this shape (error-codes.ts: "plain-text refusals … are not JSON, so there is no field to add one
+ * to"). The picker's move is the same for all three anyway — stay where you are, say the listing
+ * failed — so a code would buy the client nothing it does not already have from the status.
+ */
+export async function dirsRoute(req: Request): Promise<Response> {
+  const want = new URL(req.url).searchParams.get("path") ?? "";
+  const result = await listDirs(want, homedir());
+  if (!result.ok) {
+    if (result.reason === "outside_root") return text("outside the home directory", 403);
+    if (result.reason === "not_a_directory") return text("not a directory", 400);
+    return text("no such directory", 404);
+  }
+  return json(result.body satisfies DirsBody, req.headers.get("accept-encoding"));
+}
+
 export async function launchersRoute(
   getLaunchers: () => Promise<Launcher[]>,
   acceptEncoding: string | null,

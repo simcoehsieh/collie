@@ -44,6 +44,31 @@ export function HomeRoute() {
         .filter((w) => w.repoRoot !== undefined && w.isWorktree === false)
         .map((w) => ({ workspaceId: w.workspaceId, repoRoot: w.repoRoot!, label: w.label }))
     : [];
+  // ONE TAP each in the new-space picker: the directories this operator is demonstrably already
+  // working in. Repo roots lead, because a project's root is what you want far more often than
+  // wherever a pane happens to have cd'd to; the panes' own cwds follow and fill in everything that
+  // is not a repo. Deduped in that order, and capped — a strip you scroll is not a shortcut.
+  //
+  // NARROWED TO THE MACHINE the picker will browse. A pack's rows come from every member, and a
+  // peer's path pasted into the lead's browser is a 404 with no explanation; `ambientPanes` is the
+  // same narrowing every other list on this page already does.
+  const dirShortcuts = useMemo(() => {
+    const host = data.scope?.host;
+    const onHost = <T extends { host?: string }>(row: T): boolean =>
+      host === undefined || row.host === undefined || row.host === host;
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const path of [
+      ...data.workspaces.filter(onHost).map((w) => w.repoRoot),
+      ...[...data.agents, ...data.shellPanes].filter(onHost).map((p) => p.cwd),
+    ]) {
+      if (path === undefined || path === "" || seen.has(path)) continue;
+      seen.add(path);
+      out.push(path);
+      if (out.length === 8) break;
+    }
+    return out;
+  }, [data.workspaces, data.agents, data.shellPanes, data.scope?.host]);
   const [newSpaceOpen, setNewSpaceOpen] = useState(false);
   const { prefs, setSpacesOpen, setLaunchOpen, setRecentOpen, setRecentDir } = useDashPrefs();
   // No stored choice yet? The space count decides — a two-space install shouldn't be handed a
@@ -161,6 +186,7 @@ export function HomeRoute() {
         onClose={() => setNewSpaceOpen(false)}
         onCreate={newSpace}
         repos={worktreeRepos}
+        dirShortcuts={dirShortcuts}
         scope={data.scope}
         onOpenWorktree={(workspaceId, path) => void showWorktree(workspaceId, path)}
         onCreateWorktree={(workspaceId, branch) => void newWorktree(workspaceId, branch)}

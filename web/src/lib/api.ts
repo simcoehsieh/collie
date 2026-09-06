@@ -26,6 +26,7 @@ import type {
   UpdateRun,
   UpdateStartResponse,
   UploadResponse,
+  DirsResponse,
   WorktreeListResponse,
   WorktreeOpenResponse,
 } from "./types";
@@ -612,6 +613,18 @@ export function listWorktrees(workspaceId: string, scope?: Scope): Promise<Workt
   return req<WorktreeListResponse>(
     withScope(`/api/workspace/${encodeURIComponent(workspaceId)}/worktrees`, scope),
   );
+}
+
+/**
+ * The folders under one directory, for the new-space picker.
+ *
+ * `path` is what the operator is browsing; omit it for their home directory. The bridge resolves it
+ * and refuses anything outside home, so this never has to be sanitised here — and must not be,
+ * since a client-side check would be the weaker of two rules and the one that runs first.
+ */
+export function listDirs(path: string | undefined, scope?: Scope): Promise<DirsResponse> {
+  const q = path === undefined || path === "" ? "" : `?path=${encodeURIComponent(path)}`;
+  return req<DirsResponse>(withScope(`/api/dirs${q}`, scope));
 }
 
 /** Create a worktree on a new branch and open it as its own space. */
