@@ -19,7 +19,10 @@ stays true).
   where it lands rather than before. Gated on write although it writes nothing: a device that may
   not create a space has no use for the list. The sheet browses one tap per level, with a shortcut
   strip built from the directories already open (repo roots first, then pane cwds), and the manual
-  path field stays below it for everything the picker deliberately cannot reach.
+  path field stays below it for everything the picker deliberately cannot reach. Every filesystem
+  call is on a deadline: the operator's own `~` never answered at first, because one symlink in it
+  resolves into `~/Library/CloudStorage/`, and the bridge — started by launchd without Full Disk
+  Access — waits on that forever. One unresponsive entry now costs its own row and nothing else.
 - **The tab strip's "+" can open an agent.** Hold it to choose which launcher row it runs — or a
   plain shell, which is the default and what every install shipped with. The pin is stored as the
   row's `command`, so renaming a row in `launchers.toml` keeps it working and deleting one falls

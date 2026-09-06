@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
-import { DIR_ENTRY_CAP, expandHome, listDirs, withinRoot } from "./dirs.ts";
+import { DIR_ENTRY_CAP, expandHome, listDirs, withinRoot, type DirsIo } from "./dirs.ts";
 
 // The folder picker's read. Driven against a REAL temporary tree rather than a fake io, and that is
 // deliberate: the whole rule this module carries is "resolve first, compare second", and a fake
@@ -175,5 +175,61 @@ describe("listDirs", () => {
     if (!res.ok) return;
     expect(res.body.home).toBe(root);
     expect(res.body.path.startsWith(root + sep)).toBe(true);
+  });
+});
+
+// ── A STALLED ENTRY COSTS ITS OWN ROW AND NOTHING ELSE ──────────────────────────────────────────
+// The defect this bounds is not hypothetical and not exotic: the operator's own `~` never answered,
+// because one symlink in it resolves into a cloud FileProvider mount the bridge has no permission
+// for, and `fs.promises` has no cancellation. `~/git` answered in 3ms the whole time. These drive
+// the injected io, which is the only way to hold a filesystem call open on purpose.
+
+/** An io whose calls answer normally except for the named path, which never settles. */
+function stallingIo(stallOn: string, tree: Record<string, string[]>): DirsIo {
+  const never = new Promise<never>(() => {});
+  const dirent = (name: string, kind: "dir" | "link") => ({
+    name,
+    isDirectory: () => kind === "dir",
+    isSymbolicLink: () => kind === "link",
+  });
+  return {
+    realpath: async (p) => (p === stallOn ? never : p),
+    stat: async (p) => (p === stallOn ? never : { isDirectory: () => true }),
+    readdir: async (p) =>
+      (tree[p] ?? []).map((r) => (r.startsWith("@") ? dirent(r.slice(1), "link") : dirent(r, "dir"))),
+  };
+}
+
+describe("listDirs — deadlines", () => {
+  test("a symlink that never resolves is DROPPED, and the rest of the listing still answers", async () => {
+    const io = stallingIo("/home/op/cloud", { "/home/op": ["git", "@cloud", "src"] });
+    const started = Date.now();
+    const res = await listDirs("", "/home/op", io);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.body.entries.map((e) => e.name)).toEqual(["git", "src"]);
+    // And it answered — the whole point. Bounded by the per-entry budget, not by Bun's idle timeout.
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  test("two stalled links cost ONE deadline, not two — they are resolved in parallel", async () => {
+    const io = stallingIo("/home/op/a", { "/home/op": ["@a", "@b", "keep"] });
+    // `stallOn` is one path, so `b` resolves; the claim is about the wall clock either way, and a
+    // serial implementation of three entries would spend three budgets on the stalled one alone.
+    const started = Date.now();
+    const res = await listDirs("", "/home/op", io);
+    expect(res.ok).toBe(true);
+    expect(Date.now() - started).toBeLessThan(400);
+  });
+
+  test("a directory whose READ never returns fails the listing instead of hanging", async () => {
+    const io: DirsIo = {
+      realpath: async (p) => p,
+      stat: async () => ({ isDirectory: () => true }),
+      readdir: () => new Promise<never>(() => {}),
+    };
+    const started = Date.now();
+    expect(await listDirs("", "/home/op", io)).toEqual({ ok: false, reason: "not_found" });
+    expect(Date.now() - started).toBeLessThan(4_000);
   });
 });

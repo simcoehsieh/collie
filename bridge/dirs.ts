@@ -22,10 +22,67 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 // even though it writes nothing. A device that may not create a space has no use for the list, and
 // the narrower gate is free.
 //
+// ── EVERY FILESYSTEM CALL IS ON A DEADLINE ───────────────────────────────────────────────────────
+// A listing must not be able to hang, and on a real home directory it can. MEASURED on the
+// operator's Mac: `~/git` answered in 3ms and `~` never answered at all, and the difference was one
+// symlink — `~/Google Drive`, which resolves into `~/Library/CloudStorage/`, a FileProvider mount.
+// From a shell with Full Disk Access that `realpath` takes 61ms; from the bridge, which launchd
+// starts without one, it never returns, and Bun closed the connection at its 10s idle timeout with
+// the request still pending.
+//
+// So the shape of the fix is not "special-case CloudStorage" — the next stalled mount will have a
+// different name — it is that one unresponsive ENTRY costs its own row and nothing else. Per-entry
+// work is bounded and dropped on timeout; the calls that decide the whole listing are bounded too
+// and fail it honestly rather than hanging. The entries are also resolved in PARALLEL, so a
+// directory of slow-but-answering links costs one deadline rather than N.
+//
 // ── DOTFILES ARE OMITTED ─────────────────────────────────────────────────────────────────────────
 // Not for safety — a caller can still name `~/.config` directly and get its children — but because
 // a home directory has dozens of them and none is the project you are looking for. The manual path
 // field stays in the sheet for exactly the cases this omission costs.
+
+/**
+ * How long one ENTRY's symlink resolution may take before the row is dropped.
+ *
+ * Generous next to a local `lstat` (microseconds) and short next to a human waiting for a folder
+ * list. A row lost to it is a symlink this machine cannot answer for quickly, which is exactly the
+ * row a picker should not be offering: tapping it would hand the same stall to the next request.
+ */
+export const ENTRY_TIMEOUT_MS = 150;
+
+/**
+ * How long the calls that decide the WHOLE listing may take — resolving the path, stat'ing it,
+ * reading it. Larger than the per-entry budget because there is no partial answer to fall back to:
+ * this one either produces the listing or fails it.
+ */
+export const LISTING_TIMEOUT_MS = 2_000;
+
+/** A sentinel distinguishable from every value the wrapped calls return. */
+const TIMED_OUT = Symbol("timed out");
+
+/**
+ * `promise`, or {@link TIMED_OUT} if it has not settled within `ms`.
+ *
+ * The timer is CLEARED when the promise wins — a race that leaves its timer armed keeps a handle
+ * alive per call, which on a route is a leak with a listing's cadence. The losing filesystem promise
+ * is left pending, which is the part that cannot be fixed here: `fs.promises` has no cancellation,
+ * so the only thing in our gift is to stop WAITING on it.
+ */
+async function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      // `settle`, not `resolve`: `node:path`'s `resolve` is in scope in this file, and shadowing it
+      // inside a timing primitive is exactly the confusion nobody needs while reading one.
+      new Promise<typeof TIMED_OUT>((settle) => {
+        timer = setTimeout(() => settle(TIMED_OUT), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 /** One directory, as the picker needs it: what to draw, and what to ask for next. */
 export interface DirEntry {
@@ -83,11 +140,26 @@ export function withinRoot(candidate: string, root: string): boolean {
   return candidate.startsWith(prefix);
 }
 
-/** The filesystem calls this module makes, injectable so the rules above are testable without one. */
+/** The little of a `Dirent` this module reads. */
+interface DirentLike {
+  name: string;
+  isDirectory: () => boolean;
+  isSymbolicLink: () => boolean;
+}
+
+/**
+ * The filesystem calls this module makes, injectable so the rules above are testable without one.
+ *
+ * Declared as the CALL SHAPES USED rather than as `typeof readdir` and friends. Naming node's
+ * functions would drag their whole overload sets in, and then the only way to write a fake — which
+ * is how a stalled entry is tested at all, since a real one cannot be held open on purpose — is a
+ * cast that throws the type evidence away. Node's own functions satisfy these narrower signatures,
+ * so the production value below is checked, not asserted.
+ */
 export interface DirsIo {
-  readdir: typeof readdir;
-  realpath: typeof realpath;
-  stat: typeof stat;
+  readdir: (path: string, options: { withFileTypes: true }) => Promise<readonly DirentLike[]>;
+  realpath: (path: string) => Promise<string>;
+  stat: (path: string) => Promise<{ isDirectory: () => boolean }>;
 }
 
 const diskIo: DirsIo = { readdir, realpath, stat };
@@ -108,63 +180,71 @@ export async function listDirs(
   home: string,
   io: DirsIo = diskIo,
 ): Promise<DirsResult> {
-  let root: string;
-  try {
-    root = await io.realpath(home);
-  } catch {
-    // A home directory that cannot be resolved is not a client error, but there is nothing to list
-    // and nothing useful to say beyond that.
-    return { ok: false, reason: "not_found" };
-  }
+  /** Run one of the whole-listing calls under {@link LISTING_TIMEOUT_MS}; a throw or a stall is null. */
+  const bounded = async <T>(call: () => Promise<T>): Promise<T | null> => {
+    try {
+      const value = await withDeadline(call(), LISTING_TIMEOUT_MS);
+      return value === TIMED_OUT ? null : value;
+    } catch {
+      return null;
+    }
+  };
 
-  let here: string;
-  try {
-    here = await io.realpath(expandHome(want, home));
-  } catch {
-    return { ok: false, reason: "not_found" };
-  }
+  // A home directory that cannot be resolved is not a client error, but there is nothing to list and
+  // nothing useful to say beyond that.
+  const root = await bounded(() => io.realpath(home));
+  if (root === null) return { ok: false, reason: "not_found" };
+
+  const here = await bounded(() => io.realpath(expandHome(want, home)));
+  if (here === null) return { ok: false, reason: "not_found" };
   // AFTER realpath, never before: `..` and symlinks are both gone by now, so this compares the place
   // the read would actually happen.
   if (!withinRoot(here, root)) return { ok: false, reason: "outside_root" };
 
-  let stats;
-  try {
-    stats = await io.stat(here);
-  } catch {
-    return { ok: false, reason: "not_found" };
-  }
+  const stats = await bounded(() => io.stat(here));
+  if (stats === null) return { ok: false, reason: "not_found" };
   if (!stats.isDirectory()) return { ok: false, reason: "not_a_directory" };
 
-  let names;
-  try {
-    names = await io.readdir(here, { withFileTypes: true });
-  } catch {
-    // Present but unreadable — a permission wall is not a missing directory, but the picker's move
-    // is the same either way: stay where you are and say the listing failed.
-    return { ok: false, reason: "not_found" };
-  }
+  // Present but unreadable — a permission wall is not a missing directory, but the picker's move is
+  // the same either way: stay where you are and say the listing failed.
+  const names = await bounded(() => io.readdir(here, { withFileTypes: true }));
+  if (names === null) return { ok: false, reason: "not_found" };
 
   const entries: DirEntry[] = [];
+  /** The symlinks worth following, resolved together rather than one after another. */
+  const links: string[] = [];
   for (const dirent of names) {
     if (dirent.name.startsWith(".")) continue;
-    const full = join(here, dirent.name);
     if (dirent.isDirectory()) {
-      entries.push({ name: dirent.name, path: full });
+      entries.push({ name: dirent.name, path: join(here, dirent.name) });
       continue;
     }
     // A symlink is not a directory to `readdir`, and a home directory full of symlinked repos is an
     // ordinary shape. Following one costs a stat and a realpath, and the realpath is not optional:
     // a link inside home may point anywhere, and this list is what the next request will ask for.
-    if (!dirent.isSymbolicLink()) continue;
-    try {
-      const target = await io.stat(full);
-      if (!target.isDirectory()) continue;
-      const resolved = await io.realpath(full);
-      if (!withinRoot(resolved, root)) continue;
-      entries.push({ name: dirent.name, path: full });
-    } catch {
-      // A broken link. Drop the row; one dangling symlink must not cost the operator the directory.
-    }
+    if (dirent.isSymbolicLink()) links.push(dirent.name);
+  }
+
+  const followed = await Promise.all(
+    links.map(async (name): Promise<DirEntry | null> => {
+      const full = join(here, name);
+      try {
+        // ONE deadline over both calls, not one each: what is being bounded is "how long this row
+        // may hold up the listing", and a link that spends the whole budget in `stat` has already
+        // spent it. A stall, a throw (a dangling link) and a non-directory all drop the row — one
+        // bad entry must never cost the operator the directory.
+        const target = await withDeadline(io.stat(full), ENTRY_TIMEOUT_MS);
+        if (target === TIMED_OUT || !target.isDirectory()) return null;
+        const resolved = await withDeadline(io.realpath(full), ENTRY_TIMEOUT_MS);
+        if (resolved === TIMED_OUT || !withinRoot(resolved, root)) return null;
+        return { name, path: full };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  for (const entry of followed) {
+    if (entry !== null) entries.push(entry);
   }
 
   entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
