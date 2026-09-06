@@ -33,7 +33,18 @@ stays true).
   nearest SELECTABLE ancestor — so `select-none` on the button moved the selection one level out and
   `select-none` on the scroller moved it out again. The walk ends only at an unselectable ROOT, so on
   a device with no mouse the chrome is now unselectable from `body` down and CONTENT is exempted by
-  name (`pre`, `code`, form controls, `[data-selectable]`). Desktop is untouched.
+  name (`pre`, `code`, form controls, `[data-selectable]`). Desktop is untouched. Each row in that
+  sheet also carries its agent's own mark — the same tile the tab strip and the herd list already
+  draw, resolved from the row's COMMAND (`codex --profile work` and `/opt/homebrew/bin/codex` are
+  both codex) rather than from a second list of names; a row whose first word names no agent gets
+  the neutral initials tile the component already falls back to.
+  Antigravity's tile is the real mark now: upstream drew a triangle "A" in white on Google blue —
+  the one brand entry with no source cited beside it — and the actual logo is a rounded arch with a
+  four-colour gradient. With no official vector to take a path from, this embeds Google's own
+  `apple-touch-icon.png` (cropped, 80px WebP, 3.0 kB) through SVG `<image>` in the same tile, rather
+  than tracing it by hand the way the wrong one got there. Orca answers this by fetching each
+  agent's favicon by domain at runtime; Collie does not copy that — it would need a third-party
+  image host in the CSP, tell that host which agents you run, and show nothing offline.
 
 - The mirror's font ceiling goes 16 → 24, for the desktop. Measured in a 1908px browser window: the
   pane view's column is 1400px and the reply field 1320px, but a herdr pane is 84 columns, so at the

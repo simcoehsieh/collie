@@ -71,6 +71,36 @@ describe("NewTabSheet", () => {
     expect(screen.getByText(/makes it what \+ does/i)).toBeInTheDocument();
   });
 
+  it("draws each row's own agent mark, and hides it from the accessible name", () => {
+    // The app already ships these tiles — the tab strip and the herd list draw the same ones — so a
+    // row here is recognisable at a glance rather than by reading it. Hidden from the a11y tree
+    // because the label beside it already names the row, and `AgentIcon` names ITSELF "<agent> logo".
+    renderSheet();
+    const claude = screen.getByRole("button", { name: /claude/ });
+    const mark = claude.querySelector('[aria-hidden="true"]');
+    expect(mark).not.toBeNull();
+    expect(mark?.querySelector("svg, span")).not.toBeNull();
+    // One name, not two: the row announces as its label alone.
+    expect(claude).toHaveAccessibleName("claude");
+  });
+
+  it("resolves the mark from the COMMAND, so flags and paths do not lose it", () => {
+    // `codex --profile work` is codex. The row's label is the operator's own word and may be
+    // anything, so it is the command that has to answer this.
+    renderSheet({
+      launchers: [{ command: "/opt/homebrew/bin/codex --profile work", label: "work" }],
+    });
+    const row = screen.getByRole("button", { name: "work" });
+    expect(row.querySelector('[role="img"], svg')).not.toBeNull();
+  });
+
+  it("leaves the plain shell a glyph rather than a tile", () => {
+    // It is the ABSENCE of an agent; a tile would read as one more brand in the list.
+    renderSheet();
+    const shell = screen.getByRole("button", { name: /plain shell/i });
+    expect(shell.querySelector("svg.lucide-terminal")).not.toBeNull();
+  });
+
   it("shows a pinned directory shortened, and nothing where a row has none", () => {
     renderSheet();
     expect(screen.getByText("~/git/collie")).toBeInTheDocument();
