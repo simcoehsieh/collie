@@ -360,6 +360,37 @@ export const handlers = [
   // Default world: no `launchers.toml`. Session-scoped (server.ts), so a test that wants rows
   // overrides this with its own `/api/launchers` handler rather than adding a field to `/api/config`.
   http.get("/api/launchers", () => HttpResponse.json({ launchers: [], home: "" })),
+  // Default world: a small home directory with two projects under `~/git`. A test that needs a
+  // different tree overrides this handler; one that needs a refusal answers a non-2xx, which is the
+  // only failure shape this route has (bridge/dirs.ts says why it carries no coded body).
+  http.get("/api/dirs", ({ request }) => {
+    const asked = new URL(request.url).searchParams.get("path") ?? "";
+    const home = "/home/op";
+    if (asked === "" || asked === home) {
+      return HttpResponse.json({
+        ok: true,
+        path: home,
+        parent: null,
+        home,
+        entries: [{ name: "git", path: "/home/op/git" }],
+        truncated: false,
+      });
+    }
+    if (asked === "/home/op/git") {
+      return HttpResponse.json({
+        ok: true,
+        path: asked,
+        parent: home,
+        home,
+        entries: [
+          { name: "ai-stock", path: "/home/op/git/ai-stock" },
+          { name: "collie", path: "/home/op/git/collie" },
+        ],
+        truncated: false,
+      });
+    }
+    return HttpResponse.json({ ok: true, path: asked, parent: "/home/op/git", home, entries: [], truncated: false });
+  }),
   http.post<never, { snoozedUntil: number | null }>("/api/notifications/snooze", async ({ request }) => {
     const { snoozedUntil } = await request.json();
     return HttpResponse.json({ snoozedUntil });

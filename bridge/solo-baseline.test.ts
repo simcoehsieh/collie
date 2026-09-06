@@ -576,6 +576,12 @@ describe("solo zero-tax — routes", () => {
       // It is named here, not exempted: the guard's job is that a route arrives on purpose.
       "/api/devices",
       "/api/devices/revoke",
+      // The new-space folder picker's listing (bridge/dirs.ts) — a SOLO route that legitimately
+      // extends this list, named here rather than exempted. It answers DIRECTORY NAMES only, rooted
+      // at the operator's home and enforced on the RESOLVED path, and it is session-scoped and
+      // WRITE-gated through the same closure `/api/launch` rides: it writes nothing, but a device
+      // that may not create a space has no use for the list, and the narrower gate is free.
+      "/api/dirs",
       // The detached updater's probe (M15/04) — a solo feature that legitimately extends this list,
       // named here rather than exempted. It is the one ungated `/api/*` route: the prober is a local
       // updater holding no credential, and what it answers is `{ ok, version, deposed, mode }`.

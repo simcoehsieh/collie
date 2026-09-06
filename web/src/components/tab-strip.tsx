@@ -26,6 +26,15 @@ interface TabStripProps {
   selected: string | null;
   onSelect: (tabId: string | null) => void;
   onNewTab: (workspaceId: string) => void;
+  /**
+   * Long-press on the "+", for choosing what it opens. Absent leaves the button a plain tap — the
+   * caller decides whether there is anything to choose BETWEEN, since it owns the launcher rows.
+   *
+   * A long-press rather than a second button: the tab row is the most width-starved strip in the
+   * app (it holds one chip per tab and must stay scrollable on a 393pt screen), and what the "+"
+   * opens is a setting you touch once, not an action you take beside it.
+   */
+  onNewTabHold?: () => void;
   /** True while this Space's own "+" create is in flight — disables the button and swaps its icon
    *  for a spinner, so a second tap during the round trip is refused rather than silently ignored
    *  (the hook already ignores it; this is the feedback that stops the operator tapping twice). */
@@ -95,6 +104,7 @@ export function TabStrip({
   selected,
   onSelect,
   onNewTab,
+  onNewTabHold,
   creatingTab = false,
   allowAll = true,
   scope,
@@ -106,6 +116,9 @@ export function TabStrip({
   useLocale();
   const [sheetTab, setSheetTab] = useState<TabView | null>(null);
   const newTab = useMuxCapability("createTab");
+  // Bound unconditionally so the hook order never depends on a prop; the handler is what is absent
+  // when there is nothing to choose, and `useLongPress` treats an undefined callback as "no hold".
+  const newTabHold = useLongPress(onNewTabHold);
   // Actions need both callbacks wired (revalidate on rename, fall back on close); without them the
   // tabs stay plain tap-to-switch — long-press is inert.
   const actionsEnabled = !!onRenamed && !!onClosed;
@@ -187,6 +200,7 @@ export function TabStrip({
           {newTab.capable && (
             <button
               type="button"
+              {...newTabHold}
               onClick={() => onNewTab(workspaceId)}
               disabled={creatingTab}
               aria-label={translate("space.tabStrip.new.aria")}
@@ -199,7 +213,10 @@ export function TabStrip({
               // row and the gap keeps it clear of its neighbour.
               className={cn(
                 STRIP_TAP_TARGET_SQUARE,
-                "flex size-8 shrink-0 self-center items-center justify-center rounded-full border border-dashed border-border text-muted-foreground transition-colors hover:bg-accent active:scale-95 disabled:opacity-100",
+                // select-none + -webkit-touch-callout:none for the same reason the tab pills carry
+                // them: without both, iOS Safari's selection loupe fires `pointercancel` mid-hold
+                // and the long-press never completes (hooks/use-long-press.ts states the pair).
+                "flex size-8 shrink-0 select-none self-center items-center justify-center rounded-full border border-dashed border-border [-webkit-touch-callout:none] text-muted-foreground transition-colors hover:bg-accent active:scale-95 disabled:opacity-100",
               )}
             >
               {/* Same box, same icon size, swapped in place — the button never resizes between its

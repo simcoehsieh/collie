@@ -13,6 +13,19 @@ stays true).
 
 ## On top of 1.5.2
 
+- **Pick a folder for a new space instead of typing its path.** A new `GET /api/dirs` answers with
+  DIRECTORY NAMES and nothing else — no files, no sizes, no contents — rooted at the operator's home
+  and enforced on the RESOLVED path, so a `..` or a symlink is refused after the kernel has said
+  where it lands rather than before. Gated on write although it writes nothing: a device that may
+  not create a space has no use for the list. The sheet browses one tap per level, with a shortcut
+  strip built from the directories already open (repo roots first, then pane cwds), and the manual
+  path field stays below it for everything the picker deliberately cannot reach.
+- **The tab strip's "+" can open an agent.** Hold it to choose which launcher row it runs — or a
+  plain shell, which is the default and what every install shipped with. The pin is stored as the
+  row's `command`, so renaming a row in `launchers.toml` keeps it working and deleting one falls
+  back to the shell rather than failing a create nobody remembers configuring. No new plumbing:
+  `POST /api/launch` already opened a tab beside a named pane, and the "+" had no way to ask for it.
+
 - The mirror's font ceiling goes 16 → 24, for the desktop. Measured in a 1908px browser window: the
   pane view's column is 1400px and the reply field 1320px, but a herdr pane is 84 columns, so at the
   default 10px the terminal draws 504px and the rest of the width has nothing in it. The mirror was

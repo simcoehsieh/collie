@@ -14,7 +14,7 @@ import { useKeyboardOpen } from "@/hooks/use-keyboard";
 import { useSheetPull } from "@/hooks/use-sheet-pull";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
-import { useLaunchers } from "@/lib/launchers";
+import { pinnedLauncher, useLaunchers } from "@/lib/launchers";
 import { buzz } from "@/lib/haptics";
 import { mirrorFont, useDisplayPrefs } from "@/hooks/use-display-prefs";
 import { useLatestReply } from "@/hooks/use-latest-reply";
@@ -49,6 +49,7 @@ import { TabStrip } from "@/components/tab-strip";
 import { PaneStrip } from "@/components/pane-strip";
 import { StripsSummary } from "@/components/strips-summary";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
+import { NewTabSheet } from "@/components/new-tab-sheet";
 import { CompactStripLabels, STRIP_TAP_TARGET_SQUARE } from "@/components/ui/labelled-strip";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { HostStaleBanner } from "@/components/host-stale-banner";
@@ -126,7 +127,7 @@ function foldLabelKey(tabCount: number, paneCount: number): MessageKey {
 
 // At most one drawer/sheet is open at a time; null = none. (The composer's own Keys/Quick/Agent
 // sheets are separate and live inside <Composer>.)
-type Drawer = "switcher" | "paneMenu" | null;
+type Drawer = "switcher" | "paneMenu" | "newTab" | null;
 
 /**
  * Is the caret in the MESSAGE COMPOSER's field, as opposed to any other input on the screen?
@@ -536,6 +537,24 @@ export function AgentChat({
   // Fold state for the "Switch pane" sheet's two long tails, shared with the dashboard so one
   // "hide the long tail" preference means the same thing in both places.
   const dash = useDashPrefs();
+
+  // WHAT THE "+" OPENS. A launcher row when the operator pinned one and it is STILL declared, and a
+  // plain shell otherwise — which is the default and the behaviour every install shipped with.
+  //
+  // The pref stores the row's COMMAND, not its label or its index: `POST /api/launch` matches on the
+  // command, so a row the operator renames keeps working, and a row they delete resolves to nothing
+  // here and falls back to the shell rather than failing a create nobody remembers pinning.
+  //
+  // Launched BESIDE this pane, and that is what makes it a TAB of this space rather than a new
+  // Space: the route takes a pane id and calls `createTab` on its workspace (bridge/server.ts).
+  const pinned = pinnedLauncher(launchers, dash.prefs.newTabLauncher);
+  const openNewTab = (workspaceId: string) => {
+    if (pinned !== undefined) {
+      void launch(pinned.command, paneId);
+      return;
+    }
+    void newTab(workspaceId);
+  };
 
   // Mirror freeze: at the bottom we follow live output; the moment you scroll up to read backscroll
   // we hold the text steady (no reflow / no re-pin) until you jump back to latest — so a long
@@ -1529,7 +1548,8 @@ export function AgentChat({
                     agents={agents}
                     selected={agent.tabId}
                     onSelect={(id) => id && goToTab(id)}
-                    onNewTab={newTab}
+                    onNewTab={openNewTab}
+                    onNewTabHold={launchers.length > 0 ? () => setDrawer("newTab") : undefined}
                     creatingTab={creatingTab.has(agent.workspaceId)}
                     allowAll={false}
                     scope={scope}
@@ -2039,6 +2059,25 @@ export function AgentChat({
             node. FindBar's own mount effect then focuses the input and pops the keyboard. Verified in
             agent-chat.test.tsx rather than reasoned about, because the ordering is the whole
             argument. */}
+        {/* Held the "+" — what should it open? Mounted beside the other sheets and sharing the one
+            `drawer` value, so it cannot be open at the same time as the switcher or the pane menu. */}
+        <NewTabSheet
+          open={drawer === "newTab"}
+          onClose={closeDrawer}
+          launchers={launchers}
+          home={launchersHome}
+          selected={dash.prefs.newTabLauncher}
+          onPick={(command) => {
+            dash.setNewTabLauncher(command);
+            // Opened NOW as well as pinned: the sheet's own subtitle promises it, and a setting that
+            // does nothing until the next tap is a setting whose effect you cannot see.
+            if (command === "") {
+              if (agent) void newTab(agent.workspaceId);
+              return;
+            }
+            void launch(command, paneId);
+          }}
+        />
         <PaneActionsSheet
           open={drawer === "paneMenu"}
           onClose={closeDrawer}

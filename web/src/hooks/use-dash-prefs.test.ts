@@ -33,6 +33,8 @@ describe("coerceDashPrefs", () => {
       launchOpen: null,
       recentOpen: true,
       recentDir: "newest",
+      // `""` is "a plain shell", which is what the tab strip's "+" has always opened.
+      newTabLauncher: "",
     });
   });
 
@@ -44,6 +46,7 @@ describe("coerceDashPrefs", () => {
         launchOpen: false,
         recentOpen: false,
         recentDir: "oldest",
+        newTabLauncher: "claude",
       }),
     ).toEqual({
       spacesOpen: false,
@@ -51,11 +54,22 @@ describe("coerceDashPrefs", () => {
       launchOpen: false,
       recentOpen: false,
       recentDir: "oldest",
+      newTabLauncher: "claude",
     });
   });
 
   it("rejects a bogus direction rather than trusting it", () => {
     expect(coerceDashPrefs({ recentDir: "sideways" }).recentDir).toBe("newest");
+  });
+
+  it("takes any string as the pinned launcher, and anything else as none", () => {
+    // NOT validated against the current rows here: this store has never read `launchers.toml`, and
+    // the rows are per-host anyway. An unknown command resolves to nothing at the call site
+    // (`pinnedLauncher`, lib/launchers.ts) and falls back to the shell.
+    expect(coerceDashPrefs({ newTabLauncher: "codex --profile work" }).newTabLauncher).toBe(
+      "codex --profile work",
+    );
+    expect(coerceDashPrefs({ newTabLauncher: 7 }).newTabLauncher).toBe("");
   });
 
   it("survives garbage", () => {
@@ -77,6 +91,7 @@ describe("useDashPrefs", () => {
       launchOpen: null,
       recentOpen: true,
       recentDir: "newest",
+      newTabLauncher: "",
     });
   });
 
@@ -87,6 +102,7 @@ describe("useDashPrefs", () => {
     act(() => first.result.current.setLaunchOpen(false));
     act(() => first.result.current.setRecentOpen(false));
     act(() => first.result.current.setRecentDir("oldest"));
+    act(() => first.result.current.setNewTabLauncher("claude"));
 
     const second = renderHook(() => useDashPrefs());
     expect(second.result.current.prefs).toEqual({
@@ -95,6 +111,7 @@ describe("useDashPrefs", () => {
       launchOpen: false,
       recentOpen: false,
       recentDir: "oldest",
+      newTabLauncher: "claude",
     });
   });
 

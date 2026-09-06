@@ -1687,10 +1687,15 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // The load-bearing claim: `?h=laptop` + `w1:p1` must never be served the DESK's `w1:p1`, and
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
-    // All NINE session-scoped routes (tab create, workspace create, launch, this host's launcher
-    // rows, tab action, the pane family, "look now", the worktree listing and the worktree actions)
-    // reach their runtime through the caller's resolver and nothing else.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(9);
+    // All TEN session-scoped routes (tab create, workspace create, launch, this host's launcher
+    // rows, the folder listing, tab action, the pane family, "look now", the worktree listing and
+    // the worktree actions) reach their runtime through the caller's resolver and nothing else.
+    //
+    // `/api/dirs` is the tenth and the newest, and it resolves for its FORWARD rather than for the
+    // runtime's value: a `?h=laptop` browse must list the LAPTOP's disk, and resolution is what
+    // sends it there. A route that answered locally without resolving would quietly show the lead's
+    // directories under a peer's name — the same class of fault as serving the desk's `w1:p1`.
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(10);
     // Exactly five `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
