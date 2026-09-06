@@ -11,7 +11,12 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
-## On top of 1.5.2
+## On top of 1.5.3
+
+Merged `v1.5.3` on 2026-09-06. It touched `cli/update*` only — release tag reads now use git's
+explicit `https::` transport so an `insteadOf` rewrite cannot send them to SSH (#170) — and nothing
+in it is fork-patched, so no local patch was dropped and none needed re-applying. The merge was
+textually clean: no file was touched by both sides.
 
 - **Pick a folder for a new space instead of typing its path.** A new `GET /api/dirs` answers with
   DIRECTORY NAMES and nothing else — no files, no sizes, no contents — rooted at the operator's home
