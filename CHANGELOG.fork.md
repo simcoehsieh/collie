@@ -23,3 +23,8 @@ stays true).
 - `collie-upstream-sync` skill: surveys the gap to upstream, reports what a new release adds,
   compares each fork patch against an upstream fix of the same defect, and asks before merging,
   rebuilding and restarting. Lives in this repo, symlinked into both agent runtime roots.
+- `collie-upstream-sync` hardened after review: prerelease tags compare numerically (`beta.10` after
+  `beta.9`), a rename reports both paths so a moved fork-patched file still shows as contested, the
+  survey is one `git log` instead of one subprocess per commit, a failed `git fetch` can no longer
+  read as "nothing to merge", the merge is held open with `--no-commit` so a drop-ours verdict is
+  applicable, and verification failure is a hard stop before the push.
