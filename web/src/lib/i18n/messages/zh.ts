@@ -397,6 +397,7 @@ export const zh: Dictionary = {
   "space.new.label.label": "标签（可选）",
   "space.new.label.placeholder": "输入工作区名称",
   "space.new.create": "创建工作区并启动 shell",
+  "dirs.roots": "项目根目录",
   "dirs.up": "返回上一层",
   "dirs.empty": "这里没有子文件夹",
   "dirs.failed": "无法读取该文件夹",

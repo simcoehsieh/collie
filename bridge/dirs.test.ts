@@ -3,7 +3,14 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
-import { DIR_ENTRY_CAP, expandHome, listDirs, withinRoot, type DirsIo } from "./dirs.ts";
+import {
+  DIR_ENTRY_CAP,
+  expandHome,
+  listDirs,
+  resolveWithinRoots,
+  withinRoot,
+  type DirsIo,
+} from "./dirs.ts";
 
 // The folder picker's read. Driven against a REAL temporary tree rather than a fake io, and that is
 // deliberate: the whole rule this module carries is "resolve first, compare second", and a fake
@@ -231,5 +238,132 @@ describe("listDirs — deadlines", () => {
     const started = Date.now();
     expect(await listDirs("", "/home/op", io)).toEqual({ ok: false, reason: "not_found" });
     expect(Date.now() - started).toBeLessThan(4_000);
+  });
+});
+
+// ── DECLARED ROOTS: THE PICKER'S BOUNDARY, NARROWED ─────────────────────────────────────────────
+// The operator may name the only trees this bridge will look in. The claims worth pinning are the
+// ones that make it a BOUNDARY rather than a default: a path inside home but outside every root is
+// refused, and the create path refuses it too — a rule only the browser respects is decoration.
+
+describe("listDirs — declared roots", () => {
+  let root = "";
+  const roots = (): string[] => [join(root, "git", "collie"), join(root, "git", "ai-stock")];
+
+  beforeAll(async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "collie-roots-")));
+    await mkdir(join(root, "git", "collie", "web"), { recursive: true });
+    await mkdir(join(root, "git", "ai-stock", "tools"), { recursive: true });
+    await mkdir(join(root, "git", "secret-project"), { recursive: true });
+    await mkdir(join(root, "Documents"), { recursive: true });
+  });
+
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("the top is the ROOTS THEMSELVES, with no path and nowhere up", async () => {
+    const res = await listDirs("", root, undefined, roots());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.body.entries.map((e) => e.name)).toEqual(["ai-stock", "collie"]);
+    // Not a directory on disk: there is no place above these two the operator may see.
+    expect(res.body.path).toBe("");
+    expect(res.body.parent).toBeNull();
+  });
+
+  test("`home` is still the real home, so the client can shorten paths against it", async () => {
+    const res = await listDirs("", root, undefined, roots());
+    expect(res.ok && res.body.home).toBe(root);
+  });
+
+  test("inside a root is allowed, and its parent stops AT the root", async () => {
+    const res = await listDirs(join(root, "git", "collie"), root, undefined, roots());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.body.entries.map((e) => e.name)).toEqual(["web"]);
+    // Null at the root, not `.../git` — offering an up arrow there would only produce a refusal.
+    expect(res.body.parent).toBeNull();
+  });
+
+  test("a sibling INSIDE HOME but outside every root is refused", async () => {
+    // The whole point. Under the old single-root rule both of these were ordinary listings.
+    expect(await listDirs(join(root, "git", "secret-project"), root, undefined, roots())).toEqual({
+      ok: false,
+      reason: "outside_root",
+    });
+    expect(await listDirs(join(root, "Documents"), root, undefined, roots())).toEqual({
+      ok: false,
+      reason: "outside_root",
+    });
+  });
+
+  test("the parent of the roots is refused too — `..` buys nothing", async () => {
+    expect(await listDirs(join(root, "git"), root, undefined, roots())).toEqual({
+      ok: false,
+      reason: "outside_root",
+    });
+  });
+
+  test("ONE root means that root IS the top — no one-row virtual level to tap through", async () => {
+    const res = await listDirs("", root, undefined, [join(root, "git", "collie")]);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.body.path).toBe(join(root, "git", "collie"));
+    expect(res.body.entries.map((e) => e.name)).toEqual(["web"]);
+  });
+
+  test("a root that does not resolve is DROPPED, not fatal", async () => {
+    // One typo in the operator's config must not take the picker down with it.
+    const res = await listDirs("", root, undefined, [...roots(), join(root, "git", "nope")]);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.body.entries.map((e) => e.name)).toEqual(["ai-stock", "collie"]);
+  });
+
+  test("no roots at all falls back to home — upstream's behaviour, untouched", async () => {
+    const res = await listDirs("", root, undefined, []);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.body.path).toBe(root);
+    expect(res.body.entries.map((e) => e.name)).toContain("Documents");
+  });
+});
+
+describe("resolveWithinRoots — the same rule, for the create path", () => {
+  let root = "";
+  const roots = (): string[] => [join(root, "git", "collie")];
+
+  beforeAll(async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "collie-create-")));
+    await mkdir(join(root, "git", "collie", "web"), { recursive: true });
+    await mkdir(join(root, "Documents"), { recursive: true });
+  });
+
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("an allowed path resolves to itself", async () => {
+    expect(await resolveWithinRoots(join(root, "git", "collie", "web"), root, roots())).toBe(
+      join(root, "git", "collie", "web"),
+    );
+  });
+
+  test("an empty ask is the FIRST ROOT, not home", async () => {
+    // The sheet opens with no directory chosen. If that still meant home, the very first tap on
+    // Create would be refused by the boundary the picker just drew.
+    expect(await resolveWithinRoots("", root, roots())).toBe(join(root, "git", "collie"));
+  });
+
+  test("a path outside every root is refused, however it is spelled", async () => {
+    expect(await resolveWithinRoots(join(root, "Documents"), root, roots())).toBeNull();
+    expect(await resolveWithinRoots(join(root, "git", "collie", "..", ".."), root, roots())).toBeNull();
+    expect(await resolveWithinRoots("~/Documents", root, roots())).toBeNull();
+  });
+
+  test("with no roots declared it is home, exactly as before", async () => {
+    expect(await resolveWithinRoots(join(root, "Documents"), root, [])).toBe(join(root, "Documents"));
+    expect(await resolveWithinRoots("", root, [])).toBe(root);
   });
 });

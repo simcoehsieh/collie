@@ -88,6 +88,7 @@ function cfg(overrides: Partial<Config> = {}): Config {
     tmuxBin: "",
     zellijBin: "",
     socketPath: "/tmp/herdr.sock",
+    dirRoots: [],
     port: 8787,
     host: "127.0.0.1",
     pollMs: 1500,

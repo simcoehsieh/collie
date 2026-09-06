@@ -408,6 +408,7 @@ export const ko: Dictionary = {
   "space.new.label.label": "라벨 (선택)",
   "space.new.label.placeholder": "스페이스 이름 지정",
   "space.new.create": "스페이스 생성 및 셸 열기",
+  "dirs.roots": "프로젝트 루트",
   "dirs.up": "상위 폴더로",
   "dirs.empty": "하위 폴더가 없습니다",
   "dirs.failed": "이 폴더를 읽을 수 없습니다",

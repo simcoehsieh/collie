@@ -410,6 +410,7 @@ export const ja: Dictionary = {
   "space.new.label.label": "ラベル（任意）",
   "space.new.label.placeholder": "スペース名",
   "space.new.create": "スペースを作成してシェルを起動",
+  "dirs.roots": "プロジェクトのルート",
   "dirs.up": "一つ上の階層へ",
   "dirs.empty": "サブフォルダはありません",
   "dirs.failed": "このフォルダを読み取れません",

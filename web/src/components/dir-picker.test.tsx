@@ -95,7 +95,7 @@ describe("DirPicker", () => {
     await user.click(await screen.findByRole("button", { name: /git/ }));
     await screen.findByRole("button", { name: /ai-stock/ });
 
-    server.use(http.get("/api/dirs", () => new HttpResponse("outside the home directory", { status: 403 })));
+    server.use(http.get("/api/dirs", () => new HttpResponse("outside the allowed directories", { status: 403 })));
     await user.click(screen.getByRole("button", { name: /collie/ }));
 
     expect(await screen.findByText(/couldn't read that folder/i)).toBeInTheDocument();

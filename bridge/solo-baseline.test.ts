@@ -657,6 +657,7 @@ const CONFIG_KEYS = {
   stateDir: true,
   multiSession: true,
   skipServe: true,
+  dirRoots: true,
 } satisfies Record<keyof Config, true>;
 
 describe("solo zero-tax — config", () => {
@@ -671,6 +672,7 @@ describe("solo zero-tax — config", () => {
       "deviceAllowlist",
       "deviceHeader",
       "dialMode",
+      "dirRoots",
       "fontsDir",
       "host",
       "journalRoots",
@@ -731,6 +733,7 @@ describe("solo zero-tax — config", () => {
       "COLLIE_CODEX_ROOT",
       "COLLIE_DEVICE_ALLOWLIST",
       "COLLIE_DEVICE_HEADER",
+      "COLLIE_DIR_ROOTS",
       "COLLIE_GROK_ROOT",
       "COLLIE_HERDR_DIAL",
       "COLLIE_HOST",

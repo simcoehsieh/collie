@@ -118,3 +118,14 @@ textually clean: no file was touched by both sides.
   answer either, because this API sends no CORS headers. Two existing tests asserted the old rule
   with a GET standing in for a write; they now use POST, which is what a write is on the wire and
   what they meant all along.
+- **The folder picker can be pointed at just the projects that matter.** `COLLIE_DIR_ROOTS` names
+  the directory trees the picker may list; unset keeps upstream's behaviour, where the operator's
+  home is the single root. With several roots declared there is no directory above them the operator
+  may see, so the top of the browse is not a place on disk — it is the roots themselves, with no
+  path and no way up. One root means that root IS the top, rather than a one-row level to tap
+  through, and a root that does not resolve is dropped rather than fatal: one typo must not take the
+  picker down. **`POST /api/workspace` enforces the same boundary**, which is the half that makes it
+  one: that route took a `cwd` straight from the client and defaulted to `$HOME`, so a limit only
+  the picker respected would have been decoration — the phone could still have opened a shell
+  anywhere on the disk. Both paths call one resolver, so the browse rule and the create rule cannot
+  drift apart. The refusal no longer says "outside the home directory", which stopped being true.

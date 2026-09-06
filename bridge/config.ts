@@ -128,6 +128,15 @@ export interface Config {
   /** Path to Herdr's control socket. A non-Herdr-launched daemon must discover this itself. */
   socketPath: string;
   /**
+   * The directory trees the folder picker may list, and the ONLY places a space may be created.
+   *
+   * Empty (the default) keeps upstream's behaviour: the operator's home is the single root. Setting
+   * it narrows the API — `GET /api/dirs` refuses anything outside, and so does `POST /api/workspace`,
+   * because a boundary only the browser respects is decoration: the create route takes a `cwd`
+   * straight from the client and would otherwise open a shell anywhere on the disk.
+   */
+  dirRoots: string[];
+  /**
    * Which dialer opens that socket. `auto` (the default) is correct everywhere: `node:net` on
    * Windows, where herdr's socket is a named pipe, and Bun's native transport elsewhere. Forcing
    * `net` on Linux/macOS exercises the Windows dial path against the real socket — the only way to
@@ -485,6 +494,9 @@ export function loadConfig(): Config {
     tmuxBin: (process.env.COLLIE_TMUX_BIN ?? "").trim(),
     zellijBin: (process.env.COLLIE_ZELLIJ_BIN ?? "").trim(),
     socketPath,
+    // Comma-separated like every other list here. `~` is expanded by the consumer (dirs.ts), which
+    // is also where a root that does not resolve is dropped — one bad entry must not break the rest.
+    dirRoots: envList("COLLIE_DIR_ROOTS"),
     dialMode: envEnum("COLLIE_HERDR_DIAL", ["auto", "net", "bun"] as const, "auto"),
     port: envInt("COLLIE_PORT", DEFAULT_PORT, { min: 1, max: 65535 }),
     host,

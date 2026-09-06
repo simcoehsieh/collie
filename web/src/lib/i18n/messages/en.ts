@@ -429,6 +429,7 @@ export const en = {
   "space.new.label.label": "Label (optional)",
   "space.new.label.placeholder": "name this space",
   "space.new.create": "Create space & open shell",
+  "dirs.roots": "Project roots",
   "dirs.up": "Up one level",
   "dirs.empty": "No sub-folders here",
   "dirs.failed": "Couldn't read that folder",
