@@ -28,10 +28,12 @@ stays true).
   row's `command`, so renaming a row in `launchers.toml` keeps it working and deleting one falls
   back to the shell rather than failing a create nobody remembers configuring. No new plumbing:
   `POST /api/launch` already opened a tab beside a named pane, and the "+" had no way to ask for it.
-  Holding it no longer hands iOS the page to highlight: the button's own `select-none` was correct
-  and applied, but iOS walks UP for the nearest selectable ancestor when the pressed element has
-  none — so the whole tab scroller is unselectable now, the "+" refuses `selectstart`, and any
-  selection that still got started is dropped before the sheet opens.
+  Holding it no longer hands iOS the page to highlight. Three rounds, and the first two were the
+  wrong model: iOS does not give up when the pressed element is unselectable, it walks UP for the
+  nearest SELECTABLE ancestor — so `select-none` on the button moved the selection one level out and
+  `select-none` on the scroller moved it out again. The walk ends only at an unselectable ROOT, so on
+  a device with no mouse the chrome is now unselectable from `body` down and CONTENT is exempted by
+  name (`pre`, `code`, form controls, `[data-selectable]`). Desktop is untouched.
 
 - The mirror's font ceiling goes 16 → 24, for the desktop. Measured in a 1908px browser window: the
   pane view's column is 1400px and the reply field 1320px, but a herdr pane is 84 columns, so at the
