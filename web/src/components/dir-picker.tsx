@@ -136,7 +136,13 @@ export function DirPicker({
             optional: rtl also right-ALIGNS, which parks a short path (`~`, on the very first open)
             against the far edge with the width of a phone between it and the up arrow. */}
         <span className="min-w-0 flex-1 truncate text-left font-mono text-xs" dir="rtl">
-          <span dir="ltr">{listing === null ? "…" : shown(listing.path)}</span>
+          {/* An EMPTY path is the virtual top: with several declared roots there is no directory
+              above them the operator may see, so the bridge answers with the roots themselves and
+              no path (bridge/dirs.ts). Rendering "" would leave the header blank and make the
+              picker look broken at the one moment it is working correctly. */}
+          <span dir="ltr">
+            {listing === null ? "…" : listing.path === "" ? t("dirs.roots") : shown(listing.path)}
+          </span>
         </span>
         {phase === "loading" && <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />}
       </div>

@@ -414,6 +414,7 @@ export const zhTW: Dictionary = {
   "space.new.label.label": "標籤（選填）",
   "space.new.label.placeholder": "輸入工作區名稱",
   "space.new.create": "建立工作區並啟動 shell",
+  "dirs.roots": "專案根目錄",
   "dirs.up": "回上一層",
   "dirs.empty": "這裡沒有子資料夾",
   "dirs.failed": "無法讀取這個資料夾",

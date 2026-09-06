@@ -16,7 +16,7 @@ import { createOperatorKeys } from "./operator-keys.ts";
 import { createOperatorQuickReplies } from "./operator-quick-replies.ts";
 import { createOperatorFonts, resolveOperatorFont } from "./operator-fonts.ts";
 import { createOperatorLaunchers } from "./operator-launchers.ts";
-import { listDirs, type DirsBody } from "./dirs.ts";
+import { listDirs, resolveWithinRoots, type DirsBody } from "./dirs.ts";
 import {
   DEFAULT_PROMPT_TAIL_LINES,
   verifyExpectedPrompt,
@@ -802,7 +802,7 @@ export function startServer(opts: {
       if (denied) return denied;
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
-      return createWorkspace(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name);
+      return createWorkspace(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name, cfg.dirRoots);
     }
     // A launch is a `/api/workspace` create the operator pre-declared: the client names a row in
     // `launchers.toml` and the bridge, never the client, supplies the command line. It sits here
@@ -837,7 +837,7 @@ export function startServer(opts: {
       // that is what resolution does with it. The listing itself is local to whoever answers.
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
-      return dirsRoute(req);
+      return dirsRoute(req, cfg.dirRoots);
     }
 
     // ── Worktrees: list / create / open / remove, all scoped to a space (ADR 0032) ──
@@ -2552,6 +2552,7 @@ async function createWorkspace(
   audit: AuditLog,
   device: string | null,
   session: string,
+  roots: readonly string[] = [],
 ): Promise<Response> {
   let body: JsonValue;
   try {
@@ -2564,7 +2565,13 @@ async function createWorkspace(
   }
   const fields = asJsonRecord(body) ?? {};
   // Checked, not declared — see createTab.
-  const cwd = (typeof fields.cwd === "string" ? fields.cwd.trim() : "") || homedir();
+  // THE SAME BOUNDARY THE FOLDER PICKER DRAWS, enforced here because this is where it actually
+  // matters: the picker is a UI and this route is the door. A `cwd` the operator's roots do not
+  // contain is refused rather than silently redirected — opening a shell somewhere other than where
+  // the client asked would be a worse answer than saying no.
+  const askedCwd = typeof fields.cwd === "string" ? fields.cwd.trim() : "";
+  const cwd = await resolveWithinRoots(askedCwd, homedir(), roots);
+  if (cwd === null) return text("outside the allowed directories", 403);
   const label = typeof fields.label === "string" ? fields.label : undefined;
   const ae = req.headers.get("accept-encoding");
   const outcome = await herdr.createSpace({ cwd, label });
@@ -2820,11 +2827,13 @@ async function openWorktree(
  * to"). The picker's move is the same for all three anyway — stay where you are, say the listing
  * failed — so a code would buy the client nothing it does not already have from the status.
  */
-export async function dirsRoute(req: Request): Promise<Response> {
+export async function dirsRoute(req: Request, roots: readonly string[] = []): Promise<Response> {
   const want = new URL(req.url).searchParams.get("path") ?? "";
-  const result = await listDirs(want, homedir());
+  const result = await listDirs(want, homedir(), undefined, roots);
   if (!result.ok) {
-    if (result.reason === "outside_root") return text("outside the home directory", 403);
+    // "allowed directories", not "home": with COLLIE_DIR_ROOTS set, home is no longer the boundary
+    // and naming it would send the operator looking in the wrong place.
+    if (result.reason === "outside_root") return text("outside the allowed directories", 403);
     if (result.reason === "not_a_directory") return text("not a directory", 400);
     return text("no such directory", 404);
   }

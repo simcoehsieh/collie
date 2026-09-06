@@ -435,6 +435,7 @@ export const es: Dictionary = {
   "space.new.label.label": "Etiqueta (opcional)",
   "space.new.label.placeholder": "Nombre del espacio",
   "space.new.create": "Crear espacio e iniciar shell",
+  "dirs.roots": "Raíces de proyectos",
   "dirs.up": "Subir un nivel",
   "dirs.empty": "No hay subcarpetas aquí",
   "dirs.failed": "No se pudo leer esa carpeta",

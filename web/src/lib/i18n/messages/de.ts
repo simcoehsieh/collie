@@ -436,6 +436,7 @@ export const de: Dictionary = {
   "space.new.label.label": "Label (optional)",
   "space.new.label.placeholder": "Space benennen",
   "space.new.create": "Space erstellen und Shell öffnen",
+  "dirs.roots": "Projektverzeichnisse",
   "dirs.up": "Eine Ebene höher",
   "dirs.empty": "Keine Unterordner hier",
   "dirs.failed": "Ordner konnte nicht gelesen werden",

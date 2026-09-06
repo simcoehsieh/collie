@@ -1,5 +1,5 @@
 import { readdir, realpath, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 // Directory listing, for the "pick a folder" half of creating a space. It exists because the
 // alternative was typing an absolute path on a phone keyboard, into a field whose only feedback for
@@ -140,6 +140,18 @@ export function withinRoot(candidate: string, root: string): boolean {
   return candidate.startsWith(prefix);
 }
 
+/**
+ * Whether `candidate` lies in ANY of `roots` — the containment rule once the operator has declared
+ * more than one place the picker may look.
+ *
+ * Same contract as {@link withinRoot}: everything is already RESOLVED, because a string comparison
+ * cannot see through a symlink. Empty roots would mean "nothing is allowed"; callers never pass
+ * that (the config falls back to home), and the honest answer here is still `false`.
+ */
+export function withinAnyRoot(candidate: string, roots: readonly string[]): boolean {
+  return roots.some((root) => withinRoot(candidate, root));
+}
+
 /** The little of a `Dirent` this module reads. */
 interface DirentLike {
   name: string;
@@ -164,6 +176,53 @@ export interface DirsIo {
 
 const diskIo: DirsIo = { readdir, realpath, stat };
 
+/**
+ * Resolve `want` and answer it only if it lands inside the allowed roots — the SAME rule the
+ * listing enforces, exported so the create path cannot drift from the browse path.
+ *
+ * This exists because a boundary only the picker respects is decoration: `POST /api/workspace`
+ * takes a `cwd` straight from the client, so without this it would open a shell anywhere on the
+ * disk while the folder list politely refused to show it. Returns the RESOLVED path (what the
+ * caller should actually use) or `null`.
+ *
+ * `roots` empty = home, matching {@link listDirs} and upstream's behaviour.
+ */
+export async function resolveWithinRoots(
+  want: string,
+  home: string,
+  configuredRoots: readonly string[] = [],
+  io: DirsIo = diskIo,
+): Promise<string | null> {
+  const bounded = async <T>(call: () => Promise<T>): Promise<T | null> => {
+    try {
+      const value = await withDeadline(call(), LISTING_TIMEOUT_MS);
+      return value === TIMED_OUT ? null : value;
+    } catch {
+      return null;
+    }
+  };
+  const homeResolved = await bounded(() => io.realpath(home));
+  if (homeResolved === null) return null;
+  const resolvedRoots: string[] = [];
+  for (const declared of configuredRoots) {
+    const r = await bounded(() => io.realpath(expandHome(declared, home)));
+    if (r !== null && !resolvedRoots.includes(r)) resolvedRoots.push(r);
+  }
+  const roots = resolvedRoots.length > 0 ? resolvedRoots : [homeResolved];
+  // An empty ask means "the default", and with roots declared the default is the first root rather
+  // than home — home is not a place this bridge may open a shell in any more.
+  const asked = want.trim();
+  const target =
+    asked === "" || asked === "~"
+      ? resolvedRoots.length > 0
+        ? roots[0]!
+        : homeResolved
+      : expandHome(asked, home);
+  const here = await bounded(() => io.realpath(target));
+  if (here === null) return null;
+  return withinAnyRoot(here, roots) ? here : null;
+}
+
 /** Why a listing could not be produced. The route turns these into statuses; nothing else reads them. */
 export type DirsFailure = "not_found" | "outside_root" | "not_a_directory";
 
@@ -179,6 +238,7 @@ export async function listDirs(
   want: string,
   home: string,
   io: DirsIo = diskIo,
+  configuredRoots: readonly string[] = [],
 ): Promise<DirsResult> {
   /** Run one of the whole-listing calls under {@link LISTING_TIMEOUT_MS}; a throw or a stall is null. */
   const bounded = async <T>(call: () => Promise<T>): Promise<T | null> => {
@@ -192,14 +252,49 @@ export async function listDirs(
 
   // A home directory that cannot be resolved is not a client error, but there is nothing to list and
   // nothing useful to say beyond that.
-  const root = await bounded(() => io.realpath(home));
-  if (root === null) return { ok: false, reason: "not_found" };
+  const homeResolved = await bounded(() => io.realpath(home));
+  if (homeResolved === null) return { ok: false, reason: "not_found" };
 
-  const here = await bounded(() => io.realpath(expandHome(want, home)));
+  // THE ROOTS ARE RESOLVED TOO, and for the same reason every other path here is: the containment
+  // test below is a string comparison, so a root reached through a symlink would never match the
+  // resolved path of anything inside it. A configured root that cannot be resolved (a typo, an
+  // unmounted disk) is DROPPED rather than fatal — one bad line in the operator's config must not
+  // take the picker down — and if that leaves nothing, home is the fallback, which is exactly the
+  // upstream behaviour this feature narrows.
+  const resolvedRoots: string[] = [];
+  for (const declared of configuredRoots) {
+    const r = await bounded(() => io.realpath(expandHome(declared, home)));
+    if (r !== null && !resolvedRoots.includes(r)) resolvedRoots.push(r);
+  }
+  const roots: string[] = resolvedRoots.length > 0 ? resolvedRoots : [homeResolved];
+  const declaredRoots = resolvedRoots.length > 0;
+
+  // ── THE VIRTUAL TOP ──────────────────────────────────────────────────────────────────────────
+  // With several roots there is no single directory above them that the operator is allowed to see,
+  // so "the top" is not a place on disk: it is the list of roots themselves. `path: ""` says so —
+  // it is the one listing whose `path` is not a resolved directory, and `parent: null` stops the up
+  // arrow there. Asking for "" with a SINGLE root is not this case: that root IS the top, and
+  // answering with a one-row virtual level would make the operator tap twice to reach it.
+  const asked = want.trim();
+  const atTop = asked === "" || asked === "~";
+  if (atTop && declaredRoots && roots.length > 1) {
+    const entries = roots
+      .map((r) => ({ name: basename(r), path: r }))
+      .toSorted((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    return {
+      ok: true,
+      body: { ok: true, path: "", parent: null, home: homeResolved, entries, truncated: false },
+    };
+  }
+
+  // With roots declared, "" means the FIRST one rather than home — home is not somewhere this
+  // picker may look any more, so resolving the default there would open on a 403.
+  const startAt = atTop && declaredRoots ? roots[0]! : expandHome(want, home);
+  const here = await bounded(() => io.realpath(startAt));
   if (here === null) return { ok: false, reason: "not_found" };
   // AFTER realpath, never before: `..` and symlinks are both gone by now, so this compares the place
   // the read would actually happen.
-  if (!withinRoot(here, root)) return { ok: false, reason: "outside_root" };
+  if (!withinAnyRoot(here, roots)) return { ok: false, reason: "outside_root" };
 
   const stats = await bounded(() => io.stat(here));
   if (stats === null) return { ok: false, reason: "not_found" };
@@ -236,7 +331,7 @@ export async function listDirs(
         const target = await withDeadline(io.stat(full), ENTRY_TIMEOUT_MS);
         if (target === TIMED_OUT || !target.isDirectory()) return null;
         const resolved = await withDeadline(io.realpath(full), ENTRY_TIMEOUT_MS);
-        if (resolved === TIMED_OUT || !withinRoot(resolved, root)) return null;
+        if (resolved === TIMED_OUT || !withinAnyRoot(resolved, roots)) return null;
         return { name, path: full };
       } catch {
         return null;
@@ -257,8 +352,10 @@ export async function listDirs(
       path: here,
       // Nowhere up to go from the root, and saying so is what keeps the UI from offering a step it
       // would then have to refuse.
-      parent: here === root ? null : dirname(here),
-      home: root,
+      // Null at ANY root, not just at home: each declared root is a top the operator may not step
+      // above, and offering an up arrow there would only produce a refusal.
+      parent: roots.includes(here) ? null : dirname(here),
+      home: homeResolved,
       entries: truncated ? entries.slice(0, DIR_ENTRY_CAP) : entries,
       truncated,
     },
