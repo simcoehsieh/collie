@@ -129,3 +129,10 @@ textually clean: no file was touched by both sides.
   the picker respected would have been decoration — the phone could still have opened a shell
   anywhere on the disk. Both paths call one resolver, so the browse rule and the create rule cannot
   drift apart. The refusal no longer says "outside the home directory", which stopped being true.
+- **The dashboard no longer launches a space from a tap.** Upstream draws the operator's
+  `launchers.toml` rows as a Launch strip, and a tap CREATES A THROWAWAY SPACE running that
+  command — a control shaped like a picker that behaves like a create, which is what made it
+  confusing rather than useful here. The strip is no longer rendered. `launchers.toml` itself is
+  kept and unchanged: the tab strip's "+" still reads the same rows for its hold-to-pin sheet, where
+  they do the thing their shape promises. The two consumers were already independent, so this
+  removes exactly the dashboard strip and nothing else; `home.tsx` records what to put back.

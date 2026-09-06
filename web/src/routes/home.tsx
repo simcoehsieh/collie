@@ -6,7 +6,6 @@ import { SessionSwitcher } from "@/components/session-switcher";
 import { ServerSwitcher } from "@/components/server-switcher";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { AgentList } from "@/components/agent-list";
-import { LaunchStrip } from "@/components/launch-strip";
 import { SpaceOverview } from "@/components/space-overview";
 import { NewSpaceSheet, type WorktreeRepo } from "@/components/new-space-sheet";
 import { StatusArea } from "@/components/status-area";
@@ -70,13 +69,12 @@ export function HomeRoute() {
     return out;
   }, [data.workspaces, data.agents, data.shellPanes, data.scope?.host]);
   const [newSpaceOpen, setNewSpaceOpen] = useState(false);
-  const { prefs, setSpacesOpen, setLaunchOpen, setRecentOpen, setRecentDir } = useDashPrefs();
+  const { prefs, setSpacesOpen, setRecentOpen, setRecentDir } = useDashPrefs();
   // No stored choice yet? The space count decides — a two-space install shouldn't be handed a
   // mystery collapsed header, and a forty-space one shouldn't be handed a wall.
   const spacesOpen = openForCount(prefs.spacesOpen, data.workspaces.length);
   // The Launch section folds on the same terms. Its count comes from the component (it owns the
   // config read), so the un-chosen default is decided there against the same threshold.
-  const launchOpen = prefs.launchOpen;
 
   // A row is opened with the PANE's host, never the ambient one: the dashboard is one list across
   // every machine (hosts are a label, not a split), so the row you tapped may well live somewhere
@@ -148,7 +146,17 @@ export function HomeRoute() {
             error={data.error}
             lastSeenAt={data.lastSeenAt}
           />
-          <LaunchStrip open={launchOpen} onOpenChange={setLaunchOpen} scope={data.scope} />
+          {/* THE LAUNCH STRIP IS DELIBERATELY NOT HERE (fork, 2026-09-06). Upstream renders the
+              operator's `launchers.toml` rows as one-tap buttons on the dashboard, and a tap
+              CREATES A THROWAWAY SPACE running that command — which reads as a picker but behaves
+              as a create, and that is what made it confusing rather than useful here.
+
+              `launchers.toml` itself is KEPT: agent-chat.tsx still reads it for the tab strip's
+              "+" hold, where the same rows do the thing their shape promises (pick what the "+"
+              opens). The two consumers are independent, so removing this line removes exactly the
+              dashboard strip and nothing else. To restore upstream's behaviour, put back:
+                <LaunchStrip open={prefs.launchOpen} onOpenChange={setLaunchOpen} scope={data.scope} />
+              plus its import and the `setLaunchOpen` binding from useDashPrefs. */}
           <SpaceOverview
             workspaces={data.workspaces}
             agents={navPanes.agents}
