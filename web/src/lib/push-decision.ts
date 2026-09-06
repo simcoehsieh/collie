@@ -94,11 +94,52 @@ export const tagFor = (paneId?: string, host?: string): string => {
 };
 
 /**
+ * What a retraction renders as on a push service that will not accept a silent one — see
+ * {@link enforcesUserVisible}. Deliberately states the **absence**, not "handled": the slot can
+ * empty because you answered at the desk, because the agent finished on its own, or because the pane
+ * closed, and the notification must not claim to know which. Overridable by the payload, so a future
+ * bridge can send better copy without a new service worker (`payload.title` wins below).
+ */
+export const ALL_CLEAR_TITLE = "Nothing needs you";
+
+/**
+ * Whether this push service revokes a subscription that receives a push and shows no notification.
+ *
+ * Apple's does. WebKit enforces the `userVisibleOnly: true` promise literally — **three push events
+ * without a notification and the subscription is revoked** — and the revocation is silent, surfacing
+ * only as 410s the next time the bridge tries to deliver. Chrome instead keeps a budget and
+ * tolerates the occasional silent push, which is what the `clear` path below was written against.
+ * <https://webkit.org/blog/12945/meet-web-push/>
+ *
+ * An endpoint we cannot read resolves to `true`, and that asymmetry is the whole point: a spurious
+ * notification is a small, visible annoyance the operator can act on, while a revoked subscription
+ * is permanent, silent, and only noticed the day an agent blocks and the phone stays dark.
+ */
+export function enforcesUserVisible(endpoint: string | null | undefined): boolean {
+  if (!endpoint) return true;
+  try {
+    const { hostname } = new URL(endpoint);
+    return hostname === "push.apple.com" || hostname.endsWith(".push.apple.com");
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Decide what the SW should do with a push. `hasVisibleClient` = a Collie tab is open and visible
  * (the in-app status already surfaces the alert, so the redundant system notification is suppressed
  * — but a clear still runs, since a retraction must close regardless).
+ *
+ * `mustShow` (from {@link enforcesUserVisible} on the live subscription) removes both silent
+ * outcomes: a retraction becomes a quiet replacement in the same slot, and a suppression becomes the
+ * alert itself. Both keep `renotify: false`, so satisfying the platform costs a line on the lock
+ * screen and never a second buzz.
  */
-export function decidePush(payload: PushPayload, hasVisibleClient: boolean): PushDecision {
+export function decidePush(
+  payload: PushPayload,
+  hasVisibleClient: boolean,
+  mustShow = false,
+): PushDecision {
   const paneId = payload.data?.paneId;
   const session = payload.data?.session;
   const host = payload.data?.host;
@@ -107,8 +148,23 @@ export function decidePush(payload: PushPayload, hasVisibleClient: boolean): Pus
   // would leave a dead notification on the lock screen forever, with nothing left that will ever
   // close it — so `clear` and `show` resolve the slot on this single line, before they diverge.
   const tag = payload.tag ?? tagFor(paneId, host);
-  if (payload.type === "clear") return { kind: "clear", tag };
-  if (hasVisibleClient) return { kind: "suppress" };
+  if (payload.type === "clear") {
+    if (!mustShow) return { kind: "clear", tag };
+    // Same tag, so this REPLACES the alert it retracts rather than stacking beside it — the slot
+    // ends up saying the true thing instead of a stale "claude needs you". No `paneId`: the pane it
+    // came from no longer wants anything, so the tap goes to the herd, not to a settled agent.
+    return {
+      kind: "show",
+      title: payload.title ?? ALL_CLEAR_TITLE,
+      body: payload.body ?? "",
+      tag,
+      session,
+      host,
+      target,
+      renotify: false,
+    };
+  }
+  if (hasVisibleClient && !mustShow) return { kind: "suppress" };
   return {
     kind: "show",
     title: payload.title ?? "Collie",
@@ -118,7 +174,9 @@ export function decidePush(payload: PushPayload, hasVisibleClient: boolean): Pus
     session,
     host,
     target,
-    renotify: payload.renotify ?? false,
+    // A notification raised only because the platform demands one must not also buzz: the operator
+    // is looking at the app that already shows it.
+    renotify: hasVisibleClient ? false : (payload.renotify ?? false),
   };
 }
 

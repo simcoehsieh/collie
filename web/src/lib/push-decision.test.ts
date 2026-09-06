@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest";
 
-import { decidePush, hostSlot, notificationPath, tagFor } from "@/lib/push-decision";
+import {
+  ALL_CLEAR_TITLE,
+  decidePush,
+  enforcesUserVisible,
+  hostSlot,
+  notificationPath,
+  tagFor,
+} from "@/lib/push-decision";
 import { scopeSearch } from "@/lib/scope";
 
 describe("decidePush", () => {
@@ -117,6 +124,95 @@ describe("decidePush", () => {
     expect(decision).toMatchObject({ kind: "show", paneId: "p1" });
     // SAFETY: as above — the absence of `target` is what the case pins, so it must be read.
     expect((decision as { target?: string }).target).toBeUndefined();
+  });
+});
+
+// Apple revokes a subscription after three pushes that show nothing, so on that push service the
+// two silent outcomes above have to become visible ones. Every case here pins the SAME slot the
+// silent path used, because the replacement is what closes the alert it retracts.
+describe("decidePush under a user-visible-only push service", () => {
+  test("a retraction becomes a quiet replacement in the same slot", () => {
+    expect(decidePush({ type: "clear", tag: "collie:herd" }, false, true)).toEqual({
+      kind: "show",
+      title: ALL_CLEAR_TITLE,
+      body: "",
+      tag: "collie:herd",
+      renotify: false,
+    });
+  });
+
+  test("the replacement drops the paneId — a settled agent is not a tap target", () => {
+    const decision = decidePush({ type: "clear", data: { paneId: "w1:p1" } }, false, true);
+    expect(decision).toMatchObject({ kind: "show", tag: "collie:w1:p1" });
+    // SAFETY: pinned by the assertion above — a show decision, whose `paneId` is what this reads.
+    expect((decision as { paneId?: string }).paneId).toBeUndefined();
+  });
+
+  test("a retraction still routes to the host and session it came from", () => {
+    expect(
+      decidePush({ type: "clear", data: { host: "box2", session: "work" } }, false, true),
+    ).toMatchObject({ kind: "show", tag: "collie@box2", host: "box2", session: "work" });
+  });
+
+  test("bridge-supplied copy wins over the built-in all-clear text", () => {
+    expect(
+      decidePush({ type: "clear", tag: "collie:herd", title: "All done", body: "3 handled" }, false, true),
+    ).toMatchObject({ kind: "show", title: "All done", body: "3 handled" });
+  });
+
+  test("a visible tab no longer suppresses — it shows without re-alerting", () => {
+    expect(
+      decidePush({ title: "claude needs you", tag: "collie:herd", renotify: true }, true, true),
+    ).toEqual({
+      kind: "show",
+      title: "claude needs you",
+      body: "",
+      tag: "collie:herd",
+      renotify: false,
+    });
+  });
+
+  test("with no visible tab the alert is unchanged — renotify still buzzes", () => {
+    expect(
+      decidePush({ title: "claude needs you", tag: "collie:herd", renotify: true }, false, true),
+    ).toMatchObject({ kind: "show", renotify: true });
+  });
+
+  // The flag is opt-in: every existing deployment keeps the silent paths it was written against.
+  test("omitting the flag leaves both silent outcomes exactly as they were", () => {
+    expect(decidePush({ type: "clear", tag: "collie:herd" }, false)).toEqual({
+      kind: "clear",
+      tag: "collie:herd",
+    });
+    expect(decidePush({ title: "claude needs you" }, true)).toEqual({ kind: "suppress" });
+  });
+});
+
+describe("enforcesUserVisible", () => {
+  test("Apple's push service does", () => {
+    expect(enforcesUserVisible("https://web.push.apple.com/QF1ax7…")).toBe(true);
+    expect(enforcesUserVisible("https://push.apple.com/QF1ax7…")).toBe(true);
+  });
+
+  test("the push services that keep a silent-push budget do not", () => {
+    expect(enforcesUserVisible("https://fcm.googleapis.com/fcm/send/abc")).toBe(false);
+    expect(enforcesUserVisible("https://updates.push.services.mozilla.com/wpush/v2/abc")).toBe(false);
+  });
+
+  // Suffix matching on the HOSTNAME, never on the string: `push.apple.com.evil.test` is a different
+  // host that a naive `includes()` would have handed Apple's stricter behaviour to.
+  test("a lookalike host is not Apple", () => {
+    expect(enforcesUserVisible("https://push.apple.com.evil.test/x")).toBe(false);
+    expect(enforcesUserVisible("https://notpush.apple.com.other.test/x")).toBe(false);
+  });
+
+  // Fail SAFE, not fail quiet: an unreadable endpoint costs one extra notification, while guessing
+  // "lenient" wrong costs the subscription — silently, and permanently.
+  test("an absent or unparseable endpoint is treated as strict", () => {
+    expect(enforcesUserVisible(undefined)).toBe(true);
+    expect(enforcesUserVisible(null)).toBe(true);
+    expect(enforcesUserVisible("")).toBe(true);
+    expect(enforcesUserVisible("not a url")).toBe(true);
   });
 });
 
