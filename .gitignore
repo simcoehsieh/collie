@@ -10,6 +10,11 @@ out/
 target/
 # The compiled `collie` binary — built from the checkout, never committed.
 /bin/
+# `bun build --compile` writes its output here first and renames it into /bin/, leaving the temp file
+# behind on the way. Untracked, it made every build stamp the version `-dirty` — which on a fork that
+# merges upstream regularly is the one signal worth keeping honest: "is my tree clean?" has to mean
+# something before a merge.
+/.*.bun-build
 
 # Logs
 *.log
