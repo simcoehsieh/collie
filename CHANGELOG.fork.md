@@ -28,3 +28,8 @@ stays true).
   survey is one `git log` instead of one subprocess per commit, a failed `git fetch` can no longer
   read as "nothing to merge", the merge is held open with `--no-commit` so a drop-ours verdict is
   applicable, and verification failure is a hard stop before the push.
+- `collie-upstream-sync` again after a second review: a strict install is never offered a prerelease
+  (upstream's own ADR 0020 rule), the survey exits non-zero when it never reached upstream, the
+  contested set comes from the effective diff so a second sync is not wrong, an unreadable upstream
+  CHANGELOG is reported rather than read as "no changes", and tests run before the build that
+  deploys them.

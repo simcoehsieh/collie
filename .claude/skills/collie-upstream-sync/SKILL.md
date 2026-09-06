@@ -108,14 +108,30 @@ Add a line to `CHANGELOG.fork.md` under a heading naming the release just taken,
 patch that was **dropped** because upstream superseded it — that record is the only thing that
 explains, a year later, why the fork no longer carries it.
 
-### 5. Rebuild, restart, verify
+### 5. Check the merged tree BEFORE it goes live, then rebuild
 
-**Not optional.** git carries neither `bin/` nor `web/dist/`, so without this the service keeps
-running the old code while every version string reports the new one.
+Order matters here, and it is not the obvious one. `collie build` swaps `web/dist` in as its last
+step and the bridge serves that directory straight off disk, so **the build is the deployment** —
+anything checked afterwards is checked on a version the phone is already being served. Test the
+merged tree first, ship second.
 
 ```bash
 cd ~/git/collie
-bash scripts/collie-ctl.sh build
+bun run typecheck && (cd web && bun run typecheck)   # BOTH: the root one skips web/'s test files
+cd web && bun run vitest run src/lib/push-decision.test.ts src/lib/  # the areas the merge touched
+```
+
+`CLAUDE.md` is explicit that the root typecheck does not cover `web/`'s test files and that the gap
+has shipped a broken tip once. Note also that the full `vitest` suite has ~133 pre-existing failures
+on this machine (`localStorage is not a function` — a vitest environment fault, unrelated to any
+change). Do not report those as regressions; compare against a clean tree before claiming the merge
+broke something.
+
+Only once those pass:
+
+```bash
+cd ~/git/collie
+bash scripts/collie-ctl.sh build     # not optional: git carries neither bin/ nor web/dist/
 ./bin/collie restart
 ./bin/collie version                 # matches the merged release
 ./bin/collie doctor --plain          # `update-source` stays red on a fork; that one is expected
@@ -126,20 +142,9 @@ Add a `grep` like that last one for every fork patch that has a greppable finger
 artefact. A patch that survives the merge in git but not in the bundle is the failure this step
 exists to catch.
 
-Typecheck **both trees** — `CLAUDE.md` says the root check does not cover `web/`'s test files, and
-that gap has shipped a broken tip before:
-
-```bash
-cd ~/git/collie && bun run typecheck && (cd web && bun run typecheck)
-```
-
-Then run the fork's own tests for the touched area (`cd web && bun run vitest run <file>`). Note:
-the full `vitest` suite has ~133 pre-existing failures on this machine (`localStorage is not a
-function` — a vitest environment fault, unrelated to any change). Do not report those as
-regressions; compare against a clean tree before claiming a merge broke something.
-
-> **HARD STOP.** If anything in this phase fails — the build, the restart, a fingerprint `grep`
-> returning 0, either typecheck — **do not proceed to phase 6.** Restore service first, then report:
+> **HARD STOP.** If anything in this phase fails — either typecheck, a test, the build, the restart,
+> or a fingerprint `grep` returning 0 — **do not proceed to phase 6.** Restore service first, then
+> report:
 >
 > ```bash
 > git merge --abort                 # if the merge is still open
