@@ -14,6 +14,7 @@ import { fixtureServers, recordReply } from "@/test/handlers";
 import { PackProvider } from "./pack-provider";
 import { Composer, TUI_SETTLE_MS } from "./composer";
 import { statusLabel, type ServerSummary } from "@/lib/types";
+import type { DisplayPrefs } from "@/hooks/use-display-prefs";
 
 // A guarded send is TWO reply calls: type (submit:false), then — once the text is verified on the
 // input line — submit-only (empty text). Overriding the reply handler therefore has to keep the fake
@@ -68,12 +69,13 @@ function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}
     text: "pane output",
     terminalDraft: null,
     rawTerminalDraft: null,
-    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
+    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true },
     setWrap: vi.fn(),
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
     setTapToFocus: vi.fn(),
     setExpandClippedReply: vi.fn(),
+    setControlsOpen: vi.fn(),
     onSent: vi.fn(),
     ...overrides,
   };
@@ -120,12 +122,13 @@ function renderComposerWithStatus(
     text: "pane output",
     terminalDraft: null,
     rawTerminalDraft: null,
-    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
+    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true },
     setWrap: vi.fn(),
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
     setTapToFocus: vi.fn(),
     setExpandClippedReply: vi.fn(),
+    setControlsOpen: vi.fn(),
     onSent: vi.fn(),
     ...overrides,
   };
@@ -496,12 +499,13 @@ describe("Composer — send", () => {
               text="pane output"
               terminalDraft={null}
               rawTerminalDraft="leftover"
-              prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true }}
+              prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true }}
               setWrap={vi.fn()}
               stepFontSize={vi.fn()}
               setRawTerminal={vi.fn()}
               setTapToFocus={vi.fn()}
               setExpandClippedReply={vi.fn()}
+              setControlsOpen={vi.fn()}
               onSent={vi.fn()}
             />
           </>
@@ -590,12 +594,13 @@ describe("Composer — send", () => {
       text: "pane output",
       terminalDraft: null,
       rawTerminalDraft: null,
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true },
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
       setTapToFocus: vi.fn(),
       setExpandClippedReply: vi.fn(),
+      setControlsOpen: vi.fn(),
       onSent: vi.fn(),
     };
     const router = createMemoryRouter([
@@ -687,12 +692,13 @@ describe("Composer — typing into the terminal", () => {
             text="pane output"
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true }}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true }}
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
             setTapToFocus={vi.fn()}
             setExpandClippedReply={vi.fn()}
+            setControlsOpen={vi.fn()}
             onSent={vi.fn()}
           />
         </>
@@ -820,12 +826,13 @@ describe("Composer — typing into the terminal", () => {
             text="pane output"
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true }}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true }}
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
             setTapToFocus={vi.fn()}
             setExpandClippedReply={vi.fn()}
+            setControlsOpen={vi.fn()}
             onSent={vi.fn()}
           />
         </>
@@ -1012,12 +1019,13 @@ describe("Composer — typing into the terminal", () => {
             text="pane output"
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true }}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true }}
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
             setTapToFocus={vi.fn()}
             setExpandClippedReply={vi.fn()}
+            setControlsOpen={vi.fn()}
             onSent={vi.fn()}
           />
         </>
@@ -1125,6 +1133,7 @@ describe("Composer — the draft field wears its own size", () => {
         expandClippedReply: true,
         rawTerminal: false,
         tapToFocus: true,
+        controlsOpen: true,
       },
     });
     const box = screen.getByPlaceholderText(/type a reply/i);
@@ -1403,9 +1412,12 @@ describe("Composer — the machine and the state, on a band of their own", () =>
   /** The status band above it: the host run, the status slot, or both. */
   const band = () => document.querySelector<HTMLElement>('[data-slot="composer-status"]')!;
   /** The reserved word slot — the band's last child (`ui/one-of.tsx`).
-   *  SAFETY: the band renders exactly two children in this order, the host run then the slot, and
-   *  the host run is `null` on a solo install — so its last child is always the slot's element. */
+   *  SAFETY: the band renders the collapse chevron, then the host run, then the slot — and only the
+   *  host run can be `null` (a solo install) — so its LAST child is always the slot's element. The
+   *  chevron is why nothing here reads `firstElementChild` any more. */
   const slot = () => band().lastElementChild as HTMLElement;
+  /** The host run inside the band, by its own label rather than by position. */
+  const hostRun = () => band().querySelector<HTMLElement>('[aria-label*="host" i]');
   /** Every alternative the slot is holding open space for, in order. */
   const words = () => Array.from(slot().children).map((l) => l.textContent);
   /** The one it is actually SHOWING. */
@@ -1470,8 +1482,14 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     // done as one colour in light theme, so the header's dot cannot carry the range alone
     // (status-badge.tsx holds the measurement, agent-chat.test.tsx pins the dot's survival).
     renderComposerWithStatus({ scope: { host: "workshop" }, status: "blocked" }, fixtureServers);
-    expect(band().firstElementChild).toHaveTextContent("workshop"); // machine first…
-    expect(shown()).toBe("needs you"); // …then what it is doing
+    expect(hostRun()).toHaveTextContent("workshop"); // machine first…
+    // …then what it is doing. Read as DOCUMENT ORDER, not as "the first child": the band opens with
+    // the controls-row chevron now, and the claim was never about being first in the box — it is
+    // that the machine is named before the state it is in.
+    expect(
+      hostRun()!.compareDocumentPosition(slot()) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(shown()).toBe("needs you");
     cleanup();
 
     // Solo — every install that exists today. HostChip renders null, so the word stands alone.
@@ -1614,7 +1632,7 @@ describe("Composer — the machine and the state, on a band of their own", () =>
       expect(band().className).toBe(soloBand); // the pack pays nothing for the chip
       expect(row().className).toBe(soloRow);
       // Both runs state the same 12px line box, as ONE utility.
-      for (const run of [band().firstElementChild!, slot().firstElementChild!.firstElementChild!]) {
+      for (const run of [hostRun()!, slot().firstElementChild!.firstElementChild!]) {
         expect(run.className).toContain("text-[10px]/3");
         expect(run.className).not.toMatch(/(?:^|\s)leading-/);
       }
@@ -1667,7 +1685,9 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     expect(band().className.match(/(?:^|\s)h-\S+/g)).toEqual([" h-[14px]"]);
     // The glyph beside the host name is 10px here and nothing else. At 12px it was the band's whole
     // content box, so it could not be centred in it — there was no room either side to centre into.
-    const glyph = band().querySelector("svg")!;
+    // Scoped to the HOST RUN: the band also carries the controls-row chevron, which is held to the
+    // same 10px in this state for the same reason and is pinned in its own test below.
+    const glyph = hostRun()!.querySelector("svg")!;
     expect(glyph.getAttribute("class")).toMatch(/(?:^|\s)size-2\.5(?=\s|$)/);
     expect(glyph.getAttribute("class")).not.toMatch(/(?:^|\s)size-3(?=\s|$)/);
     // And the line box is still ONE utility on the band, unsplit — the whole geometry above is a
@@ -1679,7 +1699,7 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     // A SOLO install renders no host at all, so the band's only occupant is the word — and the
     // centring must not be a fact about the pack. Same utilities, same class string.
     renderComposerWithStatus({ scope: { host: "workshop" }, status: "working" });
-    expect(band().querySelector("svg")).toBeNull();
+    expect(hostRun()).toBeNull();
     expect(band().className).toMatch(/(?:^|\s)items-center(?=\s|$)/);
     expect(band().className).toMatch(/(?:^|\s)h-\[14px\](?=\s|$)/);
     expect(band().className).toMatch(/(?:^|\s)border-y(?=\s|$)/);
@@ -1708,7 +1728,10 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     expect(band().className).toMatch(/(?:^|\s)-mx-3(?=\s|$)/);
     expect(band().className).toMatch(/(?:^|\s)px-2\.5(?=\s|$)/);
     expect(band().className).not.toMatch(/(?:^|\s)bg-/);
-    expect(band().className).toMatch(/(?:^|\s)justify-end(?=\s|$)/);
+    // LEADING-EDGE, not trailing: the band is one group — handle, machine, state — since it
+    // became the controls row's handle and had to grow to 32px to be the only way back. At that
+    // height a lone chevron at one end and a word at the other read as two unrelated things.
+    expect(band().className).toMatch(/(?:^|\s)justify-start(?=\s|$)/);
     expect(row().className).toMatch(/(?:^|\s)-mx-0\.5(?=\s|$)/);
     expect(row().className).not.toMatch(/(?:^|\s)px-/); // the row's inset is the dock's, trimmed
   });
@@ -1732,12 +1755,13 @@ function renderDraftHarness(overrides: Partial<ComponentProps<typeof Composer>> 
       readOnly: false,
       dialogPresent: false,
       text: "pane output",
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true },
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
       setTapToFocus: vi.fn(),
       setExpandClippedReply: vi.fn(),
+      setControlsOpen: vi.fn(),
       onSent: vi.fn(),
       ...rest,
       terminalDraft: stable,
@@ -2004,12 +2028,13 @@ describe("Composer — in-flight echo suppression (match-last-sent)", () => {
       text: "pane output",
       terminalDraft: draft,
       rawTerminalDraft: draft,
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true },
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
       setTapToFocus: vi.fn(),
       setExpandClippedReply: vi.fn(),
+      setControlsOpen: vi.fn(),
       onSent: vi.fn(),
     };
     return (
@@ -2641,12 +2666,13 @@ describe("Composer — draft persistence", () => {
       text: "pane output",
       terminalDraft: null,
       rawTerminalDraft: null,
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true },
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
       setTapToFocus: vi.fn(),
       setExpandClippedReply: vi.fn(),
+      setControlsOpen: vi.fn(),
       onSent: vi.fn(),
       ...overrides,
     };
@@ -2909,5 +2935,126 @@ describe("Composer — the attach picker offers photos as well as files", () => 
     await user.click(screen.getByRole("button", { name: "Attach file" }));
     await user.click(await screen.findByRole("button", { name: "Files" }));
     expect(opened).toEqual(["attach-photos", "attach-files"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// THE CONTROLS ROW IS NO LONGER PERMANENT.
+//
+// The operator's report: five controls used in bursts held 58px of a phone screen open all day
+// (44px of buttons, plus the row's own `mt-2` above and `mb-1.5` below), while the terminal mirror
+// they sit under is the thing being read the whole time. So the row collapses, and the STATUS BAND
+// — already on screen in both states, already at this write surface — is its handle.
+//
+// The handle had to cost nothing, which is the whole reason it is the band and not a sixth button
+// or a strip of its own: either of those would hand back most of what putting the row away is worth.
+describe("Composer — the Controls row can be put away", () => {
+  const band = () => document.querySelector<HTMLElement>('[data-slot="composer-status"]')!;
+  const row = () => document.querySelector<HTMLElement>('[data-slot="composer-controls"]');
+  /** The chevron: the band's first child, and the only svg outside the host run. */
+  const chevron = () => band().querySelector<SVGElement>("svg")!;
+  /** The shipped defaults, so a case that only wants the row closed says only that. */
+  const OPEN_PREFS: DisplayPrefs = {
+    wrap: true,
+    fontSize: 11,
+    draftFontSize: 14,
+    fontFamily: "system",
+    rawTerminal: false,
+    tapToFocus: true,
+    expandClippedReply: true,
+    controlsOpen: true,
+  };
+
+  it("stands OPEN by default, at exactly the geometry the band was measured at", () => {
+    // The default is the shipped behaviour: an install that never touches the handle renders the
+    // row it always had, and the band is still 1 + 12 + 1 with the chevron inside that line box.
+    renderComposerWithStatus();
+    expect(row()).not.toBeNull();
+    expect(band().getAttribute("aria-expanded")).toBe("true");
+    expect(band().className).toMatch(/(?:^|\s)h-\[14px\](?=\s|$)/);
+    expect(chevron().getAttribute("class")).toMatch(/(?:^|\s)size-2\.5(?=\s|$)/);
+    expect(chevron().getAttribute("class")).not.toMatch(/rotate-180/);
+    // The 8px of hit area under a 14px strip, taken from the row's own top margin — dead space in
+    // every previous round, and the only free way to make this tappable.
+    expect(band().className).toContain("after:top-full");
+    expect(band().className).toContain("after:h-2");
+  });
+
+  it("names what it controls, in both directions", () => {
+    // `aria-controls` has to point at something that exists, and the label has to say which way the
+    // next tap goes — the icon alone says nothing to a screen reader.
+    renderComposerWithStatus();
+    expect(band().getAttribute("aria-controls")).toBe("composer-controls");
+    expect(row()!.id).toBe("composer-controls");
+    expect(band().getAttribute("aria-label")).toBe("Hide the controls row");
+    cleanup();
+
+    renderComposerWithStatus({ prefs: { ...OPEN_PREFS, controlsOpen: false } });
+    expect(band().getAttribute("aria-label")).toBe("Show the controls row");
+  });
+
+  it("asks for the row to be put away — and the ask is the PREFERENCE, not local state", async () => {
+    // It has to be persisted, or it is undone by the next pane switch. The composer therefore owns
+    // no copy of this: it reads `prefs.controlsOpen` and calls up.
+    const user = userEvent.setup();
+    const props = renderComposerWithStatus();
+    await user.click(band());
+    expect(props.setControlsOpen).toHaveBeenCalledWith(false);
+  });
+
+  it("CLOSED: the row leaves the tree, and the band becomes a target you can hit", async () => {
+    // Unmounted, not merely clipped — the five controls leave the tab order with the pixels, which
+    // is what `Collapse` buys over a `hidden` class.
+    const user = userEvent.setup();
+    const props = renderComposerWithStatus({ prefs: { ...OPEN_PREFS, controlsOpen: false } });
+    expect(row()).toBeNull();
+    expect(screen.queryByRole("button", { name: "Keys" })).not.toBeInTheDocument();
+    expect(band().getAttribute("aria-expanded")).toBe("false");
+    // `h-8` rather than the open state's 14px: closed, this is the ONLY way back, and the hit-slop
+    // it borrowed from the row's margin went with the row.
+    expect(band().className).toMatch(/(?:^|\s)h-8(?=\s|$)/);
+    expect(band().className).not.toContain("after:top-full");
+    expect(chevron().getAttribute("class")).toMatch(/rotate-180/);
+    // One height utility, closed as well as open — a second `h-*` would win under tailwind-merge.
+    expect(band().className.match(/(?:^|\s)h-\S+/g)).toEqual([" h-8"]);
+
+    await user.click(band());
+    expect(props.setControlsOpen).toHaveBeenCalledWith(true);
+  });
+
+  it("takes an open dock with it, rather than leaving one standing over the mirror", async () => {
+    // A dock is the row's panel. Left open with no row beneath it, its own ✕ is the only way out —
+    // and the ✕ is inside the thing covering the terminal you were reading.
+    const user = userEvent.setup();
+    const props = renderComposerWithStatus();
+    await user.click(screen.getByRole("button", { name: "Quick" }));
+    expect(screen.getByRole("button", { name: "Close Quick" })).toBeInTheDocument();
+
+    await user.click(band());
+    expect(screen.queryByRole("button", { name: "Close Quick" })).not.toBeInTheDocument();
+    expect(props.setControlsOpen).toHaveBeenCalledWith(false);
+  });
+
+  it("REFUSES to collapse while keys are staged, and the row stays to hold the confirm", async () => {
+    // The queue's discard guard (ADR 0005) runs on the drawer transition, so collapsing hits it like
+    // any other exit. What matters is that a REFUSED close refuses the collapse too: take the row
+    // away underneath the confirm and the operator is answering a question about a dock they can no
+    // longer see, on a row that is no longer there.
+    const user = userEvent.setup();
+    const props = renderComposerWithStatus();
+    await user.click(screen.getByRole("button", { name: "Keys" }));
+    await user.click(screen.getByRole("button", { name: "Ctrl" }));
+    await user.click(screen.getByRole("button", { name: "Tab" }));
+    expect(screen.getByRole("button", { name: "Remove Ctrl Tab" })).toBeInTheDocument();
+
+    await user.click(band());
+    expect(props.setControlsOpen).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Remove Ctrl Tab" })).toBeInTheDocument();
+    expect(screen.getByTestId("status")).toHaveTextContent(/discard 1 queued key/i);
+
+    // Second tap: the confirm is answered, the dock goes, and the collapse it was blocking lands.
+    await user.click(band());
+    expect(screen.queryByRole("button", { name: "Remove Ctrl Tab" })).not.toBeInTheDocument();
+    expect(props.setControlsOpen).toHaveBeenCalledWith(false);
   });
 });

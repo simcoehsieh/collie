@@ -199,7 +199,7 @@ export function AgentChat({
   const { newTab, launch, launching, creatingTab } = useSpaceActions();
   const { launchers, home: launchersHome } = useLaunchers(scope);
   // Single display-prefs instance: the View controls (in <Composer>) write it, the mirror reads it.
-  const { prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply } =
+  const { prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, setControlsOpen } =
     useDisplayPrefs();
   // The chosen terminal font (Settings → Terminal font), applied by re-pointing `--font-mono` on
   // the two mirror surfaces below and NOWHERE else — see mirrorFont() for how, and why it is not a
@@ -1404,7 +1404,7 @@ export function AgentChat({
             // inset is deliberately NOT taken: the header element stays mounted with its own
             // `env(safe-area-inset-top)` even while its row is collapsed away, so claiming it here
             // would pay for the notch twice.
-            zen && "[padding-bottom:env(safe-area-inset-bottom)]",
+            zen && "[padding-bottom:var(--safe-bottom)]",
           )}
         >
           {/* THE ONE WAY OUT OF ZEN. A single floating affordance over the mirror rather than a
@@ -1777,7 +1777,7 @@ export function AgentChat({
               up-levelled prompt buttons) — it now lives as a slim row just below the header.
 
               ── `shrink-0`, STATED, AND WHY IT IS NOT `min-h-0` ──────────────────────────
-              This is the flex sibling of the mirror inside a `h-[100dvh]` column. The mirror above
+              This is the flex sibling of the mirror inside the `.app-viewport` column. The mirror above
               carries `min-h-0 flex-1`, so IT is the row that gives — and it gives all the way to
               zero. What happens after that is what the operator reported as "the bottom is cut off":
               nothing else in this column can shrink, so the surplus paints past the bottom edge of
@@ -1964,6 +1964,7 @@ export function AgentChat({
                   setRawTerminal={setRawTerminal}
                   setTapToFocus={setTapToFocus}
                   setExpandClippedReply={setExpandClippedReply}
+                  setControlsOpen={setControlsOpen}
                   onSent={onSent}
                 />
               </div>

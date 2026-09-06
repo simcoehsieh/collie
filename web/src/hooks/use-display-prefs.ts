@@ -67,6 +67,17 @@ export interface DisplayPrefs {
    * is why it is a pref at all rather than unconditional.
    */
   expandClippedReply: boolean;
+  /**
+   * Whether the composer's Controls row — Keys / Type / Quick / Agent / ⚙ — stands open
+   * (default: true, i.e. exactly what every install rendered before this setting existed).
+   *
+   * Closed, the row and its margins leave through `Collapse` and the terminal mirror above grows by
+   * their height; the status band below them becomes the way back, and grows itself to a real tap
+   * target while it is the only one. This is a DISPLAY preference and not composer state for the
+   * same reason wrap and font size are: it is a standing choice about how much of the screen the
+   * mirror gets, so it has to survive a pane switch, a navigation and the app being closed.
+   */
+  controlsOpen: boolean;
 }
 
 /** The terminal font families offered in Settings. A closed list, not a free-text box: an
@@ -190,6 +201,7 @@ const DEFAULTS: DisplayPrefs = {
   rawTerminal: false,
   tapToFocus: true,
   expandClippedReply: true,
+  controlsOpen: true,
 };
 
 function readFontFamily(value: string | undefined): FontFamily {
@@ -279,6 +291,9 @@ function loadPrefs(): DisplayPrefs {
       rawTerminal: asJsonBoolean(p.rawTerminal) ?? DEFAULTS.rawTerminal,
       tapToFocus: asJsonBoolean(p.tapToFocus) ?? DEFAULTS.tapToFocus,
       expandClippedReply: asJsonBoolean(p.expandClippedReply) ?? DEFAULTS.expandClippedReply,
+      // Same independent-default rule again: a payload written before the Controls row could be put
+      // away reads `true`, so nobody's composer changes shape on the upgrade.
+      controlsOpen: asJsonBoolean(p.controlsOpen) ?? DEFAULTS.controlsOpen,
     };
   } catch {
     return DEFAULTS;
@@ -313,6 +328,8 @@ export interface UseDisplayPrefsReturn {
   setTapToFocus: (tapToFocus: boolean) => void;
   /** Toggle or explicitly set whether a clipped reply is re-shown in full above the mirror. */
   setExpandClippedReply: (expandClippedReply: boolean) => void;
+  /** Open or put away the composer's Controls row. */
+  setControlsOpen: (controlsOpen: boolean) => void;
 }
 
 export function useDisplayPrefs(): UseDisplayPrefsReturn {
@@ -382,6 +399,14 @@ export function useDisplayPrefs(): UseDisplayPrefsReturn {
     });
   }, []);
 
+  const setControlsOpen = useCallback((controlsOpen: boolean) => {
+    setPrefs((p) => {
+      const next: DisplayPrefs = { ...p, controlsOpen };
+      savePrefs(next);
+      return next;
+    });
+  }, []);
+
   return {
     prefs,
     setWrap,
@@ -392,5 +417,6 @@ export function useDisplayPrefs(): UseDisplayPrefsReturn {
     setRawTerminal,
     setTapToFocus,
     setExpandClippedReply,
+    setControlsOpen,
   };
 }

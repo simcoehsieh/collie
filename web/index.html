@@ -5,9 +5,21 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- NO `viewport-fit=cover`, and that is the fix for the letterbox — see index.css for the
+         measurements. With cover, iOS 26 gave this app two answers at once: a layout viewport of 793
+         on an 852pt screen (already 852 minus a status bar, i.e. sized for an INSET web view) while
+         still placing the page under the status bar and reporting env(safe-area-inset-top) 59. The
+         59pt difference was letterboxed in page colour above the home indicator, and no CSS reaches
+         it — a shell stretched to cover it put the composer off the bottom of the screen instead.
+         Without cover the web view is simply inset to the safe area: every env() goes to 0, the OS
+         paints the status-bar and home-indicator bands itself, and the page's own box is the whole
+         of what it is given. The chrome does not move — the header's 59pt of inset-top is replaced
+         by the OS's own band of exactly the same height.
+         `interactive-widget=resizes-content` stays: it is what makes `dvh` shrink with the soft
+         keyboard, which is what holds the composer above it (hooks/use-keyboard.ts). -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+      content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
     />
     <!-- Blocking, and first: the pin class must be on <html> before anything paints. Same-origin,
          so `script-src 'self'` already allows it. -->
@@ -26,9 +38,18 @@
     />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <!-- `default`, NOT `black-translucent`, and the reason is measured. Under black-translucent on
+         iOS 26 this app was given a layout viewport of 793 on an 852pt screen — already sized for an
+         OPAQUE status bar (852 − 59) — while the web view was still placed under the status bar and
+         `env(safe-area-inset-top)` still reported 59. The page therefore ended 59pt above the bottom
+         of the screen and iOS letterboxed the difference in page colour, which no CSS can fill: a
+         shell stretched to 852 put the composer off the bottom of the screen instead (index.css says
+         the same from the other side). `default` asks for the placement the viewport was already
+         being sized for. The header loses its 59pt of inset-top and the status bar becomes the OS's
+         to paint, so the chrome lands in the same place it always did. -->
     <meta
       name="apple-mobile-web-app-status-bar-style"
-      content="black-translucent"
+      content="default"
     />
     <meta name="apple-mobile-web-app-title" content="Collie" />
     <title>Collie</title>

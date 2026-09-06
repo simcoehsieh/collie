@@ -95,7 +95,7 @@ export function RootLayout() {
     // second derivation of it, so the tolerance can never be computed against a cadence we aren't
     // using. That mattered more once the cadence gained inputs beyond the snapshot (#156).
     <PackProvider servers={data.servers} sessions={data.sessions} ts={data.ts} pollMs={pollMs}>
-      <div className="flex h-[100dvh] flex-col overflow-hidden">
+      <div className="app-viewport flex flex-col overflow-hidden">
         {/* THE update band, and the only one: a release on offer, a confirm just tapped, a run in
             flight, a new bridge this bundle is behind, and peers following — one fixed-height row
             that says whichever of those is true. Mounted unconditionally so the bundle self-updater's
@@ -149,7 +149,7 @@ export function BootSplash() {
   const stuck = useConnectionLost(true);
   if (!stuck) {
     return (
-      <div className="flex h-[100dvh] flex-col items-center justify-center gap-3 text-muted-foreground">
+      <div className="app-viewport flex flex-col items-center justify-center gap-3 text-muted-foreground">
         {/* The bloom: the same mark as the rest state below, but turning and at full chroma. It is
             a COLOUR as well as motion, which is the half a reduced-motion reader still gets —
             `prefers-reduced-motion` stops the orbit and cannot stop the accents. `paper` is this
@@ -162,7 +162,7 @@ export function BootSplash() {
     );
   }
   return (
-    <div className="flex h-[100dvh] flex-col items-center justify-center gap-3 p-6 text-center">
+    <div className="app-viewport flex flex-col items-center justify-center gap-3 p-6 text-center">
       {/* Rest = the Collie mark still, muted (grayscale + dimmed) to read asleep
           — never the gallop's own rest frame, whose full-stretch mid-stride pose looks frozen
           mid-run. No `loading`: we have stopped trying, and a blooming mark would say otherwise.
@@ -192,7 +192,7 @@ export function RootError() {
   // language; anything else (a render-phase throw, a router error) keeps its own message.
   const message = error instanceof Error ? describeThrownError(error) : t("error.root.unknown");
   return (
-    <div className="flex h-[100dvh] flex-col items-center justify-center gap-3 p-6 text-center">
+    <div className="app-viewport flex flex-col items-center justify-center gap-3 p-6 text-center">
       <p className="font-medium text-destructive">{t("error.root.title")}</p>
       <p className="max-w-xs text-sm text-muted-foreground">{message}</p>
       <button

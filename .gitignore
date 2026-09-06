@@ -67,3 +67,7 @@ docs/bugs/
 
 # Local tooling scratch (browser-automation captures)
 .playwright-mcp/
+
+# Python bytecode from the skills that ship scripts.
+__pycache__/
+*.pyc

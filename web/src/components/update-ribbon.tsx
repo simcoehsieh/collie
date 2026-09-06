@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils";
 // it absorbs entirely — there is no second top band for updates.
 //
 // ── IN-FLOW, NEVER OVER THE HEADER ───────────────────────────────────────────
-// A flex row in RootLayout's `h-[100dvh]` column, `shrink-0`, with the safe-area top inset. It
+// A flex row in RootLayout's `.app-viewport` column, `shrink-0`, with the safe-area top inset. It
 // RESERVES space rather than overlaying, which is the whole reason a banner here can never cover a
 // route's sticky header. No `fixed`, no `absolute`, no z-index escape — asserted by a test.
 //
