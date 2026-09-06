@@ -670,6 +670,44 @@
   height: 100dvh;
 }
 
+/* ── ON A TOUCH DEVICE THE CHROME IS NOT SELECTABLE ──────────────────────────────────────────────
+   Reported twice from the operator's phone: a long-press on the tab strip's "+" started a full-page
+   selection. Both earlier fixes were correct and neither was enough, and the reason is worth stating
+   because it is the opposite of the obvious model:
+
+     iOS does not give up when the pressed element is unselectable. It walks UP for the nearest
+     SELECTABLE ancestor and starts the selection there.
+
+   So `select-none` on the button did nothing but move the selection one level out, and `select-none`
+   on the scroller moved it out again — the walk does not stop at an unselectable ancestor, it stops
+   at a selectable one, and above the strip sat the whole app. The only place that rule ends is a
+   root that is itself unselectable, so that is where this goes.
+
+   INVERTED, AND THAT IS THE POINT: chrome is not selectable, CONTENT is. `pre` and `code` are the
+   terminal mirror, the transcript, the markdown blocks and the updater's log tail — everything an
+   operator copies out of this app — and `[data-selectable]` is the escape hatch for the handful of
+   spans that are content in a chrome-shaped box (the build stamp's git hash). Form controls are
+   listed for Safari's sake, where an inherited `none` has historically reached inside them.
+
+   SCOPED TO TOUCH. This is a phone problem — a mouse selects deliberately, and taking that away on
+   the desktop would cost something real for nothing. `(hover: none) and (pointer: coarse)` is the
+   pair that means "no mouse", rather than a width guess that a tablet or a narrow window fails. */
+@media (hover: none) and (pointer: coarse) {
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  pre,
+  code,
+  input,
+  textarea,
+  [data-selectable] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
 /* ── THE BOTTOM RESERVE ──────────────────────────────────────────────────────────────────────────
    The band the home indicator sits in, as ONE token, because on this app's own target the platform
    cannot report it.
