@@ -29,12 +29,17 @@ only notification target is an iPhone.
 
 ```bash
 cd ~/git/collie
-git fetch upstream
-git merge upstream/main
-bash scripts/collie-ctl.sh build   # THIS checkout is the running service
+git fetch upstream --tags
+git tag --list 'v*' | sort -V | tail -3   # what upstream has released
+git merge v1.6.0                          # the RELEASE you decided to take, not upstream/main
+bash scripts/collie-ctl.sh build          # THIS checkout is the running service
 ./bin/collie restart
 git push origin main
 ```
+
+Merge the **tag**, the way [`docs/upgrading.md` → *You run a fork*](./docs/upgrading.md) says to.
+`upstream/main` is wherever upstream's development happens to sit today, which may be mid-release
+work nobody has shipped; a `v*` tag is a version someone decided was finished.
 
 **The rebuild is not optional.** launchd runs `bin/collie _exec-bridge` out of this directory, and
 both `bin/` and `web/dist/` are build output that git does not carry. Merge without rebuilding and
@@ -56,8 +61,13 @@ It refuses this checkout, and the refusal is correct. `assertOrigin()` in
 exists because the git update path force-checks-out onto release tags: pointed at a fork, it would
 discard local commits. `git merge upstream/main` above is the supported way, and the only one.
 
-`COLLIE_UPDATE_REPO` can retarget the guard. Leave it alone — this fork publishes no releases, so
-there is nothing for it to find.
+`COLLIE_UPDATE_REPO` can retarget the guard, and upstream says to set it "if your fork releases its
+own tags". This one does not, so leave it unset — pointed here it would find no releases at all.
+
+One consequence to expect rather than chase: `collie doctor` reports `update-source` as an **error**
+for as long as this is a fork, and the phone's Updates card is red because of it. That is the check
+telling the truth — `collie update` really will refuse — and there is no way to silence it that does
+not also make the guard lie.
 
 ## Merge hygiene
 
