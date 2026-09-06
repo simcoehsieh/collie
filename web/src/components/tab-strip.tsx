@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2, Plus } from "lucide-react";
 
 import { AgentIcon } from "@/components/agent-icon";
@@ -119,6 +119,19 @@ export function TabStrip({
   // Bound unconditionally so the hook order never depends on a prop; the handler is what is absent
   // when there is nothing to choose, and `useLongPress` treats an undefined callback as "no hold".
   const newTabHold = useLongPress(onNewTabHold);
+  // …and refuse the selection at the EVENT as well as in the cascade. `selectstart` is not a React
+  // synthetic event, so it is attached by hand; it fires on the element the gesture began on, which
+  // is the one place a preventDefault can stop the selection before iOS goes looking for something
+  // to select. Belt and braces with the `select-none` above on purpose: neither is reliable alone on
+  // a control whose own content (an icon) is nothing a reader would ever want to select.
+  const plusRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const node = plusRef.current;
+    if (!node || !onNewTabHold) return;
+    const refuse = (e: Event) => e.preventDefault();
+    node.addEventListener("selectstart", refuse);
+    return () => node.removeEventListener("selectstart", refuse);
+  }, [onNewTabHold]);
   // Actions need both callbacks wired (revalidate on rename, fall back on close); without them the
   // tabs stay plain tap-to-switch — long-press is inert.
   const actionsEnabled = !!onRenamed && !!onClosed;
@@ -156,7 +169,12 @@ export function TabStrip({
           // active tab's cover strip lives in. items-start keeps every tab's TOP on the same line,
           // which is what makes the row read as tabs rather than as boxes of different sizes.
           className={cn(
-            "-mb-px flex items-start gap-1 overflow-x-auto pb-px [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            // `select-none` on the SCROLLER, not only on the controls inside it. iOS does not give
+            // up when the pressed element is unselectable — it walks UP for the nearest selectable
+            // ancestor and starts the selection there, which is how a long-press on the "+" ended up
+            // highlighting the page. The pills have carried it for their own long-press since they
+            // were written; what was missing is that there be nothing selectable BEHIND them.
+            "-mb-px flex select-none items-start gap-1 overflow-x-auto pb-px [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
             // With a pinned control the right half of the edge-to-edge trick is spent on it: the
             // scroller becomes the flex row's growing child, keeps the LEFT gutter cancellation so
             // the first tab still starts on the route's 16px, and stops at the control instead of at
@@ -200,6 +218,7 @@ export function TabStrip({
           {newTab.capable && (
             <button
               type="button"
+              ref={plusRef}
               {...newTabHold}
               onClick={() => onNewTab(workspaceId)}
               disabled={creatingTab}

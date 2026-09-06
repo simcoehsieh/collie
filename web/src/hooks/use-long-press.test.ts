@@ -209,6 +209,39 @@ describe("useLongPress", () => {
     expect(onLongPress).toHaveBeenCalledTimes(2);
   });
 
+  it("drops any selection the gesture started, BEFORE opening", () => {
+    // iOS does not give up when the pressed element is unselectable — it walks UP for the nearest
+    // selectable ancestor and starts there, so a caller can carry `select-none` correctly and still
+    // watch the page highlight behind the sheet. The CSS is the first line and this is the one that
+    // runs when it was not enough; the ORDER matters, because a selection cleared after the sheet
+    // opens is one the operator has already seen.
+    // Spied on the PROTOTYPE, so the real `window.getSelection()` still answers with a real
+    // Selection — a hand-made stub would need a cast, and the cast is what would hide a hook that
+    // started calling a second member of it.
+    const removeAllRanges = vi.spyOn(Selection.prototype, "removeAllRanges");
+    const onLongPress = vi.fn(() => expect(removeAllRanges).toHaveBeenCalled());
+    const { result } = renderHook(() => useLongPress(onLongPress));
+
+    act(() => result.current.onPointerDown(down(0, 0)));
+    act(() => vi.advanceTimersByTime(500));
+
+    expect(onLongPress).toHaveBeenCalledTimes(1);
+    expect(removeAllRanges).toHaveBeenCalledTimes(1);
+    removeAllRanges.mockRestore();
+  });
+
+  it("survives a browser that refuses getSelection rather than losing the gesture", () => {
+    const getSelection = vi.spyOn(window, "getSelection").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const onLongPress = vi.fn();
+    const { result } = renderHook(() => useLongPress(onLongPress));
+    act(() => result.current.onPointerDown(down(0, 0)));
+    act(() => vi.advanceTimersByTime(500));
+    expect(onLongPress).toHaveBeenCalledTimes(1);
+    getSelection.mockRestore();
+  });
+
   it("leaves the native contextmenu alone when disabled (onLongPress undefined)", () => {
     const { result } = renderHook(() => useLongPress(undefined));
     const e = contextMenuEvent();
