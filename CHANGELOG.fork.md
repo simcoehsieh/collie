@@ -20,3 +20,6 @@ stays true).
   service rather than a behaviour swap. See [`FORK.md`](./FORK.md) for why this fork carries it.
 - `bun build --compile`'s temp artefact is ignored, so a build no longer stamps the version `-dirty`
   and `git status` stays a usable pre-merge check.
+- `collie-upstream-sync` skill: surveys the gap to upstream, reports what a new release adds,
+  compares each fork patch against an upstream fix of the same defect, and asks before merging,
+  rebuilding and restarting. Lives in this repo, symlinked into both agent runtime roots.
