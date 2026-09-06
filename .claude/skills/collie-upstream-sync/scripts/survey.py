@@ -39,17 +39,28 @@ def git(repo: Path, *args: str, check: bool = True) -> str:
     return r.stdout.strip()
 
 
+def tail_key(tail: str) -> list:
+    """Compare a prerelease tail NUMERICALLY where it is numeric: `beta.9` before `beta.10`.
+
+    Lexically `"beta.10" < "beta.9"`, which would pick beta.9 as the newest of a train that has
+    reached double digits — and upstream's own history has `v1.0.0-beta.45` through `beta.49`, so
+    this is a reachable wrong answer, not a hypothetical one. Split into digit and non-digit runs and
+    compare each run in its own domain. `(0, int)` sorts every numeric run below every alphabetic one
+    so the tuple never compares int against str.
+    """
+    return [(0, int(p), "") if p.isdigit() else (1, 0, p) for p in re.split(r"(\d+)", tail) if p]
+
+
 def version_key(tag: str) -> tuple:
     """Sort key for a `vX.Y.Z[-tail]` tag. A prerelease sorts BELOW its own release (PEP 440 / semver
     rule), so `v1.6.0-beta.1` never outranks `v1.6.0` and a beta is never proposed as the newer
     thing to merge."""
     m = VERSION_TAG.match(tag)
     if not m:
-        return (0, 0, 0, 0, "")
+        return (0, 0, 0, 0, [])
     major, minor, patch, tail = m.groups()
-    # 1 = final release, 0 = prerelease. Ordering within prereleases is lexical, which is enough to
-    # rank beta.1 < beta.2 and is not load-bearing beyond display order.
-    return (int(major), int(minor), int(patch), 0 if tail else 1, tail or "")
+    # 1 = final release, 0 = prerelease.
+    return (int(major), int(minor), int(patch), 0 if tail else 1, tail_key(tail or ""))
 
 
 def commits(repo: Path, rng: str) -> list[dict]:
@@ -57,23 +68,45 @@ def commits(repo: Path, rng: str) -> list[dict]:
 
     Merges are excluded on purpose: on a fork that merges upstream repeatedly, the merge commits are
     the fork's own bookkeeping and would otherwise be reported as "changes" with no content.
+
+    ONE `git log` for the whole range, not one `git show` per commit — a hundred commits behind is a
+    normal amount to be, and that shape cost a hundred and one subprocesses.
+
+    `--name-status -M` rather than `--name-only`, so a RENAME reports both paths. Upstream moving a
+    file the fork has patched is precisely when the operator must be told the file is contested, and
+    a rename recorded only under its new name would have reported no overlap at all — the quiet
+    wrong answer, in the one case that most needs the loud one.
     """
-    raw = git(repo, "log", "--no-merges", "--format=%H%x00%an%x00%ad%x00%s", "--date=short", rng)
+    marker = "\x01"
+    raw = git(
+        repo,
+        "log",
+        "--no-merges",
+        "-M",
+        "--name-status",
+        f"--format={marker}%H%x00%an%x00%ad%x00%s",
+        "--date=short",
+        rng,
+    )
     out: list[dict] = []
+    cur: dict | None = None
     for line in raw.splitlines():
-        if not line:
+        if line.startswith(marker):
+            if cur:
+                out.append(cur)
+            sha, author, date, subject = line[len(marker) :].split("\0", 3)
+            cur = {"sha": sha[:9], "author": author, "date": date, "subject": subject, "files": []}
             continue
-        sha, author, date, subject = line.split("\0", 3)
-        files = git(repo, "show", "--name-only", "--format=", sha).splitlines()
-        out.append(
-            {
-                "sha": sha[:9],
-                "author": author,
-                "date": date,
-                "subject": subject,
-                "files": [f for f in files if f],
-            }
-        )
+        if cur is None or not line.strip():
+            continue
+        # "M\tpath" · "A\tpath" · "R096\told\tnew" — take every path field, so both ends of a rename
+        # land in the set the overlap is computed from.
+        parts = line.split("\t")
+        for p in parts[1:]:
+            if p and p not in cur["files"]:
+                cur["files"].append(p)
+    if cur:
+        out.append(cur)
     return out
 
 
@@ -155,7 +188,12 @@ def survey(repo: Path, upstream: str, do_fetch: bool) -> dict:
         for t in git(repo, "tag", "--list", "v*", "--contains", base, "--merged", upstream_ref).splitlines()
         if VERSION_TAG.match(t)
     ]
-    new_tags = sorted({t for t in tags if t != base_tag}, key=version_key)
+    # Exclude by COMMIT, not by tag name. `git describe` reports one tag for the base, so a second
+    # tag on that same commit (an annotated/lightweight pair, an alias) would otherwise be announced
+    # as a release waiting to be merged when it is the version already installed.
+    new_tags = sorted(
+        {t for t in tags if git(repo, "rev-parse", f"{t}^{{commit}}") != base}, key=version_key
+    )
     releases = [
         {
             "tag": t,
@@ -171,12 +209,17 @@ def survey(repo: Path, upstream: str, do_fetch: bool) -> dict:
     fork_commits = commits(repo, f"{base}..HEAD")
     upstream_commits = commits(repo, upstream_range)
 
-    fork_files = {f: [c["sha"] for c in fork_commits if f in c["files"]] for c in fork_commits for f in c["files"]}
-    up_files = {
-        f: [c["sha"] for c in upstream_commits if f in c["files"]]
-        for c in upstream_commits
-        for f in c["files"]
-    }
+    def by_file(cs: list[dict]) -> dict[str, list[str]]:
+        """path → the shas that touched it. One pass; the comprehension this replaces re-scanned
+        every commit for every (commit, file) pair and shadowed its own loop variable."""
+        out: dict[str, list[str]] = {}
+        for c in cs:
+            for f in c["files"]:
+                out.setdefault(f, []).append(c["sha"])
+        return out
+
+    fork_files = by_file(fork_commits)
+    up_files = by_file(upstream_commits)
     overlap = [
         {"file": f, "fork": fork_files[f], "upstream": up_files[f]}
         for f in sorted(set(fork_files) & set(up_files))

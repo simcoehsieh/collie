@@ -27,10 +27,19 @@ behind, every upstream release newer than the base, the fork-local commits a mer
 the files **both sides** touched, and upstream's own changelog entries for the new releases.
 
 `--json` for the same facts machine-readably, `--no-fetch` when offline, `--repo` for another
-checkout. If it reports **no new release**, say so and stop — there is nothing to decide.
+checkout.
 
-Before going further, check the tree is clean (`git -C ~/git/collie status -sb`). A dirty tree means
-someone was mid-edit; report it and stop rather than merging over it.
+Two stop conditions, in this order:
+
+1. **`WARNING fetch failed`** (or a `fetch_error` in the JSON) — the figures came from refs already
+   on disk, so "no new release" would be an answer about **yesterday's** upstream. Report the fetch
+   failure, do not report "nothing to merge", and ask whether to retry or proceed on cached refs.
+   A false "you're up to date" is the worst output this skill can produce: it is indistinguishable
+   from the true one and nobody goes looking.
+2. **No new release, fetch fine** — say so and stop. There is nothing to decide.
+
+Then check the tree is clean (`git -C ~/git/collie status -sb`). A dirty tree means someone was
+mid-edit; report it and stop rather than merging over it.
 
 ### 2. Report what the new version adds
 
@@ -73,8 +82,16 @@ Merge the **release tag**, never `upstream/main` — the tip may be unreleased w
 
 ```bash
 cd ~/git/collie
-git merge v1.6.1
+git merge --no-commit --no-ff v1.6.1
 ```
+
+**`--no-commit` is load-bearing.** Without it a merge with no textual conflict commits itself
+immediately — and a phase-3 verdict of "take upstream, drop ours" is usually exactly that case: two
+non-overlapping hunks in one file, git happily keeping both, the patch you decided to drop still in
+the tree. Holding the merge open is what makes the verdict applicable. Review the diff of every
+contested file against its verdict, apply the verdict, then commit.
+
+If it goes wrong at any point before the commit, `git merge --abort` puts the tree back exactly.
 
 Conflict handling:
 
@@ -109,10 +126,30 @@ Add a `grep` like that last one for every fork patch that has a greppable finger
 artefact. A patch that survives the merge in git but not in the bundle is the failure this step
 exists to catch.
 
-Then run the fork's own tests for the touched area (`cd web && bun run vitest run <file>`), and
-`bunx tsc --noEmit`. Note: the full `vitest` suite has ~133 pre-existing failures on this machine
-(`localStorage is not a function` — a vitest environment fault, unrelated to any change). Do not
-report those as regressions; compare against a clean tree before claiming a merge broke something.
+Typecheck **both trees** — `CLAUDE.md` says the root check does not cover `web/`'s test files, and
+that gap has shipped a broken tip before:
+
+```bash
+cd ~/git/collie && bun run typecheck && (cd web && bun run typecheck)
+```
+
+Then run the fork's own tests for the touched area (`cd web && bun run vitest run <file>`). Note:
+the full `vitest` suite has ~133 pre-existing failures on this machine (`localStorage is not a
+function` — a vitest environment fault, unrelated to any change). Do not report those as
+regressions; compare against a clean tree before claiming a merge broke something.
+
+> **HARD STOP.** If anything in this phase fails — the build, the restart, a fingerprint `grep`
+> returning 0, either typecheck — **do not proceed to phase 6.** Restore service first, then report:
+>
+> ```bash
+> git merge --abort                 # if the merge is still open
+> git reset --hard ORIG_HEAD        # if it was already committed — nothing is pushed yet
+> bash scripts/collie-ctl.sh build && ./bin/collie restart
+> ```
+>
+> Then tell the operator what failed and what the evidence was. A failed verification that gets
+> pushed anyway is worse than not merging at all: the phone loses a patch, and the git history says
+> the release landed cleanly.
 
 ### 6. Land it
 
