@@ -120,8 +120,12 @@ def changelog_sections(repo: Path, ref: str, after: str | None) -> list[dict]:
     """
     try:
         text = git(repo, "show", f"{ref}:CHANGELOG.md")
-    except GitError:
-        return []
+    except GitError as e:
+        # Raise rather than return []. An unreadable CHANGELOG and a CHANGELOG with no release
+        # sections are the same empty list to the caller, and phase 2 would then silently skip the
+        # entire "what's new" report — the one part of this survey a human cannot reconstruct from
+        # the other fields.
+        raise GitError(f"could not read CHANGELOG.md at {ref}: {e}") from e
     sections: list[dict] = []
     current: dict | None = None
     for line in text.splitlines():
@@ -191,9 +195,18 @@ def survey(repo: Path, upstream: str, do_fetch: bool) -> dict:
     # Exclude by COMMIT, not by tag name. `git describe` reports one tag for the base, so a second
     # tag on that same commit (an annotated/lightweight pair, an alias) would otherwise be announced
     # as a release waiting to be merged when it is the version already installed.
-    new_tags = sorted(
+    candidates = sorted(
         {t for t in tags if git(repo, "rev-parse", f"{t}^{{commit}}") != base}, key=version_key
     )
+
+    # CHANNEL FILTER — a stable install never sees a prerelease. This is upstream's own rule, not a
+    # preference: ADR 0020's amendment says of a strict install "Nothing can pull it onto a
+    # prerelease", and `cli/update.ts`'s `strictOnly` enforces it there. Without this the sort alone
+    # would hand `v1.6.0-beta.1` to a fork sitting on `v1.5.2` — it really is the higher version —
+    # and propose shipping a beta to the phone.
+    base_is_prerelease = bool(base_tag and (m := VERSION_TAG.match(base_tag)) and m.group(4))
+    new_tags = candidates if base_is_prerelease else [t for t in candidates if not VERSION_TAG.match(t).group(4)]
+    held_back = [t for t in candidates if t not in new_tags]
     releases = [
         {
             "tag": t,
@@ -218,12 +231,34 @@ def survey(repo: Path, upstream: str, do_fetch: bool) -> dict:
                 out.setdefault(f, []).append(c["sha"])
         return out
 
+    # The CONTESTED set is computed from the effective diff, not from the commit list, and the
+    # distinction only shows up on the SECOND sync. A commit history says what was once done: a
+    # patch dropped during the last merge is still in it (reported forever as "must not lose"), and
+    # a fix re-applied inside a merge commit's conflict resolution is missing from it (never
+    # reported as contested at all). `git diff <base>...HEAD` says what the fork ACTUALLY carries
+    # right now, which is the only thing a merge can lose.
+    def delta_files(rng: str) -> set[str]:
+        raw = git(repo, "diff", "--name-only", "-M", rng)
+        return {f for f in raw.splitlines() if f}
+
     fork_files = by_file(fork_commits)
     up_files = by_file(upstream_commits)
+    fork_active = delta_files(f"{base}...HEAD")
+    up_active = delta_files(f"{base}...{target or upstream_ref}")
     overlap = [
-        {"file": f, "fork": fork_files[f], "upstream": up_files[f]}
-        for f in sorted(set(fork_files) & set(up_files))
+        {
+            "file": f,
+            "fork": fork_files.get(f, ["(in the effective diff, no single commit)"]),
+            "upstream": up_files.get(f, ["(in the effective diff, no single commit)"]),
+        }
+        for f in sorted(fork_active & up_active)
     ]
+
+    try:
+        changelog = changelog_sections(repo, target or upstream_ref, base_tag.lstrip("v") if base_tag else None)
+        changelog_error = None
+    except GitError as e:
+        changelog, changelog_error = [], str(e)
 
     return {
         "repo": str(repo),
@@ -231,7 +266,13 @@ def survey(repo: Path, upstream: str, do_fetch: bool) -> dict:
         "head": head[:9],
         "remotes": remotes,
         "fetch_error": fetch_error,
-        "base": {"sha": base[:9], "tag": base_tag},
+        # The single field a caller must check before believing `new_releases`. Both ways of not
+        # having asked upstream — a failed fetch, and `--no-fetch` — land here, because "no new
+        # release" is a claim about the remote and neither of them consulted it.
+        "indeterminate": bool(fetch_error) or not do_fetch,
+        "changelog_error": changelog_error,
+        "held_back_prereleases": held_back,
+        "base": {"sha": base[:9], "tag": base_tag, "prerelease": base_is_prerelease},
         "behind": behind,
         "ahead": ahead,
         "target": target,
@@ -239,7 +280,7 @@ def survey(repo: Path, upstream: str, do_fetch: bool) -> dict:
         "fork_commits": fork_commits,
         "upstream_commits": upstream_commits,
         "overlap": overlap,
-        "changelog": changelog_sections(repo, target or upstream_ref, base_tag.lstrip("v") if base_tag else None),
+        "changelog": changelog,
     }
 
 
@@ -251,17 +292,22 @@ def digest(s: dict) -> str:
     a(f"branch    {s['branch']} @ {s['head']}")
     a(f"base      {s['base']['tag'] or '(no tag)'} ({s['base']['sha']})")
     a(f"gap       {s['behind']} commit(s) behind upstream/main · {s['ahead']} fork-local commit(s)")
-    if s["fetch_error"]:
-        a(f"WARNING   fetch failed ({s['fetch_error']}) — figures are from refs already on disk")
+    if s["indeterminate"]:
+        why = f"fetch failed ({s['fetch_error']})" if s["fetch_error"] else "--no-fetch was passed"
+        a("")
+        a(f"!! INDETERMINATE — {why}. Upstream was NOT consulted; these figures describe the refs")
+        a("!! already on disk. Do NOT report \"nothing to merge\" from this run.")
 
     a("")
     if not s["new_releases"]:
-        a("No upstream release newer than the base. Nothing to merge.")
+        a("No upstream release newer than the base." + ("" if s["indeterminate"] else " Nothing to merge."))
     else:
         a(f"New upstream releases ({len(s['new_releases'])}), newest last:")
         for r in s["new_releases"]:
             a(f"  {r['tag']:<12} {r['date']}  {r['sha']}")
         a(f"Merge target: {s['target']}")
+    if s["held_back_prereleases"]:
+        a(f"Held back (prerelease, and this install is on a strict release): {', '.join(s['held_back_prereleases'])}")
 
     a("")
     a(f"Fork-local commits ({len(s['fork_commits'])}) — these are what a merge must not lose:")
@@ -280,6 +326,9 @@ def digest(s: dict) -> str:
             a(f"      fork:     {', '.join(o['fork'])}")
             a(f"      upstream: {', '.join(o['upstream'])}")
 
+    if s["changelog_error"]:
+        a("")
+        a(f"WARNING   {s['changelog_error']} — assemble 'what is new' from the release diff instead")
     if s["changelog"]:
         a("")
         a("What upstream says is new:")
@@ -304,7 +353,9 @@ def main() -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
     print(json.dumps(s, indent=2, ensure_ascii=False) if args.json else digest(s))
-    return 0
+    # 2, not 0: the survey ran, but it never asked upstream. A zero exit here is what would let a
+    # caller quote "no new release" from a run that could not have known.
+    return 2 if s["indeterminate"] else 0
 
 
 if __name__ == "__main__":
