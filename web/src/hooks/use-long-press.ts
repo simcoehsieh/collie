@@ -69,6 +69,16 @@ export function useLongPress(
     if (!onLongPress || fired.current) return;
     fired.current = true;
     clear();
+    // Drop any selection the gesture managed to start before opening. iOS does not give up when the
+    // pressed element is unselectable — it walks UP for the nearest selectable ancestor and starts
+    // there — so a caller can carry `select-none` correctly and still watch the page highlight
+    // behind the sheet. The CSS is still the first line (callers set it); this is the one that runs
+    // when the CSS was not enough, and it costs nothing when there is nothing selected.
+    try {
+      window.getSelection()?.removeAllRanges();
+    } catch {
+      // A browser that refuses the call has nothing here worth failing the gesture over.
+    }
     onLongPress();
   }, [onLongPress, clear]);
 
