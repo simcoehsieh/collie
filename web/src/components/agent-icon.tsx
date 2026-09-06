@@ -55,6 +55,31 @@ export function AgentIcon({
     );
   }
 
+  // ARTWORK, not a path — the same tile, the same inset, the same accessible name, so nothing about
+  // this component's contract changes for the one brand that has no vector source to take a path
+  // from (agent-icon-data.ts says why). `<image>` inside the SVG rather than a sibling `<img>`: the
+  // tile stays one element with one role, and the mark inherits the padding every other logo gets.
+  if (brand.kind === "image") {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        className={cn("shrink-0", className)}
+        role="img"
+        aria-label={`${agent} logo`}
+      >
+        <rect width="24" height="24" rx="5.3" fill={brand.bg} />
+        <image
+          href={brand.src}
+          x="4.6"
+          y="4.6"
+          width="14.8"
+          height="14.8"
+          preserveAspectRatio="xMidYMid meet"
+        />
+      </svg>
+    );
+  }
+
   const stroke = brand.mode === "stroke";
   // A local, not `brand.grad` inline: narrowing survives into the map callback, so the stops need no
   // non-null assertion. omp's official mark is a gradient, so its paint is a fragment reference.

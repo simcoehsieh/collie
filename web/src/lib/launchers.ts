@@ -35,6 +35,29 @@ export function pinnedLauncher(
   return launchers.find((row) => row.command === command);
 }
 
+/**
+ * Which agent a launcher row RUNS, as far as a logo is concerned — the command's first token, with
+ * any path stripped.
+ *
+ * A launcher row is a shell line, not an agent name: `codex --profile work` and
+ * `/opt/homebrew/bin/codex` are both codex, and `make -C ~/dev/collie test` is not an agent at all.
+ * The first token is the whole of the signal available here, and it is enough for the three shapes
+ * that actually occur — a bare name, a name with flags, and an absolute path.
+ *
+ * NOT a lookup against a list of known agents. `AgentIcon` already resolves a name to a brand and
+ * already falls back to a neutral initials tile for one it does not know, so a row this cannot name
+ * gets a legible tile rather than a hole — and a new agent becomes recognisable by adding a brand
+ * there, not by editing a second list here. `env FOO=1 claude` reads as "env" and takes the
+ * fallback, which is the honest answer to a line whose agent is not its first word.
+ */
+export function launcherAgent(command: string): string {
+  const first = command.trim().split(/\s+/)[0] ?? "";
+  // `?? ""` and not `?? first`: a token with no name in it (`/`) has no agent, and handing the
+  // separator on as one would put a slash in an initials tile. Empty is what `AgentIcon` already
+  // treats as "no agent", so the nameless case lands on the fallback it already has.
+  return first.split("/").findLast((segment) => segment !== "") ?? "";
+}
+
 export interface LaunchersState {
   launchers: readonly Launcher[];
   home: string;

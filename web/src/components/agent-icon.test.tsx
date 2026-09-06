@@ -9,19 +9,50 @@ describe("AgentIcon", () => {
       const { container } = render(<AgentIcon agent={agent} />);
       const svg = container.querySelector("svg");
       expect(svg).not.toBeNull();
-      expect(svg!.querySelector("path")).not.toBeNull();
-      // The tile carries its own solid brand background (theme-independent contrast).
+      // The tile carries its own solid brand background (theme-independent contrast), whatever the
+      // mark inside it turns out to be.
       expect(svg!.querySelector("rect")?.getAttribute("fill")).toMatch(/^#[0-9a-fA-F]{6}$/);
-      // Every mark is painted, one of exactly two ways: filled — a flat brand colour or a reference
-      // to the tile's own gradient — or outlined, the only shape allowed to declare `fill="none"`,
-      // and then the stroke is what carries it. A mark with neither is an invisible tile.
-      const mark = svg!.querySelector("g")!;
-      const fill = mark.getAttribute("fill");
-      if (fill === "none") expect(mark.getAttribute("stroke")).toMatch(/^#[0-9a-fA-F]{6}$/);
-      else expect(fill).toMatch(/^(#[0-9a-fA-F]{6}|url\(#[A-Za-z0-9_-]+\))$/);
+
+      // A mark is EITHER a painted path or the brand's own artwork. Antigravity is the second: there
+      // is no official vector to take a path from, and the alternative to embedding Google's own file
+      // was to trace it by hand — which is exactly how the wrong mark shipped before (see
+      // agent-icon-data.ts). Both kinds are asserted here rather than one being exempted, so a brand
+      // that renders NEITHER still fails.
+      const artwork = svg!.querySelector("image");
+      if (artwork) {
+        // Embedded, not fetched: a remote href would need a host in the CSP, would tell that host
+        // which agents you run, and would show nothing offline.
+        expect(artwork.getAttribute("href")).toMatch(/^data:image\/[a-z+]+;base64,/);
+      } else {
+        expect(svg!.querySelector("path")).not.toBeNull();
+        // Every painted mark is painted one of exactly two ways: filled — a flat brand colour or a
+        // reference to the tile's own gradient — or outlined, the only shape allowed to declare
+        // `fill="none"`, and then the stroke is what carries it. A mark with neither is invisible.
+        const mark = svg!.querySelector("g")!;
+        const fill = mark.getAttribute("fill");
+        if (fill === "none") expect(mark.getAttribute("stroke")).toMatch(/^#[0-9a-fA-F]{6}$/);
+        else expect(fill).toMatch(/^(#[0-9a-fA-F]{6}|url\(#[A-Za-z0-9_-]+\))$/);
+      }
       expect(screen.getByRole("img", { name: `${agent} logo` })).toBeInTheDocument();
     },
   );
+
+  // The fork change this file exists to hold honest. Upstream drew Antigravity as a triangle "A" in
+  // white on Google blue, with no source cited beside it — every other entry names one — and it is
+  // simply not the mark: the real one is a rounded arch with a four-colour gradient on a transparent
+  // ground. Pinned as a SHAPE of fact, not as bytes: artwork, embedded, on the tile the brand is
+  // presented on.
+  it("draws Antigravity as embedded artwork, not as a hand-drawn path", () => {
+    for (const agent of ["agy", "antigravity"]) {
+      const { container, unmount } = render(<AgentIcon agent={agent} />);
+      const svg = container.querySelector("svg")!;
+      expect(svg.querySelector("path"), `${agent} should not carry a traced path`).toBeNull();
+      expect(svg.querySelector("image")?.getAttribute("href")).toMatch(/^data:image\/webp;base64,/);
+      // On white, which is the ground the transparent mark is presented on.
+      expect(svg.querySelector("rect")?.getAttribute("fill")).toBe("#FFFFFF");
+      unmount();
+    }
+  });
 
   it.each([
     ["claude-code"],
@@ -35,7 +66,9 @@ describe("AgentIcon", () => {
     ["OMP"],
   ])("resolves label variant '%s' to a brand logo", (variant) => {
     const { container } = render(<AgentIcon agent={variant} />);
-    expect(container.querySelector("svg path")).not.toBeNull();
+    // Either kind of mark counts — what this pins is that the VARIANT resolved to a brand at all,
+    // rather than falling through to the initials tile, which renders no <svg> whatsoever.
+    expect(container.querySelector("svg path, svg image")).not.toBeNull();
   });
 
   // omp's official mark is a three-stop gradient (omp.sh/favicon.svg), and its tile is the only one
