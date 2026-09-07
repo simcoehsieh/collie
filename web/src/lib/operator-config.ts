@@ -55,6 +55,10 @@ let currentMux: MuxConfig | null = null;
 // are the same value on purpose, because both mean "there is no microphone here" (ADR 0029). Absent
 // is the feature being off, so nothing has to distinguish them.
 let currentStt: SttCapability | null = null;
+// The hostnames whose knowledge-base links open in the document panel instead of leaving the PWA.
+// Empty until a read succeeds, on a bridge that serves no documents, and on one older than the
+// field — all three mean the same thing (every link stays external), so nothing distinguishes them.
+let currentDocHosts: readonly string[] = [];
 let inflight: Promise<void> | null = null;
 let loaded = false;
 const listeners = new Set<() => void>();
@@ -81,6 +85,7 @@ export function loadOperatorCommands(): Promise<void> {
       applyOperatorFonts(currentFonts, designPrefs().font);
       currentMux = cfg.mux ?? null;
       currentStt = cfg.stt ?? null;
+      currentDocHosts = cfg.docHosts ?? [];
       loaded = true;
       emit();
     } catch {
@@ -189,6 +194,25 @@ export function useOperatorFonts(): readonly OperatorFontFace[] {
   return useSyncExternalStore(subscribeOperatorConfig, getOperatorFonts, getOperatorFonts);
 }
 
+/**
+ * The hostnames whose documents this bridge serves itself. Empty is the feature off.
+ *
+ * Returns the CACHED array, never a fresh one — `useSyncExternalStore` compares snapshots by
+ * identity, and a getter spelled `() => cfg?.docHosts ?? []` allocates on every call and makes React
+ * throw "getSnapshot should be cached". Every getter above avoids it the same way.
+ */
+export function getDocHosts(): readonly string[] {
+  return currentDocHosts;
+}
+
+/** Reactive read of the document hosts. Same one-shot fetch, same contract. */
+export function useDocHosts(): readonly string[] {
+  useEffect(() => {
+    void loadOperatorCommands();
+  }, []);
+  return useSyncExternalStore(subscribeOperatorConfig, getDocHosts, getDocHosts);
+}
+
 /** Reactive read of the Quick-dock groups. Same one-shot fetch, same contract. */
 export function useOperatorQuickReplies(): readonly OperatorQuickReplyRow[] {
   useEffect(() => {
@@ -209,6 +233,7 @@ export function __resetOperatorCommands(): void {
   currentFonts = [];
   currentMux = null;
   currentStt = null;
+  currentDocHosts = [];
   inflight = null;
   loaded = false;
   listeners.clear();

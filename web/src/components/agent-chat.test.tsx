@@ -2176,3 +2176,87 @@ describe("AgentChat: Launch section in the switcher", () => {
     expect(screen.queryByText("Launch")).toBeNull();
   });
 });
+
+// ── The document panel ────────────────────────────────────────────────────────────────────────
+// A knowledge-base link an agent printed in the mirror opens BESIDE the terminal instead of throwing
+// the operator out of the PWA (bridge/docs.ts, lib/doc-links.ts, ui/right-sheet.tsx). Each of those
+// three has its own tests; this is the only place the three meet, and the seam between them is where
+// the failure would be invisible — a classifier that says "doc" and a panel that never mounts looks
+// exactly like a link that was never tappable.
+//
+// The host list arrives from `/api/config`, so these cases also pin the thing that decides whether
+// the feature exists at all on a given bridge.
+describe("AgentChat — a knowledge-base link opens in the panel", () => {
+  const MIRROR = "see https://knowledge.agnex.dev/d/herdr-interface-anatomy and https://example.com/x";
+
+  function withDocHosts() {
+    server.use(
+      http.get("/api/config", () =>
+        HttpResponse.json({ push: false, vapidPublicKey: "", docHosts: ["knowledge.agnex.dev"] }),
+      ),
+    );
+  }
+
+  it("frames the document from COLLIE's own origin, not the knowledge base's", async () => {
+    // The whole design in one assertion: the `src` is same-origin and path-only. A src pointing at
+    // knowledge.agnex.dev would render blank — that host refuses framing, and behind Cloudflare
+    // Access with third-party cookies blocked it would answer a login page that also refuses.
+    withDocHosts();
+    const user = userEvent.setup();
+    renderChat({ text: MIRROR });
+    const link = await screen.findByRole("link", { name: /herdr-interface-anatomy/ });
+
+    await user.click(link);
+
+    const frame = await screen.findByTitle("herdr-interface-anatomy");
+    expect(frame.tagName).toBe("IFRAME");
+    expect(frame).toHaveAttribute("src", "/api/doc/herdr-interface-anatomy");
+    // Withheld capabilities, spelled on the embedder as well as in the response's own CSP: neither
+    // side should be the only thing between an agent-written document and Collie's origin.
+    expect(frame).toHaveAttribute("sandbox", "");
+  });
+
+  it("leaves every other link an ordinary external one", async () => {
+    // The fallback needs no branch anywhere: an undeclined tap keeps the anchor's own navigation,
+    // which is what makes "the bridge serves no documents" absent rather than broken.
+    withDocHosts();
+    const user = userEvent.setup();
+    renderChat({ text: MIRROR });
+    const other = await screen.findByRole("link", { name: /example\.com/ });
+    expect(other).toHaveAttribute("target", "_blank");
+
+    await user.click(other);
+
+    expect(screen.queryByTitle("herdr-interface-anatomy")).not.toBeInTheDocument();
+  });
+
+  it("a bridge that publishes no hosts leaves the SAME link external", async () => {
+    // The default `/api/config` handler carries no `docHosts`, which is every bridge older than the
+    // field and every bridge whose operator configured no knowledge base. The link must behave
+    // exactly as it did before this feature existed — not be tappable-but-broken.
+    const user = userEvent.setup();
+    renderChat({ text: MIRROR });
+    const link = await screen.findByRole("link", { name: /herdr-interface-anatomy/ });
+
+    await user.click(link);
+
+    expect(screen.queryByTitle("herdr-interface-anatomy")).not.toBeInTheDocument();
+  });
+
+  it("closing the panel unmounts the frame, so the megabyte goes with it", async () => {
+    // The median kb document is ~860 KB of inlined images and the largest is 2.3 MB. Closing has to
+    // drop the state, not just hide the panel — `RightSheet` renders nothing when closed, so a
+    // lingering `doc` would keep the frame alive on the next open of any OTHER sheet.
+    withDocHosts();
+    const user = userEvent.setup();
+    renderChat({ text: MIRROR });
+    await user.click(await screen.findByRole("link", { name: /herdr-interface-anatomy/ }));
+    await screen.findByTitle("herdr-interface-anatomy");
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    await waitFor(() =>
+      expect(screen.queryByTitle("herdr-interface-anatomy")).not.toBeInTheDocument(),
+    );
+  });
+});

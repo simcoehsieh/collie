@@ -816,6 +816,13 @@ export interface BridgeConfig {
    * decides whether to draw a button, not where the audio goes.
    */
   stt?: SttCapability;
+  /**
+   * The hostnames whose `/d/<slug>` documents this bridge serves itself, from its own origin, over
+   * loopback (bridge/docs.ts). Omitted entirely when it serves none — and it publishes a host only
+   * when it can actually ANSWER for it, so the client reads this as "these open in the panel", not
+   * "these are interesting". Mirrored in web/src/lib/types.ts.
+   */
+  docHosts?: string[];
 }
 
 /**

@@ -5,6 +5,7 @@ import { updateStartVerdict, type PackUpdateRow } from "./update-action.ts";
 import {
   bridgeConfigBody,
   muxConfigBody,
+  kbDocumentResponse,
   muxLogoResponse,
   BUILD_HEADER,
   cacheControlFor,
@@ -89,6 +90,9 @@ function cfg(overrides: Partial<Config> = {}): Config {
     zellijBin: "",
     socketPath: "/tmp/herdr.sock",
     dirRoots: [],
+    kbOrigin: "",
+    kbToken: "",
+    docHosts: [],
     port: 8787,
     host: "127.0.0.1",
     pollMs: 1500,
@@ -1577,6 +1581,46 @@ describe("muxLogoResponse — serving an adapter's mark", () => {
 
   test("a stale validator re-sends the body", () => {
     expect(muxLogoResponse(svg, `"stale"`).status).toBe(200);
+  });
+});
+
+// GET /api/doc/<slug>. The bytes are an AGENT's, written out of pages on the open web, so the
+// headers are the containment — the same argument muxLogoResponse makes, one notch stronger,
+// because "this file could carry script" is not hypothetical here.
+describe("kbDocumentResponse — serving a knowledge-base document", () => {
+  const html = "<!doctype html><title>d</title><p>hi";
+  const etag = '"abc123"';
+
+  test("answers the HTML with the sandboxing policy that makes this safe at all", async () => {
+    const res = kbDocumentResponse(html, etag);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await res.text()).toBe(html);
+  });
+
+  test("the policy permits Collie to frame it — the app's own default would not", () => {
+    // THE CLAIM: this response must NOT inherit server.ts's `CSP`, whose `frame-ancestors 'none'`
+    // is right for every other HTML the bridge serves and fatal for this one. If it ever does, the
+    // panel renders blank, the document is fine, the bridge logs nothing, and the only evidence is
+    // a line in the browser console on a phone. `secure()` adds no CSP, which is what makes the
+    // mistake possible: the policy has to arrive from docs.ts or not at all.
+    const policy = kbDocumentResponse(html, etag).headers.get("content-security-policy") ?? "";
+    expect(policy).toContain("frame-ancestors 'self'");
+    expect(policy).not.toContain("frame-ancestors 'none'");
+  });
+
+  test("a client holding the current bytes gets a bodiless 304 — still contained", async () => {
+    // The 304 path never fetched the document at all: the ETag comes from the digest kb's metadata
+    // call already carried, so a warm phone re-opening a 2 MB document spends one ~1 KB JSON call.
+    // It still carries the policy, because a 304 is an instruction to reuse a stored response and a
+    // stored response with no containment is the thing being avoided.
+    const res = kbDocumentResponse(null, etag);
+    expect(res.status).toBe(304);
+    expect(await res.text()).toBe("");
+    expect(res.headers.get("etag")).toBe(etag);
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
   });
 });
 

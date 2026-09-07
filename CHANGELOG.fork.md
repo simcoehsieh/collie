@@ -18,6 +18,30 @@ explicit `https::` transport so an `insteadOf` rewrite cannot send them to SSH (
 in it is fork-patched, so no local patch was dropped and none needed re-applying. The merge was
 textually clean: no file was touched by both sides.
 
+- **Tap a knowledge-base link in the mirror and the document opens beside the terminal.** A new
+  `GET /api/doc/<slug>` serves one of the operator's own kb documents from Collie's OWN origin,
+  fetched over loopback, and the client opens it in a right-side panel you drag away to get back to
+  the pane. An iframe of the real page cannot do this and never could: six representative targets
+  were measured and all six refuse framing, and the operator's own services are the worst case —
+  behind Cloudflare Access, with Safari blocking third-party cookies, a cross-origin frame is handed
+  a login page that refuses framing too. Same-origin is what buys all four things at once (Collie
+  sets the framing headers, the Access cookie stays first-party so the existing device gate is
+  unchanged, `default-src 'self'` already permits the frame with no policy weakened, and loopback
+  bypasses Cloudflare so no service token exists to leak). The bytes are contained rather than
+  trusted: a kb document is HTML an AGENT wrote, often out of pages on the open web, and 29 of the
+  operator's 52 carry an inline `<script>` — so the response goes out under `sandbox` into an opaque
+  origin, with `base-uri 'none'` to neutralise the leftover `<base href="about:srcdoc">` in 34 of
+  them so in-page anchors work with no script at all. The route lives under `/api/` rather than at a
+  prettier `/d/` because an iframe's document load is a NAVIGATION: the service worker answers
+  navigations from the precached app shell unless the path is denylisted, and `/^\/api\//` already
+  is — at `/d/` the panel would have rendered a second copy of Collie, and would have looked fine in
+  a browser tab with no service worker. The slug is an allowlisted charset checked before any string
+  is concatenated, because it is interpolated into a loopback call carrying the kb credential.
+  `COLLIE_KB_ORIGIN` (refused unless it is loopback), `COLLIE_KB_TOKEN` and `COLLIE_DOC_HOSTS`;
+  leave any of them blank and the feature is absent rather than broken — every link stays external,
+  which is exactly what a bridge older than the field does. The two halves cannot drift apart
+  silently: `bridge/doc-path-contract.test.ts` runs one shared list through the client's classifier
+  and the bridge's reader, the same way the `/auth` reservation is pinned.
 - **Pick a folder for a new space instead of typing its path.** A new `GET /api/dirs` answers with
   DIRECTORY NAMES and nothing else — no files, no sizes, no contents — rooted at the operator's home
   and enforced on the RESOLVED path, so a `..` or a symlink is refused after the kernel has said

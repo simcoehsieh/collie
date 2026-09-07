@@ -17,6 +17,7 @@ import { createOperatorQuickReplies } from "./operator-quick-replies.ts";
 import { createOperatorFonts, resolveOperatorFont } from "./operator-fonts.ts";
 import { createOperatorLaunchers } from "./operator-launchers.ts";
 import { listDirs, resolveWithinRoots, type DirsBody } from "./dirs.ts";
+import { documentResponseHeaders, documentSlugFromPath, fetchDocument } from "./docs.ts";
 import {
   DEFAULT_PROMPT_TAIL_LINES,
   verifyExpectedPrompt,
@@ -379,6 +380,31 @@ export function operatorFontResponse(
   return secure(new Response(bytes, { headers }));
 }
 
+/**
+ * `GET /api/doc/<slug>` — one of the operator's knowledge-base documents, served from Collie's own
+ * origin so a link an agent printed can open in a panel instead of throwing the operator out of the
+ * PWA.
+ *
+ * Pure + exported for the reason {@link muxLogoResponse} is: the handler lives inside `Bun.serve`,
+ * which `bun test` cannot stand up, so the headers are asserted against this instead.
+ *
+ * The policy itself is `DOCUMENT_CSP` in bridge/docs.ts and the argument lives there beside it. The
+ * short version is muxLogoResponse's, one notch stronger: an SVG *could* carry script, and these
+ * documents *do* — they are HTML an agent wrote, often out of pages on the open web — so `sandbox`
+ * is not a precaution here, it is the design. Note that {@link secure} adds no CSP of its own, so
+ * this response inherits none: reusing this file's {@link CSP} would end in `frame-ancestors 'none'`
+ * and block Collie's own panel, showing a blank frame with nothing in the log to explain it.
+ *
+ * `html === null` is the conditional-request answer — the bytes were never fetched from kb at all,
+ * because the ETag comes from a digest the metadata call already carried.
+ */
+export function kbDocumentResponse(html: string | null, etag: string): Response {
+  const headers = documentResponseHeaders(etag);
+  // RFC 9110 §15.4.5: a 304 echoes the validators and carries no body.
+  if (html === null) return secure(new Response(null, { status: 304, headers }));
+  return secure(new Response(html, { headers }));
+}
+
 export function bridgeConfigBody(opts: {
   push: boolean;
   vapidPublicKey: string;
@@ -410,6 +436,16 @@ export function bridgeConfigBody(opts: {
    * configured none ships the same payload as before, the same rule `mode` follows.
    */
   stt?: SttCapability;
+  /**
+   * The public hostnames whose `/d/<slug>` links this bridge can serve itself (`/api/doc/<slug>`).
+   * Same omit-when-empty rule as `operatorCommands`.
+   *
+   * Published ONLY when the bridge can actually answer — the caller passes these through solely if
+   * `kbOrigin` and `kbToken` are both set. The client classifies a link as openable-in-app purely
+   * from this list, so publishing a host a misconfigured bridge would 404 turns "the panel is off"
+   * into "the panel is broken", and the operator cannot tell those apart from the phone.
+   */
+  docHosts?: readonly string[];
 }): BridgeConfig {
   const mode = modeForWire(opts.mode);
   const mine = opts.operatorCommands ?? [];
@@ -436,6 +472,9 @@ export function bridgeConfigBody(opts: {
   // Appended after the mux block, and omit-when-absent for the reason `mode` is: no key means no
   // microphone, which is precisely true of a collie with no provider configured.
   if (opts.stt !== undefined) wire.stt = opts.stt;
+  // Omit-when-empty, like the operator rows above: a bridge with no knowledge base ships the body it
+  // shipped before this feature existed, and a client older than the field ignores it either way.
+  if (opts.docHosts !== undefined && opts.docHosts.length > 0) wire.docHosts = [...opts.docHosts];
   return wire;
 }
 
@@ -1196,6 +1235,9 @@ export function startServer(opts: {
             operatorFonts: myFonts,
             mux: activeMux?.herdr,
             stt: sttWire,
+            // Gated on the bridge being ABLE to serve a document, not merely on the hostnames being
+            // named — see the field's own comment. Both halves of the credential must be present.
+            docHosts: cfg.kbOrigin !== "" && cfg.kbToken !== "" ? cfg.docHosts : undefined,
           }),
           req.headers.get("accept-encoding"),
         );
@@ -1601,6 +1643,42 @@ export function startServer(opts: {
           { enforced: pairing.enforced(), current, devices: toDeviceWire(pairing.registry(), current) },
           req.headers.get("accept-encoding"),
         );
+      }
+
+      // ── One knowledge-base document, on Collie's own origin ──────────────
+      // The panel behind a knowledge-base link an agent printed in the mirror. It is a PROXY rather
+      // than an iframe of the real page because every measured target refuses framing, and the
+      // operator's own services are worse: behind Cloudflare Access, with Safari blocking
+      // third-party cookies, a cross-origin frame is handed a login page that refuses framing too.
+      // Same-origin also keeps the Access cookie first-party, so the gate below is the same one
+      // every other route uses. bridge/docs.ts holds the grammar, the loopback fetch and the
+      // containment; this block is the gate, the status codes, and nothing else.
+      //
+      // Read-level, like the mux mark and the operator's fonts: opening a document from a link an
+      // agent printed is watching, which is what a read-only device exists to do.
+      if (pathname.startsWith("/api/doc/") && req.method === "GET") {
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        const slug = documentSlugFromPath(pathname);
+        const doc =
+          slug === null
+            ? ({ ok: false, reason: "bad_slug" } as const)
+            : await fetchDocument(slug, { origin: cfg.kbOrigin, token: cfg.kbToken }, req.headers.get("if-none-match"));
+        if (!doc.ok) {
+          // ONE answer for the three refusals a client could otherwise probe the store with — a slug
+          // that fails the grammar, a document that is not there, and a bridge that serves no
+          // documents at all. The rest are 503 because they are THIS side's fault and the operator's
+          // next move differs: restart the containers, or fix the token. `unauthorised` is
+          // deliberately NOT a 403 — it is not the phone's authorisation that failed but the
+          // bridge's own, and a 403 would send the operator off to re-pair a device over a value in
+          // their own .env.
+          const missing =
+            doc.reason === "bad_slug" || doc.reason === "not_found" || doc.reason === "not_configured";
+          return missing
+            ? text("no such document", 404)
+            : text("the document store is not answering", 503);
+        }
+        return kbDocumentResponse(doc.unchanged ? null : doc.html, doc.metadata.etag);
       }
 
       // ── Reserved for a fronting proxy's sign-in page ─────────────────────

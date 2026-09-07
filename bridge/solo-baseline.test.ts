@@ -556,6 +556,17 @@ describe("solo zero-tax — routes", () => {
       // WRITE-gated through the same closure `/api/launch` rides: it writes nothing, but a device
       // that may not create a space has no use for the list, and the narrower gate is free.
       "/api/dirs",
+      // One of the operator's knowledge-base documents, served from Collie's own origin over
+      // loopback (bridge/docs.ts) — a SOLO route that legitimately extends this list, named here
+      // rather than exempted. It exists because every measured target refuses framing and the
+      // operator's own services answer a Cloudflare Access login page that refuses it too, so the
+      // only way a document opens beside the terminal is for the bridge to serve it itself. Read-
+      // gated like the mux mark; the bytes go out sandboxed into an opaque origin.
+      //
+      // It lives under `/api/` rather than at a prettier `/d/` because an iframe's document load is
+      // a NAVIGATION, and the service worker answers navigations from the precached app shell unless
+      // the path is on `NAVIGATION_NETWORK_ONLY` — where `/^\/api\//` already is.
+      "/api/doc/*",
       // The detached updater's probe (M15/04) — a solo feature that legitimately extends this list,
       // named here rather than exempted. It is the one ungated `/api/*` route: the prober is a local
       // updater holding no credential, and what it answers is `{ ok, version, deposed, mode }`.
@@ -658,6 +669,9 @@ const CONFIG_KEYS = {
   multiSession: true,
   skipServe: true,
   dirRoots: true,
+  kbOrigin: true,
+  kbToken: true,
+  docHosts: true,
 } satisfies Record<keyof Config, true>;
 
 describe("solo zero-tax — config", () => {
@@ -673,9 +687,12 @@ describe("solo zero-tax — config", () => {
       "deviceHeader",
       "dialMode",
       "dirRoots",
+      "docHosts",
       "fontsDir",
       "host",
       "journalRoots",
+      "kbOrigin",
+      "kbToken",
       "keysFile",
       "launchersFile",
       "multiSession",
@@ -734,9 +751,12 @@ describe("solo zero-tax — config", () => {
       "COLLIE_DEVICE_ALLOWLIST",
       "COLLIE_DEVICE_HEADER",
       "COLLIE_DIR_ROOTS",
+      "COLLIE_DOC_HOSTS",
       "COLLIE_GROK_ROOT",
       "COLLIE_HERDR_DIAL",
       "COLLIE_HOST",
+      "COLLIE_KB_ORIGIN",
+      "COLLIE_KB_TOKEN",
       "COLLIE_MULTI_SESSION",
       "COLLIE_MUX",
       "COLLIE_MUX_ENDPOINT_",

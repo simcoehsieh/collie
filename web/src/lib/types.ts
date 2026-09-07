@@ -885,6 +885,16 @@ export interface BridgeConfig {
    * feature is absent, not disabled.
    */
   stt?: SttCapability;
+  /**
+   * The hostnames whose `/d/<slug>` documents this bridge will serve itself, from its own origin,
+   * over loopback (lib/doc-links.ts, bridge/docs.ts).
+   *
+   * **Absent or empty is the feature being off** — every link in the mirror stays an ordinary
+   * external one, which is also exactly what a bridge older than this field sends. The bridge only
+   * publishes a host it can actually answer for, so this list means "these open in the panel", not
+   * "these are interesting".
+   */
+  docHosts?: string[];
 }
 
 /**

@@ -137,6 +137,31 @@ export interface Config {
    */
   dirRoots: string[];
   /**
+   * The loopback base URL of the operator's knowledge-base API, e.g. `http://127.0.0.1:8082`.
+   *
+   * Empty — the default — turns the document panel off completely: `/api/doc/<slug>` answers 404 and
+   * the bridge makes no outbound call at all. That is how CLAUDE.md's "the bridge makes no outbound
+   * call for content" survives this feature; it is declined by doing nothing, exactly as the STT
+   * seam is. A value that is not loopback is REFUSED at serve time (bridge/docs.ts
+   * `normaliseKbOrigin`) rather than merely discouraged — the difference between reading a container
+   * on this machine and proxying the open web into Collie's own origin is one typo.
+   */
+  kbOrigin: string;
+  /**
+   * The knowledge base's internal token, presented over loopback. Empty = the panel is off. It is
+   * never logged, never fingerprinted and never put in a response body (bridge/docs.ts).
+   */
+  kbToken: string;
+  /**
+   * The PUBLIC hostnames whose `/d/<slug>` links this bridge can serve itself — the operator-facing
+   * half of the same fact `kbOrigin` states in loopback terms, and not derivable from it: nothing
+   * about `http://127.0.0.1:8082` says which domain name the agents print.
+   *
+   * Published to the client in `/api/config` ONLY when the panel is actually on, so the frontend
+   * cannot classify a link as openable-in-app by a bridge that would answer it 404.
+   */
+  docHosts: string[];
+  /**
    * Which dialer opens that socket. `auto` (the default) is correct everywhere: `node:net` on
    * Windows, where herdr's socket is a named pipe, and Bun's native transport elsewhere. Forcing
    * `net` on Linux/macOS exercises the Windows dial path against the real socket — the only way to
@@ -497,6 +522,12 @@ export function loadConfig(): Config {
     // Comma-separated like every other list here. `~` is expanded by the consumer (dirs.ts), which
     // is also where a root that does not resolve is dropped — one bad entry must not break the rest.
     dirRoots: envList("COLLIE_DIR_ROOTS"),
+    kbOrigin: (process.env.COLLIE_KB_ORIGIN ?? "").trim(),
+    // Trimmed because this is nearly always pasted out of a 0600 file that ends in a newline
+    // (`COLLIE_KB_TOKEN="$(cat …/knowledge-system/secrets/internal_token)"`), and kb answers 401 to
+    // that trailing byte. docs.ts trims again — a credential is cheap to check on both sides.
+    kbToken: (process.env.COLLIE_KB_TOKEN ?? "").trim(),
+    docHosts: envList("COLLIE_DOC_HOSTS"),
     dialMode: envEnum("COLLIE_HERDR_DIAL", ["auto", "net", "bun"] as const, "auto"),
     port: envInt("COLLIE_PORT", DEFAULT_PORT, { min: 1, max: 65535 }),
     host,
