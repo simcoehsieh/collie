@@ -95,6 +95,12 @@ export interface AnsiOutputProps {
    * why AgentChat sets this to 0 whenever the find bar is open.
    */
   hideLeadingLines?: number;
+  /**
+   * Injected: a tap on an autolinked URL. Return true to say the app TOOK the tap — the anchor then
+   * suppresses its own navigation. Absent, or false, and the link keeps every behaviour it has
+   * today, so a bridge that publishes no document host needs no branch here at all.
+   */
+  onLinkOpen?: (href: string) => boolean;
 }
 
 // Stable empty result so the "not searching" path keeps the same `matches` reference across polls
@@ -229,6 +235,7 @@ export const AnsiOutput = memo(function AnsiOutput({
   onMenuAction,
   promptDisabled,
   hideLeadingLines = 0,
+  onLinkOpen,
 }: AnsiOutputProps) {
   const segments = useMemo(() => parseAnsi(text), [text]);
   const blocks = useMemo(() => buildBlocks(splitLines(segments), { agent }), [segments, agent]);
@@ -397,8 +404,25 @@ export const AnsiOutput = memo(function AnsiOutput({
       const pieceStart = at;
       at += p.text.length;
       if (p.matchIndex === null) return <Fragment key={i}>{renderFind(p.text, pieceStart)}</Fragment>;
+      // Hoisted, and not tidiness: TypeScript drops the `p.matchIndex !== null` narrowing inside the
+      // closure below, so `links[p.matchIndex]!` written inline in `onClick` would not typecheck the
+      // same way — and this keeps the non-null assertion in one place.
+      const href = links[p.matchIndex]!.href;
       return (
-        <a key={i} href={links[p.matchIndex]!.href} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
+        <a
+          key={i}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={LINK_CLASS}
+          onClick={(e) => {
+            // preventDefault ONLY when the app says it took the tap. A link the classifier declines
+            // keeps everything it has today, iOS long-press → Copy Link / Open in New Tab included,
+            // and the fallback needs no branch in the JSX. The anchor keeps its real `href` either
+            // way, so the link is still copyable and still says where it goes.
+            if (onLinkOpen?.(href)) e.preventDefault();
+          }}
+        >
           {renderFind(p.text, pieceStart)}
         </a>
       );

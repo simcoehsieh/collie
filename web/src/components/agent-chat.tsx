@@ -12,6 +12,9 @@ import {
 } from "lucide-react";
 import { useKeyboardOpen } from "@/hooks/use-keyboard";
 import { useSheetPull } from "@/hooks/use-sheet-pull";
+import { RightSheet } from "@/components/ui/right-sheet";
+import { classifyDocLink } from "@/lib/doc-links";
+import { useDocHosts } from "@/lib/operator-config";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
 import { pinnedLauncher, useLaunchers } from "@/lib/launchers";
@@ -127,7 +130,7 @@ function foldLabelKey(tabCount: number, paneCount: number): MessageKey {
 
 // At most one drawer/sheet is open at a time; null = none. (The composer's own Keys/Quick/Agent
 // sheets are separate and live inside <Composer>.)
-type Drawer = "switcher" | "paneMenu" | "newTab" | null;
+type Drawer = "switcher" | "paneMenu" | "newTab" | "doc" | null;
 
 /**
  * Is the caret in the MESSAGE COMPOSER's field, as opposed to any other input on the screen?
@@ -296,10 +299,32 @@ export function AgentChat({
   // Drawers/sheets are mutually exclusive — at most one open. A single value makes that invariant
   // unrepresentable to violate.
   const [drawer, setDrawer] = useState<Drawer>(null);
+  // The document behind the panel, when one is open. Cleared on close so the frame unmounts and the
+  // megabyte it was showing goes with it — the median kb document is ~860 KB of inlined images.
+  const [doc, setDoc] = useState<{ slug: string; path: string; href: string } | null>(null);
   const closeDrawer = () => {
     setDrawer(null);
+    setDoc(null);
     setPull(0);
   };
+
+  // Which hosts this bridge can serve documents for. Empty on every bridge that has none configured
+  // and on every bridge older than the field, and empty means the classifier below declines
+  // everything — so the mirror's links behave exactly as they did before this feature existed.
+  const docHosts = useDocHosts();
+  // `useCallback` is not optional: AnsiOutput is memo()'d with the default shallow comparison and
+  // this component re-renders on every 1.5s snapshot, so a fresh function per render would re-render
+  // the whole mirror 40 times a minute.
+  const handleLinkOpen = useCallback(
+    (href: string) => {
+      const target = classifyDocLink(href, docHosts);
+      if (target.kind !== "doc") return false;
+      setDoc({ slug: target.slug, path: target.path, href });
+      setDrawer("doc");
+      return true;
+    },
+    [docHosts],
+  );
 
   // ── ZEN MODE — chrome-free, mirror-only viewing ───────────────────────────────
   // On a phone the chrome IS most of the viewport: measured at 390x844 this route spends 199px above
@@ -1781,6 +1806,7 @@ export function AgentChat({
                     onMenuAction={handleMenuAction}
                     promptDisabled={readOnly || gone}
                     hideLeadingLines={hiddenMirrorLines}
+                    onLinkOpen={handleLinkOpen}
                   />
                 </>
               ) : (
@@ -2078,6 +2104,30 @@ export function AgentChat({
             void launch(command, paneId);
           }}
         />
+        {/* A knowledge-base document, served by this bridge from its own origin (bridge/docs.ts) and
+            framed here rather than opened in Safari. Mounted at THIS level and not inside
+            <AnsiOutput>: a `fixed inset-0` element is positioned by its nearest transformed ancestor,
+            and the mirror lives inside a scroll container — the same reason every other sheet is
+            here. Shares the one `drawer` value, so it cannot be open alongside the switcher. */}
+        <RightSheet
+          open={drawer === "doc" && doc !== null}
+          onClose={closeDrawer}
+          title={doc?.slug ?? ""}
+          subtitle={doc?.href}
+        >
+          {doc !== null && (
+            // `sandbox=""` withholds every capability — the same posture the response's own CSP
+            // takes, spelled again on the embedder so neither side is the only thing standing
+            // between an agent-written document and Collie's origin. `block` because an
+            // inline-level iframe in a scrolling body leaves a baseline gap and `h-full` misbehaves.
+            <iframe
+              src={doc.path}
+              sandbox=""
+              title={doc.slug}
+              className="block h-full w-full border-0"
+            />
+          )}
+        </RightSheet>
         <PaneActionsSheet
           open={drawer === "paneMenu"}
           onClose={closeDrawer}

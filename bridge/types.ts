@@ -872,6 +872,13 @@ export interface BridgeConfig {
    * `COLLIE_MAX_UPLOAD_MB` still answers for itself when the bytes arrive. See docs/configure.md.
    */
   upload?: UploadCapability;
+  /**
+   * The hostnames whose `/d/<slug>` documents this bridge serves itself, from its own origin, over
+   * loopback (bridge/docs.ts). Omitted entirely when it serves none — and it publishes a host only
+   * when it can actually ANSWER for it, so the client reads this as "these open in the panel", not
+   * "these are interesting". Mirrored in web/src/lib/types.ts.
+   */
+  docHosts?: string[];
 }
 
 /**
