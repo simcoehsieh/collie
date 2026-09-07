@@ -11,6 +11,34 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.5.5
+
+Merged `v1.5.5` on 2026-09-07, taking `v1.5.4` and `v1.5.5` together. **No fork patch was dropped**:
+upstream fixed none of the defects this fork carries a patch for. `sw.ts`, `push-decision.ts` and
+`bridge/push.ts` were not touched once in the range, so the iOS silent-push patch is untouched;
+upstream's three `bridge/server.ts` commits are uploads, packaged-install detection and a root-owned
+install refusal, none of which goes near the `checkAccess` Origin rule the folder-picker fix
+rewrote; and upstream's `sheet.tsx` change exports `useDialogFocus` while the fork's changes the
+`--safe-bottom` tokens, on different lines.
+
+Eight files conflicted and every one resolved as "keep both sides" — the two code bases added
+parallel, unrelated capability fields (`docHosts` here, `upload` upstream) to the same four
+declarations. The one thing removed is the `ImagePlus` icon import in `composer.tsx`: upstream
+replaced the picture icon with a paperclip, so the symbol became unreachable. That is following
+upstream's replacement, not dropping a fork patch.
+
+`CHANGELOG.md` did not conflict, which is the whole point of this file.
+
+Two known-red things that this merge did NOT cause, both proven by running them against untouched
+trees:
+
+- `bridge/pack/harness.test.ts` hangs indefinitely. It hangs identically at the pre-merge fork HEAD.
+  Every other backend test file passes.
+- `scripts/collie-cli.test.sh` fails one assertion, expecting `collie update` to hand off to
+  `systemd-run`. A checkout of **pure upstream `v1.5.5`** fails the same assertion on this machine:
+  the test assumes Linux, and macOS correctly takes the detached-child path instead. This fork never
+  runs `collie update` at all.
+
 ## On top of 1.5.3
 
 Merged `v1.5.3` on 2026-09-06. It touched `cli/update*` only — release tag reads now use git's

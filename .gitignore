@@ -56,6 +56,8 @@ Thumbs.db
 # to travel with the fork it describes — a skill that lives only in a runtime root is one nobody
 # finds again after a reinstall. Both runtime roots symlink to it (see FORK.md).
 !.claude/skills/
+
+# The tracker lives in the collie-workspace repo, never here
 .tracker/
 
 # Bug-repro screenshots — evidence for a fix, not documentation. Keep them local;

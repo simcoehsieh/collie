@@ -160,6 +160,7 @@ const updateStatus: UpdateStatus = {
   majorUrl: null,
   installKind: "detached-checkout",
   bridgeStale: false,
+  restartNeeded: false,
   checkedAt: null,
 };
 
@@ -321,6 +322,13 @@ const UPDATE_STATUS_KEYS = {
   run: true,
   // Every release newer than the running one (M15/05) — the card lists what one update folds in.
   newerVersions: true,
+  // The package manager's own upgrade command (M17/02). Optional: only a packaged install under a
+  // prefix Collie recognises has one to name.
+  packageCommand: true,
+  // The files on disk stopped naming the version this process runs (M17/02), and the command that
+  // clears it — the latter optional, because most installs never reach the state.
+  restartNeeded: true,
+  restartCommand: true,
 } satisfies Record<keyof UpdateStatus, true>;
 
 const WORKSPACE_KEYS = {
@@ -424,7 +432,13 @@ describe("solo zero-tax — wire shapes carry no pack dimension", () => {
       "majorAvailable",
       "majorUrl",
       "newerVersions",
+      // The package manager's own upgrade command (M17/02) — optional, and present only on a
+      // packaged install under a prefix Collie recognises.
+      "packageCommand",
       "releaseAvailable",
+      // The command that clears the restart, optional beside the flag that raises it (M17/02).
+      "restartCommand",
+      "restartNeeded",
       // The detached updater's run record (M15/04) — optional, so an install that has never run one
       // sends no such key at all.
       "run",
@@ -644,6 +658,7 @@ const CONFIG_KEYS = {
   themeFile: true,
   fontsDir: true,
   launchersFile: true,
+  maxUploadBytes: true,
   port: true,
   host: true,
   pollMs: true,
@@ -672,6 +687,7 @@ const CONFIG_KEYS = {
   kbOrigin: true,
   kbToken: true,
   docHosts: true,
+  uploadExtraTypes: true,
 } satisfies Record<keyof Config, true>;
 
 describe("solo zero-tax — config", () => {
@@ -695,6 +711,7 @@ describe("solo zero-tax — config", () => {
       "kbToken",
       "keysFile",
       "launchersFile",
+      "maxUploadBytes",
       "multiSession",
       "mux",
       "muxEndpoint",
@@ -715,6 +732,7 @@ describe("solo zero-tax — config", () => {
       "transcript",
       "trustedUser",
       "trustedUserOptional",
+      "uploadExtraTypes",
       "vapidPrivate",
       "vapidPublic",
       "vapidSubject",
@@ -757,6 +775,7 @@ describe("solo zero-tax — config", () => {
       "COLLIE_HOST",
       "COLLIE_KB_ORIGIN",
       "COLLIE_KB_TOKEN",
+      "COLLIE_MAX_UPLOAD_MB",
       "COLLIE_MULTI_SESSION",
       "COLLIE_MUX",
       "COLLIE_MUX_ENDPOINT_",
@@ -777,6 +796,7 @@ describe("solo zero-tax — config", () => {
       "COLLIE_TRANSCRIPT_ROOT",
       "COLLIE_TRUSTED_USER",
       "COLLIE_TRUSTED_USER_OPTIONAL",
+      "COLLIE_UPLOAD_EXTRA_TYPES",
       "COLLIE_VAPID_PRIVATE",
       "COLLIE_VAPID_PUBLIC",
       "COLLIE_VAPID_SUBJECT",

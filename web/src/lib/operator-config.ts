@@ -9,6 +9,7 @@ import type {
   OperatorKeyRow,
   OperatorQuickReplyRow,
   SttCapability,
+  UploadCapability,
 } from "@/lib/types";
 
 // The startup-resolved half of /api/config, read ONCE and held in module state: the operator's own
@@ -59,6 +60,10 @@ let currentStt: SttCapability | null = null;
 // Empty until a read succeeds, on a bridge that serves no documents, and on one older than the
 // field — all three mean the same thing (every link stays external), so nothing distinguishes them.
 let currentDocHosts: readonly string[] = [];
+// `null` until a read succeeds AND on every bridge older than the field. The two are the same value
+// on purpose: both mean "nothing said otherwise", and lib/attachments.ts answers both with the
+// contract that shipped before attachments existed — 10 MB, images only.
+let currentUpload: UploadCapability | null = null;
 let inflight: Promise<void> | null = null;
 let loaded = false;
 const listeners = new Set<() => void>();
@@ -86,6 +91,7 @@ export function loadOperatorCommands(): Promise<void> {
       currentMux = cfg.mux ?? null;
       currentStt = cfg.stt ?? null;
       currentDocHosts = cfg.docHosts ?? [];
+      currentUpload = cfg.upload ?? null;
       loaded = true;
       emit();
     } catch {
@@ -134,6 +140,15 @@ export function getMuxConfig(): MuxConfig | null {
  */
 export function getSttCapability(): SttCapability | null {
   return currentStt;
+}
+
+/**
+ * What this collie accepts as an attachment, or `null` when nothing has said otherwise (no read yet,
+ * a failed read, or a bridge older than the field). Consumers go through lib/attachments.ts, which
+ * is where `null` becomes an answer.
+ */
+export function getUploadCapability(): UploadCapability | null {
+  return currentUpload;
 }
 
 /**
@@ -213,6 +228,14 @@ export function useDocHosts(): readonly string[] {
   return useSyncExternalStore(subscribeOperatorConfig, getDocHosts, getDocHosts);
 }
 
+/** Reactive read of the attachment limits. Same one-shot fetch, same contract. */
+export function useUploadCapability(): UploadCapability | null {
+  useEffect(() => {
+    void loadOperatorCommands();
+  }, []);
+  return useSyncExternalStore(subscribeOperatorConfig, getUploadCapability, getUploadCapability);
+}
+
 /** Reactive read of the Quick-dock groups. Same one-shot fetch, same contract. */
 export function useOperatorQuickReplies(): readonly OperatorQuickReplyRow[] {
   useEffect(() => {
@@ -234,6 +257,7 @@ export function __resetOperatorCommands(): void {
   currentMux = null;
   currentStt = null;
   currentDocHosts = [];
+  currentUpload = null;
   inflight = null;
   loaded = false;
   listeners.clear();

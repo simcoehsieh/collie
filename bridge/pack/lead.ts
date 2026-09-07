@@ -110,6 +110,11 @@ export function dueForProbe(memory: PeerMemory | undefined, now: number): boolea
 export interface PackLeadDeps {
   readonly registry: PackRegistry;
   /**
+   * `cfg.maxUploadBytes` — this lead's own attachment cap, forwarded into every §13 pre-check.
+   * Per host, so a member on a different `COLLIE_MAX_UPLOAD_MB` is legal and answers for itself.
+   */
+  readonly maxUploadBytes: number;
+  /**
    * `(link) => the peer's /pack/v1/snapshot outcome`. Injected so the sweep is testable without TLS.
    *
    * `freshPreflight` is §19's one header reaching through: the phone's own on-demand read asks every
@@ -365,7 +370,7 @@ export class PackLead {
         const members = due.map((link): TurnMember => {
           const outcome = outcomes.get(link.memberId);
           const state = this.deps.registry.state(link.memberId);
-          return {
+          const turnMember: TurnMember = {
             memberId: link.memberId,
             enrolledAt: follow.enrolledAt(link.memberId),
             version: state.version,
@@ -375,6 +380,11 @@ export class PackLead {
             // construction, the same cast and the same reason as `parsePeerPreflight`'s above.
             run: outcome?.ok === true ? parsePeerRun(outcome.value as JsonValue) : null,
           };
+          // §19's field, banked with the rest of that member's own report. Assigned only when the
+          // member named a kind: absent is what "this member named no kind" has to look like, and
+          // absent counts as not packaged.
+          const kind = state.preflight?.installKind;
+          return kind === undefined ? turnMember : { ...turnMember, installKind: kind };
         });
         if (follow.turns.observe(members, this.now()).released) this.resweep();
       }
@@ -611,6 +621,8 @@ export class PackLead {
       link: resolved.link,
       state: resolved.state,
       transport: this.deps.proxy,
+      // This lead's own cap, for §13's refuse-before-forward. The peer enforces its own on arrival.
+      maxUploadBytes: this.deps.maxUploadBytes,
       // Every landed forward refreshes this member's receipt, so a watched peer's freshness tracks
       // the phone's cadence rather than the sweep's idle one. The registry owns the rules (successes
       // only, reachable members only, monotone) — this class just supplies the member id.
