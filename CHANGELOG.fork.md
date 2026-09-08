@@ -13,6 +13,47 @@ stays true).
 
 ## On top of 1.6.0
 
+**Rebased** onto `v1.6.0` on 2026-09-08, taking `v1.5.6` and `v1.6.0` together. The fork's 18
+patches were replayed onto the release rather than merged into it, so this history is linear and
+every fork commit's parent chain runs straight to upstream's tag. That is why there is one heading
+here and no longer one per release: the "On top of 1.5.3" and "On top of 1.5.5" sections described
+merge commits a rebase does not keep, and leaving them would have claimed a history shape `git log`
+contradicts. Their still-true findings are folded in below.
+
+**No fork patch was dropped.** Upstream fixed none of the defects this fork carries a patch for. The
+one to check every time is the iOS silent-push patch, and upstream did not touch `sw.ts` or
+`push-decision.ts` once in the range — upstream's own push work (#178/#179) is on the REGISTRATION
+side (`push.ts`, `use-push.ts`, `settings.tsx`), where the defect is a setup that sticks on "setting
+up", not a delivered push answered with silence. Different defect, zero file overlap.
+
+Twenty-two files were contested and every one resolved as "keep both sides": the two code bases add
+parallel, unrelated things to the same declarations — `controlsOpen` beside upstream's
+`expandClippedReply` in `DisplayPrefs`, `docHosts` beside its `upload` capability in three type
+declarations, `onLinkOpen` beside its `hideLeadingLines` on `AnsiOutput`, `COLLIE_DIR_ROOTS` beside
+`COLLIE_MAX_UPLOAD_MB` in the config roll call. `FONT_MAX` and `web/src/test/setup.ts` were not
+touched upstream at all, so the 24px ceiling and the localStorage shim are still the fork's alone.
+
+The one thing removed is the `ImagePlus` icon import in `composer.tsx`: upstream replaced the
+picture icon with a paperclip and a two-row picker, so the symbol became unreachable. That is
+following upstream's replacement, not dropping a fork patch.
+
+`CHANGELOG.md` did not conflict, which is the whole point of this file.
+
+The suite is green on the rebased tree: 195 web files / 5508 tests, 100 bridge files / 2854 tests,
+35 cli files / 1307 tests, 5 script files / 52 tests, both typechecks and oxlint — zero failures.
+Upstream's 1.6.0 adds 14 web files and 441 tests to that count and all of them pass here.
+
+Three known-red things that this rebase did NOT cause, each proven against an untouched tree:
+
+- `bridge/pack/harness.test.ts` hangs indefinitely. `git diff v1.6.0..HEAD -- bridge/pack/` is
+  empty, so that directory is byte-identical to upstream's and the hang is upstream's.
+- `scripts/collie-cli.test.sh` fails one assertion, expecting `collie update` to hand off to
+  `systemd-run --user --collect`. A pristine `v1.6.0` worktree fails the same assertion with the
+  same message on this machine: the test assumes systemd, and macOS correctly takes the detached-
+  child path. This fork never runs `collie update` at all.
+- `packaging/refresh.test.sh` fails three checks (new in 1.5.6, which added the Arch and Nix
+  recipes). The same pristine `v1.6.0` worktree fails the same three. The fork ships no package.
+
 - **The document panel fills a phone edge to edge.** It shipped inset at `w-[92%]` on every screen,
   holding a strip of backdrop back so iOS's left-edge back-swipe kept its zone and so the strip
   could double as a tap-to-dismiss target. On a 393px phone that strip is ~31px of coloured terminal
