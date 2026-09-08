@@ -180,9 +180,12 @@ describe("RightSheet — the closed state", () => {
 // so the border half is pinned too.
 //
 // The width and the two safe-area edges are pinned in the same place because all three are things a
-// reader would "tidy" into the wrong answer: `w-full` looks obviously better for a document until
-// iOS's back-swipe eats the drag, and `env(safe-area-inset-bottom)` looks like the honest spelling
-// until it reports 0 on the one device this fork serves.
+// reader would "tidy" into the wrong answer — in BOTH directions here. Collapsing the responsive
+// width to a bare `w-[92%]` puts an 8px sliver of terminal back beside a phone-width document,
+// which the operator reported as an unfinished edge; collapsing it to a bare `w-full` hands the
+// desktop panel's whole left edge to iOS's back-swipe, which eats the drag. And
+// `env(safe-area-inset-bottom)` looks like the honest spelling of the bottom until it reports 0 on
+// the one device this fork serves.
 describe("RightSheet — surface, width, and the two safe-area edges", () => {
   it("stands on the raised surface, edged with the region rule on the side that faces the app", () => {
     const { container } = render(
@@ -193,26 +196,39 @@ describe("RightSheet — surface, width, and the two safe-area edges", () => {
     const panel = container.querySelector('div[tabindex="-1"]')!;
     expect(panel.className).toMatch(/(?:^|\s)bg-card(?=\s|$)/);
     expect(panel.className).not.toMatch(/(?:^|\s)bg-background(?=\s|$)/);
-    expect(panel.className).toMatch(/(?:^|\s)border-l border-rule(?=\s|$)/);
+    // Inset-only, like the rounded corner: full-bleed on a phone there is no cut to draw. The
+    // colour is unconditional and the WIDTH is what the breakpoint moves, because a colour with no
+    // width paints nothing either way.
+    expect(panel.className).toMatch(/(?:^|\s)border-rule(?=\s|$)/);
+    expect(panel.className).toMatch(/(?:^|\s)border-l-0(?=\s|$)/);
+    expect(panel.className).toMatch(/(?:^|\s)sm:border-l(?=\s|$)/);
     // The header rides the same surface — a header in the page's colour would cut the panel in two.
     const grab = container.querySelector('[data-slot="right-sheet-grab"]')!;
     expect(grab.className).toContain("bg-card/95");
   });
 
-  it("leaves the left edge to iOS: the panel is inset, never full-width", () => {
-    // In a home-screen PWA a swipe from the physical left edge is the system's back gesture. A
-    // full-width panel puts its own "grab me and throw me away" edge on top of it and loses; the
-    // uncovered strip is what keeps the two gestures apart (and doubles as the tap-to-dismiss zone).
+  it("fills a phone edge to edge, and leaves the left edge to iOS from `sm` up", () => {
+    // In a home-screen PWA a swipe from the physical left edge is the system's back gesture, so a
+    // panel reaching that edge cannot also be dragged away from it — the system wins. From `sm` up
+    // the uncovered strip is what keeps the two gestures apart (and doubles as the tap-to-dismiss
+    // zone). On a phone that strip is a sliver of coloured terminal beside the words being read, so
+    // the panel is full-bleed there and the ways out are the ✕, the header drag, and Escape — all
+    // of them on the panel's own chrome, none of them on the edge iOS owns.
     const { container } = render(
       <RightSheet open onClose={vi.fn()} title="Notes">
         body
       </RightSheet>,
     );
     const panel = container.querySelector('div[tabindex="-1"]')!;
-    expect(panel.className).toContain("w-[92%]");
-    expect(panel.className).not.toMatch(/\bw-full\b/);
+    expect(panel.className).toMatch(/(?:^|\s)w-full(?=\s|$)/);
+    expect(panel.className).toMatch(/(?:^|\s)sm:w-\[92%\](?=\s|$)/);
+    // The corner is inset-only too: `rounded-l-md` against the screen edge would only open two
+    // notches of backdrop where the panel no longer meets anything.
+    expect(panel.className).toMatch(/(?:^|\s)sm:rounded-l-md(?=\s|$)/);
+    expect(panel.className).not.toMatch(/(?:^|\s)rounded-l-md(?=\s|$)/);
     // Still capped: 92% of a landscape 13-inch iPad is 1257px of prose measure. Wider than
-    // BottomSheet's row column on purpose — a document is not a list of phone-width rows.
+    // BottomSheet's row column on purpose — a document is not a list of phone-width rows. Below
+    // `sm` the cap is slack, since the viewport is narrower than it.
     expect(panel.className).toMatch(/\bmax-w-2xl\b/);
   });
 
