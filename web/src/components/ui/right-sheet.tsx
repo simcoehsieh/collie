@@ -38,12 +38,23 @@ import { useLocale } from "@/hooks/use-locale";
 // drag that wobbles vertical mid-travel would drop the panel back mid-flight. A tie (|dx| == |dy|)
 // goes to the scroller, on the principle that the browser owns the axis it was already panning.
 //
-// ── iOS's OWN BACK-SWIPE OWNS THE LEFT EDGE ──────────────────────────────────────────────────────
-// In a home-screen PWA a swipe from the physical left edge goes back in history. A full-width right
-// sheet would put its left edge — the natural place to grab a panel and throw it away — directly on
-// top of that system gesture, and the system wins. So the panel is inset (`w-[92%]`), leaving a
-// strip of backdrop the system gesture can have; that strip doubles as the tap-to-dismiss target
-// and as the visual "there is a terminal behind this".
+// ── THE LEFT EDGE: FULL-WIDTH ON A PHONE, INSET FROM `sm` UP ─────────────────────────────────────
+// In a home-screen PWA a swipe from the physical left edge goes back in history, so a panel that
+// reaches that edge cannot also be grabbed there and thrown away: the system wins. The first cut of
+// this sheet therefore held a strip of backdrop back on every screen, which bought three things at
+// once — the system gesture kept its zone, the strip was the tap-to-dismiss target, and it showed
+// that a terminal was still behind.
+//
+// On a phone that strip is not a signal, it is an unfinished edge: 8% of 393px is a sliver, and
+// what it uncovers is a wall of coloured terminal text a few millimetres from the words being read.
+// So below `sm` the panel is `w-full` and the strip is gone. The cost is stated here because it is
+// invisible from the code — there is no backdrop left to tap, and the left edge is the system's
+// again, where a swipe NAVIGATES rather than closes. The three remaining ways out (the ✕, the
+// header drag, Escape) all live on the panel's own chrome, which is the reason the drag was put on
+// the header in the first place rather than on an edge.
+//
+// From `sm` up the inset stays, because at that size the strip is not a sliver: it is a legible
+// piece of the terminal beside the document, on a screen with room for both.
 
 /** Travel (px) below which a touch is a tap, not a drag; the same 6 both existing gestures use. */
 export const SLOP = 6;
@@ -332,17 +343,22 @@ export function RightSheet({ open, onClose, title, subtitle, children, className
           // own token, with `--rule` for the cut between REGIONS (DESIGN.md §4). `border-l` here
           // because the edge that faces the app is the left one.
           //
-          // `w-[92%]`: the panel is inset so the leftmost strip of glass stays iOS's back-swipe
-          // zone rather than ours (see the file header). `max-w-2xl` (672px) rather than
-          // BottomSheet's `max-w-screen-sm` (640px): that cap is the argument that a sheet holding
-          // ROWS stops at the same content column every route body uses, and this one holds a
-          // document — a page with its own tables and code blocks wants a little more than a list of
-          // phone-width rows. It is still capped, because uncapped 92% is 1257px of prose measure on
-          // a landscape 13-inch iPad, which nobody can read.
+          // `w-full sm:w-[92%]`: full-bleed on a phone, inset from `sm` up so the leftmost strip of
+          // glass stays iOS's back-swipe zone rather than ours (see the file header). The rounded
+          // corner and the left rule are inset-only for the same reason they exist at all — they
+          // mark the cut between this panel and the app behind it, and full-bleed there is no cut:
+          // a `rounded-l-md` against the screen edge would only open two notches of backdrop at the
+          // corners. `max-w-2xl` (672px) rather than BottomSheet's `max-w-screen-sm` (640px): that
+          // cap is the argument that a sheet holding ROWS stops at the same content column every
+          // route body uses, and this one holds a document — a page with its own tables and code
+          // blocks wants a little more than a list of phone-width rows. It is still capped, because
+          // uncapped 92% is 1257px of prose measure on a landscape 13-inch iPad, which nobody can
+          // read; below `sm` the cap is slack anyway, since the viewport is narrower than it.
           //
           // `overflow-hidden` so the framed document is clipped by the panel's own rounded edge
           // instead of painting over it.
-          "relative z-10 flex h-full w-[92%] max-w-2xl flex-col overflow-hidden rounded-l-md border-l border-rule bg-card shadow-2xl",
+          "relative z-10 flex h-full w-full max-w-2xl flex-col overflow-hidden border-l-0 border-rule bg-card shadow-2xl",
+          "sm:w-[92%] sm:rounded-l-md sm:border-l",
           "duration-200 animate-in slide-in-from-right",
           // TWO SAFE-AREA EDGES, AND THEY ARE NOT SPELLED THE SAME WAY ON PURPOSE.
           //

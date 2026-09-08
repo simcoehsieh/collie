@@ -39,6 +39,18 @@ trees:
   the test assumes Linux, and macOS correctly takes the detached-child path instead. This fork never
   runs `collie update` at all.
 
+- **The document panel fills a phone edge to edge.** It shipped inset at `w-[92%]` on every screen,
+  holding a strip of backdrop back so iOS's left-edge back-swipe kept its zone and so the strip
+  could double as a tap-to-dismiss target. On a 393px phone that strip is ~31px of coloured terminal
+  text a few millimetres from the words being read, which reads as an unfinished edge rather than as
+  a signal — so below `sm` the panel is `w-full`. The rounded corner and the left rule go with it: a
+  `rounded-l-md` against the screen edge would only open two notches of backdrop where the panel no
+  longer meets anything. From `sm` up the inset stays, because there the strip is a legible piece of
+  terminal beside the document rather than a sliver. What it costs on a phone is stated in the
+  component, because it is invisible from the code — there is no backdrop left to tap and the left
+  edge is the system's again, so the ways out are the ✕, the header drag and Escape, all of them on
+  the panel's own chrome.
+
 ## On top of 1.5.3
 
 Merged `v1.5.3` on 2026-09-06. It touched `cli/update*` only — release tag reads now use git's
