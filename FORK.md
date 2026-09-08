@@ -55,6 +55,13 @@ Merge the **tag**, the way [`docs/upgrading.md` → *You run a fork*](./docs/upg
 `upstream/main` is wherever upstream's development happens to sit today, which may be mid-release
 work nobody has shipped; a `v*` tag is a version someone decided was finished.
 
+**`v1.6.0` was taken by rebase, once, and that was a one-off.** So `git log` shows this fork's 18
+patches in a straight line on top of that tag with no merge commit for `v1.5.6` or `v1.6.0` — the
+linear stretch is history, not a change of procedure. Merge is still the way, for the reason the
+next release makes obvious: a rebase replays every fork patch individually, so one contested file
+can be resolved several times over (`v1.6.0` cost eight rounds), and it rewrites commits that are
+already pushed, which means a force push every time. Neither is worth paying on a schedule.
+
 **The rebuild is not optional.** launchd runs `bin/collie _exec-bridge` out of this directory, and
 both `bin/` and `web/dist/` are build output that git does not carry. Merge without rebuilding and
 `git log` reports the new version while the service keeps serving the old one — the failure mode is
