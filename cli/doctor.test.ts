@@ -283,6 +283,7 @@ describe("collie doctor — the contract", () => {
       "bind-wildcard",
       "acl",
       "front-door",
+      "launchers",
       "mux",
       "beacon-hooks-claude",
       "beacons",
@@ -1184,6 +1185,7 @@ describe("the finding set is scoped by the chosen multiplexer", () => {
       "bind-wildcard",
       "acl",
       "front-door",
+      "launchers",
       "mux",
       "beacon-hooks-claude",
       "beacons",
@@ -1524,5 +1526,71 @@ describe("collie doctor — a packaged install", () => {
     const run = await findings(harness(null));
     expect(run.byCheck.get("update-source")?.detail ?? "").toContain("github.com");
     expect(run.byCheck.get("versions")?.status).not.toBe("skipped");
+  });
+});
+
+// ── launchers.toml ───────────────────────────────────────────────────────────
+// The one operator file whose absence shows on the phone as nothing at all: no rows, no long-press
+// menu on the tab strip's "+", and no line anywhere saying why. `doctor` is where that gets named.
+
+describe("collie doctor — launchers", () => {
+  const LAUNCHERS = `${CONFIG}/launchers.toml`;
+
+  test("launchers: no file is ok, and says what the \"+\" does without one", async () => {
+    const { code, byCheck } = await findings(harness(null));
+    const f = byCheck.get("launchers");
+    expect(f?.status).toBe("ok");
+    expect(f?.detail).toContain(`none at ${LAUNCHERS}`);
+    expect(f?.detail).toContain("launchers.toml.example");
+    expect(f?.remedy).toBeNull();
+    expect(code).toBe(EXIT.OK);
+  });
+
+  test("launchers: declared rows are counted, and named by their labels", async () => {
+    const files = {
+      ...healthyFiles(),
+      [LAUNCHERS]: '[[launchers]]\ncommand = "claude"\n\n[[launchers]]\ncommand = "codex"\nlabel = "Codex"\n',
+    };
+    const { code, byCheck } = await findings(harness(null, [], { files }));
+    const f = byCheck.get("launchers");
+    expect(f?.status).toBe("ok");
+    expect(f?.detail).toContain("2 rows");
+    expect(f?.detail).toContain("claude");
+    expect(f?.detail).toContain("Codex");
+    expect(code).toBe(EXIT.OK);
+  });
+
+  test("launchers: a file with every row commented out is ok, and says the \"+\" has no menu", async () => {
+    const files = { ...healthyFiles(), [LAUNCHERS]: '# [[launchers]]\n# command = "htop"\n' };
+    const { byCheck } = await findings(harness(null, [], { files }));
+    const f = byCheck.get("launchers");
+    expect(f?.status).toBe("ok");
+    expect(f?.detail).toContain("0 rows");
+    expect(f?.detail).toContain('"+"');
+  });
+
+  test("launchers: a row the bridge would drop warns, repeating the bridge's own reason", async () => {
+    const files = {
+      ...healthyFiles(),
+      [LAUNCHERS]: '[[launchers]]\ncommand = "claude"\n\n[[launchers]]\ncommand = ""\n',
+    };
+    const { code, byCheck } = await findings(harness(null, [], { files }));
+    const f = byCheck.get("launchers");
+    expect(f?.status).toBe("warn");
+    expect(f?.detail).toContain("1 row kept");
+    expect(f?.detail).toContain("missing or empty");
+    expect(f?.remedy).toContain(LAUNCHERS);
+    expect(code).toBe(EXIT.OK);
+  });
+
+  test("launchers: a file that does not parse warns, and says the bridge keeps its last good rows", async () => {
+    const files = { ...healthyFiles(), [LAUNCHERS]: "[[launchers]\ncommand = \n" };
+    const { code, byCheck } = await findings(harness(null, [], { files }));
+    const f = byCheck.get("launchers");
+    expect(f?.status).toBe("warn");
+    expect(f?.detail).toContain("does not parse");
+    expect(f?.detail).toContain("last good rows");
+    expect(f?.remedy).toContain(LAUNCHERS);
+    expect(code).toBe(EXIT.OK);
   });
 });

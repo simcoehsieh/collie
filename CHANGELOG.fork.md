@@ -234,3 +234,10 @@ Three known-red things that this rebase did NOT cause, each proven against an un
   kept and unchanged: the tab strip's "+" still reads the same rows for its hold-to-pin sheet, where
   they do the thing their shape promises. The two consumers were already independent, so this
   removes exactly the dashboard strip and nothing else; `home.tsx` records what to put back.
+- **`collie doctor` names `launchers.toml`, present or not.** With no rows the tab strip's "+"
+  opens a plain shell and its long-press is not wired at all, and nothing on the phone says why —
+  a second machine that got its `.env` but never this file reads as a broken gesture. The new
+  `launchers` line says "none at <path>" and what that costs, counts and labels the rows when
+  the file is there, and warns when a row would be dropped or the file does not parse, judged by
+  the bridge's own validator so the two cannot disagree. Absent is `ok`, not `warn`: declaring
+  nothing is a choice, and a healthy install still warns about nothing.
