@@ -11,6 +11,32 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.8.0
+
+**Merged** `v1.8.0` on 2026-09-10, taking `v1.7.0` and `v1.8.0` together. Both releases went out on
+the same day and 1.8.0 finishes the rename 1.7.0 began, so merging 1.7.0 first would have meant
+resolving the same files twice around a half-renamed middle state. Back to a merge after the one-off
+rebase onto 1.6.0, as `FORK.md` says.
+
+**No fork patch was dropped.** Upstream fixed none of the defects this fork carries a patch for, and
+the three worth checking every time all came back clean: `sw.ts` was not touched once in the range
+and `push-decision.ts` only had `pack` changed to `crew` in its comments, so the iOS silent-push
+patch stands; `git log -G'userSelect|user-select|touch-callout|longPress'` over the range is empty,
+so the long-press-selects-the-page fix stands; and `bridge/dirs.ts` and `bridge/docs.ts` do not
+exist upstream at all, so the folder picker and the document panel are still the fork's alone.
+
+Thirty-one files were contested and seven of them conflicted, every one resolved as "keep both
+sides": upstream's `CrewProvider` around the fork's `app-viewport` shell in `root.tsx`, upstream's
+scoped `useMuxCapability("createTab", scope)` above the fork's `selectstart` refusal in
+`tab-strip.tsx`, the fork's `onLinkOpen` beside upstream's `images` on `AnsiOutput`, the fork's
+`kbDocumentResponse` and `/api/dirs` route beside upstream's blob store and `/api/blobs/<hash>` in
+`bridge/server.ts`. One assertion had to be re-counted rather than picked: `bridge/server.test.ts`
+pins how many session-scoped routes resolve through the gate, and both sides said ten for different
+reasons — the fork's `/api/dirs` and upstream's blob route — so the merged tree has eleven.
+
+The pack-to-crew rename costs this deployment nothing: it is solo, `~/.config/collie/.env` holds no
+`COLLIE_PACK_*` key, and the state directory has no `pack-*.json` to migrate.
+
 ## On top of 1.6.0
 
 **Rebased** onto `v1.6.0` on 2026-09-08, taking `v1.5.6` and `v1.6.0` together. The fork's 18
