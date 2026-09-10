@@ -13,6 +13,11 @@ stays true).
 
 ## On top of 1.8.0
 
+- **An agy pane's menus, checklists and slash popup are tappable.** The Antigravity adapter grew
+  `menu`, `multi-select` and `autocomplete` detectors from ten fixtures captured live on agy 1.2.0;
+  a single-select answers with the digit alone (the old digit + Enter also answered the next
+  question of a multi-question call). Wizard, preview-select and paste are asserted not applicable
+  rather than left as todo. The multi-select contract admits a TUI whose Enter submits the set.
 - **Push heals itself.** The service worker handles `pushsubscriptionchange` and re-subscribes
   with the same VAPID key; on app open the page asks the bridge whether its endpoint is still known
   (`/api/subscribe` now answers `{known}`) and mints a fresh subscription when the bridge had pruned
