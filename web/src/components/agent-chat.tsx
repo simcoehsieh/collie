@@ -40,8 +40,8 @@ import { AnsiOutput } from "@/components/ansi-output";
 import { MIRROR_SPACE, MIRROR_INVERT, styleFor } from "@/components/mirror-space";
 import { cn } from "@/lib/utils";
 import { paneTag } from "@/lib/pane-tag";
-import { parseAnsi } from "@/lib/ansi";
-import { splitLines } from "@/lib/blocks";
+import { useMirrorModel } from "@/hooks/use-mirror-model";
+import { useStableCallback } from "@/hooks/use-stable-callback";
 import { adapterFor } from "@/lib/harness";
 import { blockOwnsKeyboard } from "@/lib/harness/dialog-contract";
 import { FindBar } from "@/components/find-bar";
@@ -639,13 +639,18 @@ export function AgentChat({
   // sat in the TUI. ALL its rows: a configured statusline is routinely 2–3 rows tall, and we used to
   // surface only the first, silently losing the rest. Routed through the SAME adapter (adapterFor)
   // whose buildBlocks strips the chrome, so the two can't drift; empty when there's no adapter for
-  // the agent, a menu is up, or no box at the tail, in which case the strip is hidden. A second parse
-  // of `display`, but memoised on it, so it only recomputes when the buffer content changes — off the
-  // render hot path.
+  // the agent, a menu is up, or no box at the tail, in which case the strip is hidden.
+  //
+  // FORK: ONE parse of the mirror (hooks/use-mirror-model.ts). The three probes below and the
+  // render inside <AnsiOutput> all read the same `lines` / `blocks`; nothing here re-parses
+  // `display`. The adapter is picked the way the render picks it — off `mirrorAgent`, which is
+  // `undefined` while raw-terminal is on — so the probes and the mirror can't disagree.
+  const mirrorAgent = grammarsOn ? agent?.agent : undefined;
+  const mirror = useMirrorModel(display, mirrorAgent);
+  const mirrorAdapter = adapterFor(mirrorAgent);
   const statusLines = useMemo(
-    () =>
-      grammarsOn ? adapterFor(agent?.agent)?.extractStatusLines(splitLines(parseAnsi(display))) ?? [] : [],
-    [display, agent?.agent, grammarsOn],
+    () => mirrorAdapter?.extractStatusLines(mirror.lines) ?? [],
+    [mirrorAdapter, mirror.lines],
   );
 
   // A user draft stranded on the input box's "❯" line — a message queued while the agent was busy
@@ -655,11 +660,8 @@ export function AgentChat({
   // exclusively phone-owned. Same parse source + same adapter as the statusline, so the two can't
   // drift; null when raw-terminal is on, there's no adapter, no box is at the tail, or the line is empty.
   const rawTerminalDraft = useMemo(
-    () =>
-      grammarsOn
-        ? adapterFor(agent?.agent)?.extractInputDraft(splitLines(parseAnsi(display))) ?? null
-        : null,
-    [display, agent?.agent, grammarsOn],
+    () => mirrorAdapter?.extractInputDraft(mirror.lines) ?? null,
+    [mirrorAdapter, mirror.lines],
   );
   // Is a dialog (prompt/wizard/preview/multi-select/menu) on screen right now? A block whose screen
   // owns the TUI's keyboard means the composer must refuse a free-text send: the text would be
@@ -672,15 +674,8 @@ export function AgentChat({
   // `kind !== "raw"`. The two were the same set until a PRESENTATIONAL non-raw kind shipped: the
   // slash-command `autocomplete` popup is painted while the agent's input box is live under it, so
   // treating it as a dialog would lock the composer out of a pane that is demonstrably typeable.
-  const dialogPresent = useMemo(
-    () =>
-      grammarsOn
-        ? (adapterFor(agent?.agent)?.buildBlocks(splitLines(parseAnsi(display))) ?? []).some(
-            blockOwnsKeyboard,
-          )
-        : false,
-    [display, agent?.agent, grammarsOn],
-  );
+  // With no adapter the blocks are one raw block, which owns nothing — so no gate is needed here.
+  const dialogPresent = useMemo(() => mirror.blocks.some(blockOwnsKeyboard), [mirror.blocks]);
 
   // Both are threaded to the composer: the RAW value (live) plus a stabilised one. extractInputDraft
   // is stateless, so it can't distinguish a stranded draft from the ~350ms flash where our OWN
@@ -1129,6 +1124,49 @@ export function AgentChat({
     }
     onBack();
   }
+  // FORK: the strips are memo()'d (tab-strip.tsx, pane-strip.tsx), so what they are handed must
+  // hold its identity across a poll tick or the memo buys nothing. Each of these calls whatever the
+  // latest render's function is (hooks/use-stable-callback.ts) — the handlers above are plain
+  // closures over this render's state and are meant to stay that way.
+  const onTabSelect = useStableCallback((id: string | null) => {
+    if (id) goToTab(id);
+  });
+  const onNewTab = useStableCallback((workspaceId: string) => openNewTab(workspaceId));
+  const onNewTabHold = useStableCallback(() => setDrawer("newTab"));
+  const revalidate = useStableCallback(() => revalidator.revalidate());
+  const onTabClosed = useStableCallback((tabId: string) => {
+    if (agent?.tabId === tabId) closeCurrentTab(tabId);
+    else revalidator.revalidate();
+  });
+  const onPaneSelect = useStableCallback((id: string) => switchTo(id));
+  const onPaneClosed = useStableCallback((id: string) => {
+    if (id === paneId) onBack();
+    else revalidator.revalidate();
+  });
+  const onToggleStrips = useStableCallback(() => toggleStrips());
+  // The fold's own control, pinned to the row's trailing end where it costs no height — the tab
+  // row is already 44px, so this centres in pixels the row was spending anyway. Same 32px square
+  // recipe as the "+" beside it: they are two controls of the same rank in the same row, and
+  // drawing them differently would rank them. Memoised on its label so the strip sees one element.
+  const foldLabel = t(foldLabelKey(stripTabs.length, tabPanes.length));
+  const foldControl = useMemo(
+    () => (
+      <button
+        type="button"
+        onClick={onToggleStrips}
+        aria-expanded={true}
+        aria-label={foldLabel}
+        className={cn(
+          STRIP_TAP_TARGET_SQUARE,
+          "flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent active:scale-95",
+        )}
+      >
+        <ChevronUp className="size-4" />
+      </button>
+    ),
+    [onToggleStrips, foldLabel],
+  );
+
 
   // Open a space from the nav hub — go to its detail route (its tabs + panes, incl. shells). A step
   // back up out of the pane, so it slides backward.
@@ -1612,37 +1650,20 @@ export function AgentChat({
                     tabs={tabs}
                     agents={agents}
                     selected={agent.tabId}
-                    onSelect={(id) => id && goToTab(id)}
-                    onNewTab={openNewTab}
-                    onNewTabHold={launchers.length > 0 ? () => setDrawer("newTab") : undefined}
+                    onSelect={onTabSelect}
+                    onNewTab={onNewTab}
+                    onNewTabHold={launchers.length > 0 ? onNewTabHold : undefined}
                     creatingTab={creatingTab.has(agent.workspaceId)}
                     allowAll={false}
                     scope={scope}
                     readOnly={readOnly}
-                    onRenamed={() => revalidator.revalidate()}
+                    onRenamed={revalidate}
                     // Closing the tab this pane lives in must not eject you to Home — see closeCurrentTab:
                     // it lands you on a neighbouring tab of this space, and only falls back to onBack() when
                     // the space has nothing left to land on. Closing any other tab just revalidates so it
                     // drops out of the strip.
-                    onClosed={(tabId) => (agent?.tabId === tabId ? closeCurrentTab(tabId) : revalidator.revalidate())}
-                    // The fold's own control, pinned to the row's trailing end where it costs no height
-                    // — the tab row is already 44px, so this centres in pixels the row was spending
-                    // anyway. Same 32px square recipe as the "+" beside it: they are two controls of the
-                    // same rank in the same row, and drawing them differently would rank them.
-                    trailing={
-                      <button
-                        type="button"
-                        onClick={toggleStrips}
-                        aria-expanded={true}
-                        aria-label={t(foldLabelKey(stripTabs.length, tabPanes.length))}
-                        className={cn(
-                          STRIP_TAP_TARGET_SQUARE,
-                          "flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent active:scale-95",
-                        )}
-                      >
-                        <ChevronUp className="size-4" />
-                      </button>
-                    }
+                    onClosed={onTabClosed}
+                    trailing={foldControl}
                   />
                 )}
 
@@ -1654,12 +1675,12 @@ export function AgentChat({
                     // this row appearing and line 1 gaining a `pN` are one decision, taken once.
                     panes={tabPanes}
                     currentPaneId={paneId}
-                    onSelect={switchTo}
+                    onSelect={onPaneSelect}
                     scope={scope}
                     readOnly={readOnly}
-                    onRenamed={() => revalidator.revalidate()}
+                    onRenamed={revalidate}
                     // Mirror closePane's success branch: closing the open pane returns Home, else revalidate.
-                    onClosed={(id) => (id === paneId ? onBack() : revalidator.revalidate())}
+                    onClosed={onPaneClosed}
                   />
                 )}
                 </div>
@@ -1835,12 +1856,13 @@ export function AgentChat({
                   )}
                   <AnsiOutput
                     text={display}
+                    model={mirror}
                     wrap={prefs.wrap}
                     fontSize={prefs.fontSize}
                     query={findOpen ? findQuery : ""}
                     currentMatch={findOpen ? currentMatch : -1}
                     onMatchCount={findOpen ? handleMatchCount : undefined}
-                    agent={grammarsOn ? agent?.agent : undefined}
+                    agent={mirrorAgent}
                     onPromptAction={handlePromptAction}
                     onWizardAction={handleWizardAction}
                     onPreviewAction={handlePreviewAction}

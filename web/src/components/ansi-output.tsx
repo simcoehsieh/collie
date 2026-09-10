@@ -4,6 +4,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { parseAnsi, type AnsiSegment } from "@/lib/ansi";
 import { buildBlocks } from "@/lib/harness";
+import type { MirrorModel } from "@/hooks/use-mirror-model";
 import {
   dropLeadingLines,
   lineText,
@@ -54,7 +55,15 @@ type GenericMenuBlock = Extract<Block, { kind: "menu" }>;
 type AutoBlock = Extract<Block, { kind: "autocomplete" }>;
 
 export interface AnsiOutputProps {
+  /** The mirror text. Parsed here unless `model` is given, in which case this is not read. */
   text: string;
+  /**
+   * FORK: the mirror ALREADY PARSED — the lines and the Block AST the caller built once for its
+   * own probes (hooks/use-mirror-model.ts). Given, this component renders them and parses nothing;
+   * absent, it parses `text` itself, so every other caller (the transcript, the playground) is
+   * unchanged. `agent` is then only the adapter the caller already chose — the blocks are theirs.
+   */
+  model?: MirrorModel;
   className?: string;
   /** true = wrap; the block breaks at the viewport width instead of scrolling horizontally. Default
    *  true — the mirror is mostly agent prose, and a phone shows far fewer columns than the desktop
@@ -184,6 +193,11 @@ function segmentStyle(s: AnsiSegment): CSSProperties {
 function preClass(wrap: boolean, className?: string): string {
   return cn(
     "m-0 font-mono leading-[1.25] tracking-normal text-foreground [font-variant-ligatures:none]",
+    // FORK: the mirror is its own layout and paint island. Nothing outside the <pre> depends on
+    // the geometry of what is inside it (the scroller sizes it, the dialogs sit after it), so a
+    // changed line no longer invalidates layout beyond the pre, and its paint is clipped to its
+    // box — which is what lets the browser skip it entirely when the composer repaints over it.
+    "[contain:layout_paint]",
     MIRROR_SPACE,
     MIRROR_INVERT,
     wrap
@@ -307,6 +321,7 @@ const renderImageCluster = (
 
 export const AnsiOutput = memo(function AnsiOutput({
   text,
+  model,
   className,
   wrap = true,
   fontSize = 11,
@@ -328,8 +343,16 @@ export const AnsiOutput = memo(function AnsiOutput({
   // The mirror is agent output and is not translated — but the two strings the image cluster
   // renders are Collie's own words, so this subscribes for the same reason every t() caller does.
   useLocale();
-  const segments = useMemo(() => parseAnsi(text), [text]);
-  const blocks = useMemo(() => buildBlocks(splitLines(segments), { agent }), [segments, agent]);
+  // One parse, or none: a caller holding a MirrorModel has already paid for it (agent-chat, whose
+  // three probes derive from the same object). The `text` path is what it always was.
+  const ownLines = useMemo(
+    () => (model === undefined ? splitLines(parseAnsi(text)) : model.lines),
+    [model, text],
+  );
+  const blocks = useMemo(
+    () => (model === undefined ? buildBlocks(ownLines, { agent }) : model.blocks),
+    [model, ownLines, agent],
+  );
 
   const rawBlocks = useMemo(
     () =>
@@ -566,7 +589,26 @@ export const AnsiOutput = memo(function AnsiOutput({
   // nothing to pan, so the table would be silently un-pannable, which is the exact failure this
   // change exists to fix. A frame row that is NOT in a run, a lone menu or panel border, keeps its clip
   // untouched: a detected table owns its own rows, and nothing beyond them.
-  const renderLine = (line: StyledLine, li: number, lead: boolean, inRun: boolean): ReactNode => {
+  // FORK: a line's key is its TEXT (plus an occurrence count for repeats), never its index. The
+  // mirror is a rendered grid: one new row of output shifts every index by one, and index keys made
+  // React rewrite the text of all ~600 lines on every tick the agent streamed — the same rows, one
+  // slot down. Keyed by content, the reconciler sees one row leave the top and one arrive at the
+  // bottom, and the 598 between them keep their DOM nodes. The counter is per block, so two
+  // identical blank lines stay distinct siblings.
+  const seen = new Map<string, number>();
+  const lineKey = (line: StyledLine): string => {
+    const content = lineText(line);
+    const n = seen.get(content) ?? 0;
+    seen.set(content, n + 1);
+    return n === 0 ? content : `${n}\u0000${content}`;
+  };
+  const renderLine = (
+    line: StyledLine,
+    li: number,
+    lead: boolean,
+    inRun: boolean,
+    trailing: ReactNode = null,
+  ): ReactNode => {
     if (li > 0) offset += 1; // the "\n" separating this line from the previous
     const segNodes = line.segments.map((s, si) => {
       const segStart = offset;
@@ -589,9 +631,10 @@ export const AnsiOutput = memo(function AnsiOutput({
       segNodes
     );
     return (
-      <Fragment key={li}>
+      <Fragment key={lineKey(line)}>
         {li > 0 && lead ? "\n" : null}
         {content}
+        {trailing}
       </Fragment>
     );
   };
@@ -600,6 +643,7 @@ export const AnsiOutput = memo(function AnsiOutput({
   let clusterIndex = 0;
   const renderBlock = (block: RawBlock, bi: number) => {
     if (bi > 0) offset += 1; // the "\n" separating this block from the previous
+    seen.clear();
     const runs = runsByBlock[bi] ?? NO_RUNS;
     const clusters = clustersByBlock[bi] ?? NO_CLUSTERS;
     const nodes: ReactNode[] = [];

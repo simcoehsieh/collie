@@ -3,6 +3,9 @@ import { fireEvent, render } from "@testing-library/react";
 import type { ComponentProps } from "react";
 
 import { AnsiOutput } from "./ansi-output";
+import { parseAnsi } from "@/lib/ansi";
+import { splitLines } from "@/lib/blocks";
+import { buildBlocks } from "@/lib/harness";
 
 const ESC = "\x1b";
 const MUTED_RULE_COLOUR = "rgb(161, 161, 161)"; // #a1a1a1, --muted-foreground's dark half
@@ -557,5 +560,45 @@ describe("terminal mirror image placeholders", () => {
     fireEvent.error(container.querySelector("img")!);
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toContain("[Image]");
+  });
+});
+
+// ── FORK: the mirror is parsed once, rendered from the model ─────────────────────────────────────
+describe("AnsiOutput — a prebuilt MirrorModel", () => {
+  it("renders the model's lines and never parses `text`", () => {
+    const lines = splitLines(parseAnsi("from the model"));
+    const model = { lines, blocks: buildBlocks(lines, {}) };
+    const { container } = render(<AnsiOutput text="from the text prop" model={model} />);
+    const pre = container.querySelector("pre")!;
+    expect(pre.textContent).toBe("from the model");
+    expect(pre.textContent).not.toContain("from the text prop");
+  });
+
+  it("keeps the `text` path for callers with no model", () => {
+    const { container } = render(<AnsiOutput text="plain" />);
+    expect(container.querySelector("pre")!.textContent).toBe("plain");
+  });
+});
+
+// ── FORK: line keys are content, so a scrolled grid keeps its nodes ───────────────────────────────
+describe("AnsiOutput — stable line nodes across a one-row scroll", () => {
+  it("keeps the DOM node of a line that moved up one row", () => {
+    const { container, rerender } = render(<AnsiOutput text={"row a\nrow b\nrow c"} />);
+    const before = [...container.querySelectorAll("pre > span")].find(
+      (n) => n.textContent === "row b",
+    )!;
+    expect(before).toBeDefined();
+    // One new row at the bottom, one gone from the top: every index shifted by one.
+    rerender(<AnsiOutput text={"row b\nrow c\nrow d"} />);
+    const after = [...container.querySelectorAll("pre > span")].find(
+      (n) => n.textContent === "row b",
+    )!;
+    expect(after).toBe(before);
+    expect(container.querySelector("pre")!.textContent).toBe("row b\nrow c\nrow d");
+  });
+
+  it("keeps two identical lines as two distinct siblings", () => {
+    const { container } = render(<AnsiOutput text={"same\nsame\nsame"} />);
+    expect(container.querySelector("pre")!.textContent).toBe("same\nsame\nsame");
   });
 });

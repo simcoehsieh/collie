@@ -11,8 +11,8 @@
 /* ── Header: a translucent, blurred bar ─────────────────────────────────────────────────── */
 header:has(> [data-slot="collapse"] [data-slot="header-row"]) {
   background-color: color-mix(in oklab, var(--background) 82%, transparent);
-  -webkit-backdrop-filter: saturate(160%) blur(14px);
-  backdrop-filter: saturate(160%) blur(14px);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
 }
 [data-slot="header-row"] {
   padding-block: 0.5rem;

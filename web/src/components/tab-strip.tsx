@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2, Plus } from "lucide-react";
 
 import { AgentIcon } from "@/components/agent-icon";
@@ -96,7 +96,7 @@ interface TabStripProps {
 // the accessible name (now an `aria-label`, since there is no visible word to point at), and the
 // `-mx-4 px-4` that lets the last tab scroll clean off the screen while the first still starts on
 // the route's 16px gutter. Spaces and Panes keep the primitive and keep their labels.
-export function TabStrip({
+export const TabStrip = memo(function TabStrip({
   workspaceId,
   tabs,
   agents,
@@ -270,7 +270,7 @@ export function TabStrip({
       )}
     </>
   );
-}
+});
 
 // The ONE agent a tab runs, or undefined. Undefined is the honest answer in two different cases and
 // both must stay unmarked: a tab with no agent at all (a bare shell), and a tab running two brands at

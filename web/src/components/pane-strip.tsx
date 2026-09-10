@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { TerminalSquare } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -33,7 +33,7 @@ interface PaneStripProps {
 // hold several panes, and this is just a quick way to flip between them. Rendered only when the tab
 // actually holds more than one pane (a lone pane needs no switcher), so it's an optional extra row.
 // A long-press on a pill opens its actions sheet (rename / close) when the parent wires the actions.
-export function PaneStrip({
+export const PaneStrip = memo(function PaneStrip({
   panes,
   currentPaneId,
   onSelect,
@@ -100,7 +100,7 @@ export function PaneStrip({
       )}
     </>
   );
-}
+});
 
 function PanePill({
   pane,
