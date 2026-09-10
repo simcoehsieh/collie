@@ -13,6 +13,38 @@ stays true).
 
 ## On top of 1.8.0
 
+- **Two panels beside the terminal: what the agent changed, and the knowledge base.** A read-only
+  `GET /api/pane/:id/diff` (git status + numstat, one file's unified diff; 5 s deadline, 512 KB cap,
+  jailed to the home directory, no write verb) feeds a "What changed" sheet in the pane's actions.
+  `GET /api/docs` and `/api/docs/tags` proxy the kb list, search and tag endpoints over the same
+  loopback-only, credential-never-leaves discipline as `/api/doc/<slug>`, and the document panel
+  grew a browser: search, tag chips, recent, and a back stack so a doc opened from a link is one tap
+  from the list.
+- **A send the link failed is kept and resent, not handed back to be retyped.** A reply that died
+  on the transport (network, timeout, Cloudflare 52x, an Access redirect) goes into a per-pane queue
+  in `localStorage` (24 h, 8 KiB each), shown above the composer with Send now / Discard, and drains
+  in order when the feed or the network comes back. A queued prompt answer never auto-drains.
+- **The red banner says where the connection broke.** `/api/health` is probed and the verdict
+  names it: Herdr down, "Collie is restarting" (auto re-probe, no Retry to hammer), "Sign in again"
+  on an Access redirect, or the tunnel. A changed build id after the first sighting posts one line
+  saying Collie restarted, so pane ids changing under the operator is explained.
+- **Four panes on one screen, each with its last six lines.** `/overview` is a grid of memoised
+  cards (status, title, plain-text tail) refreshed on a 3 s beat, paused when hidden, read without
+  `x-collie-seen` so a glance does not clear "Ready · unseen". Entry glyph on the home header.
+- **A long press pins a pane to the top of the dashboard, in the operator's order.** Pinned rows
+  lead the triage list; a sheet reorders them; pins are pruned when their pane is gone.
+- **The desk gets keyboard shortcuts, and the phone is left alone.** Fine-pointer only, never in a
+  field: `j`/`k`, Enter, `1`–`9`, `g o` / `g h` / `g s`, `/`, `?`, Esc, and ⌘K opens the palette.
+- **Low power stretches the two fast poll gaps and leaves the feed alone.** A Settings switch (or
+  `navigator.connection.saveData`) takes HOT 1 s → 3 s and the post-send burst 300 ms → 1 s; the
+  event stream stays up because it is cheaper than polling. A glyph in the header says it is on.
+- **The phone reads a reply aloud.** A speaker on the latest-reply card, and a "Read replies aloud"
+  switch under hands-free that speaks each new reply on-device via `speechSynthesis`; stops on a
+  send, a pane change, or the mirror moving on. Off by default.
+- **A Shortcut can hand text to the last pane, as a draft, never a send.** `/pane/last?send=…`
+  redirects to the most recently opened pane and seeds the composer; the manifest declares a
+  `share_target` and two app shortcuts. iOS ignores `share_target`, so the working path there is a
+  Shortcuts "Open URL" action.
 - **An agy pane's menus, checklists and slash popup are tappable.** The Antigravity adapter grew
   `menu`, `multi-select` and `autocomplete` detectors from ten fixtures captured live on agy 1.2.0;
   a single-select answers with the digit alone (the old digit + Enter also answered the next
