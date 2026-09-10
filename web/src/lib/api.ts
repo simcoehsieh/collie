@@ -343,16 +343,54 @@ export async function fetchSnapshot(
   all = false,
 ): Promise<SnapshotResponse> {
   const path = withScope("/api/snapshot", scope);
-  const snap = await req<SnapshotResponse>(
-    all ? `${path}${path.includes("?") ? "&" : "?"}sessions=all` : path,
-    { signal },
-  );
+  const url = all ? `${path}${path.includes("?") ? "&" : "?"}sessions=all` : path;
+  // THE SNAPSHOT VALIDATES LIKE THE PANE READ DOES. Polled at up to 3 Hz and, until now, transferred
+  // whole and re-parsed into a brand-new object on every beat whether or not the herd had moved —
+  // and every consumer under the root re-rendered on the new identity. The bridge answers 304 to a
+  // matching tag; this hands back THE SAME object it cached, so a loader that memoises on identity
+  // (lib/loaders.ts → toHomeData) can keep the whole tree still on a quiet herd.
+  //
+  // Keyed by the URL, which is exactly (host, session, breadth): the same three things that decide
+  // which body the bridge assembles. The invariants are fetchPane's: an ETag is recorded only
+  // together with the body it names, and only after that body parsed.
+  const cached = snapshotCache.get(url);
+  const headers = new Headers({
+    "content-type": "application/json",
+    [XHR_HEADER]: XHR_HEADER_VALUE,
+    ...authHeader(),
+  });
+  if (cached) headers.set("if-none-match", cached.etag);
+  const res = await apiFetch(url, { signal: withTimeout(signal, GET_TIMEOUT_MS), headers });
+  captureBuild(res);
+  if (res.status === 304 && cached) {
+    if (cached.response.bridge !== "disconnected") markLive();
+    return cached.response;
+  }
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    notePairing("GET", res.status, detail);
+    throw new ApiError(`${url} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  notePairing("GET", res.status);
+  // SAFETY: a 200 on `/api/snapshot` is the bridge's own `SnapshotResponse` by contract.
+  const snap = (await res.json()) as SnapshotResponse;
+  const etag = res.headers.get("etag");
+  if (etag) snapshotCache.set(url, { etag, response: snap });
+  else snapshotCache.delete(url);
   // A snapshot whose herd link is UP is a provably-live moment — stamp the shared connection-health
   // anchor so escalation is measured from here. A snapshot that 200s but reports `bridge:
   // "disconnected"` is NOT live (the pill/banner still escalate on it), so it must NOT reset the
   // clock, or the "Herdr is down" escalation could never surface.
   if (snap.bridge !== "disconnected") markLive();
   return snap;
+}
+
+/** The last snapshot body per URL, with the ETag that names it — see fetchSnapshot. */
+const snapshotCache = new Map<string, { etag: string; response: SnapshotResponse }>();
+
+/** Tests only: forget every cached snapshot tag. */
+export function __resetSnapshotCache(): void {
+  snapshotCache.clear();
 }
 
 // Per-pane cache of the last ETag AND the body it belongs to, kept together on purpose. We send
@@ -374,13 +412,27 @@ const paneCache = new Map<string, PaneCacheEntry>();
 // pane's last body). 20 comfortably covers any panes in flight on a phone.
 const PANE_CACHE_MAX = 20;
 
+export interface FetchPaneOptions {
+  /**
+   * Ask the bridge to HOLD the read for up to this many ms when the mirror has not changed, and to
+   * answer the moment it does (`?wait=`). The poll for a page whose live feed is down: one request
+   * in place of several, and a change answered as it lands rather than up to an interval later.
+   * Omitted or 0 is the plain read.
+   */
+  wait?: number;
+}
+
 export async function fetchPane(
   paneId: string,
   lines?: number,
   scope?: Scope,
   signal?: AbortSignal,
+  opts: FetchPaneOptions = {},
 ): Promise<PaneReadResponse> {
-  const q = lines ? `?lines=${lines}` : "";
+  const params: string[] = [];
+  if (lines) params.push(`lines=${lines}`);
+  if (opts.wait && opts.wait > 0) params.push(`wait=${Math.round(opts.wait)}`);
+  const q = params.length ? `?${params.join("&")}` : "";
   const url = withScope(`/api/pane/${encodeURIComponent(paneId)}${q}`, scope);
   // Pane ids are unique only within one session on one machine (each session is its own Herdr
   // server; each crew member is its own machine again), so the ETag/body cache is keyed by the full

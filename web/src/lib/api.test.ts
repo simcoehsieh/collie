@@ -4,6 +4,7 @@ import { server } from "@/test/setup";
 import { fixtureCrewSnapshot, fixtureSnapshot } from "@/test/handlers";
 import { __resetConnectionHealth, isLostLatched, lastHealthyAt } from "./connection-health";
 import { isConnecting } from "./connection";
+import { __resetSnapshotCache } from "./api";
 import {
   checkForUpdates,
   createTab,
@@ -561,5 +562,84 @@ describe("refreshNow", () => {
   it("swallows a refusal: the revalidation that follows is the one that reports", async () => {
     server.use(http.post("/api/refresh", () => new HttpResponse("nope", { status: 503 })));
     await expect(refreshNow()).resolves.toBeUndefined();
+  });
+});
+
+// FORK — the snapshot validates. The same (etag, body) discipline fetchPane has, and on a 304 the
+// SAME object comes back, which is what lets the loader keep HomeData's identity on a quiet herd.
+describe("api client — the snapshot's ETag cache", () => {
+  beforeEach(() => __resetSnapshotCache());
+  afterEach(() => vi.restoreAllMocks());
+
+  it("sends If-None-Match on the second poll and hands back the cached body on a 304", async () => {
+    const seen: (string | null)[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const inm = new Headers(init?.headers).get("if-none-match");
+      seen.push(inm);
+      if (inm === '"s1"') return new Response(null, { status: 304, headers: { etag: '"s1"' } });
+      return new Response(JSON.stringify(fixtureSnapshot), {
+        status: 200,
+        headers: { "content-type": "application/json", etag: '"s1"' },
+      });
+    });
+    const a = await fetchSnapshot();
+    const b = await fetchSnapshot();
+    expect(seen).toEqual([null, '"s1"']);
+    expect(b).toBe(a);
+  });
+
+  it("keys the cache by (host, session, breadth), so one scope's tag never validates another's", async () => {
+    const seen: { url: string; inm: string | null }[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      seen.push({ url, inm: new Headers(init?.headers).get("if-none-match") });
+      return new Response(JSON.stringify(fixtureSnapshot), {
+        status: 200,
+        headers: { "content-type": "application/json", etag: `"${url}"` },
+      });
+    });
+    await fetchSnapshot();
+    await fetchSnapshot({ session: "demo" });
+    await fetchSnapshot(undefined, undefined, true);
+    await fetchSnapshot();
+    expect(seen.map((x) => x.inm)).toEqual([null, null, null, '"/api/snapshot"']);
+  });
+
+  it("a 304 on a cached body still stamps liveness", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const inm = new Headers(init?.headers).get("if-none-match");
+      if (inm) return new Response(null, { status: 304, headers: { etag: '"s1"' } });
+      return new Response(JSON.stringify(fixtureSnapshot), {
+        status: 200,
+        headers: { "content-type": "application/json", etag: '"s1"' },
+      });
+    });
+    await fetchSnapshot();
+    __resetConnectionHealth(1);
+    await fetchSnapshot();
+    expect(lastHealthyAt()).toBeGreaterThan(1);
+  });
+});
+
+describe("api client — the pane read's wait", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("carries ?wait= only when asked, before the scope params", async () => {
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ paneId: "w1:p1", text: "", truncated: false, revision: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    await fetchPane("w1:p1", 200, { session: "demo" }, undefined, { wait: 1500 });
+    await fetchPane("w1:p1", 200, { session: "demo" }, undefined, { wait: 0 });
+    await fetchPane("w1:p1", 200, { session: "demo" });
+    expect(urls).toEqual([
+      "/api/pane/w1%3Ap1?lines=200&wait=1500&session=demo",
+      "/api/pane/w1%3Ap1?lines=200&session=demo",
+      "/api/pane/w1%3Ap1?lines=200&session=demo",
+    ]);
   });
 });
