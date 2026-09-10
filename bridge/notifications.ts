@@ -1,4 +1,5 @@
-import type { PushMessage } from "./push.ts";
+import type { BinaryPromptPeek } from "./prompt-peek.ts";
+import { YES_NO_ACTIONS, type PushMessage } from "./push.ts";
 import type { AgentStatus, AgentView } from "./types.ts";
 
 // A notification shouldn't be fire-and-forget. This coordinator gives every blocked/done alert a
@@ -32,6 +33,10 @@ export interface HerdSummary {
   body: string;
   /** Deep-link target when exactly one alert is outstanding; undefined for a multi-agent digest. */
   paneId?: string;
+  /** The one outstanding pane's agent and status — present exactly when `paneId` is. The sink needs
+   *  both to decide whether the notification earns Yes/No buttons (see {@link makeNotifySink}). */
+  agent?: string;
+  status?: NotifiableStatus;
   /** Re-alert (buzz) the device — true when a new alert arrived, false on a silent retraction update. */
   renotify: boolean;
 }
@@ -51,6 +56,13 @@ export interface PushSender {
 export interface MuteGate {
   isMuted(): boolean;
 }
+
+/**
+ * Whether the pane's tail is a dialog a plain Yes or No answers — bridge/prompt-peek.ts over a fresh
+ * read of the pane. The sink asks it ONLY for a single outstanding `blocked` alert, so a digest, a
+ * done alert and a retraction never touch the multiplexer. A rejection or a throw reads as "no".
+ */
+export type PromptPeek = (paneId: string) => Promise<BinaryPromptPeek | null>;
 
 /**
  * Who the alerts flowing through a sink belong to — the `(host, session)` half of the address triple
@@ -83,6 +95,7 @@ export function makeNotifySink(
   mute: MuteGate,
   herdTag: string,
   ident: NotifyIdentity = {},
+  peek?: PromptPeek,
 ): NotifySink {
   const { session: sessionName, host } = ident;
   return {
@@ -92,7 +105,28 @@ export function makeNotifySink(
       const msg: PushMessage = { title: s.title, body, tag: herdTag, paneId: s.paneId, renotify: s.renotify };
       if (sessionName !== undefined) msg.session = sessionName;
       if (host !== undefined) msg.host = host;
-      void push.send(msg);
+      if (s.agent !== undefined) msg.agent = s.agent;
+      // A single blocked pane may earn Yes/No buttons — but only after a look at its tail, which is
+      // a multiplexer round trip. Everything else sends on the spot, exactly as before: a caller
+      // without a peek gets the synchronous path it always had.
+      if (peek === undefined || s.paneId === undefined || s.status !== "blocked") {
+        void push.send(msg);
+        return;
+      }
+      const paneId = s.paneId;
+      void (async () => {
+        let approve: BinaryPromptPeek | null = null;
+        try {
+          approve = await peek(paneId);
+        } catch {
+          approve = null;
+        }
+        if (approve !== null) {
+          msg.actions = YES_NO_ACTIONS;
+          msg.approve = approve;
+        }
+        void push.send(msg);
+      })();
     },
     clear: () => {
       if (mute.isMuted()) return;
@@ -106,11 +140,14 @@ interface Alert {
   workspaceLabel: string;
   cwd: string;
   status: NotifiableStatus;
+  /** The pane as it was when the alert armed — what a per-pane rule is matched against on a prefs
+   *  change (bridge/notify-prefs.ts `ruleFor`), since the coordinator never re-reads the herd. */
+  pane: AgentView;
 }
 
 export class NotificationCoordinator<H = unknown> {
   /** paneId → debouncing alert (timer + its kind) that hasn't entered the summary yet. */
-  private readonly pending = new Map<string, { handle: H; status: NotifiableStatus }>();
+  private readonly pending = new Map<string, { handle: H; status: NotifiableStatus; pane: AgentView }>();
   /** paneId → alert that has fired and is reflected in the current summary (insertion-ordered). */
   private readonly outstanding = new Map<string, Alert>();
 
@@ -120,13 +157,14 @@ export class NotificationCoordinator<H = unknown> {
     private readonly delayMs: number,
     // Whether a transition into a status should notify, read live from the prefs store so a runtime
     // change is honoured. A disabled kind behaves exactly like a non-notifiable status (idle/working).
-    private readonly isNotifiable: (status: AgentStatus) => boolean,
+    // The pane rides along so a per-pane rule can answer; a caller that ignores it gets the switches.
+    private readonly isNotifiable: (status: AgentStatus, pane: AgentView) => boolean,
   ) {}
 
   /** Wire to `StateEngine.onTransition`. */
   onTransition(agent: AgentView, _from: AgentStatus, to: AgentStatus): void {
     const id = agent.paneId;
-    if (!this.isNotifiable(to)) {
+    if (!this.isNotifiable(to, agent)) {
       // Resolved to a non-notifiable (or preference-disabled) state: drop a still-pending alert,
       // retract a delivered one.
       this.resolve(id);
@@ -142,13 +180,14 @@ export class NotificationCoordinator<H = unknown> {
       // notifiable set IS `NotifiableStatus` (blocked/done) — `isNotifiable` returns false for
       // every other member of `AgentStatus`, so this branch cannot be entered with one.
       status: to as NotifiableStatus,
+      pane: agent,
     };
     const handle = this.clock.schedule(() => {
       this.pending.delete(id);
       this.outstanding.set(id, alert);
       this.emit(true);
     }, this.delayMs);
-    this.pending.set(id, { handle, status: alert.status });
+    this.pending.set(id, { handle, status: alert.status, pane: agent });
   }
 
   /** Wire to `StateEngine.onRemove` — a vanished pane is implicitly resolved. */
@@ -165,12 +204,12 @@ export class NotificationCoordinator<H = unknown> {
   applyPrefs(): void {
     // Drop pending timers for a now-disabled kind — nothing was shown yet, so no re-emit is needed.
     for (const [id, p] of this.pending) {
-      if (!this.isNotifiable(p.status)) this.cancelPending(id);
+      if (!this.isNotifiable(p.status, p.pane)) this.cancelPending(id);
     }
     // Retract delivered alerts of a now-disabled kind; re-emit the shrunk summary once if any went.
     let removed = false;
     for (const [id, a] of this.outstanding) {
-      if (!this.isNotifiable(a.status)) {
+      if (!this.isNotifiable(a.status, a.pane)) {
         this.outstanding.delete(id);
         removed = true;
       }
@@ -214,6 +253,8 @@ export class NotificationCoordinator<H = unknown> {
         title: `${a.agent} ${verb}`,
         body: `${a.workspaceLabel} · ${a.cwd}`,
         paneId,
+        agent: a.agent,
+        status: a.status,
         renotify,
       };
     }

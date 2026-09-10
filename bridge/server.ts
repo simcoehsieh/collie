@@ -10,7 +10,7 @@ import { MUX_CAPABILITIES, type MuxCapability, type MuxCapabilityDeclaration } f
 import type { MuxAdapter, MuxAck, MuxGrid } from "./mux/types.ts";
 import { computeEtag, gzipJsonResponse, notModified } from "./http-cache.ts";
 import { pluginRoot } from "./root.ts";
-import type { NotifyPrefs, NotifyPrefsStore } from "./notify-prefs.ts";
+import { parseNotifyPrefsPatch as parsePrefsPatch, type NotifyPrefs, type NotifyPrefsStore } from "./notify-prefs.ts";
 import { createOperatorCommands } from "./operator-commands.ts";
 import { createOperatorKeys } from "./operator-keys.ts";
 import { createOperatorQuickReplies } from "./operator-quick-replies.ts";
@@ -1545,11 +1545,14 @@ export function startServer(opts: {
           return text("bad subscription", 400);
         }
         if (!isPushSubscription(body)) return text("bad subscription", 400);
-        await push.addSubscription(body, {
+        // FORK: answers whether the endpoint was already on file. A device that believed itself
+        // registered and hears `known: false` was pruned (its endpoint 404/410'd a send) and must
+        // mint a fresh subscription instead of re-registering the dead one — web/src/lib/push.ts.
+        const ack = await push.addSubscription(body, {
           replaces: supersededEndpoint(body),
           userAgent: req.headers.get("user-agent") ?? undefined,
         });
-        return secure(new Response(null, { status: 204 }));
+        return json(ack, req.headers.get("accept-encoding"));
       }
       if (pathname === "/api/notifications/snooze" && req.method === "POST") {
         // Managing your own notification quiet-hours isn't terminal-driving — read-level, like subscribe.
@@ -3699,16 +3702,9 @@ export function parsePairRequest(v: JsonValue | undefined): PairRequest | null {
  * Pure + exported so the validation is unit-testable without Bun.serve.
  */
 export function parseNotifyPrefsPatch(v: JsonValue | undefined): Partial<NotifyPrefs> | null {
-  const o = asJsonRecord(v);
-  if (o === null) return null;
-  const patch: Partial<NotifyPrefs> = {};
-  for (const key of ["blocked", "done", "updates"] as const) {
-    if (!(key in o)) continue;
-    const value = o[key];
-    if (typeof value !== "boolean") return null;
-    patch[key] = value;
-  }
-  return patch;
+  // FORK: the patch grew a per-pane rule list, and its validation lives with the store that owns
+  // the shape (bridge/notify-prefs.ts) rather than beside the route.
+  return parsePrefsPatch(v);
 }
 
 // Shape-check an untrusted /api/subscribe body before persisting it (a malformed sub would be
