@@ -42,7 +42,7 @@ import type { Scope } from "@/lib/scope";
 export const BURST_MS = 300;
 /** The gap while the operator follows a pane that has something to show — its agent is working, or
  *  its mirror moved on the last poll. */
-export const HOT_MS = 1500;
+export const HOT_MS = 1000; // FORK: was 1500 — a followed, moving mirror at 1 Hz reads as live
 /** The home screen while an agent somewhere is working or blocked. Nobody is on a mirror, so there
  *  is nothing to keep smooth; the herd's row still has to reflect a status change without feeling
  *  stuck. */

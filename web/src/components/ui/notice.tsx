@@ -199,7 +199,7 @@ const STRIP = "flex min-h-[33px] w-full items-center gap-2 border-b px-4 py-1 te
  * a strip affordance — and the answer when one does is `width: stretch`, which fills what the margin
  * leaves, NOT a return to `w-full`.)
  */
-const BOX = "flex min-h-[42px] items-start gap-2 rounded-sm border px-4 py-2 text-xs font-medium";
+const BOX = "flex min-h-[42px] items-start gap-2 rounded-lg border px-4 py-2 text-xs font-medium";
 
 export function Notice({
   tone,

@@ -62,13 +62,8 @@
          would spend everyone's first paint on a minority. Keep the URL in step with
          DEFAULT_UI_FONT_URL in src/lib/sw-routes.ts and the @font-face in src/index.css —
          fonts.test.ts pins all three. -->
-    <link
-      rel="preload"
-      href="/fonts/ui-aldrich-1.002-latin.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
+    <!-- FORK: the default face is the system one, so there is nothing to preload — the two shipped
+         webfonts are opt-in and fetched when a reader picks one. -->
     <!-- The web manifest <link> is injected by vite-plugin-pwa at build time. -->
     <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -162,6 +157,11 @@
          resolves through the default below, which is what it should do. Keep in step with
          index.css. */
       :root {
+        --font-sans:
+          ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+      }
+      :root.font-aldrich {
         --font-sans:
           "Aldrich", "Aldrich Fallback", ui-sans-serif, system-ui, -apple-system,
           "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;

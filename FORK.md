@@ -77,6 +77,45 @@ again. Removing an installed PWA on iOS also discards its site data **and its We
 so that install has to re-subscribe from Settings afterwards — which is the reason to give the OTHER
 machine the new icon and leave a working, subscribed install alone.
 
+## The redesign (2026-09-10)
+
+The web UI does not look like upstream's. Upstream's `DESIGN.md` pins every corner to 2px, paints
+chrome in a neutral grey with no accent, and ships Aldrich as the default face; this fork wanted a
+modern phone app — round, tinted, one accent, the phone's own typeface — and got it **without
+rewriting a screen**, because the look was already concentrated in three places upstream does not
+touch between releases (zero commits to any of them across v1.5.0 → v1.8.0):
+
+| Layer | Where | What changed |
+| --- | --- | --- |
+| Tokens | `web/src/index.css` `:root` + `@theme` | `--radius` 2px → a real ramp (8/12/16/20/24), cool-tinted neutrals (hue ~258), one indigo `--primary`, tinted elevation (`--elev-*` → `shadow-card` / `shadow-float`), the system font as the default stack |
+| Primitives | `web/src/components/ui/*.tsx` | button (tonal `outline`, softer press), card, chip (pill), badge (pill), switch (stadium track), list-group, chat-input (filled field), sheet (3xl top corners, blurred scrim), notice box |
+| Skin | `web/src/skin.css` — **fork-only, new file** | everything reachable by a `data-slot` selector: the blurred header, the composer's rounded chrome block, the segmented controls row, the mirror's own ground, the route entrance animation |
+
+Only a handful of component files carry className edits beyond that (`agent-card`, `agent-list`,
+`composer` send buttons, `nav-tray` inherits the button change), plus one `data-slot="mirror"`
+attribute in `agent-chat.tsx` so the skin can paint the terminal well. **When a merge conflicts on
+one of those, keep upstream's structure and re-apply the class; when it conflicts on `index.css`'s
+token block or a `ui/` file, keep the fork's** — those files are the design and upstream's version of
+them is the old design.
+
+The default face moved from Aldrich to the system stack (`DEFAULT_FONT = "system"` in
+`web/src/lib/design.ts`, mirrored in `public/theme-init.js` and the `index.html` splash), so a fresh
+device fetches no webfont at all; Aldrich and Space Grotesk stay shipped as opt-in choices under
+`:root.font-aldrich` / `:root.font-grotesk`. `fonts.test.ts` and `typeface-control.test.tsx` pin the
+new default.
+
+**Two things were done for the feel of opening a terminal, not the look of it.** A navigation whose
+snapshot or mirror is already in memory now returns it at once, flagged `pending`, and
+`RootLayout` revalidates in the same tick (`web/src/lib/loaders.ts`, `web/src/routes/root.tsx`) —
+so a tap on a pane row paints the pane before the round trip instead of after it, which through
+Cloudflare was two of them. And `HOT_MS` in `use-polling.ts` is 1000 rather than 1500: a followed,
+moving mirror at 1 Hz reads as live. Both are the kind of edit that will conflict when upstream
+touches the same lines; both are a dozen lines and easy to re-apply.
+
+Upstream's `DESIGN.md` is left as it is — it is upstream's argument for upstream's look, and editing
+it would conflict on every release. Where a rule of it is knowingly broken here (the stadium, the
+ramp, the accent), the reason is in the token's own comment.
+
 ## Taking upstream's changes
 
 The procedure below is automated by the **`collie-upstream-sync` skill**, which lives in this repo

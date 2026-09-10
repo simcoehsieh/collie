@@ -1,0 +1,92 @@
+/* ── FORK: the visual skin ─────────────────────────────────────────────────────────────────────
+   Restyles the app by `data-slot` and a few structural selectors, so the redesign lives in ONE
+   fork-only file that upstream never edits. Anything that can be expressed here is expressed here
+   rather than in a component's className, because a merge conflict costs more than a selector.
+
+   Cascade: this sheet loads AFTER index.css (main.tsx), so an equal-specificity rule here wins.
+   Tailwind utilities live in `@layer utilities`; these are unlayered and therefore win over any
+   utility of equal specificity — which is the point: a utility upstream adds to a slot is
+   overridden here, and nothing here needs `!important`. */
+
+/* ── Header: a translucent, blurred bar ─────────────────────────────────────────────────── */
+header:has(> [data-slot="collapse"] [data-slot="header-row"]) {
+  background-color: color-mix(in oklab, var(--background) 82%, transparent);
+  -webkit-backdrop-filter: saturate(160%) blur(14px);
+  backdrop-filter: saturate(160%) blur(14px);
+}
+[data-slot="header-row"] {
+  padding-block: 0.5rem;
+}
+
+/* ── The mirror's ground ────────────────────────────────────────────────────────────────── */
+/* Upstream keeps the page and the terminal the SAME colour (dark --background == #0a0a0a) so the
+   mirror has no seam. This fork lifts the page off pure black, so the mirror's wrapper paints the
+   terminal ground itself and fills the whole region between the strips and the composer — the
+   terminal reads as a well set into the page, light or dark. The light value is what the mirror's
+   invert filter turns #0a0a0a into (components/mirror-space.ts), so the two agree to the pixel. */
+[data-slot="mirror"] {
+  background-color: light-dark(#f5f5f5, #0a0a0a);
+}
+
+/* ── Terminal chrome block (the composer's ground under the mirror) ──────────────────────── */
+[data-slot="chrome-block"] {
+  border-top-left-radius: var(--radius-2xl);
+  border-top-right-radius: var(--radius-2xl);
+  box-shadow: 0 -8px 28px -12px var(--shadow-ink-float);
+}
+/* The status band that doubles as the controls' handle. */
+[data-slot="composer-status"] {
+  border-color: transparent;
+  color: var(--muted-foreground);
+}
+/* The Keys · Type · Quick · Agent row reads as one segmented control. */
+[data-slot="composer-controls"] {
+  background-color: color-mix(in oklab, var(--muted) 70%, transparent);
+  border-radius: var(--radius-lg);
+  padding: 0.25rem;
+  margin-inline: 0;
+}
+[data-slot="composer-controls"] > [data-slot="button"] {
+  border-radius: var(--radius-md);
+}
+
+/* ── Dashboard rows ─────────────────────────────────────────────────────────────────────── */
+[data-slot="agent-row-title"] {
+  letter-spacing: -0.005em;
+}
+
+/* ── Sheet chrome ───────────────────────────────────────────────────────────────────────── */
+[data-slot="sheet-title-row"] {
+  padding-bottom: 0.625rem;
+}
+
+/* ── Motion: a route arriving ───────────────────────────────────────────────────────────── */
+/* The outlet wrapper in routes/root.tsx carries `data-route-enter`; the key on it changes when the
+   KIND of route changes (dashboard ↔ pane ↔ settings), which remounts the wrapper and replays the
+   entrance. A pane→pane hop keeps the wrapper, so it never restarts the composer's mount. */
+[data-route-enter] {
+  animation: route-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes route-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-route-enter] {
+    animation: none;
+  }
+}
+
+/* ── Scrollbars on the desktop, thin and quiet ──────────────────────────────────────────── */
+@media (hover: hover) and (pointer: fine) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+  }
+}

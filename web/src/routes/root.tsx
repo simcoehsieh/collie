@@ -1,11 +1,15 @@
 import {
   Outlet,
   useLoaderData,
+  useLocation,
   useNavigation,
   useParams,
   useRouteError,
+  useRevalidator,
   useRouteLoaderData,
 } from "react-router";
+
+import { useEffect } from "react";
 
 import { usePolling } from "@/hooks/use-polling";
 import { usePollBusy } from "@/hooks/use-poll-busy";
@@ -57,11 +61,20 @@ export function RootLayout() {
   // `/pane/:paneId` child is active. useAgentTransitions uses it to suppress a notification for the
   // pane you're already looking at.
   const { paneId } = useParams();
+  const routeKind = useLocation().pathname.split("/")[1] ?? "";
   // The active pane's loader data, or undefined when a pane isn't the active route — the router
   // already carries both stamps, so dating the bar by what's on screen needs no store of its own.
   // SAFETY: PANE_ROUTE_ID names the route whose `loader` is paneLoader (router.tsx pairs the two),
   // so the only value that can appear under that id is the PaneData that loader returned.
   const pane = useRouteLoaderData(PANE_ROUTE_ID) as PaneData | undefined;
+  // FORK: a loader that answered from cache on a navigation (`pending`) is owed its real read at
+  // once — not on the next poll tick, which can be 6s away on an idle herd. One effect for both
+  // loaders, because both flags mean the same thing and revalidate() re-runs every active loader.
+  const pendingRead = data.pending === true || pane?.pending === true;
+  const { revalidate } = useRevalidator();
+  useEffect(() => {
+    if (pendingRead) void revalidate();
+  }, [pendingRead, revalidate]);
 
   // The scope rides along so a "look now" on foreground lands on the machine and session the page is
   // actually showing — a refresh aimed at the lead would leave a peer's herd exactly as stale.
@@ -127,7 +140,13 @@ export function RootLayout() {
             forwarding them from anyway — six copies of the same two fields was six chances to
             disagree with the ConnectionBanner two lines up. */}
         <AppHeaderHost bridge={data.bridge} error={data.error}>
-          <Outlet />
+          {/* FORK: the route's entrance. Keyed by the KIND of route (dashboard / space / pane /
+              settings / crew), so a dashboard→pane tap replays the 220ms rise in skin.css while a
+              pane→pane hop — which must keep DetailRoute mounted (routes/detail.tsx) — does not
+              remount anything. The wrapper mirrors the column each route already draws. */}
+          <div key={routeKind} data-route-enter className="flex min-h-0 flex-1 flex-col">
+            <Outlet />
+          </div>
         </AppHeaderHost>
       </div>
     </CrewProvider>

@@ -562,13 +562,62 @@ describe("loaders — offline navigation fast path", () => {
     expect(fetchSpy).toHaveBeenCalled();
   });
 
-  it("does NOT fast-path when the connection is not latched (a brief blip still fetches)", async () => {
+  // FORK — show first, fetch second. Upstream's rule here was "a navigation that is not latched
+  // really fetches"; this fork hands back the last GOOD snapshot on the tap, flagged `pending`, and
+  // RootLayout revalidates at once (routes/root.tsx). The three facts that make that honest:
+  it("answers a navigation from the last good snapshot, flagged pending and NOT as an error", async () => {
     const { rootLoader } = await import("./loaders");
-    // No latchLost(): a transient blip must keep really fetching on navigation, not serve stale.
     await rootLoader({ request: new Request("http://localhost/") });
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    await rootLoader({ request: new Request("http://localhost/space/w1") }); // navigation, but not latched
+    const data = await rootLoader({ request: new Request("http://localhost/space/w1") });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(data.pending).toBe(true);
+    expect(data.error).toBe(false);
+    expect(data.agents.length).toBeGreaterThan(0);
+  });
+
+  it("really fetches on the revalidation that follows (same url), and that body is not pending", async () => {
+    const { rootLoader } = await import("./loaders");
+    await rootLoader({ request: new Request("http://localhost/") });
+    await rootLoader({ request: new Request("http://localhost/space/w1") }); // the tap
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const data = await rootLoader({ request: new Request("http://localhost/space/w1") }); // revalidate
     expect(fetchSpy).toHaveBeenCalled();
+    expect(data.pending).toBeUndefined();
+  });
+
+  it("still fetches a navigation it has never cached (cold path unchanged)", async () => {
+    const { rootLoader } = await import("./loaders");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const data = await rootLoader({ request: new Request("http://localhost/") });
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(data.pending).toBeUndefined();
+  });
+
+  it("answers a pane re-open from its in-memory mirror, flagged pending, then fetches on revalidate", async () => {
+    const { paneLoader, rootLoader } = await import("./loaders");
+    await paneLoader({
+      params: { paneId: "w1:p1" },
+      request: new Request("http://localhost/pane/w1:p1"),
+    });
+    await rootLoader({ request: new Request("http://localhost/") }); // leave ⇒ a return is a nav
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const tap = await paneLoader({
+      params: { paneId: "w1:p1" },
+      request: new Request("http://localhost/pane/w1:p1"),
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(tap.pending).toBe(true);
+    expect(tap.error).toBe(false);
+    expect(tap.text.length).toBeGreaterThan(0);
+
+    const poll = await paneLoader({
+      params: { paneId: "w1:p1" },
+      request: new Request("http://localhost/pane/w1:p1"),
+    });
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(poll.pending).toBeUndefined();
   });
 });
 

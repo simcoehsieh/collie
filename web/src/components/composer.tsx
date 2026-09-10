@@ -519,11 +519,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useBusyWhile(uploading);
   useBusyWhile(recorder.phase === "transcribing");
 
-  // Whether the round button at the end of the row is the microphone rather than Send. True only on
-  // an EMPTY box, which is the one state where Send can do nothing anyway; the first character typed
-  // hands the button straight back. `direct.active` keeps it, because there the same button is the
-  // "stop typing into the terminal" control and that must not be displaceable.
-  const micIsPrimary = stt !== null && !direct.active && input.trim() === "";
+  // FORK: the microphone is its OWN control, inside the field beside the attach clip, and the round
+  // button at the end of the row is always Send. Upstream makes the one round button the microphone
+  // while the box is empty and Send once there is text — which the operator read as "the send key
+  // turned into a microphone": two actions sharing one glyph slot is what he could not tell apart.
+  // The field pays 36px of width for it, the price upstream declined; a glyph that never changes
+  // meaning is worth more here. Hidden in direct typing, where the end button is "stop typing".
+  const micShown = stt !== null && !direct.active;
 
   /**
    * What happens to a finished transcript.
@@ -1618,7 +1620,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               // now, and the width came back. A second, conditional `pr-*` in this same cn() would
               // not stack — tailwind-merge keeps only the last padding-right (DESIGN.md §7) — which
               // is why nothing else may reserve space by adding one here.
-              "block pr-11",
+              // FORK: `pr-20` makes room for the microphone beside the clip (see `micShown`).
+              micShown ? "block pr-20" : "block pr-11",
               // The draft is terminal-bound text, so the field wears the TERMINAL face — the same
               // family the mirror above it renders in, not the app's chrome face. `font-mono` is
               // the mirror's own default; the style below follows the operator's mirror-family
@@ -1666,6 +1669,40 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 }}
               />
             </AnchoredMenu>
+            {/* FORK: the microphone, beside the clip (see `micShown`). Same bottom pin as the clip. */}
+            {stt !== null && !direct.active && (
+              <Button
+                type="button"
+                size="icon"
+                variant={recorder.busy ? "destructive" : "ghost"}
+                className={cn(
+                  "absolute bottom-1 right-10 size-9 rounded-full",
+                  !recorder.busy && "text-muted-foreground",
+                )}
+                disabled={!stt.available || locked || sending || recorder.phase === "transcribing"}
+                aria-pressed={recorder.busy}
+                aria-label={
+                  !stt.available
+                    ? (stt.reason ?? translate("composer.mic.unavailable"))
+                    : recorder.phase === "recording"
+                      ? translate("composer.mic.stopAria")
+                      : translate("composer.mic.recordAria")
+                }
+                title={stt.available ? undefined : stt.reason}
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() =>
+                  recorder.phase === "recording" ? recorder.stopAndSend() : recorder.start()
+                }
+              >
+                {recorder.phase === "transcribing" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : recorder.phase === "recording" ? (
+                  <Square className="size-4 fill-current" />
+                ) : (
+                  <Mic className="size-4" />
+                )}
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -1723,7 +1760,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             // child. §2 is kept by the button box being the same height in all four branches.
             <Button
               variant="destructive"
-              className="h-11 shrink-0 rounded-md px-4 text-sm font-semibold"
+              className="h-11 shrink-0 rounded-lg px-4 text-sm font-semibold"
               onClick={onSendClick}
               disabled={locked || !input.trim() || sending}
               aria-label={translate("composer.send.typeAnyway")}
@@ -1733,55 +1770,21 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           ) : !direct.active && confirmingSend ? (
             <Button
               variant="destructive"
-              className="h-11 shrink-0 rounded-md px-4 text-sm font-semibold"
+              className="h-11 shrink-0 rounded-lg px-4 text-sm font-semibold"
               onClick={onSendClick}
               disabled={locked || !input.trim() || sending}
               aria-label={translate("composer.send.reallySend")}
             >
               {translate("composer.send.reallySend")}
             </Button>
-          ) : micIsPrimary ? (
-            // THE MICROPHONE IS THE PRIMARY ACTION WHILE THE BOX IS EMPTY, and becomes Send the
-            // moment there is anything to send. It used to be a second, permanent control tucked
-            // inside the field beside the attach button — deliberately, to avoid a split primary
-            // action. The v1 beta said that reads the workflow wrong: you either dictate a message
-            // or you type one, and nobody dictates into the middle of a draft. So the field paid
-            // 36px of its width, on every render, for a control that is only ever wanted on an empty
-            // box. An empty box has no Send either (`send` refuses a blank value), so this branch
-            // takes over a button that could do nothing anyway — it replaces no capability.
-            <Button
-              size="icon"
-              variant={recorder.busy ? "destructive" : "default"}
-              className="size-11 shrink-0 rounded-full"
-              disabled={!stt.available || locked || sending || recorder.phase === "transcribing"}
-              aria-pressed={recorder.busy}
-              // The bridge's own words when it cannot serve — the operator's next move is on the
-              // host, so the button says what is wrong rather than just refusing.
-              aria-label={
-                !stt.available
-                  ? (stt.reason ?? translate("composer.mic.unavailable"))
-                  : recorder.phase === "recording"
-                    ? translate("composer.mic.stopAria")
-                    : translate("composer.mic.recordAria")
-              }
-              title={stt.available ? undefined : stt.reason}
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => (recorder.phase === "recording" ? recorder.stopAndSend() : recorder.start())}
-            >
-              {recorder.phase === "transcribing" ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : recorder.phase === "recording" ? (
-                <Square className="size-4 fill-current" />
-              ) : (
-                <Mic className="size-4" />
-              )}
-            </Button>
           ) : (
             <Button
               size="icon"
               className="size-11 shrink-0 rounded-full"
               onClick={direct.active ? () => direct.deactivate() : onSendClick}
-              disabled={locked || sending}
+              // FORK: visibly off on an empty box — `send` refuses a blank value anyway, and a lit
+              // Send over nothing to send is the other half of the glyph confusion above.
+              disabled={locked || sending || (!direct.active && input.trim() === "")}
               aria-label={
                 direct.active
                   ? translate("composer.send.stopTypingAria")

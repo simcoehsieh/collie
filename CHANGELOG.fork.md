@@ -13,6 +13,18 @@ stays true).
 
 ## On top of 1.8.0
 
+- **The redesign.** Round corners on a real ramp, cool-tinted surfaces with one indigo accent,
+  tinted elevation, pill chips and badges, a stadium switch, a filled composer field, a blurred
+  header, a floating rounded composer block, sheets with soft top corners — and the phone's own
+  typeface as the default, so a fresh device downloads no webfont. Done in the token block, the
+  `ui/` primitives and a new fork-only `web/src/skin.css` (by `data-slot`), so upstream's screens
+  are structurally untouched. `FORK.md` → "The redesign" says which side to keep on a conflict.
+- **Opening a terminal paints before the round trip.** A navigation whose snapshot or mirror is
+  already in memory returns it immediately, flagged `pending`, and the root layout revalidates at
+  once; the cold path is unchanged. The followed-mirror poll is 1 Hz (was 1.5 s). A 220 ms
+  entrance plays when the kind of route changes; a pane→pane hop keeps everything mounted.
+
+
 **Merged** `v1.8.0` on 2026-09-10, taking `v1.7.0` and `v1.8.0` together. Both releases went out on
 the same day and 1.8.0 finishes the rename 1.7.0 began, so merging 1.7.0 first would have meant
 resolving the same files twice around a half-renamed middle state. Back to a merge after the one-off

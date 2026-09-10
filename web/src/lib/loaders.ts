@@ -97,6 +97,14 @@ function scopeFromRequest(request?: Request): Scope {
 }
 
 export interface HomeData {
+  /**
+   * FORK: this body is the LAST GOOD snapshot handed back instantly on a navigation, and the real
+   * read has not run yet. `RootLayout` revalidates the moment it sees the flag, so the screen
+   * arrives on the tap and catches up one round-trip later instead of waiting for it blank.
+   * Never set on a revalidation, and never set with `error` — a cached body flagged pending is
+   * live data that happens to be a few seconds old, not a degraded one.
+   */
+  pending?: boolean;
   bridge: BridgeStatus | undefined;
   /** Per-device authorisation; undefined when the feature is off or not yet known. */
   device: DeviceAuth | undefined;
@@ -149,6 +157,9 @@ export interface HomeData {
 }
 
 export interface PaneData {
+  /** FORK: same as {@link HomeData.pending} — the last mirror this page saw, shown while the tap's
+   * own read is in flight. Revision is 0 on this path, as on the degraded one. */
+  pending?: boolean;
   paneId: string;
   /** The scope this pane was fetched in (host + session) — threaded into every read and write, so
    * a reply can never land on the right pane name on the wrong machine. */
@@ -304,6 +315,13 @@ export async function rootLoader({ request }: { request?: Request } = {}): Promi
   // markLive clears the latch → the next run fetches live and replaces the stale herd).
   if (isNavigation && isLostLatched()) return staleHome(scope, viewAll);
 
+  // FORK — SHOW FIRST, FETCH SECOND. A navigation with a known-good snapshot in hand paints it NOW
+  // and lets RootLayout's pending-revalidate fetch the fresh one; without this every tap waited
+  // on a round trip (two, via Cloudflare) before anything changed on screen. The COLD path is
+  // untouched: no cache means the fetch below, BootSplash and all.
+  const cached = isNavigation ? lastSnapshot.get(snapshotKey(scope, viewAll)) : undefined;
+  if (cached) return { ...toHomeData(cached, scope, viewAll, false), pending: true };
+
   try {
     const snap = await fetchSnapshot(scope, request?.signal, viewAll);
     lastSnapshot.set(snapshotKey(scope, viewAll), snap);
@@ -454,6 +472,25 @@ export async function paneLoader({
   // Fast path: navigating to a pane during a known, escalated outage shows its last-known mirror (or an
   // empty degraded pane if never visited) INSTANTLY — never a 10s hang on a fetch that can't land.
   if (isNavigation && isLostLatched()) return stalePane(paneId, scope, lines);
+
+  // FORK — the mirror this page last saw of the pane, on the tap, then the real read (see HomeData
+  // .pending). Only the in-memory cache qualifies: the sessionStorage tier is for a cold boot and
+  // may be hours old, and a mirror that old flagged live would be the dishonesty routes/root.tsx's
+  // "last seen" note is about.
+  const cachedText = isNavigation ? lastPaneText.get(key) : undefined;
+  if (cachedText !== undefined) {
+    return {
+      pending: true,
+      paneId,
+      scope,
+      text: cachedText,
+      truncated: false,
+      requestedLines: lines,
+      revision: 0,
+      error: false,
+      authError: false,
+    };
+  }
 
   try {
     // On a 304 fetchPane returns the cached body, so `read.text` is populated either way; the

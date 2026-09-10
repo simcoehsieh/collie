@@ -149,7 +149,7 @@ export function AgentCard({
           // box-shadow, which takes no room, so the number still holds.
           flat
             ? "flex flex-row items-center gap-3 px-3.5 py-2.5 shadow-[inset_2px_0_0_0_transparent]"
-            : "flex-row items-center gap-3 rounded-xl px-3.5 py-3 shadow-sm",
+            : "flex-row items-center gap-3 rounded-xl px-4 py-3.5 shadow-card",
           // The blocked tint survives both treatments — it's the one cue that reads at a glance.
           // The EDGE cannot: one class string, two containers. A card sits in a gap list and already
           // carries a border in every state, so it only recolours. A flat row sits in a divide-y

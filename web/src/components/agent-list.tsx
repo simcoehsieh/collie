@@ -201,7 +201,7 @@ function SortToggle({ dir, onChange }: { dir: RecentDir; onChange: (dir: RecentD
       // than something you can press. Fixed width so flipping it doesn't shift the header. No fill —
       // filled, it outweighed the heading it sits beside, which is backwards for a control that
       // reorders the section you care least about.
-      className="flex min-h-9 items-center justify-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95"
+      className="flex min-h-9 items-center justify-center gap-1 rounded-full border border-transparent bg-muted px-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-95"
     >
       <Icon className="size-3.5" aria-hidden />
       <span className="w-[3.25rem] text-left">{newest ? t("home.sort.newest") : t("home.sort.oldest")}</span>

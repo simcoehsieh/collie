@@ -1705,6 +1705,7 @@ export function AgentChat({
               selection. It is a touch convenience layered over an already-reachable action. */}
           <div
             role="presentation"
+            data-slot="mirror"
             className={cn(
               mirrorGap,
               "min-h-0 min-w-0 flex-1 border-t border-rule",

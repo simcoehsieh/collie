@@ -142,6 +142,8 @@ bash scripts/collie-ctl.sh build     # not optional: git carries neither bin/ no
 ./bin/collie version                 # matches the merged release
 ./bin/collie doctor --plain          # `update-source` stays red on a fork; that one is expected
 curl -s http://127.0.0.1:4318/sw.js | grep -c push.apple.com   # 1 = the iOS push patch survived
+# 1 = the redesign's skin.css is in the shipped stylesheet (FORK.md → "The redesign")
+curl -s http://127.0.0.1:4318/ | grep -o 'assets/[^"]*\.css' | head -1 | xargs -I{} curl -s http://127.0.0.1:4318/{} | grep -c 'data-slot=mirror'
 ```
 
 Add a `grep` like that last one for every fork patch that has a greppable fingerprint in a built
