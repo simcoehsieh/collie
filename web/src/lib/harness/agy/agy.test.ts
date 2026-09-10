@@ -13,28 +13,50 @@ const PANES_DIR = join(import.meta.dirname, "..", "..", "..", "fixtures", "panes
 /** AGY paints its composer between two full-width rules; 60 columns clears isBoxBorder. */
 const RULE = "────────────────────────────────────────────────────────────";
 
+const load = (name: string) => splitLines(parseAnsi(readFileSync(join(PANES_DIR, name), "utf8")));
+
 const allFixtures = readdirSync(PANES_DIR)
   .filter((f) => f.endsWith(".txt"))
   .toSorted();
 
 const allAgyFixtures = allFixtures.filter((f) => f.startsWith("agy--"));
 
-const NEUTRAL = new Set(["agy--fresh-idle.txt", "agy--working.txt", "agy--done.txt"]);
+// Captures that lift NOTHING by design: idle/working/done screens, a multi-line draft, the `?`
+// shortcuts overlay (no rule anchors it, so it stays raw with the composer refused), and the
+// multi-select's focused Write-in field (refused: a key there TYPES).
+const NEUTRAL = new Set([
+  "agy--fresh-idle.txt",
+  "agy--working.txt",
+  "agy--done.txt",
+  "agy--draft-multiline.txt",
+  "agy--help-overlay.txt",
+  "agy--multi-select-writein.txt",
+]);
 
 const ownFixtures = allAgyFixtures.filter((f) => !NEUTRAL.has(f));
 const neutralFixtures = allAgyFixtures.filter((f) => NEUTRAL.has(f));
 const foreignFixtures = allFixtures.filter((f) => !f.startsWith("agy--"));
 
+// Measured on Antigravity CLI 1.2.0 (2026-09-10, AGY_NOTES.md): a multi-question ask_user_question
+// call is painted as one `Question k/N:` select after another with no stepper (each lifts as
+// prompt-select), and the tool's schema — printed by the agent itself — carries no preview field.
+const NOT_APPLICABLE = {
+  wizard: "a multi-question call is a run of `Question k/N:` selects, each lifted as prompt-select",
+  "preview-select": "ask_user_question has no preview field (schema: question, options, is_multi_select)",
+} as const;
+
 describeAdapterConformance(agyAdapter, {
   ownFixtures,
   foreignFixtures,
   neutralFixtures,
+  notApplicable: NOT_APPLICABLE,
 });
 
 describeAdapterConformance(antigravityAdapter, {
   ownFixtures,
   foreignFixtures,
   neutralFixtures,
+  notApplicable: NOT_APPLICABLE,
 });
 
 describe("agyAdapter unit & footer safety", () => {
@@ -59,9 +81,11 @@ describe("agyAdapter unit & footer safety", () => {
     expect(model!.family).toBe("select");
     expect(model!.options).toHaveLength(3);
     expect(model!.options[0]!.label).toBe("Run build directly");
-    expect(model!.options[0]!.keys).toEqual(["1", "Enter"]);
+    // The digit alone: probed on 1.2.0 to select AND submit (a trailing Enter double-answers a
+    // multi-question call — see "a digit alone answers" below).
+    expect(model!.options[0]!.keys).toEqual(["1"]);
     expect(model!.options[1]!.label).toBe("Inspect directory first");
-    expect(model!.options[1]!.keys).toEqual(["2", "Enter"]);
+    expect(model!.options[1]!.keys).toEqual(["2"]);
 
     const blocks = agyAdapter.buildBlocks(lines);
     expect(blocks.some((b) => b.kind === "prompt-select")).toBe(true);
@@ -180,6 +204,31 @@ describe("agyAdapter unit & footer safety", () => {
     expect(status.length).toBeGreaterThan(0);
     const statusText = status.map((l) => l.segments.map((s) => s.text).join("")).join(" ");
     expect(statusText).toContain("Gemini 3.7 Flash");
+  });
+
+  it("a digit alone answers a `Question k/N:` step — no trailing Enter (agy--wizard-q1/q2)", () => {
+    // Probed 2026-09-10 on 1.2.0: `2` on Question 1/2 chose Green AND advanced to Question 2/2; an
+    // Enter sent after it chose the second question's pointed default sight unseen.
+    for (const name of ["agy--wizard-q1.txt", "agy--wizard-q2.txt", "agy--select-menu.txt"]) {
+      const blocks = agyAdapter.buildBlocks(load(name));
+      const block = blocks.find((b) => b.kind === "prompt-select");
+      expect(block, name).toBeDefined();
+      if (!block || block.kind !== "prompt-select") continue;
+      for (const option of block.prompt.options) expect(option.keys, name).toEqual([option.keys[0]]);
+      expect(block.prompt.options.every((o) => !/write-in/i.test(o.label)), name).toBe(true);
+    }
+    const q2 = agyAdapter.buildBlocks(load("agy--wizard-q2.txt")).find((b) => b.kind === "prompt-select");
+    if (q2 && q2.kind === "prompt-select") {
+      expect(q2.prompt.question).toBe("Question 2/2: Which size?");
+      expect(q2.prompt.options.map((o) => o.label)).toEqual(["Small", "Large"]);
+    }
+  });
+
+  it("reads a multi-line draft as one space-joined line (agy--draft-multiline.txt)", () => {
+    const lines = load("agy--draft-multiline.txt");
+    expect(agyAdapter.composerReady!(lines)).toBe(true);
+    expect(agyAdapter.extractInputDraft!(lines)).toBe("first line of a draft second line here third line");
+    expect(agyAdapter.buildBlocks(lines).every((b) => b.kind === "raw")).toBe(true);
   });
 
   it("extracts typed user draft inside an input box", () => {

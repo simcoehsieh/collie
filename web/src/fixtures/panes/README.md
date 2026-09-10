@@ -429,6 +429,27 @@ the UI retained `COLLIE_RULE_18110_MODAL_GUARD`, offered the explicit override, 
   are the most stable discriminator ("Enter to select/confirm", "Esc to cancel").
 
 
+## agy 1.2.0 corpus (captured 2026-09-10, Antigravity CLI 1.2.0, herdr sandbox pane)
+
+Byte-faithful `GET /api/pane/:id?lines=200` captures from a throwaway herdr workspace running `agy
+--new-project` in a scratch git repo. Sanitised with LENGTH-PRESERVING substitutions (the account email →
+`sandbox.user@ex.test`) and the shell's own scrollback rows dropped; nothing else touched. The blank row
+agy leaves between a modal's `Keyboard:` footer and the status row is real. Every keystroke recipe these
+back is in `web/src/lib/grammar/AGY_NOTES.md`.
+
+| Fixture | State / what's in it | Lifts |
+|---|---|---|
+| `agy--wizard-q1.txt` | Two-question ask_user_question, `Question 1/2: Which color?`, Red/Green/Blue + Write-in, `enter Select` footer. Digit `2` probed: chose Green AND advanced | `prompt-select` |
+| `agy--wizard-q2.txt` | `Question 2/2: Which size?`, footer gains `← Back`. Esc probed: skips the question | `prompt-select` |
+| `agy--multi-select-unchecked.txt` | `is_multi_select` question: `1. [ ] Cheese` … `4. Write-in...`, `space Toggle · enter Submit` footer, pointer on 1 | `multi-select` |
+| `agy--multi-select-checked.txt` | Same dialog after `2`, `space`, `↓`, `space`: Mushrooms `[x]`, pointer on 3. Enter probed: submitted Mushrooms only | `multi-select` |
+| `agy--multi-select-writein.txt` | Enter on the Write-in row: `Your answer:` field open, `enter Submit · esc Back` footer — a digit would TYPE | nothing (refused) |
+| `agy--menu-model.txt` | `/model`: `Switch Model`, `>` on the current model, `Effort ◂ ● ━ ◉ ▸` slider, `Keyboard: ↑/↓ Navigate  ←/→ Effort  enter Select  esc Go Back` | `menu` |
+| `agy--menu-permissions.txt` | `/permissions`: `Permission Config Editor`, scope rows, `Keyboard: ↑/↓ Navigate  enter Save  esc Close` | `menu` |
+| `agy--autocomplete-slash.txt` | `/mo` typed: five `/command  description` rows under the box, `↓ 6 more`, `↑/↓ Navigate · enter Select · tab Complete` | `autocomplete` (box live) |
+| `agy--help-overlay.txt` | `?` overlay: 25 shortcut rows, `[1-25 of 33 items]`, `Keyboard: … esc Close` | nothing (no anchoring rule) |
+| `agy--draft-multiline.txt` | A three-line draft in the box (pasted text is inserted literally — no placeholder) | nothing |
+
 ## agy corpus (captured 2026-08-26, Antigravity CLI 1.1.17, sandbox panes)
 
 Byte-faithful `format:ansi` captures from running sandbox `agy` panes via `scripts/capture-fixture.sh <paneId> <name> 300`. Fastfetch system scrollback was trimmed, and all session identities were sanitized with length-preserving substitutions so row padding and column alignments stay byte-identical: account email (`developer.user@corp.test`) and session plan brain UUIDs (`00000000-0000-7000-8000-000000000000`).

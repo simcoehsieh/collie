@@ -1,5 +1,6 @@
 import type { StyledLine } from "../../blocks";
 import { isBlank, isBoxBorder, lineText } from "./markers";
+import { findAutocompleteRun } from "./autocomplete";
 
 const MAX_STATUS_LINES = 4;
 const MAX_DRAFT_LINES = 100;
@@ -10,10 +11,31 @@ export interface LocatedBox {
   prompt: number;
   bottomBorder: number;
   statusEnd: number;
+  /** First row of the status run when something (the completion popup) sits between the bottom
+   *  border and it; absent = the row after the bottom border. */
+  statusFrom?: number;
   draft: string | null;
 }
 
+/**
+ * The box at the tail, with the slash-completion popup PEELED first: agy paints that popup between
+ * the bottom border and the status row, taller than the MAX_STATUS_LINES window the walk allows, so
+ * without the peel a `/mo` draft would read as "no box" and the composer would refuse to type. The
+ * peel is confirmed, not assumed — the box it yields must hold a draft starting with "/", the only
+ * state in which agy shows the popup; otherwise the walk runs unchanged from `end`.
+ */
 export function locateInputBox(texts: string[], end: number): LocatedBox | null {
+  const popup = findAutocompleteRun(texts, end);
+  if (popup !== null) {
+    const box = walkInputBox(texts, popup.start);
+    if (box !== null && box.draft !== null && box.draft.startsWith("/")) {
+      return { ...box, statusEnd: end, statusFrom: popup.footer + 1 };
+    }
+  }
+  return walkInputBox(texts, end);
+}
+
+function walkInputBox(texts: string[], end: number): LocatedBox | null {
   if (end === 0) return null;
   let bot = end - 1;
   while (bot >= 0 && isBlank(texts[bot]!)) bot--;
@@ -90,7 +112,7 @@ export function extractStatusLines(lines: StyledLine[]): StyledLine[] {
   if (box === null) return [];
 
   const rows: StyledLine[] = [];
-  for (let j = box.bottomBorder + 1; j < box.statusEnd; j++) {
+  for (let j = box.statusFrom ?? box.bottomBorder + 1; j < box.statusEnd; j++) {
     if (!isBlank(texts[j]!)) rows.push(lines[j]!);
   }
   return rows;

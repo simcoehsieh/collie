@@ -70,6 +70,16 @@ export type MultiSelectModel =
        * Captured rather than assumed so the button says what the terminal says.
        */
       advanceLabel: string;
+      /**
+       * When set, the advance is ONE guarded send of these keys from wherever the pointer sits: the
+       * TUI submits the whole set on that key and has no advance row to walk onto (agy's
+       * `enter Submit`, probed 2026-09-10 — Enter never toggles the pointed row and submits an empty
+       * set when nothing is checked). Absent = Claude's shape, where Enter activates the POINTED row
+       * and lib/multi-select-action.ts walks the pointer onto `advanceLabel` first. The action still
+       * refuses to press these while the pointer sits on a row where the key does something else
+       * (agy's `Write-in...` opens a text field): it nudges Up and re-reads until an option row.
+       */
+      submitKeys?: string[];
       signature: string;
       /**
        * Literal contiguous text over the same stepper-to-last-menu-row span as `signature`. It ends
