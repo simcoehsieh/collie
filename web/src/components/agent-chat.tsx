@@ -2022,7 +2022,9 @@ export function AgentChat({
                     aria-expanded={dockOpen}
                     ref={sheetPull.ref}
                     onClick={() => (dockOpen ? setDrawer("switcher") : setDockOpen(true))}
-                    className="flex w-full touch-none flex-col items-center justify-center gap-1 py-3 transition-colors active:bg-muted/50"
+                    // FORK: py-2 (22px row), was py-3 — the row under it is a handle too, and the two together
+                    // stood 62px above the input on a phone.
+                    className="flex w-full touch-none flex-col items-center justify-center gap-1 py-2 transition-colors active:bg-muted/50"
                   >
                     {!dockOpen && <ChevronUp className="size-4 text-muted-foreground" aria-hidden />}
                     <span className="h-1.5 w-12 rounded-full bg-muted-foreground/50" />

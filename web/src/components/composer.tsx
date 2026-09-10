@@ -1315,7 +1315,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             "relative -mx-3 flex items-center justify-start gap-1.5 border-y border-border px-2.5 text-[10px]/3",
             prefs.controlsOpen
               ? "h-[14px] after:absolute after:inset-x-0 after:top-full after:h-2 after:content-['']"
-              : "h-8",
+              : // FORK: 24px, not 32 — it is the default state now, and the operator read the 32px
+                // band as empty air around a 10px word. Still the only way back, still full-width.
+                "h-6",
           )}
         >
           {/* The band READS LEFT TO RIGHT: handle, machine, state. It was right-aligned, with the

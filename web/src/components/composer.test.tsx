@@ -3012,11 +3012,11 @@ describe("Composer — the Controls row can be put away", () => {
     expect(band().getAttribute("aria-expanded")).toBe("false");
     // `h-8` rather than the open state's 14px: closed, this is the ONLY way back, and the hit-slop
     // it borrowed from the row's margin went with the row.
-    expect(band().className).toMatch(/(?:^|\s)h-8(?=\s|$)/);
+    expect(band().className).toMatch(/(?:^|\s)h-6(?=\s|$)/);
     expect(band().className).not.toContain("after:top-full");
     expect(chevron().getAttribute("class")).toMatch(/rotate-180/);
     // One height utility, closed as well as open — a second `h-*` would win under tailwind-merge.
-    expect(band().className.match(/(?:^|\s)h-\S+/g)).toEqual([" h-8"]);
+    expect(band().className.match(/(?:^|\s)h-\S+/g)).toEqual([" h-6"]);
 
     await user.click(band());
     expect(props.setControlsOpen).toHaveBeenCalledWith(true);

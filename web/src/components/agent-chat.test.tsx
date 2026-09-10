@@ -1798,7 +1798,9 @@ describe("AgentChat — zen mode", () => {
     expect(screen.getAllByRole("button", { name: "Zen mode" })).toHaveLength(1);
     await user.keyboard("{Escape}");
 
-    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    // FORK: the controls row is closed by default; the status band opens it.
+    await user.click(screen.getByRole("button", { name: "Show the controls row" }));
+    await user.click(await screen.findByRole("button", { name: "Display settings" }));
     expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Zen mode" })).not.toBeInTheDocument();
   });

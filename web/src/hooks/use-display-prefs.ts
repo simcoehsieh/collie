@@ -212,7 +212,8 @@ const DEFAULTS: DisplayPrefs = {
   rawTerminal: false,
   tapToFocus: true,
   expandClippedReply: true,
-  controlsOpen: true,
+  // FORK: closed by default — the phone keeps its rows; the status band opens it in one tap.
+  controlsOpen: false,
 };
 
 function readFontFamily(value: string | undefined): FontFamily {
