@@ -204,7 +204,8 @@ export function SettingsRoute() {
             whatever this particular device's push status turns out to be. */}
         {state?.availability !== "server-off" && (
           <>
-            <NotifyPrefsControl />
+            {/* FORK: the per-pane rows come from the snapshot this page already holds. */}
+            <NotifyPrefsControl panes={root?.agents ?? []} />
             <SnoozeControl snoozedUntil={root?.snoozedUntil ?? null} />
           </>
         )}

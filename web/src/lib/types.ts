@@ -1059,6 +1059,8 @@ export interface NotifyPrefs {
   done: boolean;
   /** Push when a new Collie version is available (a restart or upgrade is waiting). Default on. */
   updates: boolean;
+  /** FORK: per-pane overrides. Absent from an older bridge's answer; the phone treats that as none. */
+  panes?: PaneNotifyRule[];
 }
 
 /** Lower sorts first — "needs you" at the top. Mirrors STATUS_RANK on the server. */
@@ -1120,3 +1122,21 @@ export type WorktreeOpenResponse =
   | { ok: true; pane: CreatedPane; alreadyOpen: boolean }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
 
+
+// ── FORK: per-pane notification rules ────────────────────────────────────────
+// Mirrors `PaneNotifyMode` / `PaneNotifyRule` in bridge/notify-prefs.ts (hand-mirrored wire types,
+// like everything else in this file).
+
+/** How a rule changes the bridge-wide notify switches for the panes it names. */
+export type PaneNotifyMode = "default" | "all" | "blocked" | "mute";
+
+/** One pane's override. At least one of `paneId` / `label` names it; the id wins when both match. */
+export interface PaneNotifyRule {
+  /** Exact pane id — dies with the multiplexer restart that renumbers panes. */
+  paneId?: string;
+  /** Case-insensitive substring of the pane's label, tab, space or terminal title — survives it. */
+  label?: string;
+  mode: PaneNotifyMode;
+  /** A quiet deadline for this pane alone (epoch ms); elapsed means not snoozed. */
+  snoozedUntil?: number;
+}
