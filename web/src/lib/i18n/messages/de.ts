@@ -635,6 +635,10 @@ export const de: Dictionary = {
   "mirror.imageAlt": "Terminal-Grafik",
   "mirror.imageBadge": "[Bild]",
   "mirror.imageMatchedByOrder": "nach Reihenfolge zugeordnet, zum Prüfen den Verlauf öffnen",
+  // FORK: the Copy button on a closed code fence in the mirror (components/ansi-output.tsx).
+  "mirror.copy": "Kopieren",
+  "mirror.copyBlock": "Codeblock kopieren",
+  "mirror.copied": "Kopiert",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "gerade eben",

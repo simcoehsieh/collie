@@ -1,10 +1,13 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { parseAnsi, type AnsiSegment } from "@/lib/ansi";
 import { buildBlocks } from "@/lib/harness";
 import type { MirrorModel } from "@/hooks/use-mirror-model";
+import { buzz } from "@/lib/haptics";
+import { codeFences, type CodeFence } from "@/lib/code-fences";
 import {
   dropLeadingLines,
   lineText,
@@ -319,6 +322,61 @@ const renderImageCluster = (
     </span>
   );
 
+/** The frozen empty fence list, for a block with no code fence in it. */
+const NO_FENCES: readonly CodeFence[] = Object.freeze([]);
+
+/** How long the ✓ holds on a fence's Copy button before it turns back into the clipboard glyph. */
+const COPIED_MS = 1200;
+
+// FORK. The one-tap way to lift a code block off the mirror. A phone can select text in the
+// mirror (index.css exempts `pre` from the touch-selection rule by name), but dragging two handles
+// across a fenced block inside a scrolling <pre> is the single most repeated fiddle a pane asks
+// for, and the block's edges are ALREADY known — they are the fences.
+//
+// It sits INSIDE the <pre>, so it renders in the mirror's dark colour space and is inverted with it
+// under the light theme (.adr/0002): the tint is chosen so both readings are a quiet chip. It is
+// `inline-flex` on the closing fence's own line — no block box, no extra row, no offset moved.
+function CopyFenceButton({ lines, fence }: { lines: StyledLine[]; fence: CodeFence }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current !== null) clearTimeout(timer.current);
+    },
+    [],
+  );
+  async function copy() {
+    const text = lines
+      .slice(fence.open + 1, fence.close)
+      .map(lineText)
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      buzz();
+      setCopied(true);
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), COPIED_MS);
+    } catch {
+      // No clipboard (plain-HTTP context, or the browser refused): the button keeps its glyph and
+      // claims nothing — the text is still selectable by hand, exactly as before.
+      setCopied(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      data-slot="copy-fence"
+      aria-label={copied ? t("mirror.copied") : t("mirror.copyBlock")}
+      title={copied ? t("mirror.copied") : t("mirror.copyBlock")}
+      className="ml-2 inline-flex h-[1.6em] cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 align-middle font-sans text-[0.85em] leading-none text-white/80 select-none hover:bg-white/20 active:scale-95"
+    >
+      {copied ? <Check className="size-[1em]" /> : <Copy className="size-[1em]" />}
+      <span>{copied ? t("mirror.copied") : t("mirror.copy")}</span>
+    </button>
+  );
+}
+
 export const AnsiOutput = memo(function AnsiOutput({
   text,
   model,
@@ -399,6 +457,10 @@ export const AnsiOutput = memo(function AnsiOutput({
   // image, however many cells it covers. Computed here rather than inside the render loop because
   // the TOTAL is what the caller needs before a single node is emitted.
   const clustersByBlock = useMemo(() => rawBlocks.map((b) => imageClusters(b.lines)), [rawBlocks]);
+  // FORK: the fenced code blocks of each raw block, by block index — the regions a Copy button
+  // stands beside. Only CLOSED fences: an open one is still being written, and copying half of it
+  // is the kind of help that costs a retype.
+  const fencesByBlock = useMemo(() => rawBlocks.map((b) => codeFences(b.lines)), [rawBlocks]);
   const clusterCount = useMemo(
     () => clustersByBlock.reduce((sum, c) => sum + c.length, 0),
     [clustersByBlock],
@@ -646,9 +708,20 @@ export const AnsiOutput = memo(function AnsiOutput({
     seen.clear();
     const runs = runsByBlock[bi] ?? NO_RUNS;
     const clusters = clustersByBlock[bi] ?? NO_CLUSTERS;
+    const fences = fencesByBlock[bi] ?? NO_FENCES;
     const nodes: ReactNode[] = [];
     let ri = 0;
     let ci = 0;
+    let fi = 0;
+    // The Copy button rides the CLOSING fence line, inline after its three backticks, so it adds no
+    // row to the grid and moves no offset: the find and link coordinate spaces are text, and a
+    // button is not text.
+    const fenceTrailing = (li: number): ReactNode => {
+      const fence: CodeFence | undefined = fences[fi];
+      if (!fence || fence.close !== li) return null;
+      fi++;
+      return <CopyFenceButton key="copy" lines={block.lines} fence={fence} />;
+    };
     for (let li = 0; li < block.lines.length; ) {
       const cluster: ImageCluster | undefined = clusters[ci];
       if (cluster && cluster.start === li) {
@@ -675,7 +748,7 @@ export const AnsiOutput = memo(function AnsiOutput({
       }
       const run: TableRun | undefined = runs[ri];
       if (!run || run.start !== li) {
-        nodes.push(renderLine(block.lines[li]!, li, true, false));
+        nodes.push(renderLine(block.lines[li]!, li, true, false, fenceTrailing(li)));
         li++;
         continue;
       }

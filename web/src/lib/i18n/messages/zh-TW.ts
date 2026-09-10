@@ -610,6 +610,10 @@ export const zhTW: Dictionary = {
   "mirror.imageAlt": "終端機圖形",
   "mirror.imageBadge": "[圖片]",
   "mirror.imageMatchedByOrder": "依順序比對，開啟歷史記錄確認",
+  // FORK: the Copy button on a closed code fence in the mirror (components/ansi-output.tsx).
+  "mirror.copy": "複製",
+  "mirror.copyBlock": "複製程式碼區塊",
+  "mirror.copied": "已複製",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "剛剛",

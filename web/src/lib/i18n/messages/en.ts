@@ -656,6 +656,10 @@ export const en = {
   "mirror.imageAlt": "Terminal graphics",
   "mirror.imageBadge": "[Image]",
   "mirror.imageMatchedByOrder": "matched by order, open History to check",
+  // FORK: the Copy button on a closed code fence in the mirror (components/ansi-output.tsx).
+  "mirror.copy": "Copy",
+  "mirror.copyBlock": "Copy code block",
+  "mirror.copied": "Copied",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "just now",

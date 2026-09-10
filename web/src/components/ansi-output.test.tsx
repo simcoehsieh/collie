@@ -602,3 +602,51 @@ describe("AnsiOutput — stable line nodes across a one-row scroll", () => {
     expect(container.querySelector("pre")!.textContent).toBe("same\nsame\nsame");
   });
 });
+
+// ── FORK: one tap lifts a fenced code block off the mirror ────────────────────────────────────────
+describe("AnsiOutput — Copy on a closed code fence", () => {
+  const FENCED = "run this:\n```sh\nbun install\nbun run build\n```\nthen reload";
+
+  function withClipboard(writeText: (text: string) => Promise<void>) {
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  }
+
+  it("draws a Copy button on the closing fence line and none elsewhere", () => {
+    const { container, getAllByRole } = render(<AnsiOutput text={FENCED} />);
+    const buttons = getAllByRole("button", { name: "Copy code block" });
+    expect(buttons).toHaveLength(1);
+    // Inline on the closing row: no extra line in the grid, the text reads exactly as printed.
+    expect(container.querySelector("pre")!.textContent).toBe(`${FENCED.replace("```\nthen", "```Copy\nthen")}`);
+  });
+
+  it("copies the lines BETWEEN the fences, not the fences", async () => {
+    const writeText = vi.fn(async () => {});
+    withClipboard(writeText);
+    const { getByRole, findByRole } = render(<AnsiOutput text={FENCED} />);
+    fireEvent.click(getByRole("button", { name: "Copy code block" }));
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("bun install\nbun run build"));
+    // The ✓ reading, then the glyph again.
+    expect(await findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+
+  it("draws nothing for a fence still being written", () => {
+    const { queryByRole } = render(<AnsiOutput text={"```ts\nconst a = 1;\n"} />);
+    expect(queryByRole("button", { name: "Copy code block" })).toBeNull();
+  });
+
+  it("a clipboard refusal leaves the glyph as it was and does not throw", async () => {
+    withClipboard(async () => {
+      throw new Error("not allowed");
+    });
+    const { getByRole, queryByRole } = render(<AnsiOutput text={FENCED} />);
+    fireEvent.click(getByRole("button", { name: "Copy code block" }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(queryByRole("button", { name: "Copied" })).toBeNull();
+    expect(getByRole("button", { name: "Copy code block" })).toBeInTheDocument();
+  });
+
+  it("the mirror is a layout and paint island", () => {
+    const { container } = render(<AnsiOutput text="x" />);
+    expect(container.querySelector("pre")!.className).toContain("[contain:layout_paint]");
+  });
+});
