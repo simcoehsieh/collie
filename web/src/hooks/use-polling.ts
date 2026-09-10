@@ -21,6 +21,7 @@ import {
   useTopologyBursting,
 } from "@/lib/poll-intent";
 import { getRequestedLines, type HomeData } from "@/lib/loaders";
+import { useLowPower } from "@/hooks/use-dash-prefs";
 import { crewMoving, runInFlight } from "@/lib/update-ribbon";
 import type { Scope } from "@/lib/scope";
 
@@ -66,6 +67,22 @@ export const IDLE_MS = 6000;
  * keystroke you just sent is worth a fast read whether or not a poke is coming.
  */
 export const LIVE_FEED_MS = 30_000;
+/**
+ * FORK: the same two gaps under Low power (Settings, or the phone's own Data Saver). Three times
+ * the hot gap and a third of the burst rate; the idle gaps are already slow and the live feed is
+ * left alone, because one open stream is cheaper than the polls it spares.
+ */
+export const LOW_POWER_HOT_MS = 3000;
+export const LOW_POWER_BURST_MS = 1000;
+
+/** Whether the browser reports the operator asked for less data (`navigator.connection.saveData`). */
+export function saveDataRequested(): boolean {
+  // SAFETY: `connection` is the Network Information API, absent on Safari and typed nowhere in
+  // lib.dom; reading an optional field off an optional object is defined either way.
+  const nav = globalThis.navigator as (Navigator & { connection?: { saveData?: boolean } }) | undefined;
+  return nav?.connection?.saveData === true;
+}
+
 /** The least time between two poke-driven reads — the watcher behind the stream re-reads a moving
  *  pane every 400 ms and a stream of pokes at that rate is coalesced onto this one. */
 export const POKE_GAP_MS = 400;
@@ -90,6 +107,8 @@ export interface PollIntent {
   topologyBursting?: boolean;
   /** The live feed is open (lib/live-feed.ts): a change will be poked, so the timer is a safety net. */
   liveFeed?: boolean;
+  /** FORK: Low power is on — the burst and hot gaps stretch (see LOW_POWER_HOT_MS). */
+  lowPower?: boolean;
 }
 
 // Self-heal a wedged revalidation. Normally a tick no-ops while one is already in flight (see the
@@ -122,11 +141,15 @@ export function intervalFor(
   paneId?: string | null,
   intent?: PollIntent,
 ): number {
+  // FORK: the two fast gaps, or their Low power stand-ins.
+  const burst = intent?.lowPower ? LOW_POWER_BURST_MS : BURST_MS;
+  const hot = intent?.lowPower ? LOW_POWER_HOT_MS : HOT_MS;
+
   // 0. A create or a close just went through, wherever you're looking: catch the list up.
-  if (intent?.topologyBursting) return BURST_MS;
+  if (intent?.topologyBursting) return burst;
 
   // 1. A send just happened on the pane you are looking at: watch it land.
-  if (intent?.bursting) return BURST_MS;
+  if (intent?.bursting) return burst;
 
   // 1b. THE STREAM IS UP. Every rule below this line is a guess about when the herd might have
   // moved; with the feed open the bridge SAYS when it moved, and the timer only has to catch what
@@ -138,8 +161,8 @@ export function intervalFor(
   // says so, or the mirror itself moved on the last poll. The second half is what covers a plain
   // shell and any harness that publishes no status: "the screen is still changing" needs no adapter.
   if (paneId && intent?.following && paneIsOpen(data, paneId)) {
-    if (openPaneWorking(data, paneId)) return HOT_MS;
-    if (intent.changed) return HOT_MS;
+    if (openPaneWorking(data, paneId)) return hot;
+    if (intent.changed) return hot;
   }
 
   // 3b. AN UPDATE IS RUNNING ON THIS MACHINE (M20/08). Measured on 2026-09-08: `/settings/updates`
@@ -151,7 +174,7 @@ export function intervalFor(
   // Above the herd rule, because a herd that happens to be busy is not the reason to be fast here,
   // and below the pane rules, because a pane the operator is looking at still outranks a page they
   // may have left open. The state set comes from `lib/update-ribbon.ts`, never a copy.
-  if (runInFlight(data?.update?.run) || crewMoving(data?.update)) return HOT_MS;
+  if (runInFlight(data?.update?.run) || crewMoving(data?.update)) return hot;
 
   // 4. Nobody is on a mirror, but the herd is not resting. The dashboard row is the thing being
   // watched now, and a status that flips there should not sit a full IDLE_MS behind.
@@ -237,6 +260,8 @@ export function usePolling(
   const sendKick = useSendCount();
   const topoBursting = useTopologyBursting();
   const liveFeed = useLiveFeedHealthy();
+  // FORK: the operator's Low power switch, or the phone's own Data Saver.
+  const lowPower = useLowPower() || saveDataRequested();
   const isFollowingNow = following ?? storeFollowing;
   const ms = intervalFor(data, paneId, {
     bursting: burstAppliesTo(burstPane, paneId),
@@ -246,6 +271,7 @@ export function usePolling(
     changed,
     topologyBursting: topoBursting,
     liveFeed,
+    lowPower,
   });
 
   // ── The live feed ──────────────────────────────────────────────────────────

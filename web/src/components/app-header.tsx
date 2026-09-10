@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { Settings } from "lucide-react";
+import { BatteryLow, Settings } from "lucide-react";
 import { useNavigate } from "react-router";
 
 import { isConnecting } from "@/lib/connection";
@@ -21,6 +21,7 @@ import { useLocale } from "@/hooks/use-locale";
 import { useMuxLogoUrl, useMuxName } from "@/lib/mux-capability";
 import { useConnectionLost, useConnectionTrouble } from "@/hooks/use-connection-lost";
 import { useLoadingStalled } from "@/hooks/use-loading-stalled";
+import { useLowPower } from "@/hooks/use-dash-prefs";
 import { settingsPath } from "@/lib/nav";
 import { CollieHome } from "@/components/collie-home";
 import { AlphaBar } from "@/components/alpha-bar";
@@ -367,6 +368,9 @@ export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
                 {/* gap-1, not gap-3: the icon buttons now carry their own 12px of padding to reach 44px,
                     so a 12px gap on top of that reads as a gulf. 4px keeps the apparent spacing between
                     icons close to what it was. */}
+                {/* FORK: Low power is on (Settings) — a muted glyph, so the slower mirror reads as
+                    a choice and not a fault. Sits before the route's own cluster, on every route. */}
+                <LowPowerGlyph />
                 <div data-slot="header-right" ref={setRight} className="flex items-center gap-1" />
               </>
             )}
@@ -519,5 +523,22 @@ export function SettingsGear({ scope }: { scope?: Scope }) {
     >
       <Settings className="size-5" />
     </button>
+  );
+}
+
+// FORK: see the call site. Renders nothing while Low power is off, which is every install by default.
+function LowPowerGlyph() {
+  useLocale();
+  const on = useLowPower();
+  if (!on) return null;
+  return (
+    <span
+      data-slot="low-power-glyph"
+      className="grid size-8 place-items-center text-muted-foreground"
+      title={t("settings.lowPower.title")}
+      aria-label={t("settings.lowPower.title")}
+    >
+      <BatteryLow className="size-4" />
+    </span>
   );
 }

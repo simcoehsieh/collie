@@ -14,6 +14,7 @@ import { SnoozeControl } from "@/components/snooze-control";
 import { ThemeControl } from "@/components/theme-control";
 import { HapticsControl } from "@/components/haptics-control";
 import { HandsFreeControl } from "@/components/hands-free-control";
+import { LowPowerControl } from "@/components/low-power-control";
 import { ZenControl } from "@/components/zen-control";
 import { InstallControl } from "@/components/install-control";
 import { LanguageControl } from "@/components/language-control";
@@ -159,6 +160,9 @@ export function SettingsRoute() {
             not a rendering pref (those live in the pane's own Display dock). Off by default, because
             zen takes away every way back except one floating button. */}
         <ZenControl />
+
+        {/* FORK: Low power — the poll cadence, per device. Same family as the three above. */}
+        <LowPowerControl />
 
         <Card className="gap-0 py-0">
           <div className="flex items-center justify-between gap-4 p-4">
