@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRevalidator } from "react-router";
 import {
   CheckCircle2,
+  CloudOff,
   Loader2,
   LogIn,
   Plug,
@@ -20,6 +21,8 @@ import { useOnline } from "@/hooks/use-online";
 import { isConnecting } from "@/lib/connection";
 import { clockTime } from "@/lib/format";
 import * as api from "@/lib/api";
+import { useServerBuild } from "@/lib/server-build";
+import { setStatus } from "@/lib/status";
 import type { BridgeStatus } from "@/lib/types";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
@@ -39,10 +42,17 @@ interface ConnectionBannerProps {
   lastSeenAt?: number;
 }
 
-// The result of the /api/config probe (which never touches Herdr): "unknown" until it resolves,
-// "reachable" = the bridge answered (so the herd link is what's down), "unreachable" = the bridge
-// itself couldn't be reached. Only ever run while RED, to name the cause.
-type Probe = "unknown" | "reachable" | "unreachable";
+// FORK: the result of the /api/health probe (ungated; never touches Herdr), run only while RED, to
+// name WHERE the connection is broken. "unknown" until it resolves; then lib/api.ts's four answers:
+// `ok` = the bridge answered (so the herd link is what's down), `gateway` = the tunnel's edge
+// answered FOR the bridge (it is down or restarting — the network is fine and it will be back),
+// `auth` = the front door wants a sign-in, `down` = nothing answered at all.
+type Probe = "unknown" | api.BridgeProbe;
+
+// FORK: while the bridge is restarting the banner re-probes on its own, doubling from here to the
+// cap, so the operator is not asked to tap Retry at a thing that is coming back by itself.
+export const REPROBE_MIN_MS = 2_000;
+export const REPROBE_MAX_MS = 30_000;
 
 // The three color-coded states, plus null = nothing. green = established, amber = checking, red = failed.
 type Tone = "amber" | "red" | "green";
@@ -62,8 +72,32 @@ export const EXIT_MS = 200;
 // red cause), never a gate. Threshold lockstep with the shared clock is proven in use-connection-lost;
 // here we own the amber→red→green state machine and the smooth mount/unmount.
 export function ConnectionBanner({ bridge, error, authError, lastSeenAt }: ConnectionBannerProps) {
+  useBridgeRestartNotice();
   if (authError) return <AuthErrorBanner />;
   return <ConnectionStateBanner bridge={bridge} error={error} lastSeenAt={lastSeenAt} />;
+}
+
+/**
+ * FORK: say so when the bridge came back as a DIFFERENT build. Every poll carries the bridge's
+ * build id; the first id seen is the baseline, and a later, different one means the process was
+ * rebuilt and restarted under the phone — which is also the moment pane ids can change, since the
+ * multiplexer's are only stable within one bridge's life. A one-line event, on the same channel
+ * every other "what just happened" uses. A restart on the SAME build is invisible here, which is
+ * honest: the id is the only fact the poll carries.
+ */
+function useBridgeRestartNotice(): void {
+  const build = useServerBuild();
+  const seen = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (build === undefined || build === "unknown") return;
+    if (seen.current === undefined) {
+      seen.current = build;
+      return;
+    }
+    if (seen.current === build) return;
+    seen.current = build;
+    setStatus(t("connection.restarted"), "info");
+  }, [build]);
 }
 
 // A refusal is not an outage, so it gets its own surface ahead of the connection state machine: no
@@ -191,13 +225,10 @@ function ConnectionStateBanner({
   const [probe, setProbe] = useState<Probe>("unknown");
   const [retrying, setRetrying] = useState(false);
 
-  const runProbe = useCallback(async () => {
-    try {
-      await api.fetchConfig();
-      setProbe("reachable");
-    } catch {
-      setProbe("unreachable");
-    }
+  const runProbe = useCallback(async (): Promise<Probe> => {
+    const result = await api.probeBridge();
+    setProbe(result);
+    return result;
   }, []);
 
   useEffect(() => {
@@ -205,7 +236,30 @@ function ConnectionStateBanner({
       setProbe("unknown");
       return;
     }
-    void runProbe();
+    // FORK: probe, and while the answer is "the bridge is coming back" keep probing on a doubling
+    // timer; the moment it answers, revalidate so the red row clears on the very next tick rather
+    // than at the poller's own leisure.
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let delay = REPROBE_MIN_MS;
+    const tick = async () => {
+      const result = await runProbe();
+      if (cancelled) return;
+      if (result === "ok") {
+        revalidator.revalidate();
+        return;
+      }
+      if (result !== "gateway") return;
+      timer = setTimeout(() => void tick(), delay);
+      delay = Math.min(delay * 2, REPROBE_MAX_MS);
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer !== null) clearTimeout(timer);
+    };
+    // `revalidator` is a new object every render; its `revalidate` is what is wanted and is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lost, runProbe]);
 
   if (!rendered) return null;
@@ -220,6 +274,10 @@ function ConnectionStateBanner({
   }
 
   const view = resolveView(shownTone, online, probe, lastSeenAt);
+  // FORK: a restarting bridge gets no Retry — it is coming back on its own and the banner is already
+  // asking after it; a spinner says so. A sign-in problem gets the link that fixes it instead.
+  const restarting = shownTone === "red" && probe === "gateway";
+  const needsSignIn = shownTone === "red" && probe === "auth";
 
   return (
     // Outer grid collapses 0fr → 1fr (an in-flow height animation the layout below rides), fading with
@@ -241,11 +299,25 @@ function ConnectionStateBanner({
             view.row,
           )}
         >
-          <view.Icon className={cn("size-3.5 shrink-0", view.icon)} />
+          {restarting ? (
+            <Loader2 className={cn("size-3.5 shrink-0 animate-spin", view.icon)} />
+          ) : (
+            <view.Icon className={cn("size-3.5 shrink-0", view.icon)} />
+          )}
           {/* One truncating, flex-1 span — the row can never wrap to a second line, whatever the copy. */}
           <span className="min-w-0 flex-1 truncate font-medium text-foreground">{view.copy}</span>
-          {/* Actions only in red — amber is ambient (no buttons), green is a passing confirmation. */}
-          {shownTone === "red" && (
+          {needsSignIn && (
+            <a
+              href={PROXY_AUTH_PATH}
+              className={cn(buttonVariants({ size: "sm" }), "h-6 gap-1 px-2 text-xs no-underline")}
+            >
+              <LogIn className="size-3.5" />
+              {t("connection.signInAgain")}
+            </a>
+          )}
+          {/* Actions only in red — amber is ambient (no buttons), green is a passing confirmation.
+              FORK: and not while the bridge is restarting, which needs no tap. */}
+          {shownTone === "red" && !restarting && (
             <>
               <Button
                 size="sm"
@@ -294,12 +366,22 @@ function resolveView(tone: Tone, online: boolean, probe: Probe, lastSeenAt?: num
     // prefers-reduced-motion. Ambient by design.
     return { copy: t("connection.reconnecting"), Icon: Plug, row: TINT.working.row, icon: TINT.working.icon } as const;
   }
+  // FORK: four causes from one probe. `ok` = the bridge is up, so Herdr is the outage; `gateway` =
+  // the tunnel reached the origin's door and found nobody home, so the bridge is restarting;
+  // `auth` = the front door wants a sign-in; `down` = nothing answered — offline if the phone says
+  // so, otherwise the tunnel. Before the probe answers, the generic line.
   const cause =
-    probe === "reachable"
+    probe === "ok"
       ? { copy: t("connection.herdrDown"), Icon: TriangleAlert }
-      : probe === "unreachable" && !online
-        ? { copy: t("connection.offlineCantReach"), Icon: WifiOff }
-        : { copy: t("connection.cantReach"), Icon: TriangleAlert };
+      : probe === "gateway"
+        ? { copy: t("connection.bridgeRestarting"), Icon: Loader2 }
+        : probe === "auth"
+          ? { copy: t("connection.auth.message"), Icon: LogIn }
+          : probe === "down" && !online
+            ? { copy: t("connection.offlineCantReach"), Icon: WifiOff }
+            : probe === "down"
+              ? { copy: t("connection.tunnelDown"), Icon: CloudOff }
+              : { copy: t("connection.cantReach"), Icon: TriangleAlert };
   const copy =
     lastSeenAt === undefined
       ? cause.copy
