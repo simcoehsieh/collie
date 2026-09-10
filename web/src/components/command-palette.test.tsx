@@ -1,10 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CommandPalette } from "./command-palette";
 import type { OperatorCommand } from "@/lib/types";
 
-function setup(overrides?: { agent?: string | null; mine?: OperatorCommand[] }) {
+function setup(overrides?: { agent?: string | null; mine?: OperatorCommand[]; open?: boolean }) {
   // Widened at the binding, not asserted at the literal: the overrides below hand `null` and
   // `undefined` for the same prop, so the base value has to carry the whole domain.
   const agentProp: string | null | undefined = "claude";
@@ -21,6 +21,21 @@ function setup(overrides?: { agent?: string | null; mine?: OperatorCommand[] }) 
 }
 
 describe("CommandPalette", () => {
+  // FORK: ⌘K from the desktop hotkeys opens a closed palette, and its own close clears that.
+  it("opens on the palette event when its parent has it closed, and closes through onClose", async () => {
+    const user = userEvent.setup();
+    const props = setup({ open: false });
+    expect(screen.queryByText("/status")).toBeNull();
+    act(() => {
+      document.dispatchEvent(new CustomEvent("collie:palette"));
+    });
+    expect(screen.getByText("/status")).toBeInTheDocument();
+    await user.click(screen.getByText("/status"));
+    expect(props.onSubmit).toHaveBeenCalledWith("/status");
+    expect(props.onClose).toHaveBeenCalled();
+    expect(screen.queryByText("/status")).toBeNull();
+  });
+
   it("shows only common commands when the query is empty", () => {
     setup();
     // /status is common; /doctor is not.

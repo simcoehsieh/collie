@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { BottomSheet } from "@/components/ui/sheet";
 import { AgentIcon } from "@/components/agent-icon";
 import { usePendingConfirm } from "@/hooks/use-pending-confirm";
+import { PALETTE_EVENT } from "@/hooks/use-hotkeys";
 import { commandsFor, type AgentCommand } from "@/lib/agent-commands";
 import type { OperatorCommand } from "@/lib/types";
 import { t } from "@/lib/i18n";
@@ -34,14 +35,28 @@ export function CommandPalette({
   const all = commandsFor(agent, mine);
   const [query, setQuery] = useState("");
   const { pending, confirm, reset } = usePendingConfirm();
+  // FORK: ⌘K / Ctrl+K from the desktop hotkeys (hooks/use-hotkeys.ts). The sheet is controlled by
+  // its parent, which the hotkeys cannot reach, so the event opens it from here: `forced` ORs into
+  // `open`, and the parent's `onClose` (which the sheet already calls) clears it again.
+  const [forced, setForced] = useState(false);
+  useEffect(() => {
+    const onPalette = () => setForced(true);
+    document.addEventListener(PALETTE_EVENT, onPalette);
+    return () => document.removeEventListener(PALETTE_EVENT, onPalette);
+  }, []);
+  const shown = open || forced;
+  const close = () => {
+    setForced(false);
+    onClose();
+  };
 
   // Reset transient state whenever the sheet (re)opens.
   useEffect(() => {
-    if (open) {
+    if (shown) {
       setQuery("");
       reset();
     }
-  }, [open, reset]);
+  }, [shown, reset]);
 
   const q = query.trim().toLowerCase();
   const list = q
@@ -54,17 +69,17 @@ export function CommandPalette({
   function pick(c: AgentCommand) {
     if (c.takesArg) {
       onInsert(`${c.command} `);
-      onClose();
+      close();
       return;
     }
     if (c.dangerous && !confirm(c.command)) return; // first tap arms the confirm
     reset();
     onSubmit(c.command);
-    onClose();
+    close();
   }
 
   return (
-    <BottomSheet open={open} onClose={onClose} title={t("commands.title")} className="max-h-[85dvh]">
+    <BottomSheet open={shown} onClose={close} title={t("commands.title")} className="max-h-[85dvh]">
       {agent && (
         <div className="mb-3 flex items-center gap-2">
           <AgentIcon agent={agent} className="size-6" />
