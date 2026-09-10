@@ -314,6 +314,13 @@ export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
                     box the gear at the other end of the row has. */}
                 {claim.wordmark && (
                   <div data-slot="header-identity" className="relative min-w-0">
+                    {/* FORK: `hideMux` in branding.json drops the whole "on <mux>" line, so the name is
+                        the block's one flow child at the line's own size — an eyebrow with nothing under
+                        it would sit 24px above the row's centre. */}
+                    {BRAND.hideMux ? (
+                      <span className="block min-h-6 truncate text-base font-medium">{BRAND_WORD}</span>
+                    ) : (
+                    <>
                     <SectionLabel className="absolute bottom-full left-0 max-w-full truncate leading-none">
                       {/* FORK: the machine's own name when branding.json gives one (src/lib/brand.ts). */}
                       {BRAND_WORD}
@@ -345,7 +352,7 @@ export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
                               than a pixel guess, and inline so the line stays ONE text run — the
                               sentence is still "on <name>" to a screen reader and to a text query.
                               Nothing renders when the bridge published no URL. */}
-                          {muxLogo !== "" && !BRAND.hideMuxLogo && (
+                          {muxLogo !== "" && (
                             <img
                               src={muxLogo}
                               alt=""
@@ -356,6 +363,8 @@ export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
                         </>
                       )}
                     </span>
+                    </>
+                    )}
                   </div>
                 )}
                 {/* Center region: the breadcrumb (or, on the dashboard/space, an empty flex-1 spacer that

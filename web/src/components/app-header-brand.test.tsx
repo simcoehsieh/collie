@@ -15,7 +15,7 @@ import { AppHeaderHost, RouteHeader, SettingsGear } from "./app-header";
 // is the reason src/lib/brand.ts exists as a module at all. app-header.test.tsx covers the stock
 // brand this mock replaces.
 vi.mock("@/lib/brand", () => ({
-  BRAND: { shortName: "Meow", hideMuxLogo: true },
+  BRAND: { shortName: "Meow", hideMux: true },
   BRAND_WORD: "Meow",
 }));
 
@@ -59,12 +59,18 @@ describe("the header on a branded machine", () => {
   });
   afterEach(() => __resetOperatorCommands());
 
-  it("prints the machine's own name over the mux line, and no mux logo beside it", async () => {
+  it("prints the machine's own name alone — no \"on <mux>\" line and no mux logo", async () => {
     const { container } = renderHeader();
-    await waitFor(() => expect(screen.getByText("on reference")).toBeInTheDocument());
-    expect(screen.getByText("Meow")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Meow")).toBeInTheDocument());
+    // Give /api/config a beat to land, then check the mux line never appeared with it.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText(/on reference/)).toBeNull();
     expect(screen.queryByText("Collie")).toBeNull();
-    // The bridge published a logo URL; the branding said not to draw it. The sentence is intact.
+    // The bridge published a logo URL; `hideMux` dropped the line it would have sat on.
     expect(container.querySelector('img[src*="logo"]')).toBeNull();
+    // The name is the block's flow child at line size, not an eyebrow over an empty line.
+    const name = screen.getByText("Meow");
+    expect(name.tagName).toBe("SPAN");
+    expect(name.className).toContain("text-base");
   });
 });

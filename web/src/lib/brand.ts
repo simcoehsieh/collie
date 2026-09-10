@@ -9,7 +9,7 @@ export interface BrandInfo {
   /** The label under the home screen icon and the header's brand line; null = stock "Collie". */
   readonly shortName: string | null;
   /** Leave the multiplexer's own logo off the header's "on <mux>" line. */
-  readonly hideMuxLogo: boolean;
+  readonly hideMux: boolean;
 }
 
 export const BRAND: BrandInfo = __BRAND__;

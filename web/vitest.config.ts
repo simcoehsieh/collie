@@ -15,7 +15,7 @@ export default defineConfig({
     }),
     // FORK: tests see the stock brand whatever ~/.config/collie/branding/ says on this machine;
     // the branded case is exercised by mocking "@/lib/brand" (see app-header.test.tsx).
-    __BRAND__: JSON.stringify({ shortName: null, hideMuxLogo: false }),
+    __BRAND__: JSON.stringify({ shortName: null, hideMux: false }),
   },
   plugins: [react()],
   resolve: {

@@ -13,5 +13,5 @@ declare const __BUILD_INFO__: {
 // FORK: per-machine branding baked in at build time (see vite.config.ts → `brand`, web/branding.ts).
 declare const __BRAND__: {
   shortName: string | null;
-  hideMuxLogo: boolean;
+  hideMux: boolean;
 };

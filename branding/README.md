@@ -36,9 +36,9 @@ subscription**, so it has to re-subscribe from Settings afterwards.
 
 `branding.json` in a set names the app: `name` reaches the web manifest, `shortName` becomes the
 `<title>`, the label iOS writes under the icon **and the brand word in the app's header**.
-`"hideMuxLogo": true` keeps the multiplexer's own logo off the header's "on <mux>" line (the cat set
-sets it — herdr's grey mark beside a cat would say herdr looks like a cat). Delete the file to change
-the icon and keep the name.
+`"hideMux": true` drops the header's whole "on <mux>" line — logo and words — so the header reads
+just the name (the cat set sets it: "Meow", not "Meow on herdr"). Delete the file to change the icon
+and keep the name.
 
 ## Redrawing them
 

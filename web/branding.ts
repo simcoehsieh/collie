@@ -23,8 +23,8 @@
 //   ├── favicon.svg / .ico         optional — ditto
 //   ├── web-app-manifest-*.png     optional — Android and other installers; iOS never reads these
 //   └── branding.json              optional — {"name", "shortName", "description",
-//                                   "hideMuxLogo"}, all optional. `hideMuxLogo: true` keeps the
-//                                   multiplexer's own logo off the header's "on <mux>" line —
+//                                   "hideMux"}, all optional. `hideMux: true` drops the header's
+//                                   "on <mux>" line, logo and words, so the name stands alone —
 //                                   for a machine whose mark is not the collie, a second animal
 //                                   beside the name would say "herdr looks like this", which it
 //                                   does not. `shortName` also becomes the header's brand word.
@@ -52,7 +52,7 @@ export interface BrandingText {
   readonly shortName?: string;
   readonly description?: string;
   /** Draw no multiplexer logo beside "on <mux>" in the header. Absent = draw it, as upstream does. */
-  readonly hideMuxLogo?: boolean;
+  readonly hideMux?: boolean;
 }
 
 export interface Branding extends BrandingText {
@@ -70,7 +70,7 @@ export interface Branding extends BrandingText {
 const HOME_SCREEN_LABEL_BUDGET = 12;
 
 /** Everything `branding.json` may say. Anything else in the file is a typo worth naming. */
-const BRANDING_KEYS = new Set(["name", "shortName", "description", "hideMuxLogo"]);
+const BRANDING_KEYS = new Set(["name", "shortName", "description", "hideMux"]);
 
 const warn = (msg: string) => console.warn(`\x1b[33m⚠ branding: ${msg}\x1b[0m`);
 
@@ -141,7 +141,7 @@ export function readBrandingText(dir: string): BrandingText {
     name: readString(doc, file, "name"),
     shortName: readString(doc, file, "shortName"),
     description: readString(doc, file, "description"),
-    hideMuxLogo: readFlag(doc, file, "hideMuxLogo"),
+    hideMux: readFlag(doc, file, "hideMux"),
   };
 }
 
@@ -193,7 +193,7 @@ export function loadBranding(webRoot: string): Branding {
     .map((e) => e.name)
     .toSorted();
 
-  const named = text.name ?? text.shortName ?? text.description ?? text.hideMuxLogo;
+  const named = text.name ?? text.shortName ?? text.description ?? text.hideMux;
   if (files.length === 0 && named === undefined) {
     warn(`${dir} exists but is empty — building the stock Collie`);
     return { publicDir: stock, htmlPlugin: null };

@@ -152,7 +152,7 @@ export default defineConfig({
     // FORK: the machine's own name and the mux-logo toggle, from branding.json (src/lib/brand.ts).
     __BRAND__: JSON.stringify({
       shortName: brand.shortName ?? null,
-      hideMuxLogo: brand.hideMuxLogo ?? false,
+      hideMux: brand.hideMux ?? false,
     }),
   },
   plugins: [

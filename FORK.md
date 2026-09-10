@@ -85,7 +85,7 @@ playground — and `index.html`'s first-paint splash draws the same cat as a CSS
 galloping-dog sprite. **This swap is unconditional in the fork**: both machines get the cat mark
 in-app, because the mark is a committed component and not a per-machine file. What DOES come from
 `branding.json` is the header's brand word (`shortName`, so this machine's header says "Meow" over
-"on herdr") and `"hideMuxLogo": true`, which keeps herdr's own grey mark off that line. Both reach
+"on herdr") and `"hideMux": true`, which drops that "on herdr" line altogether. Both reach
 the bundle through vite's `define` as `__BRAND__`, read by `src/lib/brand.ts`; tests see the stock
 brand (`vitest.config.ts`) and mock that module for the branded case.
 
