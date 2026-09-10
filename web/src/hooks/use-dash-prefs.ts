@@ -67,6 +67,8 @@ export interface DashPrefs {
    * fast cadence is the product, and this is the operator saying "not today".
    */
   lowPower: boolean;
+  /** FORK: the dashboard's usage section (components/quota-card.tsx), open unless folded. */
+  quotaOpen: boolean;
 }
 
 const STORAGE_KEY = "collie:dash-prefs:v1";
@@ -83,6 +85,7 @@ const DEFAULTS: DashPrefs = {
   newTabLauncher: "",
   pinned: [],
   lowPower: false,
+  quotaOpen: true,
 };
 
 /**
@@ -125,6 +128,7 @@ export function coerceDashPrefs(raw: JsonValue | undefined): DashPrefs {
     newTabLauncher: typeof p.newTabLauncher === "string" ? p.newTabLauncher : DEFAULTS.newTabLauncher,
     pinned: coercePinned(p.pinned),
     lowPower: asJsonBoolean(p.lowPower) ?? DEFAULTS.lowPower,
+    quotaOpen: asJsonBoolean(p.quotaOpen) ?? DEFAULTS.quotaOpen,
   };
 }
 
@@ -236,6 +240,8 @@ export interface UseDashPrefsReturn {
   movePinned: (paneId: string, delta: -1 | 1, known?: readonly string[]) => void;
   /** FORK: Low power on or off. */
   setLowPower: (on: boolean) => void;
+  /** FORK: fold or open the usage section. */
+  setQuotaOpen: (open: boolean) => void;
 }
 
 export function useDashPrefs(): UseDashPrefsReturn {
@@ -251,6 +257,7 @@ export function useDashPrefs(): UseDashPrefsReturn {
     [],
   );
   const setLowPower = useCallback((lowPower: boolean) => updateDashPrefs({ lowPower }), []);
+  const setQuotaOpen = useCallback((quotaOpen: boolean) => updateDashPrefs({ quotaOpen }), []);
 
   return {
     prefs: current,
@@ -263,5 +270,6 @@ export function useDashPrefs(): UseDashPrefsReturn {
     setPinned,
     movePinned,
     setLowPower,
+    setQuotaOpen,
   };
 }

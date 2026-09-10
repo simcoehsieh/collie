@@ -31,6 +31,7 @@ import type {
   DocsResponse,
   DocTagsResponse,
   PaneDiffResponse,
+  QuotaResponse,
   WorktreeListResponse,
   WorktreeOpenResponse,
 } from "./types";
@@ -1138,6 +1139,45 @@ export function fetchDocs(query: DocsQuery = {}, signal?: AbortSignal): Promise<
 /** Every tag the knowledge base knows, most-used first. */
 export function fetchDocTags(signal?: AbortSignal): Promise<DocTagsResponse> {
   return req<DocTagsResponse>("/api/docs/tags", { signal });
+}
+
+// ── FORK: what the three agents have left ────────────────────────────────────────────────────
+
+let quotaCache: { etag: string; response: QuotaResponse } | null = null;
+
+/** A forced rerun waits for three providers; the bridge's own deadline is 20 s. */
+const QUOTA_REFRESH_TIMEOUT_MS = 25_000;
+
+/**
+ * The three agents' quotas (bridge/quota.ts). Its own ETag cache, one entry: the bridge serves
+ * a body up to a minute old and answers 304 to its tag, and on a 304 THE SAME object comes back so
+ * a memoised row stays still. `refresh` asks the bridge to rerun its command and wait for it.
+ */
+export async function fetchQuota(refresh = false, signal?: AbortSignal): Promise<QuotaResponse> {
+  const url = refresh ? "/api/quota?refresh=1" : "/api/quota";
+  const headers = new Headers({ [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() });
+  if (quotaCache) headers.set("if-none-match", quotaCache.etag);
+  const res = await apiFetch(url, {
+    signal: withTimeout(signal, refresh ? QUOTA_REFRESH_TIMEOUT_MS : GET_TIMEOUT_MS),
+    headers,
+  });
+  captureBuild(res);
+  if (res.status === 304 && quotaCache) return quotaCache.response;
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    throw new ApiError(`${url} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  // SAFETY: a 200 on `/api/quota` is the bridge's own `QuotaResponse` by contract (bridge/quota.ts
+  // serialises exactly that shape and nothing else answers the path).
+  const body = (await res.json()) as QuotaResponse;
+  const etag = res.headers.get("etag");
+  quotaCache = etag ? { etag, response: body } : null;
+  return body;
+}
+
+/** Test seam. */
+export function __resetQuotaCache(): void {
+  quotaCache = null;
 }
 
 // ── FORK: naming the outage ───────────────────────────────────────────────────────────────────

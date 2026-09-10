@@ -29,6 +29,7 @@ import { diffPatch, diffStat } from "./diff.ts";
 import { listDirs, resolveWithinRoots, type DirsBody } from "./dirs.ts";
 import { documentResponseHeaders, documentSlugFromPath, fetchDocument, type DocumentFailure } from "./docs.ts";
 import { listDocuments, listTags, normaliseDocumentQuery } from "./docs-list.ts";
+import { QuotaSource, parseQuotaCommand, type QuotaFailure } from "./quota.ts";
 import {
   DEFAULT_PROMPT_TAIL_LINES,
   verifyExpectedPrompt,
@@ -586,6 +587,12 @@ export function bridgeConfigBody(opts: {
    * into "the panel is broken", and the operator cannot tell those apart from the phone.
    */
   docHosts?: readonly string[];
+  /**
+   * FORK: whether `/api/quota` answers — the usage card's gate. Published only as `true`, and only
+   * when a command is configured (bridge/quota.ts); absent is the feature off, which is also what
+   * every bridge older than the field sends.
+   */
+  quota?: boolean;
 }): BridgeConfig {
   const mode = modeForWire(opts.mode);
   const mine = opts.operatorCommands ?? [];
@@ -619,6 +626,8 @@ export function bridgeConfigBody(opts: {
   // Omit-when-empty, like the operator rows above: a bridge with no knowledge base ships the body it
   // shipped before this feature existed, and a client older than the field ignores it either way.
   if (opts.docHosts !== undefined && opts.docHosts.length > 0) wire.docHosts = [...opts.docHosts];
+  // Omit-when-off, like `docHosts`: a `false` on the wire would be a key an older client never saw.
+  if (opts.quota === true) wire.quota = true;
   return wire;
 }
 
@@ -798,6 +807,13 @@ export function startServer(opts: {
 
   /** One in-flight "look now" per session — see bridge/refresh.ts for why it coalesces. */
   const refreshes = new RefreshCoalescer();
+
+  /**
+   * FORK: the usage card's source (bridge/quota.ts) — the operator's `ai-quota --json`, cached and
+   * coalesced. Null is the feature off: no command, no spawn, `/api/quota` answers 404.
+   */
+  const quotaArgv = parseQuotaCommand(cfg.quotaCommand);
+  const quota = quotaArgv === null ? null : new QuotaSource(quotaArgv);
 
   /**
    * Take a fresh look at one session's multiplexer, then make the bridge re-read it.
@@ -1583,6 +1599,7 @@ export function startServer(opts: {
             // Gated on the bridge being ABLE to serve a document, not merely on the hostnames being
             // named — see the field's own comment. Both halves of the credential must be present.
             docHosts: cfg.kbOrigin !== "" && cfg.kbToken !== "" ? cfg.docHosts : undefined,
+            quota: quota !== null ? true : undefined,
           }),
           req.headers.get("accept-encoding"),
         );
@@ -2054,6 +2071,21 @@ export function startServer(opts: {
       // The document BROWSER (bridge/docs-list.ts): which documents kb has, so the panel can open
       // one the agent never printed. Read-gated like the document itself; JSON, never HTML, so
       // none of the document route's containment applies and the ordinary `json()` answers.
+      // FORK: what the three agents have left (bridge/quota.ts). Read-gated like the document
+      // browser — a read-only device watching the herd wants to know how much herd is left. The
+      // body is the CLI's JSON normalised, never its text; a failure is a reason, never its output.
+      if (pathname === "/api/quota" && req.method === "GET") {
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        if (quota === null) return text("no quota source", 404);
+        const got = await quota.get(url.searchParams.get("refresh") === "1");
+        if (!got.ok) return text(quotaRefusal(got.reason), 503);
+        if (notModified(req.headers.get("if-none-match"), got.etag)) {
+          return secure(new Response(null, { status: 304, headers: { etag: got.etag, "cache-control": "no-store" } }));
+        }
+        return jsonBodyResponse(got.body, req.headers.get("accept-encoding"), { etag: got.etag });
+      }
+
       if ((pathname === "/api/docs" || pathname === "/api/docs/tags") && req.method === "GET") {
         const denied = guard(req, cfg, "read", pairing);
         if (denied) return denied;
@@ -2341,6 +2373,20 @@ export function historyParams(url: URL): HistoryParams {
  * A document-list refusal as a status. The same split the document route makes: an absent store is
  * a 404 (the feature is off), and everything else is THIS side's fault and a 503.
  */
+/** FORK: the usage card's refusal, as plain text the phone shows under the section label. */
+function quotaRefusal(reason: QuotaFailure): string {
+  switch (reason) {
+    case "not_configured":
+      return "no quota source";
+    case "timeout":
+      return "the quota command did not answer in time";
+    case "unparsable":
+      return "the quota command printed something that is not its JSON";
+    default:
+      return "the quota command failed";
+  }
+}
+
 function docsRefusal(reason: DocumentFailure): Response {
   return reason === "not_configured" || reason === "not_found" || reason === "bad_slug"
     ? text("no document store", 404)

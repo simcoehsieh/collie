@@ -928,6 +928,11 @@ export interface BridgeConfig {
    * "these are interesting". Mirrored in web/src/lib/types.ts.
    */
   docHosts?: string[];
+  /**
+   * FORK: `true` when `/api/quota` answers (bridge/quota.ts) — the usage card's gate. Absent is the
+   * feature off, which is also what every bridge older than the field sends.
+   */
+  quota?: boolean;
 }
 
 /**
@@ -967,3 +972,57 @@ export const STATUS_RANK = {
   idle: 3,
   done: 4,
 } satisfies Record<AgentStatus, number>;
+
+// ── FORK: what the three agents have left (bridge/quota.ts) ───────────────────────────────────
+// The wire shape of `GET /api/quota`, normalised from the operator's `ai-quota --json` so the
+// phone never sees the CLI's own vocabulary (providers, windows named by label) — only the three
+// agents it already knows by name and the two numbers that matter for each.
+
+/** The agent the operator runs, in the name the dashboard already uses for its panes. */
+export type QuotaAgentKey = "claude" | "codex" | "agy";
+
+/** Which of an agent's limits a window is: the rolling five hours, the week, or something else. */
+export type QuotaWindowKind = "5h" | "weekly" | "other";
+
+export interface QuotaWindow {
+  kind: QuotaWindowKind;
+  /** The provider's own label, shown only for `other` windows. */
+  label: string;
+  /** 0–100. */
+  usedPercent: number;
+  /** ISO-8601, when the provider said; null when it did not. The phone counts down from it. */
+  resetAt: string | null;
+  resetAfterSeconds: number | null;
+  /** The provider's word for the window's state, e.g. `allowed`; passed through, never interpreted. */
+  status: string;
+}
+
+export interface QuotaModel {
+  label: string;
+  usedPercent: number;
+  resetAfterSeconds: number | null;
+}
+
+export interface QuotaAgent {
+  key: QuotaAgentKey;
+  name: string;
+  /** `missing` is a provider the CLI did not report at all; `error` is one it could not read. */
+  status: "ok" | "error" | "missing";
+  plan?: string;
+  /** The five-hour and weekly windows first, in that order where present, then the rest. */
+  windows: QuotaWindow[];
+  models?: QuotaModel[];
+  /** A balance the provider states as text, e.g. `$0`. */
+  credits?: string;
+  /** One line, the CLI's own words, only ever from its structured `error` field. */
+  error?: string;
+}
+
+/** GET /api/quota */
+export interface QuotaResponse {
+  ok: true;
+  /** ISO-8601, when the CLI was last run — the body may be older than the request. */
+  fetchedAt: string;
+  /** Always all three, in the order claude, codex, agy. */
+  agents: QuotaAgent[];
+}

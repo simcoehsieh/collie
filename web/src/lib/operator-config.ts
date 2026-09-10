@@ -64,6 +64,8 @@ let currentUpload: UploadCapability | null = null;
 // Empty until a read succeeds, on a bridge that serves no documents, and on one older than the
 // field — all three mean the same thing (every link stays external), so nothing distinguishes them.
 let currentDocHosts: readonly string[] = [];
+/** FORK: whether the bridge answers `/api/quota` — the dashboard's usage section gate. */
+let currentQuota = false;
 let inflight: Promise<void> | null = null;
 let loaded = false;
 const listeners = new Set<() => void>();
@@ -92,6 +94,7 @@ export function loadOperatorCommands(): Promise<void> {
       currentStt = cfg.stt ?? null;
       currentUpload = cfg.upload ?? null;
       currentDocHosts = cfg.docHosts ?? [];
+      currentQuota = cfg.quota === true;
       loaded = true;
       emit();
     } catch {
@@ -290,6 +293,19 @@ export function useDocHosts(): readonly string[] {
   return useSyncExternalStore(subscribeOperatorConfig, getDocHosts, getDocHosts);
 }
 
+/** FORK: whether the usage section can be drawn. `false` until the config has loaded. */
+export function getQuotaEnabled(): boolean {
+  return currentQuota;
+}
+
+/** Reactive read of the usage gate. Same one-shot fetch, same contract. */
+export function useQuotaEnabled(): boolean {
+  useEffect(() => {
+    void loadOperatorCommands();
+  }, []);
+  return useSyncExternalStore(subscribeOperatorConfig, getQuotaEnabled, getQuotaEnabled);
+}
+
 /** Reactive read of the Quick-dock groups. Same one-shot fetch, same contract. */
 export function useOperatorQuickReplies(): readonly OperatorQuickReplyRow[] {
   useEffect(() => {
@@ -314,6 +330,7 @@ export function __resetOperatorCommands(): void {
   currentStt = null;
   currentUpload = null;
   currentDocHosts = [];
+  currentQuota = false;
   inflight = null;
   loaded = false;
   listeners.clear();

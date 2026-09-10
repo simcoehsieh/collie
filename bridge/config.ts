@@ -183,6 +183,16 @@ export interface Config {
    */
   docHosts: string[];
   /**
+   * FORK: the command that reports what the three agents have left — the operator's own
+   * `ai-quota --json` or anything that prints its JSON. Whitespace-split into an argv, never handed
+   * to a shell. Empty — the default — turns the usage card off: `/api/quota` answers 404 and the
+   * bridge spawns nothing, the same declined-by-doing-nothing shape the document panel has. It is
+   * the third seam that reaches outside the machine (the CLI calls the providers), and it is
+   * granted the same treatment: off unless named, run on a deadline, its output never echoed into
+   * a response body (the CLI reads credentials, and its errors may quote them).
+   */
+  quotaCommand: string;
+  /**
    * Which dialer opens that socket. `auto` (the default) is correct everywhere: `node:net` on
    * Windows, where herdr's socket is a named pipe, and Bun's native transport elsewhere. Forcing
    * `net` on Linux/macOS exercises the Windows dial path against the real socket — the only way to
@@ -572,6 +582,7 @@ export function loadConfig(): Config {
     // that trailing byte. docs.ts trims again — a credential is cheap to check on both sides.
     kbToken: (process.env.COLLIE_KB_TOKEN ?? "").trim(),
     docHosts: envList("COLLIE_DOC_HOSTS"),
+    quotaCommand: (process.env.COLLIE_QUOTA_COMMAND ?? "").trim(),
     dialMode: envEnum("COLLIE_HERDR_DIAL", ["auto", "net", "bun"] as const, "auto"),
     port: envInt("COLLIE_PORT", DEFAULT_PORT, { min: 1, max: 65535 }),
     host,

@@ -123,6 +123,7 @@ function cfg(overrides: Partial<Config> = {}): Config {
     kbOrigin: "",
     kbToken: "",
     docHosts: [],
+    quotaCommand: "",
     port: 8787,
     host: "127.0.0.1",
     pollMs: 1500,

@@ -1063,6 +1063,23 @@ export const en = {
   "settings.readAloud.ariaLabel": "Read replies aloud",
   "chat.fullReply.speak": "Read this reply aloud",
   "chat.fullReply.stopSpeaking": "Stop reading",
+  // --- FORK: the usage section (components/quota-card.tsx) ---
+  "quota.title": "Usage",
+  "quota.refresh.aria": "Refresh usage",
+  "quota.loading": "Reading usage…",
+  "quota.window.5h": "5h",
+  "quota.window.weekly": "Weekly",
+  "quota.used": "{percent}%",
+  "quota.reset": "resets in {time}",
+  "quota.resetNow": "resetting",
+  "quota.missing": "not configured",
+  "quota.error": "unavailable",
+  "quota.models": "Models",
+  "quota.credits": "Balance {credits}",
+  "quota.row.aria": "{agent} usage",
+  "quota.time.days": "{d}d {h}h",
+  "quota.time.hours": "{h}h {m}m",
+  "quota.time.minutes": "{m}m",
 } as const;
 
 /** Every key that exists, as a union of string literals. The completeness contract. */
