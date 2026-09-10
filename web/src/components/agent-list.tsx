@@ -36,6 +36,11 @@ interface AgentListProps {
   error?: boolean;
   /** When the stale data was fetched, for the "last seen HH:MM" half of the disconnected placeholder. */
   lastSeenAt?: number;
+  /** FORK: pane ids pinned to the top, in the operator's order (hooks/use-dash-prefs.ts). Omit to
+   *  render the plain triage — the sidebar and the palette never pin. */
+  pinned?: readonly string[];
+  /** FORK: a long press on a row — the dashboard opens its pin sheet. Omitted elsewhere. */
+  onLongPress?: (pane: AgentView) => void;
 }
 
 /** Which timestamp a section's rows date themselves by. Attention rows show none — a blocked
@@ -65,6 +70,8 @@ export const AgentList = memo(function AgentList({
   emptyState = true,
   error = false,
   lastSeenAt,
+  pinned,
+  onLongPress,
 }: AgentListProps) {
   useLocale();
   // Whether the multiplexer can say which agent a pane holds. Read unconditionally — a hook cannot
@@ -109,7 +116,7 @@ export const AgentList = memo(function AgentList({
     );
   }
 
-  const all = triage(agents, recentDir);
+  const all = triage(agents, recentDir, pinned);
   const sections = all.filter((s) => s.agents.length > 0);
   if (sections.length === 0) return null;
   // "What needs me right now?" deserves an answer even when the answer is "nothing". Without this
@@ -147,6 +154,10 @@ export const AgentList = memo(function AgentList({
             statusStyle="dot"
             density={ATTENTION.has(s.key) ? "card" : "row"}
             {...(age ? { age } : {})}
+            // FORK: a pinned row wears its glyph in every section it could sit in — which is only
+            // this one, since triage lifts it out of the others.
+            pinned={s.key === "pinned"}
+            {...(onLongPress ? { onLongPress: () => onLongPress(a) } : {})}
           />
         ));
 

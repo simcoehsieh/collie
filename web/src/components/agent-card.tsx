@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { Check, TerminalSquare } from "lucide-react";
+import { Check, Pin, TerminalSquare } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import { statusLabel } from "@/lib/types";
 import type { AgentView } from "@/lib/types";
 import { useLocale } from "@/hooks/use-locale";
 import { useActionEcho } from "@/hooks/use-action-echo";
+import { useLongPress } from "@/hooks/use-long-press";
 import { usePromptPeek } from "@/hooks/use-prompt-peek";
 import { buzz } from "@/lib/haptics";
 import { t } from "@/lib/i18n";
@@ -51,6 +52,10 @@ interface AgentCardProps {
    * signal — see a card, something wants you; all flat, nothing does.
    */
   density?: "card" | "row";
+  /** FORK: the row is one the operator pinned — draws the pin glyph in the trailing column. */
+  pinned?: boolean;
+  /** FORK: a long press on the row (the dashboard's pin sheet). Absent = the row has no hold. */
+  onLongPress?: () => void;
 }
 
 /** The row's text: line 1's name, and line 2's two runs. */
@@ -112,7 +117,10 @@ export const AgentCard = memo(AgentCardImpl, (a, b) =>
   a.age === b.age &&
   a.scope === b.scope &&
   a.statusStyle === b.statusStyle &&
-  a.density === b.density,
+  a.density === b.density &&
+  a.pinned === b.pinned &&
+  // Presence only, like `onClick`: the dashboard's hold handler is an inline arrow too.
+  (a.onLongPress === undefined) === (b.onLongPress === undefined),
 );
 
 function AgentCardImpl({
@@ -122,8 +130,13 @@ function AgentCardImpl({
   scope = "herd",
   statusStyle = "badge",
   density = "card",
+  pinned = false,
+  onLongPress,
 }: AgentCardProps) {
   useLocale();
+  // FORK: the hold that opens the dashboard's pin sheet. Inert when no handler is passed (the
+  // hook's own contract), so the space view and the sidebar rows are byte-for-byte what they were.
+  const hold = useLongPress(onLongPress);
   const isShell = agent.kind === "shell";
   const blocked = agent.status === "blocked";
   const inTab = scope === "tab";
@@ -188,8 +201,13 @@ function AgentCardImpl({
       <button
         type="button"
         onClick={onClick}
+        // FORK: the hook needs the iOS callout and selection off the element it times (see its
+        // note); `data-pane-row` is what the desktop hotkeys walk with j/k (hooks/use-hotkeys.ts).
+        {...hold}
+        data-pane-row={agent.paneId}
         className={cn(
           "flex w-full flex-row items-center gap-3 text-left",
+          onLongPress !== undefined && "select-none [-webkit-touch-callout:none]",
           flat ? "px-3.5 py-2.5" : "px-4 py-3.5",
         )}
       >
@@ -263,6 +281,10 @@ function AgentCardImpl({
           <HostChip host={agent.host} />
           <SessionChip session={agent.session} />
           {stamp !== undefined && <Age at={stamp} />}
+          {/* FORK: the pin, muted and small — a mark that the row's place is chosen, not earned. */}
+          {pinned && (
+            <Pin className="size-3.5 shrink-0 text-muted-foreground" aria-label={t("home.pin.pinned")} />
+          )}
         </div>
 
         {isShell ? (

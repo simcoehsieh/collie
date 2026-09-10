@@ -83,3 +83,14 @@ describe("AgentCard's two lines", () => {
     expect(line2(container)).not.toHaveTextContent("review");
   });
 });
+
+// FORK: the pin glyph and the hold.
+describe("AgentCard — pinned", () => {
+  it("wears the pin glyph only when pinned, and the row carries its pane id for the hotkeys", () => {
+    const { container, rerender } = render(<AgentCard agent={agent()} onClick={() => {}} />);
+    expect(container.querySelector('[aria-label="Pinned"]')).toBeNull();
+    expect(container.querySelector("[data-pane-row]")!.getAttribute("data-pane-row")).toBe(agent().paneId);
+    rerender(<AgentCard agent={agent()} onClick={() => {}} pinned />);
+    expect(container.querySelector('[aria-label="Pinned"]')).not.toBeNull();
+  });
+});
