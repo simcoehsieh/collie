@@ -625,7 +625,10 @@ describe("filePairingIo", () => {
     // most once a second, and it is the directory watch that brings the clock forward — which is an
     // event, so one turn of the loop is what "the next read" costs.
     await writeFile(join(stateDir, DEVICES_FILENAME), JSON.stringify({ devices: [] }));
-    await new Promise((r) => setTimeout(r, 50));
+    // The kqueue event behind fs.watch lands in tens of milliseconds on macOS but is not bounded by
+    // any number a test can pick; poll for it, and let the one-second clock be the ceiling.
+    const deadline = Date.now() + 1500;
+    while (store.enforced() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
     expect(store.enforced()).toBe(false);
     expect(store.resolve("t")).toBeNull();
   });

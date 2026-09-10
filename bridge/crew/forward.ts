@@ -52,7 +52,7 @@ export function crewRouteFor(pathname: string): string | null {
  * but not across a link (or, worse, the reverse).
  */
 const FORWARDABLE: readonly RegExp[] = [
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|focus))?$/,
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|focus|diff))?$/,
   /^tab$/,
   /^tab\/[^/]+\/(?:rename|close)$/,
   /^workspace$/,
@@ -91,7 +91,9 @@ export function forwardKind(route: string): ForwardKind {
   if (route.startsWith("blobs/")) return "read";
   if (!route.startsWith("pane/")) return "write";
   const action = route.split("/")[2];
-  return action === undefined || action === "history" ? "read" : "write";
+  // `diff` is the fork's read-only `git diff` of the pane's work tree — the same shape as `history`:
+  // a GET that changes nothing, answered by whichever member owns the pane's disk.
+  return action === undefined || action === "history" || action === "diff" ? "read" : "write";
 }
 
 /** The pane id a route addresses, for the lead's own audit line. `undefined` for tab/workspace. */
@@ -120,7 +122,7 @@ export function forwardAuditAction(route: string): string | null {
   if (route.startsWith("blobs/")) return null; // a read
   if (route.startsWith("tab/")) return route.endsWith("/close") ? "tab.close" : "tab.rename";
   const action = route.split("/")[2];
-  if (action === undefined || action === "history") return null;
+  if (action === undefined || action === "history" || action === "diff") return null;
   if (action === "close" || action === "rename") return `pane.${action}`;
   return action; // reply | keys | upload
 }

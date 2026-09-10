@@ -127,6 +127,7 @@ describe("PeerNotifier — a peer's alerts on the lead's phone", () => {
     expect(push.sent).toHaveLength(1);
     expect(push.sent[0]).toEqual({
       title: "claude needs you",
+      agent: "claude",
       body: "laptop · collie · /home/you/collie",
       tag: "collie:herd@laptop",
       paneId: "p1",
