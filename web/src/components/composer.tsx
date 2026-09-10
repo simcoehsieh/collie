@@ -582,6 +582,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const sentTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // FORK: true from the tap until the guarded send has answered. While it is set, the "You sent"
+  // preview is the ONLY place the operator's words are on screen (the field cleared on the tap),
+  // so a mirror tick that is not the echo — a spinner frame, a tool's progress line — must not
+  // take it down. The verified outcome hands the preview back to the mirror-echo rule below.
+  const inFlightRef = useRef(false);
   // What we last sent, and when — so we can recognise our OWN reply momentarily echoing on the "❯"
   // line (during the bridge's send_text→settle→Enter gap) and NOT treat it as a stranded draft. A
   // ref, not state: it feeds a render-time derivation but must not itself trigger re-renders.
@@ -631,6 +636,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // When the mirror delivers fresh output (text changed), the send has been echoed back — clear the
   // pending preview immediately regardless of the 6s fallback timer.
   useEffect(() => {
+    if (inFlightRef.current) return;
     setLastSent(null);
     if (lastSentTimerRef.current) {
       clearTimeout(lastSentTimerRef.current);
@@ -782,6 +788,37 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     // attention, not about the send's verdict: a send that stalls or is blocked is exactly a moment
     // they are staring at the mirror.
     stampSend(paneId);
+    // FORK: THE FIELD CLEARS ON THE TAP, NOT ON THE ROUND TRIP. The guarded send below is a probe
+    // read, the type, a verify loop (350 ms a turn, up to eight) and the submit key — through a
+    // tunnel that is two round trips per call, the typed text used to sit in the box for one to
+    // two seconds after Send with a spinner where the glyph was, which reads as "did that go?".
+    // What moves here is pixel timing only: the box empties, the ✓ shows and the "You sent" chip
+    // carries the words at once, and every outcome that is not `sent` puts the text BACK
+    // (`restoreDraft`), so the safety property — no submit key without a verified echo, the draft
+    // survives a stall — is exactly what it was. The chip's spinner stays honest: it is the
+    // verification that is still pending, and the ✓ becomes true when it lands.
+    const draftBefore = isDraft ? value : null;
+    inFlightRef.current = true;
+    if (isDraft) updateInput("");
+    setJustSent(true);
+    if (sentTimer.current) clearTimeout(sentTimer.current);
+    sentTimer.current = null; // holds until the outcome; the 1.5 s hold starts when it is verified
+    const preview = t.length > 60 ? `${t.slice(0, 57)}…` : t;
+    setLastSent(preview);
+    if (lastSentTimerRef.current) clearTimeout(lastSentTimerRef.current);
+    lastSentTimerRef.current = setTimeout(() => setLastSent(null), 6000);
+    /** Every non-`sent` outcome: the words go back where they were, and the chip comes down. A
+     *  draft the operator started typing meanwhile is kept, under the restored one. */
+    const restoreDraft = () => {
+      setJustSent(false);
+      setLastSent(null);
+      if (lastSentTimerRef.current) {
+        clearTimeout(lastSentTimerRef.current);
+        lastSentTimerRef.current = null;
+      }
+      if (draftBefore === null) return;
+      updateInputFrom((prev) => (prev.trim() ? `${draftBefore}\n${prev}` : draftBefore));
+    };
     try {
       // Guarded: types the text, verifies it reached the input box, and only THEN sends the submit
       // key. A "stalled" outcome means nothing was submitted and the draft must survive (#34).
@@ -863,9 +900,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         },
       });
       if (res.status === "sent") {
-        // Phone-owned input — cleared once the reply is on its way. Via updateInput, so the stored
-        // draft goes with it (an empty value removes the key).
-        if (isDraft) updateInput("");
+        // The phone-owned input was cleared on the tap (above); nothing to clear here.
         // Remember what/when we sent, so the next few polls recognise this text echoing on the "❯"
         // line as our own in-flight reply rather than a stranded draft (suppressEcho above).
         lastSentRef.current = { text: t, at: Date.now() };
@@ -884,10 +919,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         if (sentTimer.current) clearTimeout(sentTimer.current);
         sentTimer.current = setTimeout(() => setJustSent(false), 1500);
         setStatus(translate("composer.status.sent"), "success");
-        const preview = t.length > 60 ? `${t.slice(0, 57)}…` : t;
-        setLastSent(preview);
-        if (lastSentTimerRef.current) clearTimeout(lastSentTimerRef.current);
-        lastSentTimerRef.current = setTimeout(() => setLastSent(null), 6000);
+        // The chip was raised on the tap; from here the mirror's echo is what takes it down.
+        inFlightRef.current = false;
         forceConfirm.reset(); // a clean send disarms any leftover override
         noticeNoEcho(null); // whatever prompt it described, the pane has moved past it
         onSent(); // you just acted — snap the mirror back to the live tail to see the result
@@ -897,6 +930,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         // but the adapter can only report what it can see, so the user gets a deliberate override —
         // the same two-tap shape as the destructive-send confirm. The second tap skips the pre-flight
         // ONLY; the type-then-verify guard still runs, so Enter is never fired blind either way.
+        inFlightRef.current = false;
+        restoreDraft(); // the second tap re-sends the FIELD, so the words must be back in it
         forceConfirm.confirm("force");
         // A password prompt gets the notice AND keeps the override: the notice explains the screen and
         // offers the control that works, the override stays for the case where the detection is wrong.
@@ -918,10 +953,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             ? { prompt: res.noEcho, typed: true }
             : null,
         );
+        // After the notice, on purpose: a password prompt sets `noEchoRef` there, and the restore
+        // then goes back into the field WITHOUT re-entering the 48 h store (updateInput's gate).
+        inFlightRef.current = false;
+        restoreDraft();
         setStatus(res.error, "error");
         return false;
       }
     } catch (e) {
+      inFlightRef.current = false;
+      restoreDraft();
       setStatus(describeThrownError(e), "error");
       return false;
     } finally {
@@ -1796,9 +1837,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             >
               {direct.active ? (
                 <Keyboard className="size-4" />
-              ) : sending ? (
-                <Loader2 className="size-4 animate-spin" />
               ) : justSent ? (
+                // FORK: the ✓ is up from the tap (see send()); `sending` only disables the button,
+                // and the chip's spinner is where "still verifying" lives.
                 <Check className="size-4" />
               ) : (
                 <Send className="size-4" />
