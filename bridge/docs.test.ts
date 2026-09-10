@@ -89,6 +89,26 @@ function kbAnswer(
   };
 }
 
+/** A chunked kb answer: no Content-Length, the bytes arrive on a stream in 4 KB pieces. */
+function streamedAnswer(status: number, text: string, contentType: string): KbAnswer {
+  const bytes = Buffer.from(text, "utf8");
+  const headers = new Map<string, string>([["content-type", contentType]]);
+  let offset = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset >= bytes.byteLength) return controller.close();
+      controller.enqueue(new Uint8Array(bytes.subarray(offset, offset + 4096)));
+      offset += 4096;
+    },
+  });
+  return {
+    status,
+    headers: { get: (name) => headers.get(name.toLowerCase()) ?? null },
+    text: async () => text,
+    body,
+  };
+}
+
 const htmlAnswer = (text = HTML): KbAnswer =>
   kbAnswer(200, text, { "content-type": "text/html; charset=utf-8" });
 
@@ -607,15 +627,25 @@ describe("fetchDocument — telling the failures apart", () => {
     });
   });
 
-  test("a body with no declared length is refused rather than buffered", async () => {
-    // kb sends a Content-Length on every answer, so one without is not the thing this module was
-    // pointed at — and reading it anyway means buffering whatever the peer feels like sending.
+  test("a body with no declared length is read chunk by chunk up to the cap", async () => {
+    // kb is Go's net/http: anything past its 4 KB write buffer goes out chunked, with no
+    // Content-Length. That is most tag lists and every full page of documents, so an answer without
+    // a length is ordinary — it is read from the stream and capped as it arrives, never buffered
+    // past the ceiling.
     const { io } = kbIo({
       ...happyRoutes(),
-      [kbDocumentHtmlUrl(ORIGIN, ID)]: kbAnswer(200, HTML, {
-        "content-type": "text/html; charset=utf-8",
-        "content-length": null,
-      }),
+      [kbDocumentHtmlUrl(ORIGIN, ID)]: streamedAnswer(200, HTML, "text/html; charset=utf-8"),
+    });
+    const served = await fetchDocument("herdr-interface-anatomy", settings, null, io, silent);
+    expect(served.ok).toBe(true);
+    if (served.ok && !served.unchanged) expect(served.html).toBe(HTML);
+  });
+
+  test("a streamed body that runs past the cap is dropped where it crosses it", async () => {
+    const oversized = "字".repeat(MAX_DOCUMENT_BYTES / 3 + 1024);
+    const { io } = kbIo({
+      ...happyRoutes(),
+      [kbDocumentHtmlUrl(ORIGIN, ID)]: streamedAnswer(200, oversized, "text/html; charset=utf-8"),
     });
     expect(await fetchDocument("herdr-interface-anatomy", settings, null, io, silent)).toEqual({
       ok: false,

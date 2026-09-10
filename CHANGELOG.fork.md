@@ -13,6 +13,10 @@ stays true).
 
 ## On top of 1.8.0
 
+- **A chunked kb answer is read under the cap, not refused.** kb is Go's net/http and sends any
+  body past its 4 KB write buffer chunked with no Content-Length — the tag list and a full page of
+  documents both are — and `body()` had refused those as "unusable" while a three-row search came
+  through. It now streams a lengthless answer chunk by chunk and drops it where it crosses the cap.
 - **Two panels beside the terminal: what the agent changed, and the knowledge base.** A read-only
   `GET /api/pane/:id/diff` (git status + numstat, one file's unified diff; 5 s deadline, 512 KB cap,
   jailed to the home directory, no write verb) feeds a "What changed" sheet in the pane's actions.

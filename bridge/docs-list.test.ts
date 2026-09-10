@@ -29,6 +29,25 @@ function answer(status: number, json: JsonValue): KbAnswer {
   return { status, headers: { get: (name) => headers.get(name.toLowerCase()) ?? null }, text: async () => text };
 }
 
+/** kb past Go's 4 KB write buffer: chunked, no Content-Length, bytes on a stream. */
+function chunkedAnswer(status: number, json: JsonValue): KbAnswer {
+  const bytes = Buffer.from(JSON.stringify(json), "utf8");
+  let offset = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset >= bytes.byteLength) return controller.close();
+      controller.enqueue(new Uint8Array(bytes.subarray(offset, offset + 4096)));
+      offset += 4096;
+    },
+  });
+  return {
+    status,
+    headers: { get: (name) => (name.toLowerCase() === "content-type" ? "application/json; charset=utf-8" : null) },
+    text: async () => bytes.toString("utf8"),
+    body,
+  };
+}
+
 function fakeKb(reply: (url: string, init: KbRequestInit) => KbAnswer): KbIo & { calls: { url: string; init: KbRequestInit }[] } {
   const calls: { url: string; init: KbRequestInit }[] = [];
   return {
@@ -143,6 +162,19 @@ describe("listDocuments", () => {
 });
 
 describe("listTags", () => {
+  test("a chunked tag list — no Content-Length, the ordinary case past 4 KB — is read", async () => {
+    // Measured 2026-09-10: the live kb's tag list is ~10 KB and goes out chunked, and was refused as
+    // "unusable" while a three-row search beside it, under Go's write buffer, came through.
+    const rows = Array.from({ length: 300 }, (_, n) => ({ path: `tag_${n}`, doc_count: n }));
+    const io = fakeKb(() => chunkedAnswer(200, { results: rows }));
+    const got = await listTags(KB, io, () => {});
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.body.tags).toHaveLength(300);
+      expect(got.body.tags[0]).toEqual({ path: "tag_299", count: 299 });
+    }
+  });
+
   test("tags come back most-used first, with an ill-formed path dropped", async () => {
     const io = fakeKb(() =>
       answer(200, {

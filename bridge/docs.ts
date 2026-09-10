@@ -341,6 +341,11 @@ export interface KbAnswer {
   readonly status: number;
   readonly headers: { get: (name: string) => string | null };
   text: () => Promise<string>;
+  /**
+   * The byte stream, when the answer has one (a real `Response` always does). It is how a body with
+   * no declared length is read under the cap instead of buffered whole — see {@link body}.
+   */
+  readonly body?: ReadableStream<Uint8Array> | null;
 }
 
 /** The init this module sends. `redirect` is pinned to the only value it may ever have — see below. */
@@ -611,19 +616,48 @@ export async function ask(
  */
 export async function body(answer: KbAnswer, limit: number): Promise<string | null> {
   const declared = answer.headers.get("content-length");
-  if (declared === null || !/^\d+$/u.test(declared)) return null;
-  if (Number(declared) > limit) return null;
+  if (declared !== null) {
+    // A declared length is a claim: refuse an oversized or malformed one before reading a byte, and
+    // still measure the bytes that arrive, because the claim can undersell them.
+    if (!/^\d+$/u.test(declared) || Number(declared) > limit) return null;
+  } else if (answer.body) {
+    // No length is NOT kb misbehaving. kb is Go's net/http, which switches to chunked transfer for
+    // any body that outgrows its 4 KB write buffer before the handler returns — the tag list and a
+    // full page of documents both do, and were refused here as "unusable" on 2026-09-10 while the
+    // three-row search result beside them, under the buffer, came through. So a chunked answer is
+    // read the only safe way an unbounded one can be: chunk by chunk, dropped the moment it passes
+    // the cap, never buffered past it.
+    return readCapped(answer.body, limit);
+  }
   let text: string;
   try {
     text = await answer.text();
   } catch {
-    // A body that dies mid-read — the deadline firing, the container going away — is the same
-    // "kb did not deliver" the caller already handles, and there is nothing here to say about it.
     return null;
   }
-  // The declared length was a claim; this is the measurement. Bytes, not characters: one CJK glyph
-  // in a title is three of the bytes the ceiling is written in, and these documents are full of them.
   return Buffer.byteLength(text, "utf8") > limit ? null : text;
+}
+
+/** Drains a stream into a string, or returns null (and cancels the stream) once it passes `limit`. */
+async function readCapped(stream: ReadableStream<Uint8Array>, limit: number): Promise<string | null> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 /** kb's metadata, once it has been believed: the parts the route needs plus the parts it checks. */
