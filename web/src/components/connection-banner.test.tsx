@@ -2,7 +2,7 @@ import { useState } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
-import { ConnectionBanner, EXIT_MS, GREEN_MS } from "./connection-banner";
+import { ConnectionBanner, EXIT_MS, GREEN_MS, REPROBE_MAX_MS, REPROBE_MIN_MS } from "./connection-banner";
 
 // Drive the two shared-clock thresholds directly so the amber→red→green STATE MACHINE can be tested
 // without burning real seconds; the 4s/15s wall-clock lockstep itself is proven in
@@ -14,16 +14,18 @@ vi.mock("@/hooks/use-connection-lost", () => ({
 }));
 vi.mock("@/hooks/use-loading-stalled", () => ({ useLoadingStalled: () => false }));
 
-// The /api/config probe (red only) — controllable + counted, so we don't lean on MSW timing under fake
-// timers. `reachable` false makes fetchConfig throw (bridge unreachable).
-const cfg = vi.hoisted(() => ({ reachable: true, calls: 0 }));
+// The /api/health probe (red only) — controllable + counted, so we don't lean on MSW timing under fake
+// timers. FORK: `answer` is what lib/api.ts's probeBridge would say; `reachable` keeps the older
+// cases readable (true = "ok", false = "down").
+// `answer` is the probe's verdict to stage, `""` for "derive it from `reachable`".
+const cfg = vi.hoisted(() => ({ reachable: true, answer: "", calls: 0 }));
 vi.mock("@/lib/api", () => ({
-  fetchConfig: vi.fn(async () => {
+  probeBridge: vi.fn(async () => {
     cfg.calls += 1;
-    if (!cfg.reachable) throw new Error("unreachable");
-    return { push: false, vapidPublicKey: "" };
+    return cfg.answer !== "" ? cfg.answer : cfg.reachable ? "ok" : "down";
   }),
 }));
+vi.mock("@/lib/status", () => ({ setStatus: vi.fn() }));
 
 function setOnline(value: boolean) {
   Object.defineProperty(navigator, "onLine", { configurable: true, get: () => value });
@@ -62,6 +64,7 @@ beforeEach(() => {
   h.trouble = false;
   h.lost = false;
   cfg.reachable = true;
+  cfg.answer = "";
   cfg.calls = 0;
   setOnline(true);
 });
@@ -136,13 +139,56 @@ describe("ConnectionBanner — the single connection surface", () => {
     expect(screen.getByRole("alert").className).toMatch(/bg-status-blocked/); // offline is always red
   });
 
-  it("says 'Can't reach Collie' when the probe fails but the browser still reports online", async () => {
+  it("names the TUNNEL when nothing answers but the browser still reports online", async () => {
     h.lost = true;
     cfg.reachable = false;
     setOnline(true);
     renderBanner();
     await act(async () => {});
-    expect(screen.getByText("Can't reach Collie")).toBeInTheDocument();
+    expect(screen.getByText("Can't reach Collie through the tunnel")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+  });
+
+  // FORK: the tunnel reached the origin's door and found nobody home — the bridge is restarting.
+  // No Retry: it is coming back on its own, and the banner keeps asking after it, doubling the
+  // gap, and revalidates the moment it answers.
+  it("says the bridge is restarting on a gateway answer, drops Retry, and re-probes on a doubling timer", async () => {
+    h.lost = true;
+    cfg.answer = "gateway";
+    renderBanner();
+    await act(async () => {});
+    expect(screen.getByRole("alert")).toHaveTextContent("Collie is restarting…");
+    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+    expect(cfg.calls).toBe(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(REPROBE_MIN_MS);
+    });
+    expect(cfg.calls).toBe(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(REPROBE_MIN_MS * 2);
+    });
+    expect(cfg.calls).toBe(3);
+    // Back: the next probe answers ok, and no further probe is scheduled.
+    cfg.answer = "ok";
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(REPROBE_MIN_MS * 4);
+    });
+    expect(cfg.calls).toBe(4);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(REPROBE_MAX_MS);
+    });
+    expect(cfg.calls).toBe(4);
+  });
+
+  // FORK: the front door wants a sign-in. The loaders' own 401 reaches the auth banner; this is the
+  // case where the probe is the one to see it — and the link that fixes it is right there.
+  it("offers Sign in again when the probe says the front door refused", async () => {
+    h.lost = true;
+    cfg.answer = "auth";
+    renderBanner();
+    await act(async () => {});
+    const link = screen.getByRole("link", { name: /sign in again/i });
+    expect(link).toHaveAttribute("href", "/auth/");
   });
 
   // A cold boot with the tunnel down re-renders the whole herd from cache, which looks exactly like a
@@ -153,7 +199,7 @@ describe("ConnectionBanner — the single connection surface", () => {
     setOnline(true);
     renderBanner({ error: true, lastSeenAt: new Date(2026, 0, 2, 14, 32).getTime() });
     await act(async () => {});
-    expect(screen.getByRole("alert")).toHaveTextContent(/Can't reach Collie — last seen \d/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/Can't reach Collie through the tunnel — last seen \d/);
   });
 
   it("leaves the red row undated when nothing can date it", async () => {
@@ -173,6 +219,22 @@ describe("ConnectionBanner — the single connection surface", () => {
       fireEvent.click(screen.getByRole("button", { name: /retry/i }));
     });
     expect(cfg.calls).toBe(2); // Retry ran a fresh probe
+  });
+
+  // FORK: the bridge came back as a different build under the phone — the moment pane ids can
+  // change — and the banner says so once, on the event channel.
+  it("announces a bridge restart when the served build changes, once, and never on the first sighting", async () => {
+    const { setStatus } = await import("@/lib/status");
+    const { observeServerBuild, __resetServerBuild } = await import("@/lib/server-build");
+    __resetServerBuild();
+    renderBanner({ bridge: "connected" });
+    act(() => observeServerBuild("1.8.0+aaa"));
+    expect(setStatus).not.toHaveBeenCalled();
+    act(() => observeServerBuild("1.8.0+aaa"));
+    expect(setStatus).not.toHaveBeenCalled();
+    act(() => observeServerBuild("1.8.0+bbb"));
+    expect(setStatus).toHaveBeenCalledWith("Collie restarted — panes may have new ids.", "info");
+    expect(setStatus).toHaveBeenCalledTimes(1);
   });
 
   it("is one crisp, non-wrapping row (text-xs, a single truncating flex-1 copy span)", async () => {

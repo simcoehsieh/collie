@@ -1456,6 +1456,11 @@ describe("marksPaneSeen — CSRF guard on marking a pane seen", () => {
     expect(marksPaneSeen(withHeader({ [SEEN_HEADER]: "1" }), "history")).toBe(true);
   });
 
+  test("diff is a read of the REPO, not the pane — it needs the header too", () => {
+    expect(marksPaneSeen(withHeader(), "diff")).toBe(false);
+    expect(marksPaneSeen(withHeader({ [SEEN_HEADER]: "1" }), "diff")).toBe(true);
+  });
+
   test("write actions count without it — they already cleared the Origin-requiring write gate", () => {
     for (const action of ["reply", "keys", "upload", "close", "rename"]) {
       expect(marksPaneSeen(withHeader(), action)).toBe(true);

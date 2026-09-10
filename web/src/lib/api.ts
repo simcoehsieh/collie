@@ -28,6 +28,9 @@ import type {
   UpdateStartResponse,
   UploadResponse,
   DirsResponse,
+  DocsResponse,
+  DocTagsResponse,
+  PaneDiffResponse,
   WorktreeListResponse,
   WorktreeOpenResponse,
 } from "./types";
@@ -88,6 +91,11 @@ class ApiError extends Error {
 /** True when an API request failed with the given HTTP status. */
 export function isApiErrorStatus<TThrown>(error: TThrown, status: number): boolean {
   return error instanceof ApiError && error.status === status;
+}
+
+/** The HTTP status a thrown API failure carried, or `undefined` when the throw was not one. */
+export function apiErrorStatus<TThrown>(error: TThrown): number | undefined {
+  return error instanceof ApiError ? error.status : undefined;
 }
 
 /**
@@ -1051,4 +1059,116 @@ export function transcribeAudio(audio: Blob, signal?: AbortSignal): Promise<SttR
       };
     })().finally(endLongUpload),
   );
+}
+
+// ── FORK: what the agent changed ──────────────────────────────────────────────────────────────
+
+/** Which answer to ask `/api/pane/:id/diff` for. */
+export type PaneDiffQuery = { mode: "stat" } | { mode: "patch"; path: string };
+
+/** The last diff body per (pane, query), with the ETag that names it — see fetchPaneDiff. */
+const diffCache = new Map<string, { etag: string; response: PaneDiffResponse }>();
+const DIFF_CACHE_MAX = 40;
+
+/** Tests only. */
+export function __resetDiffCache(): void {
+  diffCache.clear();
+}
+
+/**
+ * The pane's work-tree changes: the file list, or one file's patch.
+ *
+ * Validates the way the pane read does — the bridge hashes the body, this sends the tag back and
+ * keeps the body it names, so re-opening the sheet on an unchanged tree is a 304 and no download.
+ */
+export async function fetchPaneDiff(
+  paneId: string,
+  query: PaneDiffQuery,
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<PaneDiffResponse> {
+  const params = new URLSearchParams();
+  params.set("mode", query.mode);
+  if (query.mode === "patch") params.set("path", query.path);
+  const url = withScope(`/api/pane/${encodeURIComponent(paneId)}/diff?${params.toString()}`, scope);
+  const cacheKey = `${paneScopeKey(scope, paneId)}|${params.toString()}`;
+  const cached = diffCache.get(cacheKey);
+  const headers = new Headers({ [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() });
+  if (cached) headers.set("if-none-match", cached.etag);
+  const res = await apiFetch(url, { signal: withTimeout(signal, GET_TIMEOUT_MS), headers });
+  captureBuild(res);
+  if (res.status === 304 && cached) return cached.response;
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    throw new ApiError(`${url} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  // SAFETY: a 200 on `/api/pane/:id/diff` is the bridge's own `PaneDiffResponse` by contract.
+  const data = (await res.json()) as PaneDiffResponse;
+  const etag = res.headers.get("etag");
+  if (etag) {
+    diffCache.set(cacheKey, { etag, response: data });
+    if (diffCache.size > DIFF_CACHE_MAX) {
+      const oldest = diffCache.keys().next().value;
+      if (oldest !== undefined) diffCache.delete(oldest);
+    }
+  }
+  return data;
+}
+
+// ── FORK: the document browser ────────────────────────────────────────────────────────────────
+
+export interface DocsQuery {
+  q?: string;
+  tag?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+/** The knowledge base's documents — recent, searched, or by tag. */
+export function fetchDocs(query: DocsQuery = {}, signal?: AbortSignal): Promise<DocsResponse> {
+  const params = new URLSearchParams();
+  if (query.q) params.set("q", query.q);
+  if (query.tag) params.set("tag", query.tag);
+  if (query.cursor) params.set("cursor", query.cursor);
+  if (query.limit) params.set("limit", String(query.limit));
+  const q = params.toString();
+  return req<DocsResponse>(q ? `/api/docs?${q}` : "/api/docs", { signal });
+}
+
+/** Every tag the knowledge base knows, most-used first. */
+export function fetchDocTags(signal?: AbortSignal): Promise<DocTagsResponse> {
+  return req<DocTagsResponse>("/api/docs/tags", { signal });
+}
+
+// ── FORK: naming the outage ───────────────────────────────────────────────────────────────────
+
+/**
+ * What one probe of the ungated `/api/health` says about WHERE the connection is broken.
+ *
+ *  - `ok`      — the bridge answered: whatever is failing is behind it (Herdr, a session route).
+ *  - `auth`    — the front door wants a sign-in (a 401/403, or a redirect normalised to one).
+ *  - `gateway` — the tunnel answered FOR the bridge: 502/503/504 and Cloudflare's 52x are an edge
+ *                that reached the origin's door and found nobody home — the bridge is down or
+ *                restarting, the network is fine.
+ *  - `down`    — nothing answered at all: no route to the edge, DNS, TLS, a timeout.
+ */
+export type BridgeProbe = "ok" | "auth" | "gateway" | "down";
+
+const PROBE_TIMEOUT_MS = 6_000;
+
+export async function probeBridge(): Promise<BridgeProbe> {
+  try {
+    const res = await apiFetch("/api/health", {
+      signal: withTimeout(undefined, PROBE_TIMEOUT_MS),
+      headers: { [XHR_HEADER]: XHR_HEADER_VALUE },
+    });
+    captureBuild(res);
+    if (res.ok) return "ok";
+    if (res.status === 401 || res.status === 403) return "auth";
+    if (res.status === 502 || res.status === 503 || res.status === 504) return "gateway";
+    if (res.status >= 520 && res.status <= 530) return "gateway";
+    return "down";
+  } catch {
+    return "down";
+  }
 }

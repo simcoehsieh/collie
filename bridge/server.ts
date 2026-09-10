@@ -25,8 +25,10 @@ import { createOperatorKeys } from "./operator-keys.ts";
 import { createOperatorQuickReplies } from "./operator-quick-replies.ts";
 import { createOperatorFonts, resolveOperatorFont } from "./operator-fonts.ts";
 import { createOperatorLaunchers } from "./operator-launchers.ts";
+import { diffPatch, diffStat } from "./diff.ts";
 import { listDirs, resolveWithinRoots, type DirsBody } from "./dirs.ts";
-import { documentResponseHeaders, documentSlugFromPath, fetchDocument } from "./docs.ts";
+import { documentResponseHeaders, documentSlugFromPath, fetchDocument, type DocumentFailure } from "./docs.ts";
+import { listDocuments, listTags, normaliseDocumentQuery } from "./docs-list.ts";
 import {
   DEFAULT_PROMPT_TAIL_LINES,
   verifyExpectedPrompt,
@@ -189,7 +191,7 @@ export function isLoopbackPeer(address: string | null | undefined): boolean {
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
 }
 
-const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|focus))?$/;
+const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|focus|diff))?$/;
 
 /**
  * A pairing claim's refusal, as an error code.
@@ -271,7 +273,9 @@ export const SEEN_HEADER = "x-collie-seen";
  */
 export function marksPaneSeen(req: Request, action: string | undefined): boolean {
   if (req.headers.get(SEEN_HEADER) !== null) return true;
-  return action !== undefined && action !== "history";
+  // `diff` is a read of the pane's REPO, not of the pane: a phone reviewing a change is not thereby
+  // caught up on the terminal, and (like `history`) it must not clear an alert on its own.
+  return action !== undefined && action !== "history" && action !== "diff";
 }
 
 /**
@@ -1112,7 +1116,8 @@ export function startServer(opts: {
       // Reading a pane is allowed for any access-gated client; every action (reply/keys/upload/
       // close) types into or restructures a terminal, so it additionally needs an authorised device.
       // `history` is a READ despite being an action segment — it only ever reads a log off disk.
-      const isRead = !action || action === "history";
+      // `diff` likewise: three read-only git subcommands against the pane's cwd (bridge/diff.ts).
+      const isRead = !action || action === "history" || action === "diff";
       const denied = caller.gate(isRead ? "read" : "write");
       if (denied) return denied;
       const rt = await caller.resolve();
@@ -1148,6 +1153,7 @@ export function startServer(opts: {
       if (!action && req.method === "GET") return readPane(rt, readsFor(rt), cfg, paneId, url, req);
       if (action === "history" && req.method === "GET")
         return paneHistory(cfg, journals, transcripts, rt.engine, paneId, url, req);
+      if (action === "diff" && req.method === "GET") return paneDiff(rt.engine, paneId, url, req);
       if (action === "reply" && req.method === "POST") return replyPane(herdr, cfg, paneId, req, audit_, device, session);
       if (action === "keys" && req.method === "POST") return keysPane(herdr, cfg, paneId, req, audit_, device, session);
       if (action === "upload" && req.method === "POST") return uploadPane(cfg, paneId, req, audit_, device, session);
@@ -2045,6 +2051,24 @@ export function startServer(opts: {
       //
       // Read-level, like the mux mark and the operator's fonts: opening a document from a link an
       // agent printed is watching, which is what a read-only device exists to do.
+      // The document BROWSER (bridge/docs-list.ts): which documents kb has, so the panel can open
+      // one the agent never printed. Read-gated like the document itself; JSON, never HTML, so
+      // none of the document route's containment applies and the ordinary `json()` answers.
+      if ((pathname === "/api/docs" || pathname === "/api/docs/tags") && req.method === "GET") {
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        const kb = { origin: cfg.kbOrigin, token: cfg.kbToken };
+        const ae = req.headers.get("accept-encoding");
+        if (pathname === "/api/docs/tags") {
+          const tags = await listTags(kb);
+          return tags.ok ? json(tags.body, ae) : docsRefusal(tags.reason);
+        }
+        const query = normaliseDocumentQuery(url.searchParams);
+        if (query === null) return text("bad query", 400);
+        const list = await listDocuments(query, kb);
+        return list.ok ? json(list.body, ae) : docsRefusal(list.reason);
+      }
+
       if (pathname.startsWith("/api/doc/") && req.method === "GET") {
         const denied = guard(req, cfg, "read", pairing);
         if (denied) return denied;
@@ -2311,6 +2335,52 @@ export function historyParams(url: URL): HistoryParams {
   // is what the store reads as "newest page".
   if (before && before.length <= 100) params.before = before;
   return params;
+}
+
+/**
+ * A document-list refusal as a status. The same split the document route makes: an absent store is
+ * a 404 (the feature is off), and everything else is THIS side's fault and a 503.
+ */
+function docsRefusal(reason: DocumentFailure): Response {
+  return reason === "not_configured" || reason === "not_found" || reason === "bad_slug"
+    ? text("no document store", 404)
+    : text("the document store is not answering", 503);
+}
+
+/**
+ * GET /api/pane/:id/diff — what the agent changed in the pane's working tree, read-only.
+ *
+ * `?mode=stat` (the default) is the file list with counts; `?mode=patch&path=<repo-relative>` is
+ * one file's unified diff. The pane's `cwd` comes off the engine's own snapshot, so nothing here
+ * takes a directory from the client — only a path INSIDE the repo that cwd resolves to, and
+ * bridge/diff.ts refuses one that is not. Validates on the body's hash: a re-open of an unchanged
+ * tree is a 304, which on a phone is the difference between a tap and a download.
+ *
+ * Refusals are plain text, the folder picker's convention: the sheet's move is the same for each
+ * (say why, offer Refresh), so a coded body would buy it nothing.
+ */
+async function paneDiff(engine: StateEngine, paneId: string, url: URL, req: Request): Promise<Response> {
+  const { agents, shellPanes } = engine.current();
+  const pane = [...agents, ...shellPanes].find((a) => a.paneId === paneId);
+  if (!pane) return text("no such pane", 404);
+  const mode = url.searchParams.get("mode") === "patch" ? "patch" : "stat";
+  const result =
+    mode === "patch"
+      ? await diffPatch(pane.cwd, url.searchParams.get("path") ?? "", homedir())
+      : await diffStat(pane.cwd, homedir());
+  if (!result.ok) {
+    if (result.reason === "outside_root") return text("outside the allowed directories", 403);
+    if (result.reason === "not_a_repo") return text("not a git work tree", 404);
+    if (result.reason === "bad_path") return text("not a path in this repo", 400);
+    if (result.reason === "timeout") return text("git did not answer in time", 504);
+    return text("no such file", 404);
+  }
+  const body = JSON.stringify(result.body);
+  const etag = computeEtag(body);
+  if (notModified(req.headers.get("if-none-match"), etag)) {
+    return secure(new Response(null, { status: 304, headers: { etag, "cache-control": "no-store" } }));
+  }
+  return secure(jsonBodyResponse(body, req.headers.get("accept-encoding"), { etag }));
 }
 
 /**
