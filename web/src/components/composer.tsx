@@ -27,6 +27,7 @@ import { ActionRow } from "@/components/action-sheet-rows";
 import { AnchoredMenu } from "@/components/ui/anchored-menu";
 import * as api from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
+import { enqueueSend } from "@/lib/send-queue";
 import { commandsFor } from "@/lib/agent-commands";
 import { useMuxCapability, useMuxUnsupportedKeys } from "@/lib/mux-capability";
 import { useOperatorCommands, useOperatorKeys, useUploadCapability } from "@/lib/operator-config";
@@ -953,6 +954,25 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             ? { prompt: res.noEcho, typed: true }
             : null,
         );
+        // FORK: THE LINK FAILED, NOT THE PANE. Nothing was typed (`transport` is only set on the
+        // throws before the text went anywhere, and `textDelivered` says it did not), so the words
+        // are still good and only the moment was wrong. They go to the queue (lib/send-queue.ts)
+        // rather than back into the field: the queue resends them the moment a poll proves the
+        // link live, and the field is free for the next thing. The chip comes down either way.
+        if (res.status === "error" && res.transport !== undefined && !res.textDelivered && noEchoRef.current === null) {
+          const kept = enqueueSend({ paneId, scope, text: t, kind: "message", agent: agent ?? null, status });
+          if (kept !== null) {
+            inFlightRef.current = false;
+            setJustSent(false);
+            setLastSent(null);
+            if (lastSentTimerRef.current) {
+              clearTimeout(lastSentTimerRef.current);
+              lastSentTimerRef.current = null;
+            }
+            setStatus(translate("queue.queued"), "warn");
+            return false;
+          }
+        }
         // After the notice, on purpose: a password prompt sets `noEchoRef` there, and the restore
         // then goes back into the field WITHOUT re-entering the 48 h store (updateInput's gate).
         inFlightRef.current = false;

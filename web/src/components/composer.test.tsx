@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { __resetSendQueue, queuedForPane } from "@/lib/send-queue";
 import type { ComponentProps } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -3199,5 +3200,46 @@ describe("Composer — the field clears on the tap", () => {
     await user.click(screen.getByRole("button", { name: "tick" }));
     expect(screen.getByText("still there")).toBeInTheDocument();
     release();
+  }, 15000);
+});
+
+// ── FORK: a send the LINK failed goes to the queue, not back into the field ───────────────────
+//
+// The tunnel dropping for a second used to hand the words back to the field with an error, on a
+// phone, where the operator re-taps until it goes or forgets. Now the words are kept
+// (lib/send-queue.ts) and resent when a poll proves the link live; the field is free.
+describe("Composer — a link failure queues the send", () => {
+  beforeEach(() => __resetSendQueue());
+
+  it("a network failure before anything was typed keeps the words in the queue and leaves the field empty", async () => {
+    const user = userEvent.setup();
+    // The POST that would type the words is what fails — the link, not the pane — so nothing was
+    // typed and the guard reports a transport error rather than a stall.
+    server.use(http.post(/\/api\/pane\/[^/]+\/reply$/, () => HttpResponse.error()));
+    renderComposerWithStatus();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+
+    await user.type(box, "keep me");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(queuedForPane(undefined, "w1:p1").map((r) => r.text)).toEqual(["keep me"]), {
+      timeout: 5000,
+    });
+    expect(box).toHaveValue("");
+    expect(screen.getByTestId("status")).toHaveTextContent(/kept, to send when it's back/);
+    // The stored draft went with the field: the queue, not the 48 h store, holds the words now.
+    expect(loadDraft(undefined, "w1:p1")).toBeNull();
+  }, 15000);
+
+  it("a refusal from the pane still puts the words back — only the link's failures are queued", async () => {
+    const user = userEvent.setup();
+    server.use(http.post(/\/api\/pane\/[^/]+\/reply$/, async () => HttpResponse.json({ ok: true })));
+    renderComposerWithStatus();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.type(box, "please wait for me");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await awaitTerminalStall();
+    await waitFor(() => expect(box).toHaveValue("please wait for me"));
+    expect(queuedForPane(undefined, "w1:p1")).toEqual([]);
   }, 15000);
 });

@@ -93,6 +93,11 @@ export function isApiErrorStatus<TThrown>(error: TThrown, status: number): boole
   return error instanceof ApiError && error.status === status;
 }
 
+/** The HTTP status a thrown API failure carried, or `undefined` when the throw was not one. */
+export function apiErrorStatus<TThrown>(error: TThrown): number | undefined {
+  return error instanceof ApiError ? error.status : undefined;
+}
+
 /**
  * The bridge's error fields off a caught throw, or `undefined` when it did not come from here.
  *

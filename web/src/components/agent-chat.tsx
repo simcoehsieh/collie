@@ -13,6 +13,7 @@ import {
 import { useKeyboardOpen } from "@/hooks/use-keyboard";
 import { useSheetPull } from "@/hooks/use-sheet-pull";
 import { DiffSheet } from "@/components/diff-sheet";
+import { QueuedSends } from "@/components/queued-sends";
 import { DocPanel } from "@/components/doc-panel";
 import { classifyDocLink } from "@/lib/doc-links";
 import { useDocHosts } from "@/lib/operator-config";
@@ -2058,6 +2059,8 @@ export function AgentChat({
                     it; the draft survives because Composer persists it per pane (lib/drafts.ts). */}
                 <Collapse open={dockOpen}>
 
+                {/* FORK: the sends waiting for the link, above the composer they came from. */}
+                <QueuedSends paneId={paneId} scope={scope} />
                 <Composer
                   ref={composerRef}
                   paneId={paneId}
