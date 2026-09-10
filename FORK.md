@@ -19,11 +19,63 @@ Not the documented default. Upstream assumes `tailscale serve`; this runs behind
 | Write identity | `COLLIE_DEVICE_HEADER=Cf-Access-Authenticated-User-Email` + a one-address allowlist |
 | Multiplexer | herdr, session `listeners` — four long-lived Claude panes plus whatever agents spawn |
 | Config | `~/.config/collie/.env` (mode 600) — outside the checkout, so it survives every merge |
+| Branding | `~/.config/collie/branding/` — this machine's home screen icon and label (below) |
 | Phone | iPhone PWA on the home screen, Web Push subscribed via `web.push.apple.com` |
 
 That last row is why the fork's first patch exists: the silent-push paths upstream wrote against
 Chrome's budget are a subscription-revoking offence on Apple's push service, and this deployment's
 only notification target is an iPhone.
+
+## Two machines, one commit
+
+There is a second instance at the office, built from this same fork, and the two are told apart on a
+phone by the only thing visible at the moment of the tap: the home screen icon and the word under it.
+Both were the stock white collie head on black labelled "Collie", so the identity has to be a
+per-MACHINE input rather than a committed value — which means it lives outside the checkout, in
+`~/.config/collie/branding/`, next to the `.env` that is already there.
+
+```
+~/.config/collie/branding/
+├── apple-touch-icon.png       180×180 — THE file iOS bakes into the home screen icon
+├── favicon-96x96.png          optional — the browser tab
+├── web-app-manifest-*.png     optional — Android and other installers; iOS never reads these
+└── branding.json              optional — {"name", "shortName", "description"}, all optional
+```
+
+A file whose name matches one in `web/public/` replaces it for that machine's build; a name matching
+nothing there is copied anyway and warns, because a typo'd filename is the failure that looks exactly
+like success. **A machine with no such directory builds byte for byte what it built before the
+feature existed**, so leaving it absent here keeps this install exactly as it is.
+
+The artwork itself is versioned in [`branding/`](./branding/), which the build never reads: it is how
+the other machine obtains a set through the `git pull` it already has to do, and it carries the
+script that redraws every tile from `web/public/` so a set stays in step with upstream's mark instead
+of freezing whatever it looked like the day it was copied. Installing one is a copy:
+
+```bash
+mkdir -p ~/.config/collie/branding
+cp branding/dcard/* ~/.config/collie/branding/
+```
+
+The implementation is [`web/branding.ts`](./web/branding.ts) — a new file, so upstream has nothing to
+conflict with — plus thirteen lines in `web/vite.config.ts`. It replaces `publicDir` rather than
+copying into `dist/` after the build, and that is not a style choice: vite-plugin-pwa computes each
+precache entry's revision from the bytes the BUILD saw, so an icon swapped in afterwards ships under
+the stock file's hash and the service worker serves whichever copy it cached first.
+
+Rebuild after changing anything in there — the branding is a build input, and `bin/collie version`
+will happily report the new bundle while the phone keeps the old icon:
+
+```bash
+bash scripts/collie-ctl.sh build && ./bin/collie restart
+curl -s http://127.0.0.1:4318/manifest.webmanifest | head -c 120   # the name it will install under
+```
+
+**iOS bakes the icon in at "Add to Home Screen" and never revisits it.** Changing the file afterwards
+does nothing to an install that already exists: it has to be removed from the home screen and added
+again. Removing an installed PWA on iOS also discards its site data **and its Web Push subscription**,
+so that install has to re-subscribe from Settings afterwards — which is the reason to give the OTHER
+machine the new icon and leave a working, subscribed install alone.
 
 ## Taking upstream's changes
 

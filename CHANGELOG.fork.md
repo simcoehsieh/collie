@@ -37,6 +37,24 @@ reasons — the fork's `/api/dirs` and upstream's blob route — so the merged t
 The pack-to-crew rename costs this deployment nothing: it is solo, `~/.config/collie/.env` holds no
 `COLLIE_PACK_*` key, and the state directory has no `pack-*.json` to migrate.
 
+- **The installed PWA takes its icon and its name from the machine that serves it.** This fork now
+  runs on two machines — one at the office, one at home — off the same commit, and on an iPhone home
+  screen both installs were the same white collie head on black under the same word "Collie". The
+  thing that tells them apart therefore cannot be a committed value, so it is a directory outside the
+  checkout: `~/.config/collie/branding/`, beside the `.env` that already lives there. Drop an
+  `apple-touch-icon.png` in it (and optionally a `branding.json` naming the app) and that machine
+  builds its own identity; a machine without the directory builds byte for byte what it built before
+  the feature existed, which is what keeps the other install untouched. The overlay replaces
+  `publicDir` rather than copying into `dist/` after the build, because vite-plugin-pwa computes each
+  precache revision from the bytes the build saw — an icon swapped in afterwards ships under the
+  stock file's hash and the service worker serves whichever copy it cached first. Nearly all of it is
+  `web/branding.ts`, a new file upstream cannot conflict with; `vite.config.ts` gains thirteen lines.
+  The tiles themselves are versioned under `branding/`, which the build never reads — it is how the
+  second machine obtains a set through the pull it already makes, and it carries the script that
+  redraws them from `web/public/` rather than leaving a PNG nobody can regenerate. The work set is
+  Dcard's own brand blue with a small D badge on the iOS tile alone; the badge stays off the
+  maskable manifest pair, which Android may crop to exactly where a corner badge sits.
+
 ## On top of 1.6.0
 
 **Rebased** onto `v1.6.0` on 2026-09-08, taking `v1.5.6` and `v1.6.0` together. The fork's 18

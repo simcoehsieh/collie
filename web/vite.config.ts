@@ -5,6 +5,7 @@ import { VitePWA } from "vite-plugin-pwa";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadBranding } from "./branding";
 
 // The bridge (Bun server) serves the built app from `web/dist` and proxies nothing — the
 // browser talks to the same origin for both static files and /api. In `vite dev`, proxy the
@@ -138,12 +139,20 @@ const buildInfoPlugin: Plugin = {
   },
 };
 
+// Per-machine PWA identity — the home screen icon and the label under it — from
+// `~/.config/collie/branding/`, or stock Collie when that directory does not exist. Resolved HERE,
+// at config time, because it decides `publicDir`: the build must never read the stock icons and
+// then have them swapped underneath the service worker's precache revisions. See branding.ts.
+const brand = loadBranding(import.meta.dirname);
+
 export default defineConfig({
+  publicDir: brand.publicDir,
   define: { __BUILD_INFO__: JSON.stringify(BUILD_INFO) },
   plugins: [
     react(),
     tailwindcss(),
     buildInfoPlugin,
+    brand.htmlPlugin,
     VitePWA({
       // Build the manifest + service worker. We use `injectManifest` (not the default generateSW)
       // because we hand-write the SW in `src/sw.ts` to add `push` + `notificationclick` handlers a
@@ -159,9 +168,10 @@ export default defineConfig({
       filename: "sw.ts", // source; compiled to dist/sw.js (the bridge sets Service-Worker-Allowed: /)
       includeAssets: ["favicon.svg", "favicon.ico", "favicon-96x96.png", "apple-touch-icon.png"],
       manifest: {
-        name: "Collie",
-        short_name: "Collie",
-        description: "Monitor and reply to your terminal AI agents from your phone",
+        name: brand.name ?? "Collie",
+        short_name: brand.shortName ?? "Collie",
+        description:
+          brand.description ?? "Monitor and reply to your terminal AI agents from your phone",
         id: "/",
         start_url: "/",
         scope: "/",
