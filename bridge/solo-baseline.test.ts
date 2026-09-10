@@ -650,6 +650,12 @@ describe("solo zero-tax — routes", () => {
       // for the same reason every other route is: it arrives on purpose, and it leaves on purpose.
       "/api/pack",
       "/api/pair",
+      // The usage card (bridge/quota.ts) — a SOLO route that legitimately extends this list, named
+      // here rather than exempted. It runs the command the operator named in COLLIE_QUOTA_COMMAND
+      // and answers its JSON normalised; read-gated like the document browser, 404 when no command
+      // is configured, and never forwarded — a quota belongs to the machine whose credentials the
+      // command reads.
+      "/api/quota",
       // "Look now" (ADR 0031) — a SOLO route that legitimately extends this list, named here rather
       // than exempted. It is session-scoped and read-gated, and it registers no crew route of its
       // own: a lead reaches a peer's through the peer's existing `/crew/v1/*` dispatch.
@@ -743,6 +749,7 @@ const CONFIG_KEYS = {
   kbOrigin: true,
   kbToken: true,
   docHosts: true,
+  quotaCommand: true,
 } satisfies Record<keyof Config, true>;
 
 describe("solo zero-tax — config", () => {
@@ -776,6 +783,7 @@ describe("solo zero-tax — config", () => {
       "port",
       "publicHosts",
       "quickRepliesFile",
+      "quotaCommand",
       "readLines",
       "skipServe",
       "socketPath",
@@ -842,6 +850,7 @@ describe("solo zero-tax — config", () => {
       "COLLIE_POLL_MS",
       "COLLIE_PORT",
       "COLLIE_PUBLIC_HOSTS",
+      "COLLIE_QUOTA_COMMAND",
       "COLLIE_READ_LINES",
       "COLLIE_SKIP_SERVE",
       "COLLIE_STATE_DIR",

@@ -1,0 +1,183 @@
+{
+  "timestamp": "2026-09-10T16:30:09.764874Z",
+  "total_duration_ms": 702,
+  "providers": {
+    "claude": {
+      "provider": "claude",
+      "provider_name": "Anthropic Claude",
+      "status": "ok",
+      "plan": "Claude MAX (claude max 20x)",
+      "tier": "claude max 20x",
+      "account_email": null,
+      "account_id": null,
+      "five_hour_window": {
+        "label": "5h Rolling Limit",
+        "used_percent": 17.0,
+        "remaining_percent": 83.0,
+        "reset_at": "2026-09-10T20:10:00Z",
+        "reset_after_seconds": 13190,
+        "limit_window_seconds": 18000,
+        "status": "allowed"
+      },
+      "primary_window": {
+        "label": "7-Day Window",
+        "used_percent": 75.0,
+        "remaining_percent": 25.0,
+        "reset_at": "2026-09-11T02:00:00Z",
+        "reset_after_seconds": 34190,
+        "limit_window_seconds": 604800,
+        "status": "allowed"
+      },
+      "secondary_windows": null,
+      "model_quotas": null,
+      "credits": null,
+      "latency_ms": 702,
+      "error": null
+    },
+    "gemini": {
+      "provider": "gemini",
+      "provider_name": "Google Gemini (Antigravity)",
+      "status": "ok",
+      "plan": "Google Antigravity",
+      "tier": null,
+      "account_email": null,
+      "account_id": null,
+      "five_hour_window": {
+        "label": "5h Rolling Limit (Gemini)",
+        "used_percent": 0.0,
+        "remaining_percent": 100.0,
+        "reset_at": "2026-09-10T21:30:09Z",
+        "reset_after_seconds": 17999,
+        "limit_window_seconds": 18000,
+        "status": "allowed"
+      },
+      "primary_window": {
+        "label": "Weekly Limit (Gemini)",
+        "used_percent": 17.799999999999997,
+        "remaining_percent": 82.2,
+        "reset_at": "2026-09-10T18:40:59Z",
+        "reset_after_seconds": 7849,
+        "limit_window_seconds": 604800,
+        "status": "allowed"
+      },
+      "secondary_windows": [
+        {
+          "label": "Weekly Limit (Claude & GPT)",
+          "used_percent": 0.0,
+          "remaining_percent": 100.0,
+          "reset_at": "2026-09-17T16:30:09Z",
+          "reset_after_seconds": 604799,
+          "limit_window_seconds": 604800,
+          "status": "allowed"
+        },
+        {
+          "label": "5h Rolling Limit (Claude & GPT)",
+          "used_percent": 0.0,
+          "remaining_percent": 100.0,
+          "reset_at": "2026-09-10T21:30:09Z",
+          "reset_after_seconds": 17999,
+          "limit_window_seconds": 18000,
+          "status": "allowed"
+        }
+      ],
+      "model_quotas": [
+        {
+          "id": "gemini-3.1-pro-high",
+          "display_name": "Gemini 3.1 Pro (High)",
+          "remaining_percent": 100.0,
+          "used_percent": 0.0,
+          "reset_at": "2026-09-10T21:30:09Z",
+          "reset_after_seconds": 17999
+        },
+        {
+          "id": "gemini-3.6-flash-high",
+          "display_name": "Gemini 3.6 Flash (High)",
+          "remaining_percent": 100.0,
+          "used_percent": 0.0,
+          "reset_at": "2026-09-10T21:30:09Z",
+          "reset_after_seconds": 17999
+        },
+        {
+          "id": "gemini-3.1-flash-lite",
+          "display_name": "Gemini 3.1 Flash Lite",
+          "remaining_percent": 100.0,
+          "used_percent": 0.0,
+          "reset_at": "2026-09-10T21:30:09Z",
+          "reset_after_seconds": 17999
+        },
+        {
+          "id": "gemini-2.5-pro",
+          "display_name": "Gemini 2.5 Pro",
+          "remaining_percent": 100.0,
+          "used_percent": 0.0,
+          "reset_at": "2026-09-10T21:30:09Z",
+          "reset_after_seconds": 17999
+        },
+        {
+          "id": "claude-opus-4-6-thinking",
+          "display_name": "Claude Opus 4.6 (Thinking)",
+          "remaining_percent": 100.0,
+          "used_percent": 0.0,
+          "reset_at": "2026-09-10T21:30:09Z",
+          "reset_after_seconds": 17999
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "display_name": "Claude Sonnet 4.6 (Thinking)",
+          "remaining_percent": 100.0,
+          "used_percent": 0.0,
+          "reset_at": "2026-09-10T21:30:09Z",
+          "reset_after_seconds": 17999
+        },
+        {
+          "id": "gpt-oss-120b-medium",
+          "display_name": "GPT-OSS 120B (Medium)",
+          "remaining_percent": 100.0,
+          "used_percent": 0.0,
+          "reset_at": "2026-09-10T21:30:09Z",
+          "reset_after_seconds": 17999
+        }
+      ],
+      "credits": null,
+      "latency_ms": 343,
+      "error": null
+    },
+    "openai": {
+      "provider": "openai",
+      "provider_name": "OpenAI (ChatGPT / Codex)",
+      "status": "ok",
+      "plan": "ChatGPT PROLITE",
+      "tier": "prolite",
+      "account_email": "operator@example.com",
+      "account_id": "acct_redacted",
+      "five_hour_window": null,
+      "primary_window": {
+        "label": "7-Day Window",
+        "used_percent": 4.0,
+        "remaining_percent": 96.0,
+        "reset_at": "2026-09-16T07:30:37Z",
+        "reset_after_seconds": 486029,
+        "limit_window_seconds": 604800,
+        "status": "allowed"
+      },
+      "secondary_windows": null,
+      "model_quotas": [
+        {
+          "id": "GPT-5.3-Codex-Spark",
+          "display_name": "GPT-5.3-Codex-Spark",
+          "remaining_percent": 100.0,
+          "used_percent": 0.0,
+          "reset_at": "2026-09-10T21:30:09Z",
+          "reset_after_seconds": 18000
+        }
+      ],
+      "credits": {
+        "has_credits": false,
+        "balance": "$0",
+        "unlimited": false
+      },
+      "latency_ms": 647,
+      "error": null
+    }
+  }
+}

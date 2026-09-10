@@ -64,6 +64,8 @@ const KEYS = [
   "COLLIE_DOC_HOSTS",
   "COLLIE_KB_ORIGIN",
   "COLLIE_KB_TOKEN",
+  // FORK: the usage card's command, for the same reason.
+  "COLLIE_QUOTA_COMMAND",
 ];
 
 let saved: Record<string, string | undefined>;

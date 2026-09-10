@@ -1020,6 +1020,12 @@ export interface BridgeConfig {
    * "these are interesting".
    */
   docHosts?: string[];
+  /**
+   * FORK: `true` when the bridge can answer `/api/quota` (a `COLLIE_QUOTA_COMMAND` is configured).
+   * Absent is the feature off — also what every bridge older than the field sends — and the
+   * dashboard draws no usage section at all.
+   */
+  quota?: boolean;
 }
 
 /**
@@ -1206,4 +1212,47 @@ export interface DocTagView {
 export interface DocTagsResponse {
   ok: true;
   tags: DocTagView[];
+}
+
+// ── FORK: what the three agents have left (bridge/quota.ts) ────────────────────────────────────
+// Hand-mirrored from bridge/types.ts, like everything else in this file.
+
+export type QuotaAgentKey = "claude" | "codex" | "agy";
+export type QuotaWindowKind = "5h" | "weekly" | "other";
+
+export interface QuotaWindow {
+  kind: QuotaWindowKind;
+  label: string;
+  /** 0–100. */
+  usedPercent: number;
+  /** ISO-8601; the card counts down from it. Null when the provider did not say. */
+  resetAt: string | null;
+  resetAfterSeconds: number | null;
+  status: string;
+}
+
+export interface QuotaModel {
+  label: string;
+  usedPercent: number;
+  resetAfterSeconds: number | null;
+}
+
+export interface QuotaAgent {
+  key: QuotaAgentKey;
+  name: string;
+  status: "ok" | "error" | "missing";
+  plan?: string;
+  /** The five-hour and weekly windows first, then the rest. */
+  windows: QuotaWindow[];
+  models?: QuotaModel[];
+  credits?: string;
+  error?: string;
+}
+
+/** GET /api/quota */
+export interface QuotaResponse {
+  ok: true;
+  fetchedAt: string;
+  /** Always all three, in the order claude, codex, agy. */
+  agents: QuotaAgent[];
 }

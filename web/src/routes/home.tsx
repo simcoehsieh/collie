@@ -10,6 +10,7 @@ import { AgentList } from "@/components/agent-list";
 import { SpaceOverview } from "@/components/space-overview";
 import { NewSpaceSheet, type WorktreeRepo } from "@/components/new-space-sheet";
 import { PinSheet } from "@/components/pin-sheet";
+import { QuotaCard } from "@/components/quota-card";
 import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
 import { BuildStamp } from "@/components/build-stamp";
@@ -18,6 +19,7 @@ import { UpdateBanner } from "@/components/update-banner";
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { useMuxCapability } from "@/lib/mux-capability";
+import { useQuotaEnabled } from "@/lib/operator-config";
 import { ambientPanes, leadHost, paneScope, sessionsOnHost } from "@/lib/hosts";
 import { panePath, spacePath } from "@/lib/nav";
 import { overviewPath } from "@/lib/overview";
@@ -80,7 +82,10 @@ export function HomeRoute() {
     return out;
   }, [data.workspaces, data.agents, data.shellPanes, data.scope?.host]);
   const [newSpaceOpen, setNewSpaceOpen] = useState(false);
-  const { prefs, setSpacesOpen, setRecentOpen, setRecentDir } = useDashPrefs();
+  const { prefs, setSpacesOpen, setRecentOpen, setRecentDir, setQuotaOpen } = useDashPrefs();
+  // FORK: the usage section draws only on a bridge that can answer `/api/quota` — absent from
+  // `/api/config` is the feature off, and the dashboard is byte for byte what it was.
+  const quotaOn = useQuotaEnabled();
   // No stored choice yet? The space count decides — a two-space install shouldn't be handed a
   // mystery collapsed header, and a forty-space one shouldn't be handed a wall.
   const spacesOpen = openForCount(prefs.spacesOpen, data.workspaces.length);
@@ -200,6 +205,10 @@ export function HomeRoute() {
             open={spacesOpen}
             onOpenChange={setSpacesOpen}
           />
+          {/* FORK: what the three agents have left (components/quota-card.tsx). Under Spaces and
+              above the footer: it is information, not a thing to act on, so it sits below
+              everything that is. Foldable like Spaces; the fold is a dash pref. */}
+          {quotaOn && <QuotaCard open={prefs.quotaOpen} onOpenChange={setQuotaOpen} />}
         </main>
 
         {/* The footer is the dashboard's meta zone, in widening order: the crew you're part of, an

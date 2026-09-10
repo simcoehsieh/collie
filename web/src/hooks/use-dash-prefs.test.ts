@@ -42,6 +42,7 @@ describe("coerceDashPrefs", () => {
       newTabLauncher: "",
       pinned: [],
       lowPower: false,
+      quotaOpen: true,
     });
   });
 
@@ -56,6 +57,7 @@ describe("coerceDashPrefs", () => {
         newTabLauncher: "claude",
         pinned: ["w1:p1", "w2:p3"],
         lowPower: true,
+        quotaOpen: false,
       }),
     ).toEqual({
       spacesOpen: false,
@@ -66,6 +68,7 @@ describe("coerceDashPrefs", () => {
       newTabLauncher: "claude",
       pinned: ["w1:p1", "w2:p3"],
       lowPower: true,
+      quotaOpen: false,
     });
   });
 
@@ -115,6 +118,7 @@ describe("useDashPrefs", () => {
       newTabLauncher: "",
       pinned: [],
       lowPower: false,
+      quotaOpen: true,
     });
   });
 
@@ -128,6 +132,7 @@ describe("useDashPrefs", () => {
     act(() => first.result.current.setNewTabLauncher("claude"));
     act(() => first.result.current.setLowPower(true));
     act(() => first.result.current.setPinned("w1:p1", true));
+    act(() => first.result.current.setQuotaOpen(false));
 
     // A remount AND a fresh page (the store re-reads storage) both see the same values.
     __resetDashPrefs();
@@ -141,6 +146,7 @@ describe("useDashPrefs", () => {
       newTabLauncher: "claude",
       pinned: ["w1:p1"],
       lowPower: true,
+      quotaOpen: false,
     });
   });
 
