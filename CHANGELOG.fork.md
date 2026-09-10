@@ -13,6 +13,12 @@ stays true).
 
 ## On top of 1.8.0
 
+- **The home page shows what each of the three agents has left.** A "Usage" section under Spaces
+  lists claude, codex and agy with their 5-hour and weekly windows as bars, the reset countdown
+  ticking client-side, and a tap opening the other windows, model quotas and credits. Fed by
+  `GET /api/quota`, which runs `COLLIE_QUOTA_COMMAND` (this machine: ai-live's `ai-quota --json`)
+  behind a 60 s cache that serves stale while refreshing; unset means no route and no card. The
+  command's output never reaches a response body — it reads keychain tokens.
 - **A chunked kb answer is read under the cap, not refused.** kb is Go's net/http and sends any
   body past its 4 KB write buffer chunked with no Content-Length — the tag list and a full page of
   documents both are — and `body()` had refused those as "unusable" while a three-row search came
