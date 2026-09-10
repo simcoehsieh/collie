@@ -721,8 +721,12 @@ describe("AgentChat — block-grammar scoping (an agent with no adapter)", () =>
       expect(handleRow).not.toBeNull();
       // Same parent, and the handle's row is the sibling immediately before the composer — so
       // nothing, statusline or otherwise, can ever get between the two.
-      expect(handleRow.parentElement).toBe(composer.parentElement);
-      expect(handleRow.nextElementSibling).toBe(composer);
+      // FORK: the composer stands in a Collapse of its own too (the dock folds on a downward pull
+      // of this handle), so the adjacency is between the two ROWS, handle's and dock's.
+      const dockRow = composer.closest('[data-slot="collapse"]')!;
+      expect(dockRow).not.toBeNull();
+      expect(handleRow.parentElement).toBe(dockRow.parentElement);
+      expect(handleRow.nextElementSibling).toBe(dockRow);
       // THAT SHARED PARENT IS THE CHROME BLOCK, and it is what answers the operator's later report
       // that the drawer was "really hard to distinguish" in dark. The handle used to stand on the
       // mirror's own black — `--background` IS the mirror's fill in dark (mirror-space.ts) — so a

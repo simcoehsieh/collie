@@ -93,7 +93,13 @@ touch between releases (zero commits to any of them across v1.5.0 → v1.8.0):
 
 Only a handful of component files carry className edits beyond that (`agent-card`, `agent-list`,
 `composer` send buttons, `nav-tray` inherits the button change), plus one `data-slot="mirror"`
-attribute in `agent-chat.tsx` so the skin can paint the terminal well. **When a merge conflicts on
+attribute in `agent-chat.tsx` so the skin can paint the terminal well. Two behaviours were changed
+in the same spirit, both from phone reports: the **microphone is its own button** inside the field
+beside the attach clip and the round button is always Send (upstream shares one button between the
+two, which read as the send key turning into a microphone); and **the dock folds on a downward pull
+of its grab handle** — status band, controls and input fold down to the 30px handle, a tap or an
+upward pull on it (or a tap on the mirror) brings them back. The pull-down is an `onPullDown` option
+added to `hooks/use-sheet-pull.ts`; the fold is `dockOpen` state in `agent-chat.tsx`, session-only. **When a merge conflicts on
 one of those, keep upstream's structure and re-apply the class; when it conflicts on `index.css`'s
 token block or a `ui/` file, keep the fork's** — those files are the design and upstream's version of
 them is the old design.

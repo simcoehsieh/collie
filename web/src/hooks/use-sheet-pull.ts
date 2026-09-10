@@ -12,6 +12,17 @@ export const OPEN_PX = 120;
 export const FLING_PX_PER_MS = 0.6;
 /** Travel (px) below which a touch is a tap, not a drag; mirrors ui/sheet.tsx's own SLOP. */
 export const SLOP = 6;
+/**
+ * FORK: DOWNWARD travel (px) past which the gesture is a "put the dock away" pull rather than a
+ * sheet pull. Fired once per gesture through `onPullDown`, after which that gesture is over for the
+ * sheet: no peek, no open, no cancel. Well past SLOP so a wobbling thumb at rest never trips it.
+ */
+export const DOWN_PX = 40;
+
+/** Pure: is `dy` (positive = up) a downward pull past {@link DOWN_PX}? Exported for the test. */
+export function isPullDown(dy: number): boolean {
+  return -dy >= DOWN_PX;
+}
 
 /**
  * Pure open/cancel decision, exported on its own so it is unit-testable without simulating touch
@@ -62,6 +73,8 @@ interface UseSheetPullOptions {
    * never overshoots the sheet's own ceiling regardless of how far the finger travels.
    */
   max?: number;
+  /** FORK: fired once when the finger travels {@link DOWN_PX} DOWN from where it landed. */
+  onPullDown?: () => void;
 }
 
 interface UseSheetPullResult {
@@ -74,7 +87,10 @@ export function useSheetPull({
   onOpen,
   onCancel,
   max,
+  onPullDown,
 }: UseSheetPullOptions): UseSheetPullResult {
+  const onPullDownRef = useRef(onPullDown);
+  onPullDownRef.current = onPullDown;
   // Callbacks travel through refs so the attach effect below runs once per DOM node rather than
   // re-binding listeners on every render, the same "read via ref, stay stable across renders"
   // shape hooks/use-spaces.ts uses for its own callbacks.
@@ -102,6 +118,8 @@ export function useSheetPull({
 
     let startY = 0;
     let engaged = false;
+    // FORK: set once a downward pull has fired; the rest of that gesture belongs to nobody.
+    let pulledDown = false;
     // Trailing samples for the velocity read, trimmed to the last VELOCITY_WINDOW_MS on each move.
     let samples: { t: number; y: number }[] = [];
 
@@ -115,6 +133,7 @@ export function useSheetPull({
       if (!t) return;
       startY = t.clientY;
       engaged = false;
+      pulledDown = false;
       samples = [{ t: e.timeStamp, y: t.clientY }];
       // Measured once per gesture: the handle's own distance from the viewport bottom, so the
       // peek's top edge can start there instead of at the screen's bottom edge (BottomSheet's
@@ -134,6 +153,12 @@ export function useSheetPull({
       // Non-passive listener: suppress the browser's own scroll/pull-to-refresh while the drag is
       // ours, same reasoning as ui/sheet.tsx's drag-to-dismiss.
       e.preventDefault();
+      if (pulledDown) return;
+      if (onPullDownRef.current && isPullDown(dy)) {
+        pulledDown = true;
+        onPullDownRef.current();
+        return;
+      }
 
       samples.push({ t: e.timeStamp, y: t.clientY });
       const cutoff = e.timeStamp - VELOCITY_WINDOW_MS;
@@ -145,6 +170,10 @@ export function useSheetPull({
     const onEnd = () => {
       if (!engaged) return;
       engaged = false;
+      if (pulledDown) {
+        onCancelRef.current();
+        return;
+      }
       const last = samples[samples.length - 1];
       const first = samples[0];
       const dy = last ? startY - last.y : 0;

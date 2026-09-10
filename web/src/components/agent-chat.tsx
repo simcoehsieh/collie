@@ -437,18 +437,36 @@ export function AgentChat({
   // the composer sandwiched between the panel and the thumb dragging it.
   const [pull, setPull] = useState(0);
   const [pullFrom, setPullFrom] = useState(0);
+  // FORK — THE DOCK CAN BE PUT AWAY. The grab handle reads as a sheet handle, and the operator's
+  // first instinct on a phone was to drag it DOWN; upstream only wires UP (the pane switcher) and a
+  // tap (same). So a downward pull now folds the whole dock — status band, controls, input — down
+  // to the 30px handle, and the mirror takes the rows. A tap or an upward pull on the folded handle
+  // brings it back; so does tapping the mirror (focusFromMirror). Session state on purpose, not a
+  // display pref: a folded composer is a "right now" choice, and reopening the app should never
+  // greet the operator with no way to type in sight.
+  const [dockOpen, setDockOpen] = useState(true);
   const sheetPull = useSheetPull({
-    onPull: setPull,
+    // The switcher peeks only under an open dock: a pull-up on the folded handle is "bring the dock
+    // back", and a sheet rising under it would answer a question nobody asked.
+    onPull: (px) => {
+      if (dockOpen) setPull(px);
+    },
     onAnchor: setPullFrom,
     onOpen: () => {
       buzz();
-      setDrawer("switcher");
+      if (dockOpen) setDrawer("switcher");
+      else setDockOpen(true);
       setPull(0);
       setPullFrom(0);
     },
     onCancel: () => {
       setPull(0);
       setPullFrom(0);
+    },
+    onPullDown: () => {
+      if (!dockOpen) return;
+      buzz();
+      setDockOpen(false);
     },
   });
   // ── COMPOSING MODE — read ONCE, here, for the whole pane ──────────────────────
@@ -1134,6 +1152,16 @@ export function AgentChat({
   //  - the user is selecting text (a long-press selection), so copy works instead of the tap
   //    collapsing the selection and popping the keyboard.
   function focusFromMirror(e: ReactMouseEvent<HTMLDivElement>) {
+    // FORK: a tap on the mirror while the dock is folded brings the dock back — there is no input
+    // to focus yet, and this is the biggest target on the screen for "I want to type now".
+    if (!dockOpen) {
+      // SAFETY: same invariant as `target` below — a click's target inside this div is an Element,
+      // and the optional call covers the one case it somehow is not.
+      const tapped = e.target as Element | null;
+      if (tapped?.closest?.("button, a")) return;
+      setDockOpen(true);
+      return;
+    }
     if (!prefs.tapToFocus) return;
     // SAFETY: a React mouse event's `target` is the DOM node the tap landed on — an Element by
     // construction for a click inside this div. React types it as the generic `EventTarget`, which
@@ -1982,19 +2010,28 @@ export function AgentChat({
                 <Collapse
                   open={
                     !composing &&
-                    (agents.length + shellPanes.length > 0 || launchers.length > 0)
+                    (!dockOpen || agents.length + shellPanes.length > 0 || launchers.length > 0)
                   }
                 >
+                  {/* FORK: the same handle is also how the folded dock comes back (see `dockOpen`),
+                      so it is drawn whenever the dock is folded, even on a lone pane with nothing to
+                      switch to — otherwise the fold would be a one-way door. */}
                   <button
                     type="button"
-                    aria-label={t("chat.switcher.aria")}
+                    aria-label={dockOpen ? t("chat.switcher.aria") : t("chat.dock.showAria")}
+                    aria-expanded={dockOpen}
                     ref={sheetPull.ref}
-                    onClick={() => setDrawer("switcher")}
-                    className="flex w-full touch-none items-center justify-center py-3 transition-colors active:bg-muted/50"
+                    onClick={() => (dockOpen ? setDrawer("switcher") : setDockOpen(true))}
+                    className="flex w-full touch-none flex-col items-center justify-center gap-1 py-3 transition-colors active:bg-muted/50"
                   >
-                    <span className="h-1.5 w-12 rounded-md bg-muted-foreground/50" />
+                    {!dockOpen && <ChevronUp className="size-4 text-muted-foreground" aria-hidden />}
+                    <span className="h-1.5 w-12 rounded-full bg-muted-foreground/50" />
                   </button>
                 </Collapse>
+
+                {/* FORK: the dock folds through Collapse, the house exit, and unmounts at the end of
+                    it; the draft survives because Composer persists it per pane (lib/drafts.ts). */}
+                <Collapse open={dockOpen}>
 
                 <Composer
                   ref={composerRef}
@@ -2029,6 +2066,7 @@ export function AgentChat({
                   setControlsOpen={setControlsOpen}
                   onSent={onSent}
                 />
+                </Collapse>
               </div>
             </div>
           </Collapse>

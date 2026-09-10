@@ -284,6 +284,7 @@ export const ko: Dictionary = {
   "chat.fullReply.showingTerminal": "터미널 표시 중",
   "chat.output.empty": "(최근 출력 없음)",
   "chat.switcher.aria": "창 전환",
+  "chat.dock.showAria": "입력창 표시",
   "chat.switcher.title": "창 전환",
   "chat.switcher.launch.here": "여기",
   "chat.status.feedbackSent": "피드백 전송 완료",

@@ -1,4 +1,4 @@
-import { FLING_PX_PER_MS, maxPullForAnchor, OPEN_PX, SLOP, shouldOpen } from "./use-sheet-pull";
+import { DOWN_PX, FLING_PX_PER_MS, isPullDown, maxPullForAnchor, OPEN_PX, SLOP, shouldOpen } from "./use-sheet-pull";
 
 // Pure decision table only  -  the touch-tracking half of the hook is exercised through
 // agent-chat.test.tsx, which drives the real handle.
@@ -38,5 +38,21 @@ describe("maxPullForAnchor", () => {
 
   it("never goes negative — an anchor past the ceiling clamps to 0, not a negative pull", () => {
     expect(maxPullForAnchor(900, 600)).toBe(0);
+  });
+});
+
+// FORK: a downward pull folds the dock (components/agent-chat.tsx). `dy` is positive UP, as in
+// the hook, so a downward pull is negative.
+describe("isPullDown", () => {
+  it("is a fold once the finger has travelled DOWN_PX down", () => {
+    expect(isPullDown(-DOWN_PX)).toBe(true);
+  });
+  it("is not a fold short of it, nor for any upward travel", () => {
+    expect(isPullDown(-(DOWN_PX - 1))).toBe(false);
+    expect(isPullDown(SLOP + 1)).toBe(false);
+    expect(isPullDown(OPEN_PX)).toBe(false);
+  });
+  it("sits well past the tap slop, so a resting thumb never folds anything", () => {
+    expect(DOWN_PX).toBeGreaterThan(SLOP * 4);
   });
 });
