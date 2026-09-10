@@ -32,6 +32,7 @@ subscription**, so it has to re-subscribe from Settings afterwards.
 | Set | Paper | For |
 | --- | --- | --- |
 | `dcard/` | `#006aa6` — Dcard's own brand blue, read from the `theme-color` their site serves | The work machine |
+| `cat/` | `#0f1113` — the stock near-black paper, with the stock paperwhite ink | The home machine: a cat peeking over a terminal window, replacing the collie head. `favicon.svg` IS the source drawing; the PNGs are `qlmanage -t -s 1024` of it, resized with Pillow (LANCZOS) |
 
 `branding.json` in a set names the app: `name` reaches the web manifest, `shortName` becomes both
 the `<title>` and the label iOS writes under the icon. Delete the file to change the icon and keep

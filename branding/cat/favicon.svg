@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-label="Collie cat"><rect width="180" height="180" fill="#0f1113"/>
+<polygon points="52,60 60,22 84,54" fill="#f2f0ec"/>
+<polygon points="128,60 120,22 96,54" fill="#f2f0ec"/>
+<path d="M56,66 a34,26 0 0 1 68,0" fill="#f2f0ec"/>
+<rect x="24" y="66" width="132" height="92" rx="14" fill="#0f1113" stroke="#f2f0ec" stroke-width="6"/>
+<ellipse cx="74" cy="64" rx="5" ry="7" fill="#0f1113"/>
+<ellipse cx="106" cy="64" rx="5" ry="7" fill="#0f1113"/>
+<path d="M44,98 l14,12 l-14,12" stroke="#f2f0ec" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="70" y="98" width="11" height="26" rx="2" fill="#f2f0ec"/></svg>
