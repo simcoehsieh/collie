@@ -12,7 +12,8 @@ import {
 } from "lucide-react";
 import { useKeyboardOpen } from "@/hooks/use-keyboard";
 import { useSheetPull } from "@/hooks/use-sheet-pull";
-import { RightSheet } from "@/components/ui/right-sheet";
+import { DiffSheet } from "@/components/diff-sheet";
+import { DocPanel } from "@/components/doc-panel";
 import { classifyDocLink } from "@/lib/doc-links";
 import { useDocHosts } from "@/lib/operator-config";
 import { useSpaceActions } from "@/hooks/use-spaces";
@@ -131,7 +132,7 @@ function foldLabelKey(tabCount: number, paneCount: number): MessageKey {
 
 // At most one drawer/sheet is open at a time; null = none. (The composer's own Keys/Quick/Agent
 // sheets are separate and live inside <Composer>.)
-type Drawer = "switcher" | "paneMenu" | "newTab" | "doc" | null;
+type Drawer = "switcher" | "paneMenu" | "newTab" | "doc" | "diff" | null;
 
 /**
  * Is the caret in the MESSAGE COMPOSER's field, as opposed to any other input on the screen?
@@ -2183,29 +2184,22 @@ export function AgentChat({
           }}
         />
         {/* A knowledge-base document, served by this bridge from its own origin (bridge/docs.ts) and
-            framed here rather than opened in Safari. Mounted at THIS level and not inside
-            <AnsiOutput>: a `fixed inset-0` element is positioned by its nearest transformed ancestor,
-            and the mirror lives inside a scroll container — the same reason every other sheet is
-            here. Shares the one `drawer` value, so it cannot be open alongside the switcher. */}
-        <RightSheet
-          open={drawer === "doc" && doc !== null}
+            framed here rather than opened in Safari — or, with no document, the BROWSER that finds
+            one (doc-panel.tsx). Mounted at THIS level and not inside <AnsiOutput>: a `fixed inset-0`
+            element is positioned by its nearest transformed ancestor, and the mirror lives inside a
+            scroll container — the same reason every other sheet is here. Shares the one `drawer`
+            value, so it cannot be open alongside the switcher. */}
+        <DocPanel open={drawer === "doc"} onClose={closeDrawer} initial={doc} />
+        {/* FORK: what the agent changed in this pane's work tree, read-only (bridge/diff.ts). */}
+        <DiffSheet
+          open={drawer === "diff"}
           onClose={closeDrawer}
-          title={doc?.slug ?? ""}
-          subtitle={doc?.href}
-        >
-          {doc !== null && (
-            // `sandbox=""` withholds every capability — the same posture the response's own CSP
-            // takes, spelled again on the embedder so neither side is the only thing standing
-            // between an agent-written document and Collie's origin. `block` because an
-            // inline-level iframe in a scrolling body leaves a baseline gap and `h-full` misbehaves.
-            <iframe
-              src={doc.path}
-              sandbox=""
-              title={doc.slug}
-              className="block h-full w-full border-0"
-            />
-          )}
-        </RightSheet>
+          paneId={paneId}
+          scope={scope}
+          fontSize={prefs.fontSize}
+          mirrorFace={mirrorFace}
+          home={launchersHome}
+        />
         <PaneActionsSheet
           open={drawer === "paneMenu"}
           onClose={closeDrawer}
@@ -2228,6 +2222,18 @@ export function AgentChat({
           // flexible element the budget protects. Zen is also the same FAMILY as the two rows it
           // joins — "look at the output differently" — so the menu it belongs in already existed.
           onZen={zenAvailable && display ? enterZen : undefined}
+          // FORK: the two panels beside the terminal. Changes is offered for every pane — a shell
+          // has a cwd too; the bridge answers "not a repo" honestly. Documents only when this
+          // bridge serves any (the same `docHosts` gate the mirror's links use).
+          onDiff={() => setDrawer("diff")}
+          onDocs={
+            docHosts.length > 0
+              ? () => {
+                  setDoc(null);
+                  setDrawer("doc");
+                }
+              : undefined
+          }
         />
       </div>
     </CompactStripLabels>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Maximize2, Monitor, Pencil, ScrollText, Search, XCircle } from "lucide-react";
+import { BookOpen, FileDiff, Maximize2, Monitor, Pencil, ScrollText, Search, XCircle } from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { ActionRow, DestructiveActionRow, RenameView } from "@/components/action-sheet-rows";
@@ -54,6 +54,10 @@ interface PaneActionsSheetProps {
    *  buffered output to look at. Absence IS the gate, exactly as it is for find and history above —
    *  a device that never asked for zen sees a sheet byte-identical to today's. */
   onZen?: () => void;
+  /** FORK: open the Changes sheet — what the agent changed in this pane's work tree (read-only). */
+  onDiff?: () => void;
+  /** FORK: open the knowledge-base browser. Absent when this bridge serves no documents. */
+  onDocs?: () => void;
 }
 
 type Mode = "actions" | "rename";
@@ -79,6 +83,8 @@ export function PaneActionsSheet({
   onFind,
   onHistory,
   onZen,
+  onDiff,
+  onDocs,
 }: PaneActionsSheetProps) {
   useLocale();
   const [mode, setMode] = useState<Mode>("actions");
@@ -256,7 +262,7 @@ export function PaneActionsSheet({
           sheet; rename and close are the half you arrive at deliberately.
           Hidden in `rename` mode with the rest of the list — that view is a sub-screen, not a
           section. */}
-      {mode === "actions" && (onFind || onHistory || onZen) && (
+      {mode === "actions" && (onFind || onHistory || onZen || onDiff || onDocs) && (
         <div className="mb-1 flex flex-col gap-1">
           {onFind && (
             <ActionRow
@@ -292,6 +298,28 @@ export function PaneActionsSheet({
               onClick={() => {
                 onClose();
                 onZen();
+              }}
+            />
+          )}
+          {/* FORK: two more READ rows, after zen for the reason zen trails find — each opens a
+              panel beside the terminal, and neither writes to it. Close-then-act, as above. */}
+          {onDiff && (
+            <ActionRow
+              icon={<FileDiff className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("diff.row.label")}
+              onClick={() => {
+                onClose();
+                onDiff();
+              }}
+            />
+          )}
+          {onDocs && (
+            <ActionRow
+              icon={<BookOpen className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("docs.row.label")}
+              onClick={() => {
+                onClose();
+                onDocs();
               }}
             />
           )}

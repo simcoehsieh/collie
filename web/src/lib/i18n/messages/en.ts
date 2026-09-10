@@ -978,6 +978,43 @@ export const en = {
   // The close on the two QUIET crew states. Not "dismiss this version": what is put down there is a
   // notice about another machine, and this host's own offer is untouched by it.
   "updateRibbon.hideNotice": "Hide this notice",
+
+  // --- FORK: the Changes sheet, the document browser, the send queue, the outage's name ---
+  "diff.row.label": "What changed",
+  "diff.title": "Changes",
+  "diff.subtitle": "{branch} · {root}",
+  "diff.loading": "Reading the work tree…",
+  "diff.empty": "Nothing changed — the work tree is clean.",
+  "diff.refresh": "Refresh",
+  "diff.back": "Back to the file list",
+  "diff.copyPath": "Copy path",
+  "diff.copied": "Copied",
+  "diff.truncated": "Cut short — the change is larger than the phone will show.",
+  "diff.binary": "binary",
+  "diff.staged": "staged",
+  "diff.error.notRepo": "This pane is not in a Git work tree.",
+  "diff.error.outside": "The pane's folder is outside what Collie may read.",
+  "diff.error.failed": "Couldn't read the changes.",
+  "docs.row.label": "Documents",
+  "docs.title": "Documents",
+  "docs.search.placeholder": "Search the knowledge base",
+  "docs.recent": "Recent",
+  "docs.results": "Results",
+  "docs.empty": "No documents.",
+  "docs.more": "More",
+  "docs.error": "Couldn't reach the document store.",
+  "docs.back": "Back",
+  "docs.tags.aria": "Tags",
+  "queue.title": "Waiting to send",
+  "queue.sendNow": "Send now",
+  "queue.discard": "Discard",
+  "queue.queued": "Couldn't reach Collie — kept, to send when it's back.",
+  "queue.held": "Waiting for you — the pane moved on since this was queued.",
+  "queue.sent": "Queued message sent",
+  "connection.bridgeRestarting": "Collie is restarting…",
+  "connection.tunnelDown": "Can't reach Collie through the tunnel",
+  "connection.signInAgain": "Sign in again",
+  "connection.restarted": "Collie restarted — panes may have new ids.",
 } as const;
 
 /** Every key that exists, as a union of string literals. The completeness contract. */

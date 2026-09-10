@@ -362,7 +362,7 @@ export interface KbIo {
   fetch: (url: string, init: KbRequestInit) => Promise<KbAnswer>;
 }
 
-const networkIo: KbIo = { fetch: (url, init) => fetch(url, init) };
+export const networkIo: KbIo = { fetch: (url, init) => fetch(url, init) };
 
 /**
  * Why a document could not be served. The route turns these into statuses; nothing else reads them.
@@ -563,7 +563,7 @@ type Hop = { ok: true; answer: KbAnswer } | { ok: false; reason: DocumentFailure
  * Neither the token nor an upstream body ever reaches `warn`. The status is worth a local line; the
  * body is not, and an error body from another service can name a host, an account or a path.
  */
-async function ask(
+export async function ask(
   url: string,
   token: string,
   accept: string,
@@ -609,7 +609,7 @@ async function ask(
  * The declared-length refusal is what makes a BROKEN kb cheap. If the loopback restriction is ever
  * relaxed, this must become a streamed read — `readCapped` is the existing example.
  */
-async function body(answer: KbAnswer, limit: number): Promise<string | null> {
+export async function body(answer: KbAnswer, limit: number): Promise<string | null> {
   const declared = answer.headers.get("content-length");
   if (declared === null || !/^\d+$/u.test(declared)) return null;
   if (Number(declared) > limit) return null;
@@ -693,7 +693,7 @@ function classify(status: number): DocumentFailure | null {
 // module would welcome.
 
 /** The JSON object inside `text`, or null when it is not parseable or is not an object. */
-function parseRecord(text: string): JsonObject | null {
+export function parseRecord(text: string): JsonObject | null {
   let parsed: JsonValue;
   try {
     // SAFETY: `JSON.parse` returns a JsonValue by construction, and every field below is read
@@ -706,6 +706,6 @@ function parseRecord(text: string): JsonObject | null {
   return jsonRecord(parsed);
 }
 
-function defaultWarn(message: string): void {
+export function defaultWarn(message: string): void {
   console.warn(`[docs] ${message}`);
 }

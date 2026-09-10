@@ -285,6 +285,27 @@ describe("PaneActionsSheet — the read rows", () => {
     );
   });
 
+  it("FORK: offers Changes and Documents only when given their callbacks, and closes before acting", async () => {
+    const user = userEvent.setup();
+    const onDiff = vi.fn();
+    const onDocs = vi.fn();
+    const onClose = vi.fn();
+    renderSheet({ onDiff, onDocs, onClose });
+    expect(screen.getByRole("button", { name: "What changed" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Documents" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "What changed" }));
+    expect(onClose).toHaveBeenCalled();
+    expect(onDiff).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Documents" }));
+    expect(onDocs).toHaveBeenCalledTimes(1);
+  });
+
+  it("FORK: a bridge with no document store shows no Documents row", () => {
+    renderSheet({ onDiff: vi.fn() });
+    expect(screen.getByRole("button", { name: "What changed" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Documents" })).not.toBeInTheDocument();
+  });
+
   it("leads the list — reads come before the writes you arrive at deliberately", () => {
     renderSheet({ onFind: vi.fn(), onHistory: vi.fn() });
     const find = screen.getByRole("button", { name: "Find in output" });

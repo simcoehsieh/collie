@@ -578,7 +578,10 @@ describe("solo zero-tax — routes", () => {
       // read-gated like the pane read beside it, so a `?host=` call forwards to the member whose
       // journal named the file (CREW_PROTOCOL.md §9.1).
       "/^\\/api\\/blobs\\/([^/]+)$/",
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|focus))?$/",
+      // `diff` is the fork's read-only "what did the agent change" view (bridge/diff.ts): three
+      // read-only git subcommands against the pane's own cwd, read-gated like `history`, and it
+      // is named here for the reason every other action is — a route arrives on purpose.
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|focus|diff))?$/",
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktree(?:\\/(open))?$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktrees$/",
@@ -610,6 +613,11 @@ describe("solo zero-tax — routes", () => {
       // a NAVIGATION, and the service worker answers navigations from the precached app shell unless
       // the path is on `NAVIGATION_NETWORK_ONLY` — where `/^\/api\//` already is.
       "/api/doc/*",
+      // The document BROWSER (bridge/docs-list.ts) — the fork's list, search and tag rows for the
+      // same store, so the panel can open a document the agent never printed. Read-gated like the
+      // document, JSON only, loopback only; named here for the reason `/api/doc/*` is.
+      "/api/docs",
+      "/api/docs/tags",
       // The live feed (bridge/events.ts) — a SOLO route that legitimately extends this list, named
       // here rather than exempted. One long-lived GET per open page on which the bridge writes a
       // POKE when the herd or the followed pane moves; the page then runs the loaders it always

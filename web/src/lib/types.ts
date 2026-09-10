@@ -1120,3 +1120,70 @@ export type WorktreeOpenResponse =
   | { ok: true; pane: CreatedPane; alreadyOpen: boolean }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
 
+
+// ── FORK: what the agent changed (bridge/diff.ts) ──────────────────────────────────────────────
+
+/** One changed file in the pane's work tree, as the Changes sheet lists it. */
+export interface DiffFileView {
+  path: string;
+  /** The old path, when the change is a rename. */
+  from?: string;
+  /** One porcelain letter: M, A, D, R, ?, U, T, C. */
+  status: string;
+  staged: boolean;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+/** GET /api/pane/:id/diff — the file list. */
+export interface PaneDiffStatResponse {
+  ok: true;
+  mode: "stat";
+  cwd: string;
+  repoRoot: string;
+  branch: string;
+  files: DiffFileView[];
+  truncated: boolean;
+}
+
+/** GET /api/pane/:id/diff?mode=patch&path=… — one file's unified diff. */
+export interface PaneDiffPatchResponse {
+  ok: true;
+  mode: "patch";
+  path: string;
+  patch: string;
+  truncated: boolean;
+}
+
+export type PaneDiffResponse = PaneDiffStatResponse | PaneDiffPatchResponse;
+
+// ── FORK: the document browser (bridge/docs-list.ts) ───────────────────────────────────────────
+
+/** A knowledge-base document as the browser lists it. */
+export interface DocSummaryView {
+  slug: string;
+  title: string;
+  summary?: string;
+  /** ISO-8601; absent on a search hit. */
+  updatedAt?: string;
+}
+
+/** GET /api/docs */
+export interface DocsResponse {
+  ok: true;
+  documents: DocSummaryView[];
+  /** Present when there may be another page. */
+  nextCursor?: string;
+}
+
+export interface DocTagView {
+  path: string;
+  count: number;
+}
+
+/** GET /api/docs/tags */
+export interface DocTagsResponse {
+  ok: true;
+  tags: DocTagView[];
+}

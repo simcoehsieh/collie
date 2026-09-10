@@ -643,3 +643,42 @@ describe("api client — the pane read's wait", () => {
     ]);
   });
 });
+
+// ── FORK: the diff read validates, and the probe names where the outage is ──────────────────────
+describe("fetchPaneDiff", () => {
+  it("sends the tag back and hands back the SAME body on a 304", async () => {
+    const { fetchPaneDiff, __resetDiffCache } = await import("./api");
+    __resetDiffCache();
+    let sawTag: string | null = null;
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/diff/, ({ request }) => {
+        sawTag = request.headers.get("if-none-match");
+        if (sawTag === '"d1"') return new HttpResponse(null, { status: 304 });
+        return HttpResponse.json(
+          { ok: true, mode: "stat", cwd: "/h", repoRoot: "/h", branch: "main", files: [], truncated: false },
+          { headers: { etag: '"d1"' } },
+        );
+      }),
+    );
+    const first = await fetchPaneDiff("w1:p1", { mode: "stat" });
+    const second = await fetchPaneDiff("w1:p1", { mode: "stat" });
+    expect(sawTag).toBe('"d1"');
+    expect(second).toBe(first);
+  });
+});
+
+describe("probeBridge", () => {
+  it("ok / auth / gateway / down, by what the health route answered", async () => {
+    const { probeBridge } = await import("./api");
+    server.use(http.get("/api/health", () => HttpResponse.json({ ok: true })));
+    expect(await probeBridge()).toBe("ok");
+    server.use(http.get("/api/health", () => new HttpResponse(null, { status: 401 })));
+    expect(await probeBridge()).toBe("auth");
+    server.use(http.get("/api/health", () => new HttpResponse(null, { status: 502 })));
+    expect(await probeBridge()).toBe("gateway");
+    server.use(http.get("/api/health", () => new HttpResponse(null, { status: 524 })));
+    expect(await probeBridge()).toBe("gateway");
+    server.use(http.get("/api/health", () => HttpResponse.error()));
+    expect(await probeBridge()).toBe("down");
+  });
+});
