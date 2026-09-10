@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { hasResizeObserver } from "@/lib/env";
+import { hasAnimationFrame, hasResizeObserver } from "@/lib/env";
 
 interface UseAutoScrollOptions {
   /** Px distance from the bottom still considered "at bottom". */
@@ -10,8 +10,24 @@ interface UseAutoScrollOptions {
   onAtBottomChange?: (atBottom: boolean) => void;
 }
 
+/** Run `fn` on the next animation frame, or at once where the browser has no frames (jsdom). */
+function nextFrame(fn: () => void): number | null {
+  if (!hasAnimationFrame()) {
+    fn();
+    return null;
+  }
+  return requestAnimationFrame(fn);
+}
+
 // Keeps a scroll container pinned to the bottom as content grows, but yields control the moment
 // the user scrolls up to read backscroll (and offers a button to jump back down).
+//
+// FORK: the re-pin is COALESCED. A poll that moves the mirror fires the MutationObserver once and
+// the ResizeObserver once per changed child, and each of those used to read `scrollHeight` (a
+// layout flush) and write `scrollTo` (another) on its own — a read/write/read/write ladder inside
+// one frame, while the agent is streaming. Every observer now asks for ONE pin on the next frame,
+// and the frame does one read and one write. The layout-effect pin on `dep` stays synchronous:
+// opening a pane must land on the live tail BEFORE first paint, not one frame after it.
 export function useAutoScroll<T extends HTMLElement = HTMLDivElement>(
   options: UseAutoScrollOptions = {},
 ) {
@@ -22,17 +38,33 @@ export function useAutoScroll<T extends HTMLElement = HTMLDivElement>(
   // Container height as it was at the PREVIOUS scroll event (0 = never measured). Written only
   // here and at mount — never by the ResizeObserver, on purpose: see `onScroll`.
   const heightAtLastScroll = useRef(0);
+  // The one pending pin frame, and the one pending scroll-read frame. `null` = nothing scheduled.
+  const pinFrame = useRef<number | null>(null);
+  const scrollFrame = useRef<number | null>(null);
+  // A scroll event that arrived while a frame was already pending — read once when it ends.
+  const trailingScroll = useRef(false);
 
   const atBottom = useCallback(
     (el: HTMLElement) => Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) <= offset,
     [offset],
   );
 
-  const pinToBottom = useCallback(() => {
+  /** Pin right now, synchronously. The before-paint path (`dep`) and the frame callback use it. */
+  const pinNow = useCallback(() => {
     const el = scrollRef.current;
     if (!el || !autoScroll.current) return;
     el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
   }, []);
+
+  /** Ask for a pin on the next frame. Any number of asks inside one frame cost one pin. Bails
+   *  before scheduling when the user has scrolled away, so a frozen mirror schedules nothing. */
+  const pinToBottom = useCallback(() => {
+    if (!autoScroll.current || pinFrame.current !== null) return;
+    pinFrame.current = nextFrame(() => {
+      pinFrame.current = null;
+      pinNow();
+    });
+  }, [pinNow]);
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
@@ -43,7 +75,7 @@ export function useAutoScroll<T extends HTMLElement = HTMLDivElement>(
     onAtBottomChange?.(true);
   }, [onAtBottomChange]);
 
-  const onScroll = useCallback(() => {
+  const readScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     // A scroll that arrives with a CHANGED container height is layout, not intent: the soft
@@ -61,14 +93,35 @@ export function useAutoScroll<T extends HTMLElement = HTMLDivElement>(
     heightAtLastScroll.current = height;
     if (grewOrShrank && autoScroll.current) {
       // Keep the follow intent and put the tail back under the new bottom edge.
-      pinToBottom();
+      pinNow();
       return;
     }
     const bottom = atBottom(el);
     autoScroll.current = bottom;
     setIsAtBottom(bottom);
     onAtBottomChange?.(bottom);
-  }, [atBottom, onAtBottomChange, pinToBottom]);
+  }, [atBottom, onAtBottomChange, pinNow]);
+
+  // Leading-edge throttle: the first scroll event of a frame is read at once (a single wheel tick
+  // or a test's one event still answers synchronously); the rest of a fling's events in that same
+  // frame collapse into ONE trailing read. Each read is three layout properties, and a thumb
+  // dragging across a 600-line mirror fires scroll events far faster than the screen can paint.
+  const onScroll = useCallback(() => {
+    if (scrollFrame.current !== null) {
+      trailingScroll.current = true;
+      return;
+    }
+    readScroll();
+    scrollFrame.current = nextFrame(() => {
+      scrollFrame.current = null;
+      // The LAST event of the frame is the one that says where the thumb ended up, so it is never
+      // dropped: a fling that stops one frame after it started must still settle on the truth.
+      if (trailingScroll.current) {
+        trailingScroll.current = false;
+        readScroll();
+      }
+    });
+  }, [readScroll]);
 
   // Seed the height record once, so the FIRST scroll after a viewport resize is already
   // recognisable as layout. A container that has never been laid out reports 0, which stays the
@@ -81,8 +134,8 @@ export function useAutoScroll<T extends HTMLElement = HTMLDivElement>(
   // Re-pin before paint when new content arrives — opening a pane / switching tabs must land on
   // the live tail without a flash of the oldest scrollback. Yields if the user has scrolled away.
   useLayoutEffect(() => {
-    pinToBottom();
-  }, [dep, pinToBottom]);
+    pinNow();
+  }, [dep, pinNow]);
 
   // Re-pin when the container OR its content resizes while we're following.
   // - Container: a shrinking viewport (keys dock, on-screen keyboard) pushes the tail below the fold.
@@ -120,6 +173,16 @@ export function useAutoScroll<T extends HTMLElement = HTMLDivElement>(
       mo.disconnect();
     };
   }, [pinToBottom]);
+
+  // A frame still owed at unmount would pin a container that is gone.
+  useEffect(
+    () => () => {
+      if (!hasAnimationFrame()) return;
+      if (pinFrame.current !== null) cancelAnimationFrame(pinFrame.current);
+      if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
+    },
+    [],
+  );
 
   return { scrollRef, isAtBottom, scrollToBottom, onScroll };
 }
