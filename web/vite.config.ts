@@ -183,6 +183,21 @@ export default defineConfig({
         // phone. `"any"` defers to the device instead of overriding it, so a tablet held in
         // landscape with rotation lock on still stays portrait.
         orientation: "any",
+        // FORK: the phone's own automation. `share_target` lets the share sheet hand text to the
+        // pane this device opened last (a GET with `?send=`; routes/detail.tsx seeds the composer
+        // and the operator taps Send — never an auto-send). `shortcuts` are the home-screen
+        // long-press entries. Neither changes `id` or `start_url`, so an installed PWA stays the
+        // same install. iOS ignores both today (Shortcuts opens the URL directly instead); Android
+        // and desktop honour them.
+        share_target: {
+          action: "/pane/last",
+          method: "GET",
+          params: { text: "send", title: "send_title", url: "send_url" },
+        },
+        shortcuts: [
+          { name: "Overview", short_name: "Overview", url: "/overview" },
+          { name: "Home", short_name: "Home", url: "/" },
+        ],
         background_color: "#0a0a0a",
         theme_color: "#0a0a0a",
         icons: [

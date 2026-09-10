@@ -6,6 +6,9 @@ import {
   HOT_MS,
   IDLE_MS,
   LIVE_FEED_MS,
+  LOW_POWER_BURST_MS,
+  LOW_POWER_HOT_MS,
+  saveDataRequested,
   POKE_GAP_MS,
   SUPERSEDE_MS,
   intervalFor,
@@ -161,6 +164,24 @@ describe("intervalFor", () => {
     expect(intervalFor(workingPane, "w1:p1", on({ following: false }))).toBe(IDLE_MS);
     expect(intervalFor(shell, "w1:s1", on({ changed: true, following: false }))).toBe(IDLE_MS);
     expect(intervalFor(idlePane, "w1:p1", on())).toBe(IDLE_MS);
+  });
+
+  // FORK: Low power stretches the two fast gaps and leaves the slow ones alone.
+  it("FORK: low power stretches the burst and the hot gap, and nothing else", () => {
+    expect(intervalFor(workingPane, "w1:p1", on({ lowPower: true }))).toBe(LOW_POWER_HOT_MS);
+    expect(intervalFor(idlePane, "w1:p1", on({ lowPower: true, changed: true }))).toBe(LOW_POWER_HOT_MS);
+    expect(intervalFor(idlePane, "w1:p1", on({ lowPower: true, bursting: true }))).toBe(LOW_POWER_BURST_MS);
+    expect(intervalFor(idlePane, null, on({ lowPower: true, topologyBursting: true }))).toBe(LOW_POWER_BURST_MS);
+    expect(intervalFor(elsewhere, null, on({ lowPower: true, following: true }))).toBe(HOME_BUSY_MS);
+    expect(intervalFor(idlePane, null, on({ lowPower: true }))).toBe(IDLE_MS);
+    // The live feed is cheaper than the polls it spares, so it wins the same way it does without.
+    expect(intervalFor(workingPane, "w1:p1", on({ lowPower: true, liveFeed: true }))).toBe(LIVE_FEED_MS);
+    expect(LOW_POWER_HOT_MS).toBeGreaterThan(HOT_MS);
+    expect(LOW_POWER_BURST_MS).toBeGreaterThan(BURST_MS);
+  });
+
+  it("FORK: saveDataRequested reads the phone's Data Saver flag, absent on most engines", () => {
+    expect(saveDataRequested()).toBe(false);
   });
 
   it("a pane the snapshot no longer knows about is not 'open'", () => {

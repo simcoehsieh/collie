@@ -22,7 +22,14 @@ describe("router — route-level code splitting", () => {
     },
   );
 
-  it.each([undefined, "space/:spaceId", "pane/:paneId"])("%s is on the shell", (path) => {
+  it.each([undefined, "space/:spaceId", "pane/:paneId", "overview"])("%s is on the shell", (path) => {
     expect(elementOf(path).type).not.toBe(Suspense);
+  });
+
+  // FORK: the redirect an iOS Shortcut can name. A loader, no element.
+  it("pane/last is a loader-only redirect", () => {
+    const route = children.find((r) => r.path === "pane/last")!;
+    expect(route.loader).toBeTypeOf("function");
+    expect(route.element).toBeUndefined();
   });
 });

@@ -1,10 +1,11 @@
-import { Mic } from "lucide-react";
+import { Mic, Volume2 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
 import { setHandsFreeEnabled, useHandsFree, useSttCapability } from "@/lib/stt";
+import { setReadAloudEnabled, ttsSupported, useReadAloud } from "@/hooks/use-tts";
 
 // The one voice SETTING (ADR 0029). Everything else about speech-to-text is an operator act on the
 // keyboard — `collie stt setup` mints the credential, exactly as `collie pair` does — so this page
@@ -23,6 +24,11 @@ export function HandsFreeControl() {
   useLocale();
   const stt = useSttCapability();
   const enabled = useHandsFree();
+  // FORK: the other half of the loop — read each new reply aloud while hands-free is on
+  // (hooks/use-tts.ts). Only offered where the browser can speak; only ACTS while hands-free is on,
+  // which is why it sits under that switch rather than beside it.
+  const readAloud = useReadAloud();
+  const canSpeak = ttsSupported();
   if (stt === null) return null;
 
   return (
@@ -45,6 +51,25 @@ export function HandsFreeControl() {
           />
         </div>
       </div>
+      {canSpeak && (
+        <div className="flex items-center justify-between gap-4 border-t border-border p-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <Volume2 className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <div className="font-medium">{t("settings.readAloud.title")}</div>
+              <p className="text-sm text-muted-foreground">{t("settings.readAloud.description")}</p>
+            </div>
+          </div>
+          <div className="flex h-6 w-11 shrink-0 items-center justify-center">
+            <Switch
+              checked={readAloud}
+              disabled={!enabled}
+              onCheckedChange={setReadAloudEnabled}
+              aria-label={t("settings.readAloud.ariaLabel")}
+            />
+          </div>
+        </div>
+      )}
       {!stt.available && stt.reason !== undefined && (
         <p className="border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
           {stt.reason}

@@ -234,10 +234,47 @@ describe("worstTriage — what a tab or space chip advertises", () => {
 describe("TRIAGE_STATUS", () => {
   it("maps every bucket to the status whose colour it should borrow", () => {
     expect(TRIAGE_STATUS).toEqual({
+      pinned: "idle",
       needs: "blocked",
       ready: "done",
       working: "working",
       recent: "idle",
     });
+  });
+});
+
+// FORK: the operator's own section.
+describe("triage — pinned", () => {
+  const herd = [
+    agent("p1", "idle", { seen: 1 }),
+    agent("p2", "blocked", { active: 5 }),
+    agent("p3", "working", { active: 3 }),
+    agent("p4", "done", { active: 9, seen: 1 }),
+  ];
+
+  it("renders no pinned section without pins, or with pins the herd does not hold", () => {
+    expect(triage(herd).map((s) => s.key)).toEqual(["needs", "ready", "working", "recent"]);
+    expect(triage(herd, "newest", []).map((s) => s.key)).toEqual(["needs", "ready", "working", "recent"]);
+    expect(triage(herd, "newest", ["nope"]).map((s) => s.key)).toEqual(["needs", "ready", "working", "recent"]);
+  });
+
+  it("puts the pinned rows first, in the operator's order, and lifts them out of their buckets", () => {
+    const sections = triage(herd, "newest", ["p3", "p2"]);
+    expect(sections[0]!.key).toBe("pinned");
+    expect(sections[0]!.agents.map((a) => a.paneId)).toEqual(["p3", "p2"]);
+    // p2 is blocked and p3 is working, and neither appears twice.
+    const rest = sections.slice(1).flatMap((s) => s.agents.map((a) => a.paneId));
+    expect(rest).toEqual(["p4", "p1"]);
+    expect(sections.find((s) => s.key === "needs")!.agents).toEqual([]);
+  });
+
+  it("changes where a row is drawn, not what it needs — worstTriage still sees the blocked pane", () => {
+    expect(worstTriage(herd)).toBe("needs");
+    expect(triage(herd, "newest", ["p2"]).find((s) => s.key === "needs")!.agents).toEqual([]);
+  });
+
+  it("ignores a duplicate id in the pinned list", () => {
+    const sections = triage(herd, "newest", ["p1", "p1"]);
+    expect(sections[0]!.agents.map((a) => a.paneId)).toEqual(["p1"]);
   });
 });

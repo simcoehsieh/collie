@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { useLoaderData, useLocation, useNavigate, useParams } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { useLoaderData, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { AgentChat } from "@/components/agent-chat";
 import { useLoadingStalled } from "@/hooks/use-loading-stalled";
@@ -8,6 +8,8 @@ import { homePath, panePath } from "@/lib/nav";
 import { paneScopeKey } from "@/lib/scope";
 import { findPane, paneScope } from "@/lib/hosts";
 import { setStatus } from "@/lib/status";
+import { saveDraft } from "@/lib/drafts";
+import { rememberLastPane } from "@/lib/last-pane";
 import type { AgentView } from "@/lib/types";
 import { useRootData } from "@/lib/route-data";
 
@@ -29,6 +31,30 @@ export function DetailRoute() {
   const navigate = useNavigate();
   const location = useLocation();
   const stalled = useLoadingStalled();
+
+  // ── FORK: `?send=<text>` SEEDS THE COMPOSER, AND NOTHING MORE ─────────────
+  // The entry point for an iOS Shortcut ("open collie.example/pane/last?send=continue") and the
+  // manifest's share target. The text goes into the pane's DRAFT — the composer reads its draft
+  // once, in its own `useState` initialiser, so the seed has to be stored BEFORE the first render
+  // of AgentChat below, which is what a `useState` initialiser up here guarantees. It is a seed,
+  // NOT a send: a URL is something any app on the phone can open, and a URL that types into a real
+  // terminal and presses Enter would let a stray link drive an agent. The operator taps Send.
+  // The param is then stripped from the URL (`replace`, so Back does not re-seed).
+  const [params, setParams] = useSearchParams();
+  const seed = params.get("send");
+  useState(() => {
+    if (seed !== null && seed !== "") saveDraft(scope, paneId, seed);
+    return null;
+  });
+  useEffect(() => {
+    if (seed === null) return;
+    const next = new URLSearchParams(params);
+    next.delete("send");
+    setParams(next, { replace: true });
+  }, [seed, params, setParams]);
+
+  // FORK: this is the pane `/pane/last` will mean from now on (lib/last-pane.ts).
+  useEffect(() => rememberLastPane(paneId, scope), [paneId, scope]);
 
   // SAFETY: `location.state` is whatever the navigation that got here attached — `unknown` by
   // definition. The only shape Collie ever puts there is `{ freshPane }` (components/agent-list's

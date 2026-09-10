@@ -18,6 +18,8 @@ import { useBusyWhile } from "@/lib/busy";
 import { useAgentTransitions } from "@/hooks/use-transitions";
 import { usePushSetup } from "@/hooks/use-push";
 import { useConnectionLost } from "@/hooks/use-connection-lost";
+import { useHotkeys } from "@/hooks/use-hotkeys";
+import { HotkeysSheet } from "@/components/hotkeys-sheet";
 import { UpdateRibbon } from "@/components/update-ribbon";
 import { ConnectionBanner } from "@/components/connection-banner";
 import { AppHeaderHost } from "@/components/app-header";
@@ -102,6 +104,8 @@ export function RootLayout() {
   useBusyWhile(useNavigation().state !== "idle");
   useAgentTransitions(data.agents, paneId ?? null);
   usePushSetup();
+  // FORK: desktop shortcuts, live only with a fine pointer (hooks/use-hotkeys.ts).
+  const hotkeys = useHotkeys(data);
 
   // A viewport-height flex column: the top banners (when shown) are in-flow rows at the top and the
   // active route fills the rest (each route root is `min-h-0 flex-1`). This is what keeps a banner
@@ -157,6 +161,7 @@ export function RootLayout() {
             <Outlet />
           </div>
         </AppHeaderHost>
+        <HotkeysSheet open={hotkeys.helpOpen} onClose={() => hotkeys.setHelpOpen(false)} />
       </div>
     </CrewProvider>
   );

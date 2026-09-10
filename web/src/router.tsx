@@ -5,6 +5,8 @@ import { BootSplash, RootError, RootLayout } from "@/routes/root";
 import { HomeRoute } from "@/routes/home";
 import { SpaceRoute } from "@/routes/space";
 import { DetailRoute } from "@/routes/detail";
+import { OverviewRoute } from "@/routes/overview";
+import { lastPanePath } from "@/lib/last-pane";
 import {
   devicesLoader,
   historyLoader,
@@ -71,6 +73,16 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <HomeRoute /> },
       { path: "space/:spaceId", element: <SpaceRoute /> },
+      // FORK: every agent's last lines on one screen. Eager, like the dashboard: for a herd of
+      // long-lived panes it is a first screen, not a once-a-week one.
+      { path: "overview", element: <OverviewRoute /> },
+      // FORK: the pane this device opened last (lib/last-pane.ts) — the target an iOS Shortcut or
+      // the share sheet can name without knowing a pane id. `replace`, so Back does not return to
+      // a redirect. Nothing remembered falls back to the dashboard.
+      {
+        path: "pane/last",
+        loader: ({ request }) => replace(lastPanePath(new URL(request.url).search) ?? "/"),
+      },
       // Settings carries the paired-device registry, so it gets its own loader — a revoke or a pair
       // is then the app's standard mutation shape (api call → revalidate), with no second data path.
       { path: "settings", loader: devicesLoader, element: settingsRoute },
