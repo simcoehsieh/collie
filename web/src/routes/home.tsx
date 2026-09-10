@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { LayoutGrid } from "lucide-react";
 import { useNavigate } from "react-router";
 
 import { RouteHeader, SettingsGear } from "@/components/app-header";
@@ -8,6 +9,7 @@ import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { AgentList } from "@/components/agent-list";
 import { SpaceOverview } from "@/components/space-overview";
 import { NewSpaceSheet, type WorktreeRepo } from "@/components/new-space-sheet";
+import { PinSheet } from "@/components/pin-sheet";
 import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
 import { BuildStamp } from "@/components/build-stamp";
@@ -18,6 +20,9 @@ import { useSpaceActions } from "@/hooks/use-spaces";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { ambientPanes, leadHost, paneScope, sessionsOnHost } from "@/lib/hosts";
 import { panePath, spacePath } from "@/lib/nav";
+import { overviewPath } from "@/lib/overview";
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/hooks/use-locale";
 import type { AgentView } from "@/lib/types";
 import { useRootData } from "@/lib/route-data";
 
@@ -31,7 +36,12 @@ import { useRootData } from "@/lib/route-data";
 export function HomeRoute() {
   const data = useRootData();
   const navigate = useNavigate();
+  useLocale();
   const { newSpace, newWorktree, showWorktree, creatingSpace } = useSpaceActions();
+  // FORK: the row a long press picked up, for the pin sheet. Null while the sheet is closed.
+  const [held, setHeld] = useState<AgentView | null>(null);
+  const hold = useCallback((pane: AgentView) => setHeld(pane), []);
+  const knownIds = useMemo(() => data.agents.map((a) => a.paneId), [data.agents]);
 
   // Which repos a worktree could be branched from: one entry per repo, taken from the space that
   // shows the repo ITSELF (a worktree's own space would branch from the same repo, so listing both
@@ -120,6 +130,17 @@ export function HomeRoute() {
         width="column"
         rightLead={
           <>
+            {/* FORK: the overview — every agent's last lines on one screen (routes/overview.tsx).
+                A plain glyph like the gear, ahead of the switchers, because it is a place to go
+                rather than a dimension to change. */}
+            <button
+              type="button"
+              onClick={() => navigate(overviewPath(data.scope))}
+              aria-label={t("overview.title")}
+              className="grid size-11 place-items-center text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <LayoutGrid className="size-5" />
+            </button>
             {/* Host first, then session — outer dimension first, and the two are deliberately
                 different shapes (bordered server pill vs filled layers capsule) so a glance can tell
                 "change machine" from "change session on this machine". Both self-hide. */}
@@ -154,6 +175,8 @@ export function HomeRoute() {
             onRecentOpenChange={setRecentOpen}
             error={data.error}
             lastSeenAt={data.lastSeenAt}
+            pinned={prefs.pinned}
+            onLongPress={hold}
           />
           {/* THE LAUNCH STRIP IS DELIBERATELY NOT HERE (fork, 2026-09-06). Upstream renders the
               operator's `launchers.toml` rows as one-tap buttons on the dashboard, and a tap
@@ -197,6 +220,16 @@ export function HomeRoute() {
       <ToastViewport>
         <StatusArea />
       </ToastViewport>
+
+      {/* FORK: pin / un-pin / reorder, from a long press on a row. */}
+      <PinSheet
+        open={held !== null}
+        pane={held}
+        pinned={prefs.pinned}
+        known={knownIds}
+        onClose={() => setHeld(null)}
+        onOpen={open}
+      />
 
       <NewSpaceSheet
         open={newSpaceOpen}
