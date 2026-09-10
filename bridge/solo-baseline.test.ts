@@ -610,6 +610,12 @@ describe("solo zero-tax — routes", () => {
       // a NAVIGATION, and the service worker answers navigations from the precached app shell unless
       // the path is on `NAVIGATION_NETWORK_ONLY` — where `/^\/api\//` already is.
       "/api/doc/*",
+      // The live feed (bridge/events.ts) — a SOLO route that legitimately extends this list, named
+      // here rather than exempted. One long-lived GET per open page on which the bridge writes a
+      // POKE when the herd or the followed pane moves; the page then runs the loaders it always
+      // ran. Read-gated like the snapshot, served for this collie's own sessions only — a member's
+      // scope falls back to polling, so nothing here forwards.
+      "/api/events",
       // The detached updater's probe (M15/04) — a solo feature that legitimately extends this list,
       // named here rather than exempted. It is the one ungated `/api/*` route: the prober is a local
       // updater holding no credential, and what it answers is `{ ok, version, deposed, mode }`.
