@@ -12,6 +12,15 @@ import {
 } from "./lib/push-decision";
 import { openNotificationTarget, type OpenOutcome } from "./lib/notification-open";
 import { FONT_URLS, NAVIGATION_NETWORK_ONLY } from "./lib/sw-routes";
+import {
+  RESUBSCRIBED_MESSAGE,
+  VAPID_KEY_MESSAGE,
+  XHR_HEADER_NAME,
+  XHR_HEADER_VALUE,
+  resubscribeBody,
+  serverKeyFor,
+} from "./lib/push-heal";
+import { scopeSearch } from "./lib/scope";
 
 // Custom service worker (vite-plugin-pwa `injectManifest`). It does everything the old generated
 // Workbox SW did — precache the app shell + SPA-fallback navigations — PLUS the two handlers a
@@ -96,10 +105,92 @@ self.addEventListener("install", () => void self.skipWaiting());
 clientsClaim();
 self.addEventListener("message", (event: ExtendableMessageEvent) => {
   // SAFETY: `ExtendableMessageEvent.data` is `any` — a structured clone from an arbitrary client.
-  // Only the same-origin page can reach this worker, and lib/pwa.ts is the one thing that posts to
-  // it; the optional chain means any other payload simply fails the comparison.
-  if ((event.data as { type?: string } | null)?.type === "SKIP_WAITING") void self.skipWaiting();
+  // Only the same-origin page can reach this worker, and lib/pwa.ts / lib/push.ts are the things
+  // that post to it; the optional chain means any other payload simply fails the comparisons.
+  const data = event.data as { type?: string; key?: string } | null;
+  if (data?.type === "SKIP_WAITING") void self.skipWaiting();
+  // FORK: the page hands over the VAPID public key after every successful subscribe, so a
+  // `pushsubscriptionchange` that arrives with no old subscription to read the key off can still
+  // re-subscribe against the right one (see healSubscription).
+  if (data?.type === VAPID_KEY_MESSAGE && data.key) event.waitUntil(storeVapidKey(String(data.key)));
 });
+
+// ── FORK: push self-healing ─────────────────────────────────────────────────────────────────────
+// The push service may rotate or expire this device's endpoint without the page ever running (the
+// PWA is closed most of the day). The browser then fires `pushsubscriptionchange` HERE — no page,
+// no localStorage, no lib/push.ts — and if nobody answers, the phone is silently unsubscribed until
+// the next time Settings is opened. So the worker re-subscribes itself against the key the old
+// subscription was bound to (or the one the page stored, below), registers the new endpoint with
+// the bridge naming the old one as superseded, and tells any open page so it can update the
+// endpoint it remembers. Every step is best-effort: a failure leaves things exactly as the browser
+// left them, which is the state the page already knows how to recover from on its next open.
+
+/** Where the page's VAPID key is kept: the Cache API is the one durable store a worker has. */
+const META_CACHE = "collie-push-meta";
+const VAPID_KEY_URL = "/__collie/vapid-key";
+
+async function storeVapidKey(key: string): Promise<void> {
+  try {
+    const cache = await caches.open(META_CACHE);
+    await cache.put(VAPID_KEY_URL, new Response(key, { headers: { "content-type": "text/plain" } }));
+  } catch {
+    /* storage full or blocked — the change event will still try the old subscription's key */
+  }
+}
+
+async function storedVapidKey(): Promise<string | null> {
+  try {
+    const cache = await caches.open(META_CACHE);
+    const hit = await cache.match(VAPID_KEY_URL);
+    return hit ? (await hit.text()) || null : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The event's shape — not in this TS lib yet, though every engine this PWA runs on fires it. */
+interface PushSubscriptionChangeEvent extends ExtendableEvent {
+  readonly oldSubscription: PushSubscription | null;
+  readonly newSubscription: PushSubscription | null;
+}
+
+self.addEventListener("pushsubscriptionchange", (event: Event) => {
+  // SAFETY: the browser dispatches this event type with exactly these two fields (Push API §3.5);
+  // both are read as optional below, so an engine that omits one degrades to "no old key" rather
+  // than throwing.
+  const change = event as PushSubscriptionChangeEvent;
+  change.waitUntil(healSubscription(change));
+});
+
+async function healSubscription(event: PushSubscriptionChangeEvent): Promise<void> {
+  const old = event.oldSubscription;
+  try {
+    // Some engines mint the replacement themselves and hand it over; then there is nothing to
+    // subscribe, only something to register.
+    let next = event.newSubscription;
+    if (!next) {
+      const key = serverKeyFor(old?.options.applicationServerKey, await storedVapidKey());
+      if (key === null) return; // the wrong key would subscribe to silence — do nothing
+      next = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    }
+    const body = resubscribeBody(next.toJSON(), old?.endpoint);
+    const res = await fetch("/api/subscribe", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json", [XHR_HEADER_NAME]: XHR_HEADER_VALUE },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return;
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    // A WindowClient's postMessage takes no target origin — the client IS same-origin by
+    // construction (a worker only ever controls its own origin's windows); the lint rule below is
+    // written for `window.postMessage`, which does.
+    // oxlint-disable-next-line unicorn/require-post-message-target-origin
+    for (const c of windows) c.postMessage({ type: RESUBSCRIBED_MESSAGE, endpoint: body.endpoint });
+  } catch {
+    /* best-effort — see the note above */
+  }
+}
 
 // ── Web Push ────────────────────────────────────────────────────────────────────────────────────
 // The branching (suppress vs show vs clear, tag/title/renotify) lives in lib/push-decision so it's
@@ -166,22 +257,62 @@ async function handlePush(event: PushEvent): Promise<void> {
     for (const n of stale) n.close();
     return;
   }
-  // `renotify` isn't in this TS lib's NotificationOptions yet, though it's honoured by browsers that
-  // support it (and it needs a tag).
-  const options: NotificationOptions & { renotify?: boolean } = {
+  // `renotify` and `actions` aren't in this TS lib's NotificationOptions yet, though both are
+  // honoured by browsers that support them (renotify needs a tag; actions are shown on long-press
+  // where the platform has no room for buttons).
+  const options: NotificationOptions & { renotify?: boolean; actions?: { action: string; title: string }[] } = {
     body: decision.body,
     data: {
       paneId: decision.paneId,
       session: decision.session,
       host: decision.host,
       target: decision.target,
+      agent: decision.agent,
+      approve: decision.approve,
     } satisfies NotifData,
     icon: ICON,
     badge: BADGE,
     tag: decision.tag,
     renotify: decision.renotify,
   };
+  if (decision.actions) options.actions = decision.actions;
   await self.registration.showNotification(decision.title, options);
+}
+
+// ── FORK: answering from the notification ───────────────────────────────────────────────────────
+// A Yes/No button answers the pane's dialog without opening the app. NOTHING here decides what a
+// button means: the bridge looked at the dialog when it raised the alert (bridge/prompt-peek.ts)
+// and put the keystrokes for Yes and for No in the payload, BOUND to the dialog's own text. The
+// worker posts exactly that — keys plus `expected_prompt` — and the bridge refuses to type unless
+// that text is still at the tail of a fresh read (bridge/prompt-binding.ts). So a dialog that
+// changed between the push and the tap is never answered, and the tap falls back to opening the
+// pane exactly as a tap on the notification body does. The worker holds no grammar: it cannot,
+// because the grammar's import graph reaches the page's environment probes (lib/env.ts).
+
+async function answerFromNotification(data: NotifData, action: "yes" | "no"): Promise<boolean> {
+  const approve = data.approve;
+  if (!data.paneId || data.paneId === "test" || !approve) return false;
+  const keys = action === "yes" ? approve.yes : approve.no;
+  if (!Array.isArray(keys) || keys.length === 0 || !approve.region) return false;
+  // The URL spells the scope as `s`/`h` (lib/scope); the wire spells it `session`/`host`.
+  const params = new URLSearchParams(scopeSearch({ host: data.host, session: data.session }));
+  const wire = new URLSearchParams();
+  const host = params.get("h");
+  const session = params.get("s");
+  if (host) wire.set("host", host);
+  if (session) wire.set("session", session);
+  const q = wire.toString();
+  try {
+    const send = await fetch(`/api/pane/${encodeURIComponent(data.paneId)}/keys${q ? `?${q}` : ""}`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json", [XHR_HEADER_NAME]: XHR_HEADER_VALUE },
+      body: JSON.stringify({ keys, expected_prompt: approve.region }),
+    });
+    return send.ok;
+  } catch {
+    return false;
+  }
 }
 
 // Tap a notification: an update push routes to the Updates page under Settings; everything else deep-links to the agent's
@@ -203,8 +334,15 @@ self.addEventListener("notificationclick", (event: NotificationEvent) => {
   // SAFETY: `Notification.data` is `any` — but it is OUR data: the only writer is `handlePush`
   // above, in this same file, which attaches a `NotifData`. Every field is optional and defaulted.
   const data = (event.notification.data as NotifData | null) ?? {};
+  const action = event.action === "yes" || event.action === "no" ? event.action : null;
   event.waitUntil(
     (async () => {
+      // FORK: a Yes/No button answers in place and closes the notification; a refused or failed
+      // answer opens the pane instead, so the tap always lands somewhere the operator can act.
+      if (action !== null && (await answerFromNotification(data, action))) {
+        event.notification.close();
+        return;
+      }
       const outcome = await openPath(notificationPath(data));
       if (outcome !== "failed") event.notification.close();
     })(),

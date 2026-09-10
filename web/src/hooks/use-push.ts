@@ -4,6 +4,7 @@ import {
   disablePush,
   enablePush,
   getPushState,
+  installResubscribeListener,
   isPushDisabledByUser,
   type EnableResult,
   type PushState,
@@ -13,6 +14,8 @@ import {
 // silent: service workers + Push need a secure context, so over plain HTTP this no-ops (it lights up
 // once served over HTTPS). The subscribe flow lives in lib/push so the settings page can reuse it.
 export function usePushSetup() {
+  // FORK: a re-subscribe the worker did on its own reaches the page's memory of the endpoint.
+  useEffect(() => installResubscribeListener(), []);
   useEffect(() => {
     if (isPushDisabledByUser()) return;
     let cancelled = false;
