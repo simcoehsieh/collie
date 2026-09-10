@@ -34,9 +34,11 @@ subscription**, so it has to re-subscribe from Settings afterwards.
 | `dcard/` | `#006aa6` — Dcard's own brand blue, read from the `theme-color` their site serves | The work machine |
 | `cat/` | `#0f1113` — the stock near-black paper, with the stock paperwhite ink | The home machine: a cat peeking over a terminal window, replacing the collie head. `favicon.svg` IS the source drawing; the PNGs are `qlmanage -t -s 1024` of it, resized with Pillow (LANCZOS) |
 
-`branding.json` in a set names the app: `name` reaches the web manifest, `shortName` becomes both
-the `<title>` and the label iOS writes under the icon. Delete the file to change the icon and keep
-the name.
+`branding.json` in a set names the app: `name` reaches the web manifest, `shortName` becomes the
+`<title>`, the label iOS writes under the icon **and the brand word in the app's header**.
+`"hideMuxLogo": true` keeps the multiplexer's own logo off the header's "on <mux>" line (the cat set
+sets it — herdr's grey mark beside a cat would say herdr looks like a cat). Delete the file to change
+the icon and keep the name.
 
 ## Redrawing them
 

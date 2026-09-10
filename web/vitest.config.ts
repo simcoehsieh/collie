@@ -13,6 +13,9 @@ export default defineConfig({
       time: "1970-01-01T00:00:00.000Z",
       id: "test",
     }),
+    // FORK: tests see the stock brand whatever ~/.config/collie/branding/ says on this machine;
+    // the branded case is exercised by mocking "@/lib/brand" (see app-header.test.tsx).
+    __BRAND__: JSON.stringify({ shortName: null, hideMuxLogo: false }),
   },
   plugins: [react()],
   resolve: {

@@ -19,6 +19,7 @@ import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/hooks/use-locale";
 import { useMuxLogoUrl, useMuxName } from "@/lib/mux-capability";
+import { BRAND, BRAND_WORD } from "@/lib/brand";
 import { useConnectionLost, useConnectionTrouble } from "@/hooks/use-connection-lost";
 import { useLoadingStalled } from "@/hooks/use-loading-stalled";
 import { useLowPower } from "@/hooks/use-dash-prefs";
@@ -314,7 +315,8 @@ export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
                 {claim.wordmark && (
                   <div data-slot="header-identity" className="relative min-w-0">
                     <SectionLabel className="absolute bottom-full left-0 max-w-full truncate leading-none">
-                      Collie
+                      {/* FORK: the machine's own name when branding.json gives one (src/lib/brand.ts). */}
+                      {BRAND_WORD}
                     </SectionLabel>
                     {/* The line the freed width is FOR — "on <mux>", the sentence the brand line
                         above starts. `min-h-6` RESERVES it whether or not a name has arrived:
@@ -343,7 +345,7 @@ export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
                               than a pixel guess, and inline so the line stays ONE text run — the
                               sentence is still "on <name>" to a screen reader and to a text query.
                               Nothing renders when the bridge published no URL. */}
-                          {muxLogo !== "" && (
+                          {muxLogo !== "" && !BRAND.hideMuxLogo && (
                             <img
                               src={muxLogo}
                               alt=""

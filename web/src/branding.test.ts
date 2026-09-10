@@ -90,6 +90,15 @@ describe("readBrandingText", () => {
     });
   });
 
+  it("reads hideMuxLogo, and refuses anything but a boolean for it", () => {
+    withTempDirs(({ branding }) => {
+      writeFileSync(join(branding, "branding.json"), JSON.stringify({ hideMuxLogo: true }));
+      expect(readBrandingText(branding)).toEqual({ hideMuxLogo: true });
+      writeFileSync(join(branding, "branding.json"), JSON.stringify({ hideMuxLogo: "yes" }));
+      expect(() => readBrandingText(branding)).toThrow(/true or false/);
+    });
+  });
+
   it("throws on an empty string, which would install a nameless icon", () => {
     withTempDirs(({ branding }) => {
       writeFileSync(join(branding, "branding.json"), JSON.stringify({ shortName: "  " }));
@@ -137,6 +146,16 @@ describe("loadBranding", () => {
       const brand = loadBranding(webRoot);
 
       expect(readFileSync(join(brand.publicDir, "apple-touch-icon.png"), "utf8")).toBe("stock");
+    });
+  });
+
+  it("treats a file that only hides the mux logo as a branding request, not an empty directory", () => {
+    withTempDirs(({ branding, webRoot }) => {
+      writeFileSync(join(branding, "branding.json"), JSON.stringify({ hideMuxLogo: true }));
+      const brand = loadBranding(webRoot);
+      expect(brand.hideMuxLogo).toBe(true);
+      expect(brand.publicDir).toBe(resolve(webRoot, "public")); // no files to overlay
+      expect(brand.htmlPlugin).toBeNull(); // and no label to write
     });
   });
 

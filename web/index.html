@@ -69,12 +69,14 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="shortcut icon" href="/favicon.ico" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-    <!-- First-paint splash: the galloping Collie shown the instant the PWA opens, bridging the OS
-         launch splash and React mount (createRoot replaces #root, so it clears itself). Critical CSS
-         is inlined here so it paints and animates before the app bundle/index.css load — pure CSS,
-         no JS. It mirrors routes/root.tsx's BootSplash (same sprite, 4rem, copy) so the hand-off is
-         seamless. Sprite math matches .dog-gallop in index.css: dog-gallop.png is a 768×128 strip of
-         six 128px frames, stepped with steps(6). -->
+    <!-- First-paint splash: the mark shown the instant the PWA opens, bridging the OS launch splash
+         and React mount (createRoot replaces #root, so it clears itself). Critical CSS is inlined
+         here so it paints before the app bundle/index.css load — pure CSS, no JS. It mirrors
+         routes/root.tsx's BootSplash (same mark, 4rem, copy) so the hand-off is seamless.
+         FORK: the mark is the cat over a terminal (components/meow-mark.tsx), drawn here as a CSS
+         mask so it takes the splash's own text colour in either theme; upstream's galloping-dog
+         sprite (dog-gallop.png) is no longer used here. The class name is kept so the markup below
+         and any selector upstream adds keep matching. -->
     <style>
       /* index.css has not loaded at this point, so the splash declares `color-scheme` itself —
          otherwise light-dark() below has nothing to resolve against and every value falls to its
@@ -178,23 +180,15 @@
       }
       .boot-splash__dog {
         --dog-size: 4rem;
-        --dog-frames: 6;
         width: var(--dog-size);
         height: var(--dog-size);
-        background: url("/dog-gallop.png") no-repeat 0 0;
-        background-size: calc(var(--dog-frames) * var(--dog-size))
-          var(--dog-size);
-        animation: boot-dog-gallop 0.6s steps(6) infinite;
-      }
-      @keyframes boot-dog-gallop {
-        to {
-          background-position: calc(-1 * var(--dog-frames) * var(--dog-size)) 0;
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .boot-splash__dog {
-          animation: none;
-        }
+        /* The drawing is the mask, the colour is the text's: no sprite, no second colour to keep
+           in step with the theme, and the window's interior is the page showing through. Static —
+           the cursor blinks once React's mark takes over, and a still frame needs no reduced-motion
+           branch. */
+        background-color: currentColor;
+        -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 18 144 144'><polygon points='52,60 60,22 84,54'/><polygon points='128,60 120,22 96,54'/><path fill-rule='evenodd' d='M56,70 a34,26 0 0 1 68,0 Z M69,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z M101,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z'/><rect x='24' y='66' width='132' height='92' rx='14' fill='none' stroke='black' stroke-width='9'/><path d='M46,98 l14,12 l-14,12' fill='none' stroke='black' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/><rect x='72' y='97' width='12' height='27' rx='2'/></svg>") no-repeat center / contain;
+        mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 18 144 144'><polygon points='52,60 60,22 84,54'/><polygon points='128,60 120,22 96,54'/><path fill-rule='evenodd' d='M56,70 a34,26 0 0 1 68,0 Z M69,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z M101,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z'/><rect x='24' y='66' width='132' height='92' rx='14' fill='none' stroke='black' stroke-width='9'/><path d='M46,98 l14,12 l-14,12' fill='none' stroke='black' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/><rect x='72' y='97' width='12' height='27' rx='2'/></svg>") no-repeat center / contain;
       }
     </style>
   </head>

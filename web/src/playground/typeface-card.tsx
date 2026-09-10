@@ -31,7 +31,7 @@
 // playground — every real component on the page inherits the face, which is the honest way to feel
 // a candidate's impact. This card keeps the side-by-side specimen and the commentary; the sidebar's
 // Typeface control is the same store with the words left out.
-import { CollieMark } from "@/components/collie-mark";
+import { MeowMark } from "@/components/meow-mark";
 import { cn } from "@/lib/utils";
 
 import { Card, Segmented } from "./harness";
@@ -109,7 +109,7 @@ function Specimen({ face }: { face: FaceId }) {
           for the same reason it is two there — a face has to be judged on the chrome the app
           actually draws, and the app stopped drawing an 18px wordmark in this row. */}
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <CollieMark size={28} weight="header" />
+        <MeowMark size={28} weight="header" />
         <div className="flex min-w-0 flex-col">
           <SectionLabel>Collie</SectionLabel>
           {/* The real header prints the multiplexer's own name from /api/config; the specimen

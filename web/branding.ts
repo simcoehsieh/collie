@@ -22,7 +22,12 @@
 //   ├── favicon-96x96.png          optional — the browser tab
 //   ├── favicon.svg / .ico         optional — ditto
 //   ├── web-app-manifest-*.png     optional — Android and other installers; iOS never reads these
-//   └── branding.json              optional — {"name", "shortName", "description"}, all optional
+//   └── branding.json              optional — {"name", "shortName", "description",
+//                                   "hideMuxLogo"}, all optional. `hideMuxLogo: true` keeps the
+//                                   multiplexer's own logo off the header's "on <mux>" line —
+//                                   for a machine whose mark is not the collie, a second animal
+//                                   beside the name would say "herdr looks like this", which it
+//                                   does not. `shortName` also becomes the header's brand word.
 //
 // A file whose name matches one in `web/public/` replaces it. A name that matches nothing there is
 // still copied, but WARNS: a typo'd filename is the failure that looks exactly like success.
@@ -38,7 +43,7 @@ import type { Plugin } from "vite";
 // the operator, so it is untrusted input in exactly the sense src/lib/json.ts exists for — every
 // field below comes back through a reader that answers `undefined` for anything that isn't the
 // shape asked for, with no `typeof` and no assertion in the middle.
-import { asJsonObject, asJsonString, parseJson } from "./src/lib/json";
+import { asJsonBoolean, asJsonObject, asJsonString, parseJson } from "./src/lib/json";
 import type { JsonObject } from "./src/lib/json";
 
 /** `branding.json`, after validation. Every field is optional; an absent one keeps upstream's. */
@@ -46,6 +51,8 @@ export interface BrandingText {
   readonly name?: string;
   readonly shortName?: string;
   readonly description?: string;
+  /** Draw no multiplexer logo beside "on <mux>" in the header. Absent = draw it, as upstream does. */
+  readonly hideMuxLogo?: boolean;
 }
 
 export interface Branding extends BrandingText {
@@ -63,7 +70,7 @@ export interface Branding extends BrandingText {
 const HOME_SCREEN_LABEL_BUDGET = 12;
 
 /** Everything `branding.json` may say. Anything else in the file is a typo worth naming. */
-const BRANDING_KEYS = new Set(["name", "shortName", "description"]);
+const BRANDING_KEYS = new Set(["name", "shortName", "description", "hideMuxLogo"]);
 
 const warn = (msg: string) => console.warn(`\x1b[33m⚠ branding: ${msg}\x1b[0m`);
 
@@ -134,7 +141,17 @@ export function readBrandingText(dir: string): BrandingText {
     name: readString(doc, file, "name"),
     shortName: readString(doc, file, "shortName"),
     description: readString(doc, file, "description"),
+    hideMuxLogo: readFlag(doc, file, "hideMuxLogo"),
   };
+}
+
+/** One optional boolean. Present-but-not-a-boolean throws for the same reason `readString` does. */
+function readFlag(doc: JsonObject, file: string, key: string): boolean | undefined {
+  const raw = doc[key];
+  if (raw === undefined) return undefined;
+  const value = asJsonBoolean(raw);
+  if (value === undefined) throw new Error(`branding: ${file} — "${key}" must be true or false`);
+  return value;
 }
 
 /**
@@ -176,7 +193,7 @@ export function loadBranding(webRoot: string): Branding {
     .map((e) => e.name)
     .toSorted();
 
-  const named = text.name ?? text.shortName ?? text.description;
+  const named = text.name ?? text.shortName ?? text.description ?? text.hideMuxLogo;
   if (files.length === 0 && named === undefined) {
     warn(`${dir} exists but is empty — building the stock Collie`);
     return { publicDir: stock, htmlPlugin: null };

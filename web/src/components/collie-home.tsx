@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
-import { CollieMark } from "@/components/collie-mark";
+import { MeowMark } from "@/components/meow-mark";
 import { t } from "@/lib/i18n";
 import { useStatus } from "@/lib/status";
 import { useOperatorBusy } from "@/lib/busy";
@@ -22,7 +22,7 @@ interface CollieHomeProps {
 }
 
 // The single, shared Collie mark: brand + home button + connection loader in one, so the top-left of
-// every screen means the same thing. ONE element in all three states — <CollieMark/>, which is a
+// every screen means the same thing. ONE element in all three states — <MeowMark/>, which is a
 // still drawing while live, starts turning (the "bloom") once the connection has been not-live for a
 // sustained beat (`trouble`), and goes still again, muted, once the outage escalates (`lost`). That
 // is why this no longer swaps a sprite for a still image: the old sprite had no rest frame (frame 0
@@ -40,7 +40,7 @@ interface CollieHomeProps {
 // the mark with one of them trapped in here. See app-header.tsx, which now owns both lines. What is
 // left is exactly the 44px tap box DESIGN.md §6 asks for, and every header renders THIS component —
 // the consistency is structural, not a convention two files have to keep agreeing on.
-// One full round of the orbit at the mark's LOADING rate, in milliseconds. <CollieMark/> owns that
+// One full round of the orbit at the mark's LOADING rate, in milliseconds. <MeowMark/> owns that
 // rate (`TURN.live`, collie-mark.tsx) and does not export it, so this number is a copy and has to
 // stay in step with it: shorter cuts the round off part way, longer starts a second one. The rate
 // is set in the collie-brand repo (`SPRINT` in src/geometry.ts) — a change there has to be walked
@@ -172,7 +172,7 @@ export function CollieHome({ onHome, trouble, lost = false, className }: CollieH
   // and a send the operator fires into a dead link must not make it look like the app is trying
   // again. Same guard the round already carries, for the same reason.
   //
-  // No debounce, and none is wanted: <CollieMark/> carries the orbit's phase across the rate change
+  // No debounce, and none is wanted: <MeowMark/> carries the orbit's phase across the rate change
   // by hand (collie-mark.tsx), so a 200ms spin joins the drift where it left it and rejoins it where
   // it lands. Short work reads as a brief accelerate/decelerate, never as a flicker — which is what
   // lets the spin last exactly as long as the work and not one frame more.
@@ -335,7 +335,7 @@ export function CollieHome({ onHome, trouble, lost = false, className }: CollieH
           collected from HERE and not from the button, so the button's own `transition-opacity` — and
           anything a caller's `className` animates — is never handed a playback rate. */}
       <span ref={mark} className="grid size-11 shrink-0 place-items-center">
-        <CollieMark
+        <MeowMark
           size={40}
           weight="header"
           loading={bloom || ((round || busy) && !lost)}
