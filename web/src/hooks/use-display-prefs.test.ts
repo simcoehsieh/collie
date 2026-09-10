@@ -270,3 +270,34 @@ describe("useDisplayPrefs — the rest", () => {
     expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false });
   });
 });
+
+// FORK: the Controls row is closed by default, and the stored `controlsOpen` is honoured only once
+// it is a known CHOICE. The whole prefs object is written back on every change, so an install that
+// merely changed the font once under the old default carries `controlsOpen: true` without ever
+// having chosen it — and the new default would never reach it.
+describe("useDisplayPrefs — controlsOpen is a choice, not a leftover", () => {
+  const CHOSEN_KEY = "collie:display-prefs:controls-chosen";
+  beforeEach(() => localStorage.clear());
+
+  it("ignores a stored controlsOpen:true that was never chosen", () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ wrap: true, fontSize: 10, controlsOpen: true }));
+    const { result } = renderHook(() => useDisplayPrefs());
+    expect(result.current.prefs.controlsOpen).toBe(false);
+  });
+
+  it("honours a stored controlsOpen once the device has chosen it", () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ wrap: true, fontSize: 10, controlsOpen: true }));
+    localStorage.setItem(CHOSEN_KEY, "1");
+    const { result } = renderHook(() => useDisplayPrefs());
+    expect(result.current.prefs.controlsOpen).toBe(true);
+  });
+
+  it("marks the choice when the operator toggles the row, and reloads it", () => {
+    const { result } = renderHook(() => useDisplayPrefs());
+    act(() => result.current.setControlsOpen(true));
+    expect(localStorage.getItem(CHOSEN_KEY)).toBe("1");
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).controlsOpen).toBe(true);
+    const { result: again } = renderHook(() => useDisplayPrefs());
+    expect(again.current.prefs.controlsOpen).toBe(true);
+  });
+});

@@ -187,6 +187,12 @@ export function mirrorFont(family: FontFamily): MirrorFont {
 // before it existed simply reads the default. Bumping would silently reset everyone's wrap, size and
 // raw-terminal choice to buy nothing.
 const STORAGE_KEY = "collie:display-prefs:v4";
+// FORK: set the first time the operator TOGGLES the Controls row on this device. The whole prefs
+// object is written back on every change, so a device carries `controlsOpen: true` whether the
+// operator chose it or merely changed the font once while the old default was `true`. Without this
+// marker the fork's new default (closed) would never reach an existing install; with it, the stored
+// value is honoured only once it is known to be a choice.
+const CONTROLS_CHOSEN_KEY = "collie:display-prefs:controls-chosen";
 export const FONT_MIN = 9;
 // 24, not 16, and the extra eight are for the DESKTOP. 16 was a phone's ceiling — on a 393pt screen
 // nothing above it fits a useful number of columns — and it silently became the ceiling everywhere.
@@ -305,10 +311,28 @@ function loadPrefs(): DisplayPrefs {
       expandClippedReply: asJsonBoolean(p.expandClippedReply) ?? DEFAULTS.expandClippedReply,
       // Same independent-default rule again: a payload written before the Controls row could be put
       // away reads `true`, so nobody's composer changes shape on the upgrade.
-      controlsOpen: asJsonBoolean(p.controlsOpen) ?? DEFAULTS.controlsOpen,
+      controlsOpen: controlsChosen()
+        ? (asJsonBoolean(p.controlsOpen) ?? DEFAULTS.controlsOpen)
+        : DEFAULTS.controlsOpen,
     };
   } catch {
     return DEFAULTS;
+  }
+}
+
+function controlsChosen(): boolean {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem(CONTROLS_CHOSEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markControlsChosen(): void {
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem(CONTROLS_CHOSEN_KEY, "1");
+  } catch {
+    // Ignore quota / SSR write errors.
   }
 }
 
@@ -412,6 +436,7 @@ export function useDisplayPrefs(): UseDisplayPrefsReturn {
   }, []);
 
   const setControlsOpen = useCallback((controlsOpen: boolean) => {
+    markControlsChosen();
     setPrefs((p) => {
       const next: DisplayPrefs = { ...p, controlsOpen };
       savePrefs(next);
