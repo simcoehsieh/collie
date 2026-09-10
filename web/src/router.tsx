@@ -1,13 +1,10 @@
+import { lazy, Suspense, type ComponentType, type ReactNode } from "react";
 import { createBrowserRouter, replace } from "react-router";
 
 import { BootSplash, RootError, RootLayout } from "@/routes/root";
 import { HomeRoute } from "@/routes/home";
 import { SpaceRoute } from "@/routes/space";
 import { DetailRoute } from "@/routes/detail";
-import { HistoryRoute } from "@/routes/history";
-import { SettingsRoute } from "@/routes/settings";
-import { CrewRoute } from "@/routes/crew";
-import { UpdatesRoute } from "@/routes/updates";
 import {
   devicesLoader,
   historyLoader,
@@ -31,6 +28,34 @@ try {
   // sessionStorage access can throw in locked-down / private contexts — ignore.
 }
 
+// FORK: the routes that are not the dashboard or a pane load on demand. The app shell used to be
+// one 880 KB chunk that carried Settings, the crew census, the updater (with its four-step progress
+// card and its log viewer) and the transcript reader onto the cold-start path of an installed PWA —
+// screens a session opens once a week, paid for on every launch. Root, home and the pane stay
+// eager: they are what a launch is FOR, and a tap on a pane row must never wait on a chunk.
+//
+// The fallback is a route-sized nothing, not a spinner. A chunk arrives in well under a second on
+// the second launch (the service worker precaches it), and a spinner that flashes for 80 ms reads
+// as a glitch where a blank that becomes the page reads as a page opening.
+function lazyRoute(load: () => Promise<{ default: ComponentType }>): ReactNode {
+  const Route = lazy(load);
+  return (
+    <Suspense fallback={<div className="min-h-0 flex-1" aria-busy="true" />}>
+      <Route />
+    </Suspense>
+  );
+}
+const settingsRoute = lazyRoute(() =>
+  import("@/routes/settings").then((m) => ({ default: m.SettingsRoute })),
+);
+const updatesRoute = lazyRoute(() =>
+  import("@/routes/updates").then((m) => ({ default: m.UpdatesRoute })),
+);
+const crewRoute = lazyRoute(() => import("@/routes/crew").then((m) => ({ default: m.CrewRoute })));
+const historyRoute = lazyRoute(() =>
+  import("@/routes/history").then((m) => ({ default: m.HistoryRoute })),
+);
+
 // Created once at module scope so the idle-lock in App can unmount/remount RouterProvider without
 // losing the current location (the router instance retains it; loaders re-run fresh on remount).
 export const router = createBrowserRouter([
@@ -48,16 +73,16 @@ export const router = createBrowserRouter([
       { path: "space/:spaceId", element: <SpaceRoute /> },
       // Settings carries the paired-device registry, so it gets its own loader — a revoke or a pair
       // is then the app's standard mutation shape (api call → revalidate), with no second data path.
-      { path: "settings", loader: devicesLoader, element: <SettingsRoute /> },
+      { path: "settings", loader: devicesLoader, element: settingsRoute },
       // The Updates page, a sibling of settings and crew. No loader of its own: everything on it is
       // either the snapshot (root loader) or the card's own read of /api/update/check. It is
       // deliberately ON the poll loop for `crew`'s stated reason — a run in progress and a member
       // going quiet are exactly what this page exists to show without a reload.
-      { path: "settings/updates", element: <UpdatesRoute /> },
+      { path: "settings/updates", element: updatesRoute },
       // The crew census, likewise on its own loader — and deliberately ON the poll loop: the payload
       // is one small object per machine, and the whole point of the page is that a member going
       // quiet shows up here without the operator reloading. (History opts out; this one wants in.)
-      { path: "crew", loader: crewLoader, element: <CrewRoute /> },
+      { path: "crew", loader: crewLoader, element: crewRoute },
       // The path was `crew` until 1.7.0 (M24 renamed the word a person reads). The service worker
       // caches the app shell, so a client sitting on /crew when the new bundle arrives, a bookmark
       // and an installed PWA's start URL all still ask for the old spelling. `replace` rather than
@@ -73,7 +98,7 @@ export const router = createBrowserRouter([
       {
         path: "pane/:paneId/history",
         loader: historyLoader,
-        element: <HistoryRoute />,
+        element: historyRoute,
         // Opt OUT of the poll loop. revalidate() re-runs every active loader, and a transcript can be
         // hundreds of turns — re-pulling it every 1.5s would be pure waste, and it would fight the
         // view's own "load older" paging by resetting the page under it. History is fetched on
