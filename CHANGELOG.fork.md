@@ -13,6 +13,18 @@ stays true).
 
 ## On top of 1.8.0
 
+- **Push heals itself.** The service worker handles `pushsubscriptionchange` and re-subscribes
+  with the same VAPID key; on app open the page asks the bridge whether its endpoint is still known
+  (`/api/subscribe` now answers `{known}`) and mints a fresh subscription when the bridge had pruned
+  it on a 404/410. Before this an Apple endpoint rotation silenced pushes until Settings was opened.
+- **A blocked pane answers from the notification shade or the dashboard row.** The bridge peeks the
+  pane at push time (`bridge/prompt-peek.ts`) and, when the dialog is a plain Yes/No, the push
+  carries two actions plus the exact keystrokes and the prompt region; the worker sends them through
+  the guarded keys route with `expected_prompt`, so a dialog that moved is refused and the pane opens
+  instead. The dashboard row gets the same Yes/No strip without navigating. `AgentCard` is memoised.
+- **Each pane gets its own notification rule.** `notify-prefs` grows per-pane rules matched by pane
+  id or label (`default | all | blocked | mute`) with a per-rule snooze, under the existing
+  bridge-wide switches, so one chatty listener cannot train the operator to ignore every push.
 - **The bridge answers 304 when nothing moved, and pokes the phone instead of being polled.**
   `/api/snapshot` carries an ETag (hashed with `ts` zeroed) and the client hands back the same
   object on a 304, so an unchanged herd costs an empty response and no re-render. Pane reads go
