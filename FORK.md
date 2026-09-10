@@ -122,6 +122,35 @@ Upstream's `DESIGN.md` is left as it is — it is upstream's argument for upstre
 it would conflict on every release. Where a rule of it is knowingly broken here (the stadium, the
 ramp, the accent), the reason is in the token's own comment.
 
+## The performance and feature pass (2026-09-10)
+
+An audit the same day the redesign landed measured where the time went: the bridge answers in
+1–2 ms on loopback, but every request from the phone is a ~175 ms round trip through Cloudflare
+(560 ms cold), the mirror screen made two of them a second, and nothing on either side asked "did
+anything change?". Everything below follows from that measurement. The full list is in
+[`CHANGELOG.fork.md`](./CHANGELOG.fork.md) → *On top of 1.8.0*; this section is the map of where
+each piece lives, for the next merge.
+
+| Piece | Where | On a conflict |
+| --- | --- | --- |
+| Snapshot ETag / 304, pane read cache + coalescer, long-poll `?wait=`, brotli, precompressed assets, once-per-second `buildId()` and pairing registry | `bridge/server.ts` (snapshot + pane routes, `serveStatic`), `bridge/http-cache.ts`, new `bridge/events.ts`, `bridge/pairing.ts` | Keep upstream's structure, re-apply the cache/ETag hunks. `events.ts` is fork-only |
+| SSE pokes `GET /api/events` | `bridge/events.ts`, `bridge/server.ts` (route), new `web/src/lib/live-feed.ts`, `web/src/hooks/use-polling.ts` | Polling stays the truth (ARCHITECTURE.md ADR 0008 is respected: the stream only says *when* to poll). If upstream ever adds its own stream, take theirs and drop `live-feed.ts` |
+| Show-first-fetch-second for Settings / Crew / History, follow window 200 lines, snapshot identity memo | `web/src/lib/loaders.ts`, `web/src/lib/api.ts`, `web/src/routes/root.tsx`, `web/src/routes/history.tsx` | Same as the pane's `pending` path from the redesign: a dozen lines each, re-apply |
+| Optimistic send, single mirror parse, memo boundaries, lazy routes, rAF auto-scroll, containment, copy-a-fence | `web/src/components/composer.tsx`, new `web/src/hooks/use-mirror-model.ts`, `use-stable-callback.ts`, `web/src/router.tsx`, `web/src/hooks/use-auto-scroll.ts`, `web/src/lib/code-fences.ts` | Keep upstream's screen, re-apply the hook and the `memo()` wrappers |
+| Push self-heal, one-tap approve (shade + dashboard row), per-pane notify rules | `web/src/sw.ts`, new `web/src/lib/push-heal.ts`, `bridge/push.ts`, new `bridge/prompt-peek.ts`, `bridge/notify-prefs.ts`, `web/src/components/agent-card.tsx`, `notify-prefs-control.tsx` | `sw.ts` is already a fork file (the iOS silent-push patch); keep the fork's. **Every push must still show a notification** |
+| Diff sheet, document browser | new `bridge/diff.ts`, `bridge/docs-list.ts`, `web/src/components/diff-sheet.tsx`, `doc-panel.tsx`, `pane-actions-sheet.tsx` rows | Fork-only files; only the `agent-chat.tsx` mounts and the `server.ts` routes can conflict |
+| Send queue, connection verdicts | new `web/src/lib/send-queue.ts`, `send-failure.ts`, `queued-sends.tsx`, `web/src/components/connection-banner.tsx`, `web/src/lib/reply-action.ts` (`transport` on the `error` outcome) | `connection-banner.tsx` is a rewrite around `probeBridge()`: keep the fork's |
+| Overview, pins, hotkeys, low power, TTS, share target | new `web/src/routes/overview.tsx`, `web/src/lib/overview.ts`, `triage.ts` (third arg), `use-dash-prefs.ts` (store), `use-hotkeys.ts`, `use-tts.ts`, `last-pane.ts`, `web/vite.config.ts` manifest | Mostly new files. `triage.ts` and `use-dash-prefs.ts` are the two upstream may touch |
+| agy harness parity | `web/src/lib/harness/agy/*`, ten `web/src/fixtures/panes/agy--*.txt`, `multi-select-model.ts` (`submitKeys`), `conformance.ts` (`notApplicable`) | If upstream ships its own agy adapters, compare fixtures before choosing; theirs may be from a newer agy |
+
+Two things to know when operating it. **The stream watches a followed pane at 400 ms on loopback**
+— herdr publishes no pane-output event, so the bridge reads the pane itself while a phone follows it
+and pokes on change; that is 2.5 cheap local reads a second per followed pane instead of one
+175 ms round trip a second from the phone, and it stops the moment the stream closes. And **the
+bridge test run is now `bun test --timeout 20000 ${=FILES}`** with `crew/harness.test.ts` left out
+of `FILES` — in zsh an unquoted `$FILES` is one word, and bun then reports that no test file
+matched, which reads like an empty suite rather than a shell quirk.
+
 ## Taking upstream's changes
 
 The procedure below is automated by the **`collie-upstream-sync` skill**, which lives in this repo
