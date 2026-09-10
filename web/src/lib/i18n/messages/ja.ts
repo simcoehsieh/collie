@@ -627,6 +627,10 @@ export const ja: Dictionary = {
   "mirror.imageAlt": "ターミナルグラフィックス",
   "mirror.imageBadge": "[画像]",
   "mirror.imageMatchedByOrder": "順序で対応付け。確認は履歴から",
+  // FORK: the Copy button on a closed code fence in the mirror (components/ansi-output.tsx).
+  "mirror.copy": "コピー",
+  "mirror.copyBlock": "コードブロックをコピー",
+  "mirror.copied": "コピーしました",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "たった今",

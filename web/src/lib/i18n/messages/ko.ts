@@ -625,6 +625,10 @@ export const ko: Dictionary = {
   "mirror.imageAlt": "터미널 그래픽",
   "mirror.imageBadge": "[이미지]",
   "mirror.imageMatchedByOrder": "순서로 맞춤, 확인은 기록에서",
+  // FORK: the Copy button on a closed code fence in the mirror (components/ansi-output.tsx).
+  "mirror.copy": "복사",
+  "mirror.copyBlock": "코드 블록 복사",
+  "mirror.copied": "복사됨",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "방금 전",

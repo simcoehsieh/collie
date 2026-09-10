@@ -3,6 +3,9 @@ import { fireEvent, render } from "@testing-library/react";
 import type { ComponentProps } from "react";
 
 import { AnsiOutput } from "./ansi-output";
+import { parseAnsi } from "@/lib/ansi";
+import { splitLines } from "@/lib/blocks";
+import { buildBlocks } from "@/lib/harness";
 
 const ESC = "\x1b";
 const MUTED_RULE_COLOUR = "rgb(161, 161, 161)"; // #a1a1a1, --muted-foreground's dark half
@@ -557,5 +560,93 @@ describe("terminal mirror image placeholders", () => {
     fireEvent.error(container.querySelector("img")!);
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toContain("[Image]");
+  });
+});
+
+// ── FORK: the mirror is parsed once, rendered from the model ─────────────────────────────────────
+describe("AnsiOutput — a prebuilt MirrorModel", () => {
+  it("renders the model's lines and never parses `text`", () => {
+    const lines = splitLines(parseAnsi("from the model"));
+    const model = { lines, blocks: buildBlocks(lines, {}) };
+    const { container } = render(<AnsiOutput text="from the text prop" model={model} />);
+    const pre = container.querySelector("pre")!;
+    expect(pre.textContent).toBe("from the model");
+    expect(pre.textContent).not.toContain("from the text prop");
+  });
+
+  it("keeps the `text` path for callers with no model", () => {
+    const { container } = render(<AnsiOutput text="plain" />);
+    expect(container.querySelector("pre")!.textContent).toBe("plain");
+  });
+});
+
+// ── FORK: line keys are content, so a scrolled grid keeps its nodes ───────────────────────────────
+describe("AnsiOutput — stable line nodes across a one-row scroll", () => {
+  it("keeps the DOM node of a line that moved up one row", () => {
+    const { container, rerender } = render(<AnsiOutput text={"row a\nrow b\nrow c"} />);
+    const before = [...container.querySelectorAll("pre > span")].find(
+      (n) => n.textContent === "row b",
+    )!;
+    expect(before).toBeDefined();
+    // One new row at the bottom, one gone from the top: every index shifted by one.
+    rerender(<AnsiOutput text={"row b\nrow c\nrow d"} />);
+    const after = [...container.querySelectorAll("pre > span")].find(
+      (n) => n.textContent === "row b",
+    )!;
+    expect(after).toBe(before);
+    expect(container.querySelector("pre")!.textContent).toBe("row b\nrow c\nrow d");
+  });
+
+  it("keeps two identical lines as two distinct siblings", () => {
+    const { container } = render(<AnsiOutput text={"same\nsame\nsame"} />);
+    expect(container.querySelector("pre")!.textContent).toBe("same\nsame\nsame");
+  });
+});
+
+// ── FORK: one tap lifts a fenced code block off the mirror ────────────────────────────────────────
+describe("AnsiOutput — Copy on a closed code fence", () => {
+  const FENCED = "run this:\n```sh\nbun install\nbun run build\n```\nthen reload";
+
+  function withClipboard(writeText: (text: string) => Promise<void>) {
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  }
+
+  it("draws a Copy button on the closing fence line and none elsewhere", () => {
+    const { container, getAllByRole } = render(<AnsiOutput text={FENCED} />);
+    const buttons = getAllByRole("button", { name: "Copy code block" });
+    expect(buttons).toHaveLength(1);
+    // Inline on the closing row: no extra line in the grid, the text reads exactly as printed.
+    expect(container.querySelector("pre")!.textContent).toBe(`${FENCED.replace("```\nthen", "```Copy\nthen")}`);
+  });
+
+  it("copies the lines BETWEEN the fences, not the fences", async () => {
+    const writeText = vi.fn(async () => {});
+    withClipboard(writeText);
+    const { getByRole, findByRole } = render(<AnsiOutput text={FENCED} />);
+    fireEvent.click(getByRole("button", { name: "Copy code block" }));
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("bun install\nbun run build"));
+    // The ✓ reading, then the glyph again.
+    expect(await findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+
+  it("draws nothing for a fence still being written", () => {
+    const { queryByRole } = render(<AnsiOutput text={"```ts\nconst a = 1;\n"} />);
+    expect(queryByRole("button", { name: "Copy code block" })).toBeNull();
+  });
+
+  it("a clipboard refusal leaves the glyph as it was and does not throw", async () => {
+    withClipboard(async () => {
+      throw new Error("not allowed");
+    });
+    const { getByRole, queryByRole } = render(<AnsiOutput text={FENCED} />);
+    fireEvent.click(getByRole("button", { name: "Copy code block" }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(queryByRole("button", { name: "Copied" })).toBeNull();
+    expect(getByRole("button", { name: "Copy code block" })).toBeInTheDocument();
+  });
+
+  it("the mirror is a layout and paint island", () => {
+    const { container } = render(<AnsiOutput text="x" />);
+    expect(container.querySelector("pre")!.className).toContain("[contain:layout_paint]");
   });
 });

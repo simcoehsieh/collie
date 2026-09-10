@@ -614,6 +614,10 @@ export const zh: Dictionary = {
   "mirror.imageAlt": "终端图像",
   "mirror.imageBadge": "[图片]",
   "mirror.imageMatchedByOrder": "按顺序匹配，打开历史记录核对",
+  // FORK: the Copy button on a closed code fence in the mirror (components/ansi-output.tsx).
+  "mirror.copy": "复制",
+  "mirror.copyBlock": "复制代码块",
+  "mirror.copied": "已复制",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "刚刚",

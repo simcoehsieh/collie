@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { ArrowDown, ArrowUp, Check, Inbox, WifiOff } from "lucide-react";
 
 import { clockTime } from "@/lib/format";
@@ -53,7 +54,7 @@ const ATTENTION: ReadonlySet<TriageKey> = new Set<TriageKey>(["needs", "ready"])
 // The herd in the one order the app agrees on: Needs you → Ready · unseen → Working → Recent
 // (lib/triage.ts). Only Recent folds, and only Recent takes the direction toggle; the three
 // attention sections are pinned open and never invert.
-export function AgentList({
+export const AgentList = memo(function AgentList({
   agents,
   bridge,
   onOpen,
@@ -184,7 +185,7 @@ export function AgentList({
       })}
     </div>
   );
-}
+});
 
 // One tap flips the Recent order. Deliberately not a menu — the design offers a direction, not a
 // choice of sort keys. min-h-9 keeps it on the 36px touch floor.

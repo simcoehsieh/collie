@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 
 import { RouteHeader, SettingsGear } from "@/components/app-header";
@@ -81,9 +81,17 @@ export function HomeRoute() {
   // every machine (hosts are a label, not a split), so the row you tapped may well live somewhere
   // other than where the URL currently points. Resolving it here is what stops a reply landing on the
   // right pane name on the wrong terminal. Solo: every pane is untagged, so this is `data.scope`.
-  const open = (pane: AgentView) =>
-    navigate(panePath(pane.paneId, paneScope(data.scope, pane, data.servers, data.sessions)));
-  const drillInto = (id: string) => navigate(spacePath(id, data.scope));
+  // FORK: stable, because AgentList and the space overview below are memo()'d and a fresh arrow
+  // per render would hand them a new prop on every poll tick.
+  const open = useCallback(
+    (pane: AgentView) =>
+      navigate(panePath(pane.paneId, paneScope(data.scope, pane, data.servers, data.sessions))),
+    [navigate, data.scope, data.servers, data.sessions],
+  );
+  const drillInto = useCallback(
+    (id: string) => navigate(spacePath(id, data.scope)),
+    [navigate, data.scope],
+  );
   // The space navigator is LEAD-LOCAL (the merge deliberately does not union peer workspaces — their
   // ids are only unique per machine), so the spaces on screen belong to the lead and their panes must
   // be looked up under the lead's host. Undefined when solo, which keys everything exactly as before.

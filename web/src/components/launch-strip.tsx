@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Loader2 } from "lucide-react";
 
 import { useCrew } from "@/components/crew-provider";
@@ -33,7 +34,7 @@ interface LaunchStripProps {
 // height is set by a config file: `flex-wrap` fits two labels per row on a phone, so six launchers
 // is three rows of buttons between the herd you came to read and the navigator below it. Folded, the
 // header still says how many there are — the count is the reason to unfold.
-export function LaunchStrip({ open, onOpenChange, scope }: LaunchStripProps) {
+export const LaunchStrip = memo(function LaunchStrip({ open, onOpenChange, scope }: LaunchStripProps) {
   const { launchers, home } = useLaunchers(scope);
   const { launch, launching } = useSpaceActions();
   // TIER 2 (§10.3): a crew row still shows when its host refuses writes — a departed/incompatible
@@ -101,4 +102,4 @@ export function LaunchStrip({ open, onOpenChange, scope }: LaunchStripProps) {
       )}
     </section>
   );
-}
+});

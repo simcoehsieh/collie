@@ -1107,8 +1107,10 @@ describe("Composer — blocked pre-flight override", () => {
     // input line, so the verify step never passes and Enter is never fired. THE #34 invariant.
     await waitFor(() => expect(calls).toContain("type"));
     expect(calls).not.toContain("submit");
-    expect(box).toHaveValue("use fable please");
     await awaitTerminalStall(); // see the helper: an unawaited stall lands in a later test
+    // FORK: the field clears on the tap and the stall puts the words BACK — so the draft survives
+    // the override exactly as before, it is just checked after the outcome rather than mid-flight.
+    expect(box).toHaveValue("use fable please");
   }, 15000);
 });
 
@@ -3057,4 +3059,145 @@ describe("Composer — the Controls row can be put away", () => {
     expect(screen.queryByRole("button", { name: "Remove Ctrl Tab" })).not.toBeInTheDocument();
     expect(props.setControlsOpen).toHaveBeenCalledWith(false);
   });
+});
+
+// ── FORK: the field clears on the tap, not on the round trip ─────────────────────────────────────
+//
+// The guarded send is a probe read, the type, a verify loop and the submit key, through a tunnel
+// that is two round trips per call. The words used to sit in the box for the whole of that with a
+// spinner where the Send glyph was. Now the box empties and the "You sent" chip carries the words
+// the moment Send is tapped; every outcome that is not `sent` puts them back.
+describe("Composer — the field clears on the tap", () => {
+  it("empties the box and raises the chip before any round trip completes", async () => {
+    const user = userEvent.setup();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // The reply never returns until released — so anything that happened before `release()` is
+    // what the tap did on its own.
+    server.use(
+      http.post<never, { text?: string; submit?: boolean }>(/\/api\/pane\/[^/]+\/reply$/, async ({ request }) => {
+        recordReply(await request.json());
+        await held;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderComposerWithStatus();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+
+    await user.type(box, "ship it");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    // Synchronous with the tap: the box is empty, the chip holds the words, the ✓ is up.
+    expect(box).toHaveValue("");
+    expect(screen.getByText("You sent:")).toBeInTheDocument();
+    expect(screen.getByText("ship it")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send" })).toBeDisabled();
+    // The stored draft went with the field: reopening the pane must not resurrect a sent message.
+    expect(loadDraft(undefined, "w1:p1")).toBeNull();
+
+    release();
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(/sent/i));
+    expect(box).toHaveValue("");
+  }, 15000);
+
+  it("a stall puts the words back in the box and takes the chip down", async () => {
+    const user = userEvent.setup();
+    // A reply that answers ok but never echoes into the pane's input line: type-then-verify polls
+    // out and reports `stalled`, and NO submit key was sent.
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/reply$/, async () => HttpResponse.json({ ok: true })),
+    );
+    renderComposerWithStatus();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+
+    await user.type(box, "please wait for me");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(box).toHaveValue(""); // cleared on the tap
+
+    await awaitTerminalStall();
+    expect(box).toHaveValue("please wait for me"); // and back, the moment the stall is known
+    // The chip's Collapse holds its last children through the exit animation, so the words may
+    // still be in the DOM; what matters is that the row is CLOSED.
+    expect(screen.getByText("You sent:").closest('[data-slot="collapse"]')).toHaveAttribute(
+      "data-state",
+      "closed",
+    );
+    // The restored draft is persisted again, so it survives the PWA being killed mid-stall.
+    expect(loadDraft(undefined, "w1:p1")).toBe("please wait for me");
+  }, 15000);
+
+  it("keeps what the operator typed meanwhile, under the restored words", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/reply$/, async () => HttpResponse.json({ ok: true })),
+    );
+    renderComposerWithStatus();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+
+    await user.type(box, "first");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(box).toHaveValue("");
+    await user.type(box, "second");
+
+    await awaitTerminalStall();
+    expect(box).toHaveValue("first\nsecond");
+  }, 15000);
+
+  it("holds the chip through a mirror tick that is not the echo", async () => {
+    const user = userEvent.setup();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.post<never, { text?: string; submit?: boolean }>(/\/api\/pane\/[^/]+\/reply$/, async ({ request }) => {
+        recordReply(await request.json());
+        await held;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    function Harness() {
+      const [text, setText] = useState("quiet");
+      return (
+        <>
+          <Composer
+            paneId="w1:p1"
+            agent="claude"
+            isShell={false}
+            gone={false}
+            readOnly={false}
+            dialogPresent={false}
+            text={text}
+            terminalDraft={null}
+            rawTerminalDraft={null}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true }}
+            setWrap={vi.fn()}
+            stepFontSize={vi.fn()}
+            setRawTerminal={vi.fn()}
+            setTapToFocus={vi.fn()}
+            setExpandClippedReply={vi.fn()}
+            setControlsOpen={vi.fn()}
+            onSent={vi.fn()}
+          />
+          <button type="button" onClick={() => setText((t) => `${t}\n⠋ working…`)}>
+            tick
+          </button>
+        </>
+      );
+    }
+    const router = createMemoryRouter([{ path: "/", element: <Harness /> }]);
+    render(<RouterProvider router={router} />);
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.type(box, "still there");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(screen.getByText("still there")).toBeInTheDocument();
+
+    // The TUI's spinner frame changes the mirror text. Before, that took the chip down — and with
+    // the field already cleared, the operator's words would have been nowhere on screen.
+    await user.click(screen.getByRole("button", { name: "tick" }));
+    expect(screen.getByText("still there")).toBeInTheDocument();
+    release();
+  }, 15000);
 });

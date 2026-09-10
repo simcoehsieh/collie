@@ -1,9 +1,13 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { parseAnsi, type AnsiSegment } from "@/lib/ansi";
 import { buildBlocks } from "@/lib/harness";
+import type { MirrorModel } from "@/hooks/use-mirror-model";
+import { buzz } from "@/lib/haptics";
+import { codeFences, type CodeFence } from "@/lib/code-fences";
 import {
   dropLeadingLines,
   lineText,
@@ -54,7 +58,15 @@ type GenericMenuBlock = Extract<Block, { kind: "menu" }>;
 type AutoBlock = Extract<Block, { kind: "autocomplete" }>;
 
 export interface AnsiOutputProps {
+  /** The mirror text. Parsed here unless `model` is given, in which case this is not read. */
   text: string;
+  /**
+   * FORK: the mirror ALREADY PARSED — the lines and the Block AST the caller built once for its
+   * own probes (hooks/use-mirror-model.ts). Given, this component renders them and parses nothing;
+   * absent, it parses `text` itself, so every other caller (the transcript, the playground) is
+   * unchanged. `agent` is then only the adapter the caller already chose — the blocks are theirs.
+   */
+  model?: MirrorModel;
   className?: string;
   /** true = wrap; the block breaks at the viewport width instead of scrolling horizontally. Default
    *  true — the mirror is mostly agent prose, and a phone shows far fewer columns than the desktop
@@ -184,6 +196,11 @@ function segmentStyle(s: AnsiSegment): CSSProperties {
 function preClass(wrap: boolean, className?: string): string {
   return cn(
     "m-0 font-mono leading-[1.25] tracking-normal text-foreground [font-variant-ligatures:none]",
+    // FORK: the mirror is its own layout and paint island. Nothing outside the <pre> depends on
+    // the geometry of what is inside it (the scroller sizes it, the dialogs sit after it), so a
+    // changed line no longer invalidates layout beyond the pre, and its paint is clipped to its
+    // box — which is what lets the browser skip it entirely when the composer repaints over it.
+    "[contain:layout_paint]",
     MIRROR_SPACE,
     MIRROR_INVERT,
     wrap
@@ -305,8 +322,64 @@ const renderImageCluster = (
     </span>
   );
 
+/** The frozen empty fence list, for a block with no code fence in it. */
+const NO_FENCES: readonly CodeFence[] = Object.freeze([]);
+
+/** How long the ✓ holds on a fence's Copy button before it turns back into the clipboard glyph. */
+const COPIED_MS = 1200;
+
+// FORK. The one-tap way to lift a code block off the mirror. A phone can select text in the
+// mirror (index.css exempts `pre` from the touch-selection rule by name), but dragging two handles
+// across a fenced block inside a scrolling <pre> is the single most repeated fiddle a pane asks
+// for, and the block's edges are ALREADY known — they are the fences.
+//
+// It sits INSIDE the <pre>, so it renders in the mirror's dark colour space and is inverted with it
+// under the light theme (.adr/0002): the tint is chosen so both readings are a quiet chip. It is
+// `inline-flex` on the closing fence's own line — no block box, no extra row, no offset moved.
+function CopyFenceButton({ lines, fence }: { lines: StyledLine[]; fence: CodeFence }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current !== null) clearTimeout(timer.current);
+    },
+    [],
+  );
+  async function copy() {
+    const text = lines
+      .slice(fence.open + 1, fence.close)
+      .map(lineText)
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      buzz();
+      setCopied(true);
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), COPIED_MS);
+    } catch {
+      // No clipboard (plain-HTTP context, or the browser refused): the button keeps its glyph and
+      // claims nothing — the text is still selectable by hand, exactly as before.
+      setCopied(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      data-slot="copy-fence"
+      aria-label={copied ? t("mirror.copied") : t("mirror.copyBlock")}
+      title={copied ? t("mirror.copied") : t("mirror.copyBlock")}
+      className="ml-2 inline-flex h-[1.6em] cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 align-middle font-sans text-[0.85em] leading-none text-white/80 select-none hover:bg-white/20 active:scale-95"
+    >
+      {copied ? <Check className="size-[1em]" /> : <Copy className="size-[1em]" />}
+      <span>{copied ? t("mirror.copied") : t("mirror.copy")}</span>
+    </button>
+  );
+}
+
 export const AnsiOutput = memo(function AnsiOutput({
   text,
+  model,
   className,
   wrap = true,
   fontSize = 11,
@@ -328,8 +401,16 @@ export const AnsiOutput = memo(function AnsiOutput({
   // The mirror is agent output and is not translated — but the two strings the image cluster
   // renders are Collie's own words, so this subscribes for the same reason every t() caller does.
   useLocale();
-  const segments = useMemo(() => parseAnsi(text), [text]);
-  const blocks = useMemo(() => buildBlocks(splitLines(segments), { agent }), [segments, agent]);
+  // One parse, or none: a caller holding a MirrorModel has already paid for it (agent-chat, whose
+  // three probes derive from the same object). The `text` path is what it always was.
+  const ownLines = useMemo(
+    () => (model === undefined ? splitLines(parseAnsi(text)) : model.lines),
+    [model, text],
+  );
+  const blocks = useMemo(
+    () => (model === undefined ? buildBlocks(ownLines, { agent }) : model.blocks),
+    [model, ownLines, agent],
+  );
 
   const rawBlocks = useMemo(
     () =>
@@ -376,6 +457,10 @@ export const AnsiOutput = memo(function AnsiOutput({
   // image, however many cells it covers. Computed here rather than inside the render loop because
   // the TOTAL is what the caller needs before a single node is emitted.
   const clustersByBlock = useMemo(() => rawBlocks.map((b) => imageClusters(b.lines)), [rawBlocks]);
+  // FORK: the fenced code blocks of each raw block, by block index — the regions a Copy button
+  // stands beside. Only CLOSED fences: an open one is still being written, and copying half of it
+  // is the kind of help that costs a retype.
+  const fencesByBlock = useMemo(() => rawBlocks.map((b) => codeFences(b.lines)), [rawBlocks]);
   const clusterCount = useMemo(
     () => clustersByBlock.reduce((sum, c) => sum + c.length, 0),
     [clustersByBlock],
@@ -566,7 +651,26 @@ export const AnsiOutput = memo(function AnsiOutput({
   // nothing to pan, so the table would be silently un-pannable, which is the exact failure this
   // change exists to fix. A frame row that is NOT in a run, a lone menu or panel border, keeps its clip
   // untouched: a detected table owns its own rows, and nothing beyond them.
-  const renderLine = (line: StyledLine, li: number, lead: boolean, inRun: boolean): ReactNode => {
+  // FORK: a line's key is its TEXT (plus an occurrence count for repeats), never its index. The
+  // mirror is a rendered grid: one new row of output shifts every index by one, and index keys made
+  // React rewrite the text of all ~600 lines on every tick the agent streamed — the same rows, one
+  // slot down. Keyed by content, the reconciler sees one row leave the top and one arrive at the
+  // bottom, and the 598 between them keep their DOM nodes. The counter is per block, so two
+  // identical blank lines stay distinct siblings.
+  const seen = new Map<string, number>();
+  const lineKey = (line: StyledLine): string => {
+    const content = lineText(line);
+    const n = seen.get(content) ?? 0;
+    seen.set(content, n + 1);
+    return n === 0 ? content : `${n}\u0000${content}`;
+  };
+  const renderLine = (
+    line: StyledLine,
+    li: number,
+    lead: boolean,
+    inRun: boolean,
+    trailing: ReactNode = null,
+  ): ReactNode => {
     if (li > 0) offset += 1; // the "\n" separating this line from the previous
     const segNodes = line.segments.map((s, si) => {
       const segStart = offset;
@@ -589,9 +693,10 @@ export const AnsiOutput = memo(function AnsiOutput({
       segNodes
     );
     return (
-      <Fragment key={li}>
+      <Fragment key={lineKey(line)}>
         {li > 0 && lead ? "\n" : null}
         {content}
+        {trailing}
       </Fragment>
     );
   };
@@ -600,11 +705,23 @@ export const AnsiOutput = memo(function AnsiOutput({
   let clusterIndex = 0;
   const renderBlock = (block: RawBlock, bi: number) => {
     if (bi > 0) offset += 1; // the "\n" separating this block from the previous
+    seen.clear();
     const runs = runsByBlock[bi] ?? NO_RUNS;
     const clusters = clustersByBlock[bi] ?? NO_CLUSTERS;
+    const fences = fencesByBlock[bi] ?? NO_FENCES;
     const nodes: ReactNode[] = [];
     let ri = 0;
     let ci = 0;
+    let fi = 0;
+    // The Copy button rides the CLOSING fence line, inline after its three backticks, so it adds no
+    // row to the grid and moves no offset: the find and link coordinate spaces are text, and a
+    // button is not text.
+    const fenceTrailing = (li: number): ReactNode => {
+      const fence: CodeFence | undefined = fences[fi];
+      if (!fence || fence.close !== li) return null;
+      fi++;
+      return <CopyFenceButton key="copy" lines={block.lines} fence={fence} />;
+    };
     for (let li = 0; li < block.lines.length; ) {
       const cluster: ImageCluster | undefined = clusters[ci];
       if (cluster && cluster.start === li) {
@@ -631,7 +748,7 @@ export const AnsiOutput = memo(function AnsiOutput({
       }
       const run: TableRun | undefined = runs[ri];
       if (!run || run.start !== li) {
-        nodes.push(renderLine(block.lines[li]!, li, true, false));
+        nodes.push(renderLine(block.lines[li]!, li, true, false, fenceTrailing(li)));
         li++;
         continue;
       }
