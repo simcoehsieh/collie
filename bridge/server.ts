@@ -8,7 +8,16 @@ import { isLoopbackBindHost, type Config } from "./config.ts";
 import { apiError, type ApiErrorBody, type ApiErrorDetail, type ErrorCode } from "./error-codes.ts";
 import { MUX_CAPABILITIES, type MuxCapability, type MuxCapabilityDeclaration } from "./mux/capabilities.ts";
 import type { MuxAdapter, MuxAck, MuxGrid } from "./mux/types.ts";
-import { computeEtag, gzipJsonResponse, notModified } from "./http-cache.ts";
+import {
+  compressStatic,
+  computeEtag,
+  gzipJsonResponse,
+  jsonBodyResponse,
+  notModified,
+  pickEncoding,
+  type Encoding,
+} from "./http-cache.ts";
+import { EventHub, PaneReads, SSE_PING, SSE_PING_MS, sseFrame } from "./events.ts";
 import { pluginRoot } from "./root.ts";
 import type { NotifyPrefs, NotifyPrefsStore } from "./notify-prefs.ts";
 import { createOperatorCommands } from "./operator-commands.ts";
@@ -806,6 +815,59 @@ export function startServer(opts: {
     rt.engine.pokeNow();
   };
 
+  // ── The live feed's two per-session pieces (bridge/events.ts) ────────────
+  // Built on first use and kept for the runtime's life, keyed by the runtime object itself so a
+  // session that is discovered later gets its own pair and one that goes away takes them with it.
+  // Wired HERE rather than in index.ts because the runtime already carries everything they need —
+  // the adapter to read, the poker to hear the multiplexer's events, the engine to hear its polls —
+  // and a second wiring site would be a second place to forget one.
+  const paneReadsByRuntime = new WeakMap<SessionRuntime, PaneReads>();
+  const readsFor = (rt: SessionRuntime): PaneReads => {
+    let reads = paneReadsByRuntime.get(rt);
+    if (reads) return reads;
+    reads = new PaneReads(async (paneId, lines) => {
+      // "ansi" so the client can render a faithful, colored terminal mirror. It is also, as far as
+      // we have probed, why this read leaves the operator's terminal alone: a `recent` read only
+      // harvests an alt-screen pane — scrolling it up and back — in `text` format. `lines` here is
+      // whatever the web app asked for, well past any pane's height, so switching this to `strip`
+      // would move someone's screen on every revalidate — see the adapter's `readGrid`.
+      const read = await rt.herdr.readGrid(paneId, { scope: "recent", lines, styling: "preserve" });
+      if (!read.ok) return { ok: false, detail: read.detail };
+      const data = paneReadResponse(paneId, read.value);
+      const body = JSON.stringify(data);
+      return { ok: true, body, data, etag: computeEtag(body) };
+    });
+    paneReadsByRuntime.set(rt, reads);
+    // A multiplexer event is the one signal that a pane may have changed under a cached read that is
+    // still inside its window — a close, an exit, a status flip — so the next read after one goes to
+    // the socket. Cheap: the window is a quarter of a second anyway.
+    rt.poker.onPoke(() => reads!.invalidate());
+    return reads;
+  };
+  const hubByRuntime = new WeakMap<SessionRuntime, EventHub>();
+  const hubFor = (rt: SessionRuntime): EventHub => {
+    let hub = hubByRuntime.get(rt);
+    if (hub) return hub;
+    hub = new EventHub();
+    hubByRuntime.set(rt, hub);
+    // The snapshot poke rides the ENGINE's update, not the poker's: the poker fires as the engine
+    // starts re-reading the multiplexer, and a phone that fetched on that beat would read the state
+    // from before the change and 304 its way past it. The update fires once the engine holds the
+    // new state. It also fires on every quiet safety-net poll, so the body is fingerprinted and a
+    // poll that changed nothing sends nothing — the stream is for movement, not for heartbeats.
+    let fingerprint = "";
+    rt.engine.onUpdate(() => {
+      const body = localSnapshot(rt.name, null);
+      if (!body) return;
+      const next = computeEtag(JSON.stringify({ ...body, ts: 0 }));
+      if (next === fingerprint) return;
+      fingerprint = next;
+      hub!.pokeSnapshot();
+    });
+    readsFor(rt).onChange((paneId) => hub!.pokePane(paneId));
+    return hub;
+  };
+
   /**
    * This collie's own snapshot body — the whole of what `/api/snapshot` answered before crews
    * existed, and (with `device` omitted) exactly what a peer serves its lead on `/crew/v1/snapshot`.
@@ -1083,7 +1145,7 @@ export function startServer(opts: {
       const device = isRead ? null : caller.device();
       const audit_ = caller.audit;
 
-      if (!action && req.method === "GET") return readPane(herdr, cfg, paneId, url, req);
+      if (!action && req.method === "GET") return readPane(rt, readsFor(rt), cfg, paneId, url, req);
       if (action === "history" && req.method === "GET")
         return paneHistory(cfg, journals, transcripts, rt.engine, paneId, url, req);
       if (action === "reply" && req.method === "POST") return replyPane(herdr, cfg, paneId, req, audit_, device, session);
@@ -1381,10 +1443,40 @@ export function startServer(opts: {
         // peer's ETag is never recomputed here, because no peer body is re-hashed on this path.
         // Tag every snapshot poll with the on-disk build id so an open client notices a live rebuild
         // between polls — the no-service-worker self-update path (web/src/lib/self-update.ts).
+        const wire = crewLead ? crewLead.merge(body, plan) : body;
+        // THE SNAPSHOT VALIDATES LIKE THE PANE READ DOES. Polled at up to 3 Hz, and until now
+        // re-serialised, re-compressed and re-sent on every beat whether or not the herd had moved.
+        // The tag is computed with `ts` zeroed, because `ts` is stamped per call and would otherwise
+        // make every body unique — the client learns the time from the header-less 304 no worse than
+        // it did from a body that only differed in that one number.
+        const etag = computeEtag(JSON.stringify({ ...wire, ts: 0 }));
+        const build = await buildId();
+        if (notModified(req.headers.get("if-none-match"), etag)) {
+          return withBuildHeader(
+            secure(new Response(null, { status: 304, headers: { etag, "cache-control": "no-store" } })),
+            build,
+          );
+        }
         return withBuildHeader(
-          json(crewLead ? crewLead.merge(body, plan) : body, req.headers.get("accept-encoding")),
-          await buildId(),
+          secure(jsonBodyResponse(JSON.stringify(wire), req.headers.get("accept-encoding"), { etag })),
+          build,
         );
+      }
+
+      // ── The live feed (bridge/events.ts) ─────────────────────────────────
+      // One long-lived GET per open page. The bridge writes a poke on it whenever the herd or the
+      // followed pane moves, and the page fetches on the poke instead of on a timer. A READ, gated
+      // as one, served for THIS collie's own sessions only: a member's panes are read through the
+      // lead's forward, and a stream is not a thing that forwards — the phone falls back to polling
+      // for a member's scope, which is what it did before the stream existed.
+      if (pathname === "/api/events" && req.method === "GET") {
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        if (host.kind !== "local") return text("no stream for a member host", 404);
+        const rt = registry.get(sessionName);
+        if (!rt) return unknownSession();
+        rt.engine.noteAttention();
+        return eventStream(readsFor(rt), hubFor(rt), cfg, url, req);
       }
 
       // ── Session-scoped routes: the pane family, tabs, workspaces ─────────
@@ -1984,7 +2076,7 @@ export function startServer(opts: {
       if (isReservedAuthPath(pathname)) return reservedAuthPlaceholder();
 
       // ── Static PWA (with SPA fallback) ───────────────────────────────────
-      return serveStatic(pathname);
+      return serveStatic(pathname, req.headers.get("accept-encoding"));
     },
   });
 
@@ -2053,13 +2145,26 @@ export function startupWarnings(cfg: Config): string[] {
   return warnings;
 }
 
+/** The longest a pane read may be held open waiting for a change (`?wait=`). Under Cloudflare's
+ *  100 s and the client's own 10 s GET timeout with room for the answer to travel. */
+export const PANE_WAIT_MAX_MS = 2000;
+
+/** The `?wait=` a pane read asked for, clamped: absent, non-numeric or ≤ 0 reads as "answer now". */
+export function paneWaitMs(url: URL): number {
+  const raw = Number.parseInt(url.searchParams.get("wait") ?? "", 10);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.min(raw, PANE_WAIT_MAX_MS);
+}
+
 async function readPane(
-  herdr: MuxAdapter,
+  rt: SessionRuntime,
+  reads: PaneReads,
   cfg: Config,
   paneId: string,
   url: URL,
   req: Request,
 ): Promise<Response> {
+  const { herdr } = rt;
   const linesParam = Number.parseInt(url.searchParams.get("lines") ?? "", 10);
   // Clamp to a sane ceiling — don't trust the client (or Herdr) to bound an enormous read.
   const lines =
@@ -2067,40 +2172,113 @@ async function readPane(
       ? Math.min(linesParam, MAX_READ_LINES)
       : cfg.readLines;
   try {
-    // "ansi" so the client can render a faithful, colored terminal mirror. It is also, as far as we
-    // have probed, why this read leaves the operator's terminal alone: a `recent` read only harvests
-    // an alt-screen pane — scrolling it up and back — in `text` format. `lines` here is whatever the
-    // web app asked for (600 for the history view), well past any pane's height, so switching this
-    // to `strip` would move someone's screen on every revalidate — see the adapter's `readGrid`.
-    const read = await herdr.readGrid(paneId, { scope: "recent", lines, styling: "preserve" });
-    if (!read.ok) return text(`${herdr.mux} read failed: ${read.detail}`, 502);
-    const data = paneReadResponse(paneId, read.value);
-    // ETag is derived from the serialised body — if content hasn't changed the client gets a 304
-    // and skips the whole transfer (the big win on a cellular link).
-    const bodyStr = JSON.stringify(data);
-    const etag = computeEtag(bodyStr);
+    // THROUGH THE CACHE (bridge/events.ts). Two polls inside a quarter second — a second tab, a
+    // burst — share one multiplexer read, and a pane somebody follows on the live feed is answered
+    // from the watcher's own read with no socket call at all. The ETag is the cached entry's, so an
+    // unchanged poll costs neither the read nor the hash it used to.
+    let result = await reads.read(paneId, lines);
+    if (!result.ok) return text(`${herdr.mux} read failed: ${result.detail}`, 502);
+    const inm = req.headers.get("if-none-match");
+    // LONG-POLL. A client that holds the current bytes and asked to wait is held until they change
+    // or the deadline passes, then answered exactly as a plain read would be. This is the poll for
+    // a page whose stream is down: one request replaces several, and a change is answered the beat
+    // it happens rather than up to an interval later.
+    const wait = paneWaitMs(url);
+    if (wait > 0 && notModified(inm, result.entry.etag)) {
+      const changed = await reads.waitForChange(paneId, lines, result.entry.etag, wait);
+      if (changed) result = { ok: true, entry: changed };
+    }
+    const { entry } = result;
     // Tag pane polls too (both the 304 and the full body), so a client that only has a pane open —
     // not the home snapshot — still observes a live rebuild between polls.
     const build = await buildId();
-    if (notModified(req.headers.get("if-none-match"), etag)) {
+    if (notModified(inm, entry.etag)) {
       // RFC 7232 §4.1: 304 MUST echo the ETag; body MUST be empty.
       return withBuildHeader(
         secure(
           new Response(null, {
             status: 304,
-            headers: { etag, "cache-control": "no-store" },
+            headers: { etag: entry.etag, "cache-control": "no-store" },
           }),
         ),
         build,
       );
     }
     return withBuildHeader(
-      secure(gzipJsonResponse(data, req.headers.get("accept-encoding"), { etag })),
+      secure(jsonBodyResponse(entry.body, req.headers.get("accept-encoding"), { etag: entry.etag })),
       build,
     );
   } catch (err) {
     return text(`${herdr.mux} read failed: ${errorText(err)}`, 502);
   }
+}
+
+/**
+ * `GET /api/events` — the live feed, as a Server-Sent Events stream.
+ *
+ * `?pane=<id>&lines=<n>` follows one pane at the window the page polls it with: the bridge watches
+ * that pane locally and pokes the stream when its bytes move. With no pane the stream carries only
+ * herd pokes. A comment ping goes out every {@link SSE_PING_MS} so an idle proxy keeps the
+ * connection, and `retry:` tells the browser how soon to come back after a drop.
+ *
+ * The three headers are the ones a stream needs to survive an intermediary: `no-transform` so a
+ * proxy does not buffer-and-compress it into a body that arrives all at once at the end,
+ * `x-accel-buffering: no` for the nginx family, and `text/event-stream` which Cloudflare passes
+ * through unbuffered.
+ */
+function eventStream(reads: PaneReads, hub: EventHub, cfg: Config, url: URL, req: Request): Response {
+  const paneId = url.searchParams.get("pane") || undefined;
+  const linesParam = Number.parseInt(url.searchParams.get("lines") ?? "", 10);
+  const lines =
+    Number.isFinite(linesParam) && linesParam > 0 ? Math.min(linesParam, MAX_READ_LINES) : cfg.readLines;
+  const enc = new TextEncoder();
+  let cleanup: (() => void) | null = null;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let open = true;
+      const send = (chunk: string) => {
+        if (!open) return;
+        try {
+          controller.enqueue(enc.encode(chunk));
+        } catch {
+          // The socket went away between the check and the write: close our side and let the
+          // subscription go. The client's own reconnect brings a fresh stream.
+          close();
+        }
+      };
+      const unsubscribe = hub.subscribe({ paneId, send: (event) => send(sseFrame(event)) });
+      const release = paneId ? reads.watch(paneId, lines) : () => {};
+      const ping = setInterval(() => send(SSE_PING), SSE_PING_MS);
+      const close = () => {
+        if (!open) return;
+        open = false;
+        clearInterval(ping);
+        unsubscribe();
+        release();
+        req.signal.removeEventListener("abort", close);
+        try {
+          controller.close();
+        } catch {
+          /* already closed by the peer */
+        }
+      };
+      cleanup = close;
+      req.signal.addEventListener("abort", close, { once: true });
+      send("retry: 3000\n\n");
+    },
+    cancel() {
+      cleanup?.();
+    },
+  });
+  return secure(
+    new Response(stream, {
+      headers: {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache, no-transform",
+        "x-accel-buffering": "no",
+      },
+    }),
+  );
 }
 
 /**
@@ -3746,8 +3924,17 @@ function supersededEndpoint(body: JsonValue | undefined): string | undefined {
 // (`bridge/crew/standby.ts`) — one answer to "which bundle is on disk", never a second reader that
 // caches it differently.
 let buildCache: { id: string; mtime: number } | null = null;
+// The mtime check is a `stat`, and it ran on EVERY snapshot, pane read and static file — two or
+// three syscalls per request at up to 7 req/s per open page, to notice a rebuild that happens a few
+// times a week. A rebuild is now noticed within a second instead of instantly, which no client can
+// tell apart: the header is read off a poll, and no poll is faster than that.
+const BUILD_STAT_INTERVAL_MS = 1000;
+let buildStatAt = 0;
 export async function buildId(): Promise<string> {
   try {
+    const now = Date.now();
+    if (buildCache && now - buildStatAt < BUILD_STAT_INTERVAL_MS) return buildCache.id;
+    buildStatAt = now;
     const f = Bun.file(join(WEB_DIR, "build-info.json"));
     const mtime = f.lastModified;
     if (!buildCache || buildCache.mtime !== mtime) {
@@ -3868,7 +4055,7 @@ behind your own reverse proxy</em> in the README.</p>
   );
 }
 
-async function serveStatic(pathname: string): Promise<Response> {
+async function serveStatic(pathname: string, acceptEncoding: string | null = null): Promise<Response> {
   const resolved = resolveStaticPath(pathname);
   if (!resolved) return text("forbidden", 403);
   let { rel, full } = resolved;
@@ -3896,7 +4083,45 @@ async function serveStatic(pathname: string): Promise<Response> {
   };
   if (ext === ".html") headers["content-security-policy"] = CSP;
   if (rel === "sw.js") headers["service-worker-allowed"] = "/";
+  // A hashed asset is immutable, so its compressed form is too: compressed ONCE, at the top of
+  // brotli's dial, and held for the process's life. The bundle is 880 KB on disk and ~210 KB as
+  // `br`; a cold install downloads the latter. Only `assets/` — index.html and the service worker
+  // are re-read on every request precisely because they change, and are small.
+  const encoding = isCompressibleAsset(rel, ext) ? pickEncoding(acceptEncoding) : null;
+  if (encoding !== null) {
+    const compressed = await compressedAsset(full, encoding);
+    if (compressed) {
+      headers["content-encoding"] = encoding;
+      headers["vary"] = "accept-encoding";
+      return secure(new Response(compressed, { headers }));
+    }
+  }
   return secure(new Response(file, { headers }));
+}
+
+/** The file types under `assets/` worth compressing: text. Images and fonts are already packed. */
+const COMPRESSIBLE_EXTS = new Set([".js", ".css", ".svg", ".json", ".map", ".txt", ".html"]);
+
+export function isCompressibleAsset(rel: string, ext: string): boolean {
+  return rel.startsWith("assets/") && COMPRESSIBLE_EXTS.has(ext);
+}
+
+// `path\0encoding` → the bytes. Bounded by the size of one build's asset set (a few MB), and a
+// rebuild writes NEW hashed names, so a stale entry is one nothing asks for again — not a
+// correctness problem, and the process restarts on a bridge update anyway.
+const assetCache = new Map<string, Promise<Uint8Array<ArrayBuffer> | null>>();
+
+async function compressedAsset(full: string, encoding: Encoding): Promise<Uint8Array<ArrayBuffer> | null> {
+  const key = `${full}\0${encoding}`;
+  let pending = assetCache.get(key);
+  if (!pending) {
+    pending = Bun.file(full)
+      .bytes()
+      .then((bytes) => compressStatic(bytes, encoding))
+      .catch(() => null);
+    assetCache.set(key, pending);
+  }
+  return pending;
 }
 
 /**

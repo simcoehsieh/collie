@@ -26,6 +26,9 @@ import {
   launchersRoute,
   normalizeTabLabel,
   paneReadResponse,
+  paneWaitMs,
+  PANE_WAIT_MAX_MS,
+  isCompressibleAsset,
   parsePairRequest,
   parseSnoozeRequest,
   replyPane,
@@ -853,6 +856,33 @@ describe("paneReadResponse — pane read → REST body", () => {
       truncated: false,
       revision: 0,
     });
+  });
+});
+
+describe("paneWaitMs — the long-poll's hold", () => {
+  const wait = (qs: string) => paneWaitMs(new URL(`http://x/api/pane/w1:p1${qs}`));
+  test("absent, empty, non-numeric and non-positive all read as answer now", () => {
+    expect(wait("")).toBe(0);
+    expect(wait("?wait=")).toBe(0);
+    expect(wait("?wait=abc")).toBe(0);
+    expect(wait("?wait=0")).toBe(0);
+    expect(wait("?wait=-5")).toBe(0);
+  });
+  test("a hold is clamped to PANE_WAIT_MAX_MS", () => {
+    expect(wait("?wait=1500")).toBe(1500);
+    expect(wait("?wait=99999")).toBe(PANE_WAIT_MAX_MS);
+  });
+});
+
+describe("isCompressibleAsset — what is precompressed", () => {
+  test("text under assets/ is; images, fonts and everything outside assets/ are not", () => {
+    expect(isCompressibleAsset("assets/index-abc.js", ".js")).toBe(true);
+    expect(isCompressibleAsset("assets/index-abc.css", ".css")).toBe(true);
+    expect(isCompressibleAsset("assets/logo.png", ".png")).toBe(false);
+    expect(isCompressibleAsset("assets/face.woff2", ".woff2")).toBe(false);
+    // The mutable files are re-read every request on purpose (cacheControlFor) — never cached here.
+    expect(isCompressibleAsset("index.html", ".html")).toBe(false);
+    expect(isCompressibleAsset("sw.js", ".js")).toBe(false);
   });
 });
 
@@ -1939,7 +1969,7 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // locally without resolving would quietly show the lead's directories under a peer's name — the
     // same class of fault as serving the desk's `w1:p1`.
     expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(11);
-    // Exactly six `registry.get(` calls remain, and each is a sanctioned one, named here rather
+    // Exactly seven `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
     // collie's own multiplexer (M10/06) and is not session-scoped at all; `/api/mux/logo.svg`,
@@ -1948,8 +1978,11 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // THIS collie's own engine on a route that is already local-body-then-merge and has no `?h=`
     // branch to fall through; and the crew surface's own `mux` source, which answers an admitted
     // LEAD with this machine's block on `hello` and is the same local read `/api/config` makes
-    // (M22/03). A seventh would be a route reaching past the gate.
-    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(6);
+    // (M22/03); and the live feed `/api/events`, which is local by declaration — a member host is
+    // refused with a 404 on the line BEFORE the get, so there is no `?h=` value it could be served
+    // under. An eighth would be a route reaching past the gate.
+    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(7);
+    expect(src).toContain('if (host.kind !== "local") return text("no stream for a member host", 404);');
     // The mux read is a read of the LOCAL primary — never `?host=`, because a peer's capabilities
     // are its own business and reach the lead over the crew API, never out of this registry.
     expect(src).toContain("const activeMux = registry.get();");

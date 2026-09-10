@@ -7,7 +7,7 @@ import { ChatMessageList, type ChatMessageListHandle } from "@/components/ui/cha
 import { FindBar } from "@/components/find-bar";
 import { TranscriptView } from "@/components/transcript-view";
 import { fetchHistory } from "@/lib/api";
-import { HISTORY_PAGE_SIZE, type HistoryData } from "@/lib/loaders";
+import { HISTORY_FIRST_PAGE, HISTORY_PAGE_SIZE, historyKey, rememberHistory, type HistoryData } from "@/lib/loaders";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { panePath } from "@/lib/nav";
 import { setStatus } from "@/lib/status";
@@ -52,8 +52,45 @@ const GROW_THRESHOLD = 800;
 export function HistoryRoute() {
   // SAFETY: this is the `/pane/:paneId/history` route's element and `historyLoader` returns
   // `HistoryData`; React Router types a data-mode `useLoaderData()` as `unknown`.
-  const data = useLoaderData() as HistoryData;
+  const loaded = useLoaderData() as HistoryData;
   useLocale();
+  // FORK — the loader paints what this page last saw (`pending`) and fetches the FIRST page only
+  // (HISTORY_FIRST_PAGE), so the tap lands on turns rather than on a busy bar. Both halves are
+  // finished here, because this route opts out of revalidation and nothing else would: a pending
+  // open is re-read, and a first page short of the whole-history size is extended in the background
+  // — the same "load older" read the scroll already makes, fired once without waiting for a scroll.
+  const [fresh, setFresh] = useState<HistoryData | null>(null);
+  const data = fresh ?? loaded;
+  useEffect(() => {
+    setFresh(null);
+  }, [loaded]);
+  useEffect(() => {
+    if (!loaded.pending) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetchHistory(loaded.paneId, { limit: HISTORY_FIRST_PAGE }, loaded.scope);
+        if (cancelled) return;
+        if (!res.available) {
+          setFresh({ ...loaded, entries: [], hasMore: false, total: 0, unavailable: res.reason, pending: undefined });
+          return;
+        }
+        setFresh({
+          paneId: loaded.paneId,
+          scope: loaded.scope,
+          entries: res.entries,
+          hasMore: res.hasMore,
+          total: res.total,
+          fileTruncated: res.fileTruncated,
+        });
+      } catch {
+        // The cached transcript stays on screen; the next open tries again.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded]);
   const root = useRootData();
   const { paneId = "" } = useParams();
   const navigate = useNavigate();
@@ -66,14 +103,25 @@ export function HistoryRoute() {
     root.agents.find((a) => a.paneId === paneId) ??
     root.shellPanes.find((p) => p.paneId === paneId);
 
-  // Pages walked back beyond the first request (only reachable on a log longer than HISTORY_PAGE_SIZE).
+  // Pages walked back beyond the first request: the background extension to HISTORY_PAGE_SIZE, then
+  // anything the reader scrolls back for beyond that.
   const [older, setOlder] = useState<TranscriptEntry[]>([]);
   const [hasMore, setHasMore] = useState(data.hasMore);
   const [loading, setLoading] = useState(false);
+  // A new base (a re-read, a different pane) restarts the walk — its own `hasMore` is the truth now.
+  useEffect(() => {
+    setOlder([]);
+    setHasMore(data.hasMore);
+  }, [data]);
   const entries = useMemo(
     () => (older.length ? [...older, ...data.entries] : data.entries),
     [older, data.entries],
   );
+  // What the next open of this pane's history paints: everything held now, as one transcript.
+  useEffect(() => {
+    if (data.pending || data.unavailable) return;
+    rememberHistory(historyKey(data.paneId, data.scope), { ...data, entries, hasMore, total: data.total });
+  }, [data, entries, hasMore]);
 
   // How many of the NEWEST turns are rendered. Everything else is held in memory, unrendered.
   const [renderCount, setRenderCount] = useState(INITIAL_RENDER);
@@ -104,7 +152,7 @@ export function HistoryRoute() {
     pendingRestore.current = true;
   };
 
-  /** Fetch turns older than everything held — only for logs beyond the initial request. */
+  /** Fetch turns older than everything held — the background extension, then the scroll's own. */
   const loadOlder = useCallback(async () => {
     const oldest = entries[0]?.uuid;
     if (loading || !hasMore || !oldest) return;
@@ -135,6 +183,19 @@ export function HistoryRoute() {
     }
     if (hasMore) void loadOlder();
   }, [allRendered, entries.length, hasMore, loadOlder]);
+
+  // THE BACKGROUND EXTENSION. The first page is a few screens (HISTORY_FIRST_PAGE); the rest of the
+  // transcript up to HISTORY_PAGE_SIZE follows on its own the moment that page is on screen and
+  // final (not the cached copy a pending open paints — that one is about to be replaced). Read
+  // through `loadOlder`, so it anchors the reader exactly as a scroll-triggered page does.
+  useEffect(() => {
+    if (data.pending || data.unavailable || loading || !hasMore) return;
+    if (entries.length >= HISTORY_PAGE_SIZE) return;
+    void loadOlder();
+    // Once per base: `entries` and `loading` are what loadOlder changes, and re-running on them is
+    // the loop the length check above closes — but the intent is "extend this base once".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   // Auto-grow as the reader approaches the top, so scrolling back through a long thread feels
   // continuous instead of requiring a tap per window.

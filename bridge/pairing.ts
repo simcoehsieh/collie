@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 
 import type { JsonObject, JsonValue } from "./json.ts";
@@ -317,6 +317,33 @@ export function filePairingIo(stateDir: string): PairingIo {
   const pendingPath = join(stateDir, PENDING_FILENAME);
   const registryPath = join(stateDir, DEVICES_FILENAME);
   let cache: { key: string; value: JsonValue } | null = null;
+  // The `stat` before each read ran on EVERY gated request — one syscall per poll, up to 7 a
+  // second per open page, to notice an edit that happens when a device pairs or is revoked. It now
+  // runs at most once a second, and a WATCH on the state directory resets that clock the moment
+  // anything in it changes, so a revocation from another process (`bin/collie devices revoke`,
+  // which renames a temp file into place exactly as `writeAtomic` below does) is still seen on the
+  // next request rather than a second later. A watch that cannot be opened — a filesystem without
+  // kqueue/inotify, a directory that does not exist yet — leaves the clock at zero, which is the
+  // stat-every-time behaviour this always had.
+  const STAT_INTERVAL_MS = 1000;
+  let statAt = 0;
+  let watcher: FSWatcher | null = null;
+  let watched = false;
+  const ensureWatch = (): void => {
+    if (watched) return;
+    watched = true;
+    try {
+      watcher = watch(stateDir, { persistent: false }, () => {
+        statAt = 0;
+      });
+      watcher.on("error", () => {
+        watcher = null;
+        watched = false; // retry on the next read — the directory may have been recreated
+      });
+    } catch {
+      watcher = null;
+    }
+  };
 
   // Every temp name is unique to one write. A shared `${path}.tmp` is only atomic against a reader:
   // two writers both create it, the first `rename` moves it away, and the second gets ENOENT (#159).
@@ -353,8 +380,17 @@ export function filePairingIo(stateDir: string): PairingIo {
     async writeRegistry(registry) {
       await writeAtomic(registryPath, JSON.stringify(registry, null, 2));
       cache = null;
+      statAt = 0;
     },
     readRegistrySync() {
+      // The `stat` ran on every gated request — one syscall per poll, up to 7 a second per open
+      // page, to notice a registry edit that happens when a device pairs. It now runs at most once
+      // a second; a pair or a revoke through this process clears the cache itself (writeRegistry),
+      // so the only edit that waits the second is one made by hand to the file.
+      ensureWatch();
+      const now = Date.now();
+      if (watcher !== null && cache && now - statAt < STAT_INTERVAL_MS) return cache.value;
+      statAt = now;
       let key: string;
       try {
         const st = statSync(registryPath);

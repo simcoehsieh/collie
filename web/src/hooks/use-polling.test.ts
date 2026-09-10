@@ -5,11 +5,14 @@ import {
   HOME_BUSY_MS,
   HOT_MS,
   IDLE_MS,
+  LIVE_FEED_MS,
+  POKE_GAP_MS,
   SUPERSEDE_MS,
   intervalFor,
   type PollIntent,
   usePolling,
 } from "./use-polling";
+import { __resetLiveFeed } from "@/lib/live-feed";
 import { isCatchingUp, resetIdleLock, setLocked } from "@/lib/idle";
 import {
   BURST_MIN_POLLS,
@@ -505,5 +508,130 @@ describe("an update in flight is the fastest thing on the screen it is on", () =
     // a mirror somebody is reading.
     const data = withRun({ run: run("staging") });
     expect(intervalFor(data, "w1:p1", { bursting: true, following: true, changed: false })).toBe(BURST_MS);
+  });
+});
+
+// FORK — the live feed. jsdom has no EventSource; this is the shape the hook touches, kept reachable
+// so a test can open, poke and drop the stream from outside.
+class FakeEventSource {
+  static last: FakeEventSource | null = null;
+  static CLOSED = 2;
+  readyState = 0;
+  closed = false;
+  private handlers = new Map<string, Set<(e: Event) => void>>();
+  readonly url: string;
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.last = this;
+  }
+  addEventListener(type: string, fn: (e: Event) => void): void {
+    if (!this.handlers.has(type)) this.handlers.set(type, new Set());
+    this.handlers.get(type)!.add(fn);
+  }
+  emit(type: string, data?: string): void {
+    const event = data === undefined ? new Event(type) : new MessageEvent(type, { data });
+    for (const fn of this.handlers.get(type) ?? []) fn(event);
+  }
+  close(): void {
+    this.closed = true;
+    this.readyState = FakeEventSource.CLOSED;
+  }
+}
+
+describe("intervalFor — the live feed", () => {
+  const hot = () => makeData([makeAgent("w1:p1", "working")]);
+  it("relaxes every herd-shaped rule to LIVE_FEED_MS while the stream is up", () => {
+    expect(intervalFor(hot(), "w1:p1", on({ liveFeed: true }))).toBe(LIVE_FEED_MS);
+    expect(intervalFor(hot(), null, on({ liveFeed: true }))).toBe(LIVE_FEED_MS);
+    expect(intervalFor(makeData([]), null, on({ liveFeed: true }))).toBe(LIVE_FEED_MS);
+  });
+  it("keeps both bursts: the operator's own action outranks the stream", () => {
+    expect(intervalFor(hot(), "w1:p1", on({ liveFeed: true, bursting: true }))).toBe(BURST_MS);
+    expect(intervalFor(hot(), null, on({ liveFeed: true, topologyBursting: true }))).toBe(BURST_MS);
+  });
+});
+
+describe("usePolling — the live feed", () => {
+  const openPane = () => makeData([makeAgent("w1:p1", "working")]);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    rr.state = "idle";
+    rr.revalidate.mockClear();
+    resetPollIntent();
+    __resetLiveFeed();
+    FakeEventSource.last = null;
+    Object.assign(globalThis, { EventSource: FakeEventSource });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    resetPollIntent();
+    __resetLiveFeed();
+    Object.assign(globalThis, { EventSource: undefined });
+  });
+
+  it("opens one stream naming the followed pane at its window, and closes it on unmount", () => {
+    const { unmount } = renderHook(() => usePolling(openPane(), "w1:p1"));
+    const source = FakeEventSource.last!;
+    expect(source.url).toBe("/api/events?pane=w1%3Ap1&lines=200");
+    unmount();
+    expect(source.closed).toBe(true);
+  });
+
+  it("opens a herd-only stream on the home screen, and once the operator scrolls back", () => {
+    renderHook(() => usePolling(openPane(), null));
+    expect(FakeEventSource.last!.url).toBe("/api/events");
+    const { rerender } = renderHook(() => usePolling(openPane(), "w1:p1"));
+    expect(FakeEventSource.last!.url).toBe("/api/events?pane=w1%3Ap1&lines=200");
+    act(() => setFollowing(false));
+    rerender();
+    expect(FakeEventSource.last!.url).toBe("/api/events");
+  });
+
+  it("a poke revalidates at once; the timer falls back to LIVE_FEED_MS while the stream is up", () => {
+    renderHook(() => usePolling(openPane(), "w1:p1"));
+    const source = FakeEventSource.last!;
+    act(() => source.emit("open")); // coming up is worth one read
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+    rr.revalidate.mockClear();
+    vi.advanceTimersByTime(HOT_MS * 3); // the hot gap no longer ticks
+    expect(rr.revalidate).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(POKE_GAP_MS);
+    act(() => source.emit("poke", '{"kind":"pane","paneId":"w1:p1"}'));
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+    rr.revalidate.mockClear();
+    vi.advanceTimersByTime(LIVE_FEED_MS);
+    expect(rr.revalidate).toHaveBeenCalledTimes(1); // the safety net
+  });
+
+  it("coalesces a burst of pokes onto POKE_GAP_MS", () => {
+    renderHook(() => usePolling(openPane(), "w1:p1"));
+    const source = FakeEventSource.last!;
+    act(() => source.emit("open"));
+    rr.revalidate.mockClear();
+    vi.advanceTimersByTime(POKE_GAP_MS);
+    act(() => {
+      source.emit("poke", '{"kind":"pane","paneId":"w1:p1"}');
+      source.emit("poke", '{"kind":"pane","paneId":"w1:p1"}');
+      source.emit("poke", '{"kind":"snapshot"}');
+    });
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(POKE_GAP_MS);
+    expect(rr.revalidate).toHaveBeenCalledTimes(2); // the ones inside the gap became one more
+  });
+
+  it("returns to the cadence ladder when the stream drops", () => {
+    renderHook(() => usePolling(openPane(), "w1:p1"));
+    const source = FakeEventSource.last!;
+    act(() => source.emit("open"));
+    act(() => source.emit("error"));
+    rr.revalidate.mockClear();
+    vi.advanceTimersByTime(HOT_MS);
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not open a stream for a member host", () => {
+    renderHook(() => usePolling(openPane(), "w1:p1", { host: "badger" }));
+    expect(FakeEventSource.last).toBeNull();
   });
 });

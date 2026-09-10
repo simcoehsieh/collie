@@ -2,6 +2,7 @@ import {
   Outlet,
   useLoaderData,
   useLocation,
+  useMatches,
   useNavigation,
   useParams,
   useRouteError,
@@ -68,9 +69,17 @@ export function RootLayout() {
   // so the only value that can appear under that id is the PaneData that loader returned.
   const pane = useRouteLoaderData(PANE_ROUTE_ID) as PaneData | undefined;
   // FORK: a loader that answered from cache on a navigation (`pending`) is owed its real read at
-  // once — not on the next poll tick, which can be 6s away on an idle herd. One effect for both
-  // loaders, because both flags mean the same thing and revalidate() re-runs every active loader.
-  const pendingRead = data.pending === true || pane?.pending === true;
+  // once — not on the next poll tick, which can be 6s away on an idle herd. One effect for every
+  // loader on the poll loop, because the flag means the same thing on each of them and revalidate()
+  // re-runs every active loader. Read off the matches rather than by route id, so a loader that
+  // gains the flag (settings, crew) is covered without this file naming it. History is NOT here on
+  // purpose: it opts out of revalidation, and its own view re-reads on the flag.
+  const matches = useMatches();
+  // SAFETY: a match's `data` is whatever its loader returned, typed `unknown` by React Router; every
+  // loader in router.tsx returns one of the lib/loaders.ts shapes, and each of those declares
+  // `pending?: boolean` with the same meaning — so reading that one optional field is the contract
+  // those loaders share, and a loader without it simply answers undefined.
+  const pendingRead = matches.some((m) => (m.data as { pending?: boolean } | undefined)?.pending === true);
   const { revalidate } = useRevalidator();
   useEffect(() => {
     if (pendingRead) void revalidate();
