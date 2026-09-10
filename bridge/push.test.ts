@@ -332,6 +332,56 @@ describe("Push — per-message collapse topic (update must not share the herd sl
     expect(JSON.parse(sends[2]!.payload).data).toEqual({ paneId: "w1:p1", session: "work", host: "laptop" });
   });
 
+  test("`agent` lands in `data` and `actions` stays top-level, each only when the message names it", async () => {
+    const cfg = await tempCfg();
+    const { sender, sends } = capturing();
+    const push = new Push(cfg, sender);
+    enable(push, [sub("a")]);
+
+    await push.send({ title: "t", body: "b", tag: "collie:herd", paneId: "w1:p1" });
+    const plain = JSON.parse(sends[0]!.payload);
+    expect(plain.data).toEqual({ paneId: "w1:p1" });
+    expect("actions" in plain).toBe(false);
+    expect("agent" in plain).toBe(false);
+
+    const approve = { yes: ["1"], no: ["3"], region: "Proceed?\n❯ 1. Yes\n  3. No" };
+    await push.send({
+      title: "t",
+      body: "b",
+      tag: "collie:herd",
+      paneId: "w1:p1",
+      agent: "claude",
+      actions: [
+        { action: "yes", title: "Yes" },
+        { action: "no", title: "No" },
+      ],
+      approve,
+    });
+    const withButtons = JSON.parse(sends[1]!.payload);
+    expect(withButtons.data).toEqual({ paneId: "w1:p1", agent: "claude", approve });
+    expect("approve" in withButtons).toBe(false); // in `data`, not beside it
+    expect(withButtons.actions).toEqual([
+      { action: "yes", title: "Yes" },
+      { action: "no", title: "No" },
+    ]);
+    expect("agent" in withButtons).toBe(false); // in `data`, not beside it
+  });
+
+  test("addSubscription says whether the endpoint was already on file", async () => {
+    const cfg = await tempCfg();
+    const push = new Push(cfg);
+    enable(push, []);
+    expect(await push.addSubscription(sub("fresh"))).toEqual({ known: false });
+    expect(await push.addSubscription(sub("fresh"))).toEqual({ known: true });
+    // Pruned (the push service disowned it) → the next registration of the same string is unknown
+    // again, which is what tells the device to mint a new one.
+    await push.forget("fresh");
+    expect(await push.addSubscription(sub("fresh"))).toEqual({ known: false });
+    // Disabled push has nothing on file.
+    push["_enabled"] = false;
+    expect(await push.addSubscription(sub("fresh"))).toEqual({ known: false });
+  });
+
   test("a clear stays on the herd topic (it closes the herd slot)", async () => {
     const cfg = await tempCfg();
     const { sender, sends } = capturing();

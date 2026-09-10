@@ -1,6 +1,8 @@
-import { TerminalSquare } from "lucide-react";
+import { memo, useState } from "react";
+import { Check, TerminalSquare } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ShellBadge, StatusBadge, StatusDot } from "@/components/status-badge";
 import { AgentIcon } from "@/components/agent-icon";
@@ -13,6 +15,10 @@ import type { PaneParts } from "@/lib/pane-name";
 import { statusLabel } from "@/lib/types";
 import type { AgentView } from "@/lib/types";
 import { useLocale } from "@/hooks/use-locale";
+import { useActionEcho } from "@/hooks/use-action-echo";
+import { usePromptPeek } from "@/hooks/use-prompt-peek";
+import { buzz } from "@/lib/haptics";
+import { t } from "@/lib/i18n";
 
 interface AgentCardProps {
   agent: AgentView;
@@ -95,7 +101,21 @@ function Age({ at }: { at: number }) {
 // The two parts of line 2 render as separate spans on purpose: at 390px a joined string truncates
 // from the right, which would eat the tab and leave every row of a project reading the same nine
 // characters of its space. The space gives up width first and the tab takes what is left.
-export function AgentCard({
+// FORK: memoised. The dashboard re-renders every poll tick; a row whose `agent` object is the same
+// reference as last tick has nothing new to paint. `onClick` is deliberately left OUT of the
+// comparison — every caller passes an inline `() => onOpen(a)`, a new function each render that
+// does the same thing for the same `a`, and comparing it would defeat the memo on every tick. The
+// bargain: a caller that changes what "open this row" MEANS without changing any other prop is not
+// re-rendered; no caller does that (the scope a row opens into is fixed by the list it is in).
+export const AgentCard = memo(AgentCardImpl, (a, b) =>
+  a.agent === b.agent &&
+  a.age === b.age &&
+  a.scope === b.scope &&
+  a.statusStyle === b.statusStyle &&
+  a.density === b.density,
+);
+
+function AgentCardImpl({
   agent,
   onClick,
   age,
@@ -126,40 +146,51 @@ export function AgentCard({
   const cornerDot = statusStyle === "dot" && !isShell;
 
   const Shell = flat ? "div" : Card;
+  // FORK: the yes/no dialog waiting in a blocked pane, when there is one to answer from here.
+  const { peek, answered, answer } = usePromptPeek(agent);
 
+  // ── FORK: THE SHELL IS OUTSIDE THE BUTTON, NOT INSIDE IT ─────────────────
+  // Upstream nests the card chrome inside one full-width <button>. A blocked row now carries two
+  // buttons of its own beneath the title (Approve / Deny), and a button inside a button is not
+  // HTML — iOS in particular delivers the tap to whichever it likes. So the chrome moved out to a
+  // wrapper and the row's own tap target is a <button> INSIDE it, followed by the approve strip as
+  // a sibling. Same classes, same padding, same anatomy (`data-slot`s unchanged); the press scale
+  // rides on the wrapper via `:has()` so the whole card still dips under the thumb.
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <Shell
       className={cn(
-        "w-full text-left transition-transform active:scale-[0.99]",
+        "w-full transition-transform [&:has(>button:active)]:scale-[0.99]",
+        // 14px, the same as the card's own padding. A flat row now sits inside a 1px-bordered
+        // ListGroup, so its content lands on the same x as a card row's content BY CONSTRUCTION
+        // (14 + 1 on both sides) — the hand-computed 15px this replaced was faking exactly that
+        // alignment against a group that had no border to supply the 1px. The rail below is a
+        // box-shadow, which takes no room, so the number still holds.
+        //
         // No radius on a flat row, in ANY state. These sit in a `divide-y` list, and a rounded fill
         // under a full-width straight hairline reads as a rendering fault — the corners pull away
         // from a line that doesn't follow them. Corners belong to where the row sits, never to what
         // it is doing, so a blocked flat row stays square too and takes a left rail instead.
-        flat && "transition-colors hover:bg-muted/50",
+        flat
+          ? "shadow-[inset_2px_0_0_0_transparent] transition-colors hover:bg-muted/50"
+          : "gap-0 rounded-xl py-0 shadow-card",
+        // The blocked tint survives both treatments — it's the one cue that reads at a glance.
+        // The EDGE cannot: one class string, two containers. A card sits in a gap list and already
+        // carries a border in every state, so it only recolours. A flat row sits in a divide-y
+        // list, where a four-sided edge would double the hairline — and where a bare colour
+        // utility paints nothing at all, because preflight leaves the width at 0. So the flat row
+        // takes a 2px left rail, reserved transparent above so the box never changes.
+        blocked &&
+          (flat
+            ? "bg-status-blocked/5 shadow-[inset_2px_0_0_0_var(--color-status-blocked)]"
+            : "border-status-blocked/40 bg-status-blocked/5"),
       )}
     >
-      <Shell
+      <button
+        type="button"
+        onClick={onClick}
         className={cn(
-          // 14px, the same as the card's own padding. A flat row now sits inside a 1px-bordered
-          // ListGroup, so its content lands on the same x as a card row's content BY CONSTRUCTION
-          // (14 + 1 on both sides) — the hand-computed 15px this replaced was faking exactly that
-          // alignment against a group that had no border to supply the 1px. The rail below is a
-          // box-shadow, which takes no room, so the number still holds.
-          flat
-            ? "flex flex-row items-center gap-3 px-3.5 py-2.5 shadow-[inset_2px_0_0_0_transparent]"
-            : "flex-row items-center gap-3 rounded-xl px-4 py-3.5 shadow-card",
-          // The blocked tint survives both treatments — it's the one cue that reads at a glance.
-          // The EDGE cannot: one class string, two containers. A card sits in a gap list and already
-          // carries a border in every state, so it only recolours. A flat row sits in a divide-y
-          // list, where a four-sided edge would double the hairline — and where a bare colour
-          // utility paints nothing at all, because preflight leaves the width at 0. So the flat row
-          // takes a 2px left rail, reserved transparent above so the box never changes.
-          blocked &&
-            (flat
-              ? "bg-status-blocked/5 shadow-[inset_2px_0_0_0_var(--color-status-blocked)]"
-              : "border-status-blocked/40 bg-status-blocked/5"),
+          "flex w-full flex-row items-center gap-3 text-left",
+          flat ? "px-3.5 py-2.5" : "px-4 py-3.5",
         )}
       >
         <div className="min-w-0 flex-1">
@@ -242,7 +273,92 @@ export function AgentCard({
         ) : (
           <StatusBadge status={agent.status} />
         )}
-      </Shell>
-    </button>
+      </button>
+
+      {peek !== null && (
+        <ApproveStrip
+          question={peek.prompt.question}
+          yesLabel={peek.choice.yes.label}
+          noLabel={peek.choice.no.label}
+          flat={flat}
+          answered={answered}
+          onAnswer={answer}
+        />
+      )}
+    </Shell>
+  );
+}
+
+// ── FORK: Approve / Deny beneath a blocked row ──────────────────────────────
+// Two small buttons and the dialog's own question, so the operator knows WHAT they are saying yes
+// to before they say it. The keystrokes are the option's own (lib/prompt-approve.ts picks the plain
+// Yes and the No off the pane's grammar; hooks/use-prompt-peek.ts sends them through the same
+// guarded path the pane view uses). Press echo + haptic on the way out; the outcome lands as one
+// short word beside the buttons, because a row has no status channel of its own.
+function ApproveStrip({
+  question,
+  yesLabel,
+  noLabel,
+  flat,
+  answered,
+  onAnswer,
+}: {
+  question: string;
+  yesLabel: string;
+  noLabel: string;
+  flat: boolean;
+  /** Which button already went out for this dialog; both are disabled once one has. */
+  answered: "yes" | "no" | null;
+  onAnswer: (which: "yes" | "no") => Promise<{ status: "sent" | "changed" | "error"; error?: string }>;
+}) {
+  const echo = useActionEcho();
+  const [note, setNote] = useState<"sent" | "changed" | "failed" | null>(null);
+  const locked = echo.pending || answered !== null;
+
+  const run = (which: "yes" | "no") =>
+    echo.run(which, async () => {
+      buzz();
+      const result = await onAnswer(which);
+      setNote(result.status === "sent" ? "sent" : result.status === "changed" ? "changed" : "failed");
+      return result.status === "sent";
+    });
+
+  return (
+    <div
+      data-slot="agent-row-approve"
+      className={cn("flex flex-col gap-2", flat ? "px-3.5 pb-2.5" : "px-4 pb-3.5")}
+    >
+      {question !== "" && (
+        <p className="line-clamp-2 text-xs text-muted-foreground" title={question}>
+          {question}
+        </p>
+      )}
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          disabled={locked}
+          onClick={() => void run("yes")}
+          aria-label={`${t("agentCard.approve.yes")}: ${yesLabel}`}
+          title={yesLabel}
+        >
+          {echo.phaseOf("yes") === "done" || answered === "yes" ? <Check /> : t("agentCard.approve.yes")}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={locked}
+          onClick={() => void run("no")}
+          aria-label={`${t("agentCard.approve.no")}: ${noLabel}`}
+          title={noLabel}
+        >
+          {echo.phaseOf("no") === "done" || answered === "no" ? <Check /> : t("agentCard.approve.no")}
+        </Button>
+        {note !== null && (
+          <span className="text-xs text-muted-foreground" role="status">
+            {t(`agentCard.approve.${note}`)}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }

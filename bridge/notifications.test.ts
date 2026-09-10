@@ -99,6 +99,8 @@ describe("NotificationCoordinator — debounce", () => {
       title: "claude needs you",
       body: "demo · /home/you/demo",
       paneId: "p1",
+      agent: "claude",
+      status: "blocked",
       renotify: true,
     });
   });
@@ -153,6 +155,8 @@ describe("NotificationCoordinator — coalescing", () => {
       title: "claude needs you",
       body: "demo · /home/you/demo",
       paneId: "p1",
+      agent: "claude",
+      status: "blocked",
       renotify: false, // a retraction update must not re-buzz
     });
   });
@@ -285,5 +289,115 @@ describe("makeNotifySink", () => {
     sink.render(summary);
     sink.clear();
     expect(push.sent).toEqual([]);
+  });
+});
+
+describe("NotificationCoordinator — per-pane rules", () => {
+  test("the pane rides with the status, so a rule can answer for one pane and not another", () => {
+    const clock = new FakeClock();
+    const sink = new RecordingSink();
+    const muted = new Set<string>(["p2"]);
+    const coord = new NotificationCoordinator(clock, sink, 30_000, (s, pane) =>
+      s === "blocked" && !muted.has(pane.paneId),
+    );
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    coord.onTransition(agent("p2", "blocked"), "working", "blocked"); // muted by its rule
+    clock.fireAll();
+    expect(sink.last?.paneId).toBe("p1");
+    expect(sink.renders).toHaveLength(1);
+  });
+
+  test("applyPrefs re-matches each alert against ITS pane, pending and outstanding alike", () => {
+    const clock = new FakeClock();
+    const sink = new RecordingSink();
+    const muted = new Set<string>();
+    const coord = new NotificationCoordinator(clock, sink, 30_000, (s, pane) =>
+      s === "blocked" && !muted.has(pane.paneId),
+    );
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    clock.fireAll(); // p1 outstanding
+    coord.onTransition(agent("p2", "blocked"), "working", "blocked"); // p2 pending
+    muted.add("p1").add("p2");
+    coord.applyPrefs();
+    expect(clock.armed).toBe(0); // p2's timer cancelled
+    expect(sink.events.at(-1)).toEqual({ kind: "clear" }); // p1 retracted
+  });
+});
+
+describe("makeNotifySink — Yes/No buttons", () => {
+  class RecordingPush {
+    readonly sent: PushMessage[] = [];
+    send(msg: PushMessage): void {
+      this.sent.push(msg);
+    }
+  }
+  const blocked: HerdSummary = {
+    title: "claude needs you",
+    body: "demo · /home/you/demo",
+    paneId: "p1",
+    agent: "claude",
+    status: "blocked",
+    renotify: true,
+  };
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  test("a single blocked alert whose tail is a yes/no dialog carries the two actions and its agent", async () => {
+    const push = new RecordingPush();
+    const peeked: string[] = [];
+    const approve = { yes: ["1"], no: ["3"], region: "Do you want to proceed?\n❯ 1. Yes\n  2. No" };
+    const sink = makeNotifySink(push, { isMuted: () => false }, "collie:herd", {}, async (paneId) => {
+      peeked.push(paneId);
+      return approve;
+    });
+    sink.render(blocked);
+    await flush();
+    expect(peeked).toEqual(["p1"]);
+    expect(push.sent[0]).toEqual({
+      title: "claude needs you",
+      body: "demo · /home/you/demo",
+      tag: "collie:herd",
+      paneId: "p1",
+      renotify: true,
+      agent: "claude",
+      actions: [
+        { action: "yes", title: "Yes" },
+        { action: "no", title: "No" },
+      ],
+      approve,
+    });
+  });
+
+  test("no dialog, a peek that throws, a done alert and a digest all send without actions", async () => {
+    const push = new RecordingPush();
+    let peeks = 0;
+    const sink = makeNotifySink(push, { isMuted: () => false }, "collie:herd", {}, async () => {
+      peeks++;
+      if (peeks === 2) throw new Error("mux away");
+      return null;
+    });
+    sink.render(blocked); // peek 1 → null
+    sink.render(blocked); // peek 2 → throws
+    sink.render({ ...blocked, status: "done", title: "claude is done" }); // never peeked
+    sink.render({ title: "2 agents need you", body: "claude, codex", renotify: true }); // digest
+    await flush();
+    expect(peeks).toBe(2);
+    expect(push.sent).toHaveLength(4);
+    for (const m of push.sent) expect("actions" in m).toBe(false);
+    // The two that never peeked went out first, synchronously; the peeked pair followed.
+    expect(push.sent.map((m) => m.title)).toEqual([
+      "claude is done",
+      "2 agents need you",
+      "claude needs you",
+      "claude needs you",
+    ]);
+    expect(push.sent[0]!.agent).toBe("claude");
+    expect("agent" in push.sent[1]!).toBe(false);
+  });
+
+  test("without a peek the blocked alert sends synchronously, as it always did", () => {
+    const push = new RecordingPush();
+    makeNotifySink(push, { isMuted: () => false }, "collie:herd").render(blocked);
+    expect(push.sent).toHaveLength(1);
+    expect("actions" in push.sent[0]!).toBe(false);
   });
 });

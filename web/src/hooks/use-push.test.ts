@@ -7,6 +7,7 @@ vi.mock("@/lib/push", () => ({
   enablePush: vi.fn(),
   getPushState: vi.fn(),
   isPushDisabledByUser: vi.fn(),
+  installResubscribeListener: vi.fn(() => () => {}),
 }));
 
 beforeEach(() => {

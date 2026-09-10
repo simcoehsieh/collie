@@ -41,6 +41,7 @@ import type { MuxAdapter } from "./mux/types.ts";
 import { ZELLIJ_BINARY_OPTION } from "./mux/zellij/adapter.ts";
 import { NotificationCoordinator, makeNotifySink, type NotifyClock } from "./notifications.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
+import { peekBinaryPrompt } from "./prompt-peek.ts";
 import { filePairingIo, PairingStore } from "./pairing.ts";
 import { createSttGate } from "./stt/index.ts";
 import { runBootGate } from "./crew/boot-gate.ts";
@@ -996,11 +997,23 @@ const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
   // In peer mode this machine's own herd alerts are muted at the sink: the lead derives them from the
   // swept snapshot and owns the one phone registration (CREW_PROTOCOL.md §5). Nothing is deleted —
   // see herdPushGate. Solo and lead get `snooze` back by identity, so there is no crew tax here.
-  const sink = makeNotifySink(push, herdPushGate(crew.mode, snooze), herdTagFor(isPrimary, name), {
-    session: isPrimary ? undefined : name,
-  });
-  const notifications = new NotificationCoordinator(clock, sink, cfg.notifyDelayMs, (status) =>
-    notifyPrefs.isNotifiable(status),
+  // FORK: a single blocked alert has its pane's tail read once before it is sent, so the push can
+  // carry Yes/No buttons when a plain yes/no dialog is what is waiting (bridge/prompt-peek.ts). The
+  // same read shape as GET /api/pane/:id, which is the one known to leave the terminal alone.
+  const peek = async (paneId: string) => {
+    const read = await herdr.readGrid(paneId, { scope: "recent", lines: 60, styling: "preserve" });
+    return read.ok ? peekBinaryPrompt(read.value.text) : null;
+  };
+  const sink = makeNotifySink(
+    push,
+    herdPushGate(crew.mode, snooze),
+    herdTagFor(isPrimary, name),
+    { session: isPrimary ? undefined : name },
+    peek,
+  );
+  // FORK: the pane rides along so a per-pane rule (notify-prefs.ts) can answer for it.
+  const notifications = new NotificationCoordinator(clock, sink, cfg.notifyDelayMs, (status, pane) =>
+    notifyPrefs.isNotifiable(status, pane),
   );
   engine.onTransition((agent, from, to) => notifications.onTransition(agent, from, to));
   engine.onRemove((paneId) => notifications.onRemove(paneId));

@@ -2,8 +2,10 @@ import { describe, expect, test } from "vitest";
 
 import {
   ALL_CLEAR_TITLE,
+  approveSpec,
   decidePush,
   enforcesUserVisible,
+  honouredActions,
   hostSlot,
   notificationPath,
   tagFor,
@@ -296,5 +298,66 @@ describe("notificationPath — where a tap lands", () => {
         `/pane/w1%3Ap1${scopeSearch(scope)}`,
       );
     }
+  });
+});
+
+describe("decidePush — Yes/No buttons", () => {
+  const yesNo = [
+    { action: "yes", title: "Yes" },
+    { action: "no", title: "No" },
+  ];
+  const approve = { yes: ["1"], no: ["3"], region: "Do you want to proceed?\n❯ 1. Yes\n  3. No" };
+
+  test("carries the bridge's Yes/No, their binding and the pane's agent through to the show decision", () => {
+    expect(
+      decidePush(
+        {
+          title: "claude needs you",
+          tag: "collie:herd",
+          actions: yesNo,
+          data: { paneId: "p1", agent: "claude", approve },
+        },
+        false,
+      ),
+    ).toMatchObject({ kind: "show", paneId: "p1", agent: "claude", actions: yesNo, approve });
+  });
+
+  test("buttons without a binding, or a binding without buttons, show neither", () => {
+    const unbound = decidePush({ title: "t", tag: "collie:herd", actions: yesNo, data: { paneId: "p1" } }, false);
+    expect("actions" in unbound).toBe(false);
+    expect("approve" in unbound).toBe(false);
+    const buttonless = decidePush({ title: "t", tag: "collie:herd", data: { paneId: "p1", approve } }, false);
+    expect("actions" in buttonless).toBe(false);
+    expect("approve" in buttonless).toBe(false);
+    // A half binding is no binding.
+    expect(approveSpec({ yes: [], no: ["3"], region: "x" })).toBeUndefined();
+    expect(approveSpec({ yes: ["1"], no: ["3"], region: "" })).toBeUndefined();
+    expect(approveSpec(approve)).toEqual(approve);
+  });
+
+  test("an agent push without buttons, or without a pane, shows exactly as before", () => {
+    const plain = decidePush({ title: "t", tag: "collie:herd", data: { paneId: "p1" } }, false);
+    expect("actions" in plain).toBe(false);
+    expect("agent" in plain).toBe(false);
+    const noPane = decidePush({ title: "3 agents need you", tag: "collie:herd", actions: yesNo, data: { approve } }, false);
+    expect("actions" in noPane).toBe(false);
+  });
+
+  test("buttons the handler cannot honour are dropped whole, never partially", () => {
+    expect(honouredActions([{ action: "yes", title: "Yes" }, { action: "later", title: "Later" }], "p1")).toBeUndefined();
+    expect(honouredActions([...yesNo, { action: "no", title: "Nope" }], "p1")).toBeUndefined();
+    expect(honouredActions([], "p1")).toBeUndefined();
+    expect(honouredActions(yesNo, undefined)).toBeUndefined();
+    expect(honouredActions([{ action: "yes", title: "Yes" }], "p1")).toEqual([{ action: "yes", title: "Yes" }]);
+  });
+
+  test("a retraction never carries buttons — there is nothing left to answer", () => {
+    const quiet = decidePush(
+      { type: "clear", tag: "collie:herd", actions: yesNo, data: { paneId: "p1", approve } },
+      false,
+      true,
+    );
+    expect(quiet.kind).toBe("show");
+    expect("actions" in quiet).toBe(false);
   });
 });
