@@ -13,6 +13,11 @@ stays true).
 
 ## On top of 1.8.0
 
+- **The mark inside the app is the cat, and the header says the machine's own name.** A fork-only
+  `MeowMark` takes `CollieMark`'s props and every host (header, boot splash, idle lock, playground)
+  uses it; loading blinks the cursor in the accent colour and lets the eyes glance. `branding.json`
+  gains `hideMuxLogo`, which drops the multiplexer's own mark from the "on herdr" line; the brand word
+  is `shortName`. Upstream's generated `collie-mark.tsx` is untouched and its hash test still holds.
 - **The home page shows what each of the three agents has left.** A "Usage" section under Spaces
   lists claude, codex and agy with their 5-hour and weekly windows as bars, the reset countdown
   ticking client-side, and a tap opening the other windows, model quotas and credits. Fed by
