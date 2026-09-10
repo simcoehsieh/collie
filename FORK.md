@@ -77,6 +77,26 @@ again. Removing an installed PWA on iOS also discards its site data **and its We
 so that install has to re-subscribe from Settings afterwards — which is the reason to give the OTHER
 machine the new icon and leave a working, subscribed install alone.
 
+## The mark inside the app is the cat (2026-09-11)
+
+`web/src/components/meow-mark.tsx` stands in for `collie-mark.tsx` at every place the app draws its
+own mark — the header's home button, the boot splash, the idle lock, the not-connected screen, the
+playground — and `index.html`'s first-paint splash draws the same cat as a CSS mask instead of the
+galloping-dog sprite. **This swap is unconditional in the fork**: both machines get the cat mark
+in-app, because the mark is a committed component and not a per-machine file. What DOES come from
+`branding.json` is the header's brand word (`shortName`, so this machine's header says "Meow" over
+"on herdr") and `"hideMuxLogo": true`, which keeps herdr's own grey mark off that line. Both reach
+the bundle through vite's `define` as `__BRAND__`, read by `src/lib/brand.ts`; tests see the stock
+brand (`vitest.config.ts`) and mock that module for the branded case.
+
+`collie-mark.tsx` is generated upstream and pinned by `collie-mark-hash.test.ts`, so it is left
+byte for byte as shipped and simply not imported by the app. `MeowMark` keeps its contract — the one
+`svg:has(> style)`, the `cm-live` class, the `--cm-paper` / `--cm-a1` properties, and `cm-`-prefixed
+animation names so `collie-home.tsx`'s spin ramp still finds something to drive. On a merge: keep
+upstream's `collie-mark.tsx` and `src/test/collie-mark.ts`; if upstream adds a new call site of
+`<CollieMark/>`, swap that one import too; if upstream rewrites the splash block in `index.html`,
+take theirs and re-apply the mask rule.
+
 ## The redesign (2026-09-10)
 
 The web UI does not look like upstream's. Upstream's `DESIGN.md` pins every corner to 2px, paints

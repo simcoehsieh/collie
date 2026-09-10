@@ -147,7 +147,14 @@ const brand = loadBranding(import.meta.dirname);
 
 export default defineConfig({
   publicDir: brand.publicDir,
-  define: { __BUILD_INFO__: JSON.stringify(BUILD_INFO) },
+  define: {
+    __BUILD_INFO__: JSON.stringify(BUILD_INFO),
+    // FORK: the machine's own name and the mux-logo toggle, from branding.json (src/lib/brand.ts).
+    __BRAND__: JSON.stringify({
+      shortName: brand.shortName ?? null,
+      hideMuxLogo: brand.hideMuxLogo ?? false,
+    }),
+  },
   plugins: [
     react(),
     tailwindcss(),

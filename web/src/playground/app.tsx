@@ -22,7 +22,7 @@ import { CollieHome } from "@/components/collie-home";
 import { NewSpaceSheet } from "@/components/new-space-sheet";
 import { CrewProvider } from "@/components/crew-provider";
 import { SpaceOverview } from "@/components/space-overview";
-import { CollieMark } from "@/components/collie-mark";
+import { MeowMark } from "@/components/meow-mark";
 import { ConnectionBanner } from "@/components/connection-banner";
 import { HostStaleBanner } from "@/components/host-stale-banner";
 import { IdleLock } from "@/components/idle-lock";
@@ -1293,7 +1293,7 @@ function MarkSample({
 }) {
   return (
     <div className="flex flex-col items-center gap-1.5">
-      <CollieMark
+      <MeowMark
         size={size}
         weight={weight}
         loading={loading}
