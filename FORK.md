@@ -13,13 +13,13 @@ Not the documented default. Upstream assumes `tailscale serve`; this runs behind
 
 | | |
 | --- | --- |
-| Front door | Cloudflare Tunnel → Cloudflare Access (Google SSO, 720 h session) at `https://collie.agnex.dev` |
+| Front door | Cloudflare Tunnel → Cloudflare Access (Google SSO, 720 h session) at `https://meow.agnex.dev` (renamed from `collie.agnex.dev` on 2026-09-11 with the cat icon and the name "Meow"; the old hostname stays an alias until the phone is re-added) |
 | Bridge | `127.0.0.1:4318`, launchd unit `herdr.collie`, built from this checkout |
 | Deployment variant | E ([`docs/deployment.md`](./docs/deployment.md)) — `COLLIE_SKIP_SERVE=1`, the operator owns the ingress |
 | Write identity | `COLLIE_DEVICE_HEADER=Cf-Access-Authenticated-User-Email` + a one-address allowlist |
 | Multiplexer | herdr, session `listeners` — four long-lived Claude panes plus whatever agents spawn |
 | Config | `~/.config/collie/.env` (mode 600) — outside the checkout, so it survives every merge |
-| Branding | `~/.config/collie/branding/` — this machine's home screen icon and label (below) |
+| Branding | `~/.config/collie/branding/` — this machine's home screen icon and label (below); this machine installs `branding/cat/` and is called **Meow** |
 | Phone | iPhone PWA on the home screen, Web Push subscribed via `web.push.apple.com` |
 
 That last row is why the fork's first patch exists: the silent-push paths upstream wrote against
