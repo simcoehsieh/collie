@@ -13,6 +13,36 @@ stays true).
 
 ## On top of 1.8.0
 
+- **The bridge answers 304 when nothing moved, and pokes the phone instead of being polled.**
+  `/api/snapshot` carries an ETag (hashed with `ts` zeroed) and the client hands back the same
+  object on a 304, so an unchanged herd costs an empty response and no re-render. Pane reads go
+  through a 250 ms cache with an in-flight coalescer, invalidated by herdr events, so a 304 and a
+  second tab no longer each cost a herdr round trip. `GET /api/events` is a Server-Sent Events
+  stream of `{kind:"snapshot"}` / `{kind:"pane"}` pokes (polling stays the truth; the stream only
+  says when to poll), and while it is up the fixed loop relaxes to a 30 s safety net. When it is
+  down, `GET /api/pane/:id?wait=1500` long-polls up to 2 s for a change. Bodies go out as brotli
+  when the client accepts it; static assets are compressed once in memory. `buildId()` and the
+  pairing registry are read once per second instead of `stat`-ed on every request.
+- **A followed mirror asks for 200 lines, not 600.** The viewport is what a live tail needs;
+  scrolling back or "Load older" still fetches 600 → 1000.
+- **Settings, Crew and History paint before their round trip.** The same show-first-fetch-second
+  pattern the pane got on 2026-09-10; History opens with 200 turns and extends to 5000 in the
+  background.
+- **The composer clears on the tap, not on the round trip.** Send is optimistic: the field empties
+  and the ✓ / "You sent" chip rises at once; a stalled, blocked or failed send restores the draft.
+  The harness guard's probe → send → verify sequence is unchanged, only the pixels moved.
+- **The pane screen parses the mirror once per tick.** `useMirrorModel` builds lines and blocks
+  once and every derived view — status line, terminal draft, dialog detection, the rendered
+  output — reads from it (was four parses and two block builds). `AgentList` and the strips are
+  memoised and their handlers identity-stable, so a poll that changed nothing re-renders nothing.
+- **The screens a session opens once a week load on demand.** Settings, Updates, Crew and History
+  are `React.lazy` chunks; the eager bundle went from 884 KB (256 KB gz) to 529 + 295 KB (158 + 90 KB gz).
+- **The mirror re-pins once per frame.** Auto-scroll coalesces its observers behind one
+  `requestAnimationFrame`, bails when not following, and reads a fling once per frame; the `<pre>`
+  has `contain: layout paint` and rows keep their DOM node when a line shifts. The header's
+  backdrop blur is 10px with no `saturate()`.
+- **One tap copies a fenced code block off the mirror.** A copy button sits on the closing
+  fence; native long-press selection on the mirror already worked and is left alone.
 - **The redesign.** Round corners on a real ramp, cool-tinted surfaces with one indigo accent,
   tinted elevation, pill chips and badges, a stadium switch, a filled composer field, a blurred
   header, a floating rounded composer block, sheets with soft top corners — and the phone's own
