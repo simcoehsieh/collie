@@ -2,6 +2,8 @@ import { act, render, screen } from "@testing-library/react";
 import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
+import { loadDraft } from "@/lib/drafts";
+import { lastPane } from "@/lib/last-pane";
 import { ROOT_ROUTE_ID, type HomeData, type PaneData } from "@/lib/loaders";
 import { panePath } from "@/lib/nav";
 import type { AgentView } from "@/lib/types";
@@ -134,5 +136,21 @@ describe("DetailRoute — freshPane bootstrap", () => {
 
     await screen.findByTestId("home");
     expect(router.state.location.pathname).toBe("/");
+  });
+});
+
+// FORK: the phone's automation entry — `?send=` seeds the composer's draft and is stripped; the
+// pane on screen is remembered for `/pane/last`.
+describe("DetailRoute — ?send= and last pane", () => {
+  it("puts the text in the pane's draft (never sends it), strips the param, and remembers the pane", async () => {
+    const paneA = agentView("w1:p1", "agent");
+    const router = makeRouter(`${panePath("w1:p1")}?send=continue%20please`, () => connected([paneA]));
+    render(<RouterProvider router={router} />);
+    expect(await screen.findByTestId("chat")).toHaveTextContent("pane:w1:p1:live");
+    expect(loadDraft(undefined, "w1:p1")).toBe("continue please");
+    await act(async () => {});
+    expect(router.state.location.search).toBe("");
+    expect(router.state.location.pathname).toBe(panePath("w1:p1"));
+    expect(lastPane()).toEqual({ paneId: "w1:p1", scope: {} });
   });
 });
