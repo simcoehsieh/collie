@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import type { CSSProperties } from "react";
-import { asJsonBoolean, asJsonNumber, asJsonString, parseJsonObject } from "@/lib/json";
+import { asJsonBoolean, asJsonNumber, asJsonObject, asJsonString, parseJsonObject } from "@/lib/json";
+import type { JsonValue } from "@/lib/json";
 
 // Terminal mirror display preferences, persisted in localStorage.
 // Safe to call in SSR contexts (localStorage guarded throughout).
@@ -85,6 +86,72 @@ export interface DisplayPrefs {
    * mirror gets, so it has to survive a pane switch, a navigation and the app being closed.
    */
   controlsOpen: boolean;
+  /**
+   * FORK — WHICH VIEW EACH PANE OPENS IN: its conversation, or its terminal mirror.
+   *
+   * PER PANE **and** per device, which is why it is a map and not a boolean. The two questions are
+   * genuinely different: a Claude pane is a conversation you read (chat mode is its default), while
+   * a pane running a TUI installer is a screen you watch — and the same operator wants opposite
+   * answers for the two on the same phone. A single switch would make every pane pay for the one
+   * you last looked at.
+   *
+   * Keyed by the pane's ADDRESS (`paneScopeKey`), never the bare id: the same pane id on another
+   * host or another herdr session is a different pane, and a shared key would let one machine's
+   * choice decide another's.
+   *
+   * ABSENT IS NOT "terminal" — it is "no choice made", which `paneViewFor` resolves per pane kind
+   * (agent → transcript, shell → mirror). That is what lets the default change without rewriting
+   * everyone's stored map, and what keeps a shell pane out of a view it has no journal for.
+   */
+  paneView: Record<string, PaneView>;
+}
+
+/** FORK: which of the pane's two representations is on screen. */
+export type PaneView = "transcript" | "terminal";
+
+/**
+ * How many panes' choices are remembered. Panes come and go (a multiplexer restart renumbers them),
+ * so an unbounded map is a localStorage entry that only ever grows; 80 is far more than any herd
+ * anyone has, and the oldest entry is the one nobody is looking at.
+ */
+export const PANE_VIEW_MAX = 80;
+
+/**
+ * The view a pane opens in: the operator's own choice for THIS pane, or the default for its kind.
+ *
+ * `isAgent` is the caller's answer, not a guess made here — the pane view already knows whether it
+ * is looking at an agent or a bare shell, and a shell has no transcript to show.
+ */
+export function paneViewFor(
+  prefs: DisplayPrefs,
+  paneKey: string,
+  isAgent: boolean,
+): PaneView {
+  const chosen = Object.hasOwn(prefs.paneView, paneKey) ? prefs.paneView[paneKey] : undefined;
+  if (chosen === "transcript" || chosen === "terminal") return chosen;
+  return isAgent ? "transcript" : "terminal";
+}
+
+/**
+ * FORK: write ONE pane's view into the stored prefs from outside the hook.
+ *
+ * For a surface that mounts a pane with no live bridge behind it — the states playground, whose
+ * whole subject is captured TERMINAL screens and whose own docstring promises "no fetch anywhere".
+ * Chat mode would otherwise make every card there open on a transcript it would have to go and
+ * fetch, which is both the wrong picture and a broken promise.
+ *
+ * Written through the real store rather than pushed in as a prop, on the same argument
+ * `playground/harness.tsx` already makes for seeding a composer draft: the app restores this on
+ * mount, so writing the store IS how a choice arrives. Call it BEFORE the pane mounts.
+ */
+export function seedPaneView(paneKey: string, view: PaneView): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    const current = loadPrefs();
+    savePrefs({ ...current, paneView: { ...current.paneView, [paneKey]: view } });
+  } catch {
+    // Ignore quota / SSR write errors — the pane simply opens on its default view.
+  }
 }
 
 /** The terminal font families offered in Settings. A closed list, not a free-text box: an
@@ -227,7 +294,34 @@ const DEFAULTS: DisplayPrefs = {
   expandClippedReply: true,
   // FORK: closed by default — the phone keeps its rows; the status band opens it in one tap.
   controlsOpen: false,
+  // FORK: empty is "nobody has chosen for any pane yet" — see `paneViewFor` for what that resolves to.
+  paneView: {},
 };
+
+/** A stored view word, or undefined — the one place the two spellings are checked. */
+function asPaneView(value: JsonValue | undefined): PaneView | undefined {
+  return value === "transcript" || value === "terminal" ? value : undefined;
+}
+
+/**
+ * One stored map off a parsed document: unknown views dropped, the whole thing capped.
+ *
+ * Takes a {@link JsonValue} rather than `unknown` for the reason lib/json.ts states — everything
+ * reachable inside a parsed payload IS one, so this can narrow without re-asserting per field.
+ * Insertion order is preserved for string keys, which is what makes the cap drop the OLDEST entry.
+ */
+function readPaneView(raw: JsonValue | undefined): DisplayPrefs["paneView"] {
+  const stored = asJsonObject(raw);
+  if (stored === undefined) return {};
+  const out: DisplayPrefs["paneView"] = {};
+  const entries: [string, PaneView][] = [];
+  for (const [key, value] of Object.entries(stored)) {
+    const view = asPaneView(value);
+    if (view !== undefined) entries.push([key, view]);
+  }
+  for (const [key, view] of entries.slice(-PANE_VIEW_MAX)) out[key] = view;
+  return out;
+}
 
 function readFontFamily(value: string | undefined): FontFamily {
   return value !== undefined && isFontFamily(value) ? value : DEFAULTS.fontFamily;
@@ -321,6 +415,10 @@ function loadPrefs(): DisplayPrefs {
       controlsOpen: controlsChosen()
         ? (asJsonBoolean(p.controlsOpen) ?? DEFAULTS.controlsOpen)
         : DEFAULTS.controlsOpen,
+      // FORK: same independent-default rule as every field above — a payload written before chat
+      // mode existed carries no map, which reads as "no pane has been chosen for" and lets
+      // `paneViewFor` answer per kind.
+      paneView: readPaneView(p.paneView),
     };
   } catch {
     return DEFAULTS;
@@ -373,6 +471,8 @@ export interface UseDisplayPrefsReturn {
   setExpandClippedReply: (expandClippedReply: boolean) => void;
   /** Open or put away the composer's Controls row. */
   setControlsOpen: (controlsOpen: boolean) => void;
+  /** FORK: remember which view ONE pane opens in. `paneKey` is `paneScopeKey(scope, paneId)`. */
+  setPaneView: (paneKey: string, view: PaneView) => void;
 }
 
 export function useDisplayPrefs(): UseDisplayPrefsReturn {
@@ -451,8 +551,26 @@ export function useDisplayPrefs(): UseDisplayPrefsReturn {
     });
   }, []);
 
+  const setPaneView = useCallback((paneKey: string, view: PaneView) => {
+    setPrefs((p) => {
+      // Re-inserted at the END even when it is already there, so "most recently chosen" is the
+      // order the cap trims from — the same touch-on-hit rule the bridge's journal cache uses.
+      const { [paneKey]: _dropped, ...rest } = p.paneView;
+      const merged = { ...rest, [paneKey]: view };
+      const entries = Object.entries(merged);
+      const paneView: DisplayPrefs["paneView"] =
+        entries.length <= PANE_VIEW_MAX
+          ? merged
+          : Object.fromEntries(entries.slice(entries.length - PANE_VIEW_MAX));
+      const next: DisplayPrefs = { ...p, paneView };
+      savePrefs(next);
+      return next;
+    });
+  }, []);
+
   return {
     prefs,
+    setPaneView,
     setWrap,
     setFontSize,
     setFontFamily,

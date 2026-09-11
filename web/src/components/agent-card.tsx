@@ -86,6 +86,46 @@ function Age({ at }: { at: number }) {
   return <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{timeAgoShort(at)}</span>;
 }
 
+// ── FORK: WHAT THE AGENT SAYS IT IS DOING ────────────────────────────────────
+//
+// One sentence the agent wrote about itself (`collie beacon status "<line>"`, bridge/beacon/
+// status-line.ts). It is CONTENT, not chrome — the words are the agent's — so it wears
+// `font-content` (DESIGN.md § "Chrome wears the app face"), and it is text the row does not
+// interpret: nothing branches on it, and a pane that has one sorts, badges and opens exactly as it
+// did before.
+//
+// STALE IS DIMMED AND NEVER HIDDEN, which is the whole of the freshness rule. An agent that said
+// "running the migration" forty minutes ago is still telling you the most useful thing anyone knows
+// about that pane; a row that emptied itself would only make you wonder whether the feature broke.
+// So the row keeps the sentence and adds its age, and the pair reads as "this was true, then".
+
+/** How old a line may be before the row says so. Mirrors `STATUS_LINE_FRESH_MS` bridge-side. */
+const STATUS_LINE_FRESH_MS = 15 * 60 * 1000;
+
+function StatusLine({ line, at }: { line?: string; at?: number }) {
+  if (!line) return null;
+  const stale = at !== undefined && Date.now() - at > STATUS_LINE_FRESH_MS;
+  return (
+    <p
+      data-slot="agent-status-line"
+      className={cn(
+        "mt-1 flex items-baseline gap-1.5 overflow-hidden text-xs leading-snug",
+        stale ? "text-muted-foreground/60" : "text-muted-foreground",
+      )}
+    >
+      {/* Truncated, not wrapped, for the reason PaneHint states: a list holds one row pitch, and a
+          sentence that wrapped would make its row taller than every other for no visible reason.
+          `title` keeps the whole of it a hover away on a desktop. */}
+      <span className="min-w-0 truncate font-content" title={line}>
+        {line}
+      </span>
+      {stale && at !== undefined && (
+        <span className="shrink-0 tabular-nums">{t("agentCard.statusLine.stale", { age: timeAgoShort(at) })}</span>
+      )}
+    </p>
+  );
+}
+
 // A pane row, used by the triage home and the space view. Usually an agent; for a bare shell pane
 // (kind:"shell") it shows a terminal glyph and a muted "shell" tag instead of a status badge.
 //
@@ -259,6 +299,12 @@ function AgentCardImpl({
               )}
             </div>
           )}
+
+          {/* FORK: the AGENT's own sentence about what it is working on (`collie beacon status`),
+              under the name it belongs to. Same standing as the bridge's hint below it — text, never
+              a branch — and it is placed above because it is the more specific of the two: the hint
+              describes a pane Collie is guessing at, this one is the pane telling you itself. */}
+          <StatusLine line={agent.statusLine} at={agent.statusLineAt} />
 
           {/* The bridge's own sentence about this pane, when it sent one — text, never a branch
               (components/pane-hint.tsx). It changes nothing about the row: a hinted pane is still a

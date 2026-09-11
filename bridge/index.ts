@@ -13,6 +13,7 @@ import { beaconReader, hooksInstalledProbe } from "./beacon-io.ts";
 import { withAgentBeacons } from "./beacon/decorate.ts";
 import { withAgentHints } from "./beacon/hint.ts";
 import { loadConfig, nonLoopbackBindRefusal, resolveConfigDir, type Config } from "./config.ts";
+import { journalAgentOf } from "./types.ts";
 import type { CrewMode, CrewStatusResponse } from "./types.ts";
 import { EventPoker } from "./event-poker.ts";
 import { exePathOf, exeReplaced } from "./exe-replaced.ts";
@@ -39,9 +40,12 @@ import {
 import { TMUX_BINARY_OPTION } from "./mux/tmux/adapter.ts";
 import type { MuxAdapter } from "./mux/types.ts";
 import { ZELLIJ_BINARY_OPTION } from "./mux/zellij/adapter.ts";
+import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
+import { TranscriptStore } from "./journal/store.ts";
 import { NotificationCoordinator, makeNotifySink, type NotifyClock } from "./notifications.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
 import { peekBinaryPrompt } from "./prompt-peek.ts";
+import { replyFirstLine } from "./reply-peek.ts";
 import { filePairingIo, PairingStore } from "./pairing.ts";
 import { createSttGate } from "./stt/index.ts";
 import { runBootGate } from "./crew/boot-gate.ts";
@@ -939,6 +943,23 @@ function withBeaconsIfBlind(adapter: MuxAdapter, target: MuxTarget): MuxAdapter 
   return withAgentHints(seeing, { hooksInstalled });
 }
 
+// ── FORK: the journal reader the NOTIFICATION path uses ──────────────────────
+//
+// `createServer` builds its own registry and store for `GET /api/pane/:id/history`, and this is a
+// SECOND pair rather than a shared one on purpose. The session factory below runs before the server
+// is constructed, and threading the server's instances back here would make the push body's source a
+// parameter of the HTTP layer — which it is not. The cost is one extra parse cache of four entries,
+// paid only on a `done` alert that survived the debounce, which is rare by construction (the default
+// notify prefs do not even push on `done`).
+//
+// Null when transcripts are off (`COLLIE_TRANSCRIPT=0`), which is exactly what the history route
+// answers `disabled` for — the push then carries the body it always had.
+const journals = cfg.transcript ? buildJournalRegistry(cfg.journalRoots) : null;
+const transcriptPeeks = cfg.transcript ? new TranscriptStore() : null;
+
+/** Turns fetched for a push body. The newest SPOKEN turn may sit behind a run of tool calls. */
+const REPLY_PEEK_TURNS = 8;
+
 // ── Per-session runtime factory ──────────────────────────────────────────────
 // One mux adapter + StateEngine + EventPoker + NotificationCoordinator per herd session. The
 // registry calls this for the primary at construction and for each session discovered later. Push,
@@ -1004,12 +1025,32 @@ const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
     const read = await herdr.readGrid(paneId, { scope: "recent", lines: 60, styling: "preserve" });
     return read.ok ? peekBinaryPrompt(read.value.text) : null;
   };
+  // FORK: a single DONE alert carries the agent's own opening line in its body — one journal read,
+  // after the debounce and after the notify prefs have already let the alert through (see ReplyPeek).
+  // Resolution is the history route's, step for step: the pane's ref comes off the LIVE snapshot
+  // (never from a caller), the harness that wrote it keys the adapter, and the store does the
+  // containment. Null at every branch that has nothing to read, which leaves the body untouched.
+  const replyPeek =
+    journals === null || transcriptPeeks === null
+      ? undefined
+      : async (paneId: string): Promise<string | null> => {
+          const { agents, shellPanes } = engine.current();
+          const pane = [...agents, ...shellPanes].find((p) => p.paneId === paneId);
+          if (!pane?.agentSession) return null;
+          const adapter = adapterFor(journals, journalAgentOf(pane));
+          if (adapter === undefined) return null;
+          const page = await transcriptPeeks.page(adapter, pane.agentSession, {
+            limit: REPLY_PEEK_TURNS,
+          });
+          return page === null ? null : replyFirstLine(page.entries);
+        };
   const sink = makeNotifySink(
     push,
     herdPushGate(crew.mode, snooze),
     herdTagFor(isPrimary, name),
     { session: isPrimary ? undefined : name },
     peek,
+    replyPeek,
   );
   // FORK: the pane rides along so a per-pane rule (notify-prefs.ts) can answer for it.
   const notifications = new NotificationCoordinator(clock, sink, cfg.notifyDelayMs, (status, pane) =>

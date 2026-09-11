@@ -53,6 +53,9 @@ import {
 import type { StateEngine } from "./state-engine.ts";
 import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
 import { TranscriptStore } from "./journal/store.ts";
+// FORK: the agent-authored status line — one sentence per pane, read through a cache.
+import { fileStatusLineDirectory } from "./beacon-io.ts";
+import { StatusLineStore } from "./status-lines.ts";
 import type { JournalAdapter } from "./journal/types.ts";
 import { isBlobHash, resolveBlobPath } from "./journal/pi.ts";
 import { statFile } from "./journal/files.ts";
@@ -805,6 +808,13 @@ export function startServer(opts: {
   const operatorLaunchers = createOperatorLaunchers(cfg.launchersFile);
   const journals = cfg.transcript ? buildJournalRegistry(cfg.journalRoots) : null;
   const transcripts = cfg.transcript ? new TranscriptStore() : null;
+  /**
+   * FORK: the agent-authored status lines, read through a cache so the SYNCHRONOUS snapshot builder
+   * below can carry one without doing I/O (bridge/status-lines.ts). Unconditional — a status line is
+   * not a transcript and does not ride `COLLIE_TRANSCRIPT`: it is one short sentence an agent chose
+   * to publish, not its conversation.
+   */
+  const statusLines = new StatusLineStore({ directory: fileStatusLineDirectory(cfg.stateDir) });
   /** Does this agent have a journal at all — the snapshot's History-affordance gate. */
   const hasJournal = (agent: string) => adapterFor(journals ?? {}, agent) !== undefined;
 
@@ -920,7 +930,16 @@ export function startServer(opts: {
     // this takes the runtime rather than closing over the ambient one.
     const withActivity = (from: SessionRuntime, p: AgentView): AgentView => {
       const a = activity.get(from.name, p.paneId);
-      return a ? { ...p, lastActiveAt: a.activeAt, lastSeenAt: a.seenAt } : p;
+      const stamped = a ? { ...p, lastActiveAt: a.activeAt, lastSeenAt: a.seenAt } : p;
+      // FORK: and the agent's own sentence about what it is working on, joined by the SESSION ref
+      // this pane already carries (the journal's own key) rather than by anything new. Read at
+      // serialise time, from a cache, for the same reason the two timestamps above are: as fresh as
+      // the request, and never a filesystem call inside a synchronous builder. Assigned, never
+      // conditionally spread, so a pane with no line is byte-identical to one on an older bridge.
+      if (stamped.agentSession === undefined) return stamped;
+      const said = statusLines.get(stamped.agentSession);
+      if (said === null) return stamped;
+      return { ...stamped, statusLine: said.line, statusLineAt: said.writtenMs };
     };
     // The one place a pane leaves the bridge: the session ref is stripped to a presence flag here,
     // so an agent-reported filesystem path never reaches a browser (see toPaneWire). The flag is

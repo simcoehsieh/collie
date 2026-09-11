@@ -31,6 +31,16 @@ export interface HerdSummary {
   title: string;
   /** Sub-line: "demo · /path" for one outstanding alert, or the agent names for a digest. */
   body: string;
+  /**
+   * FORK: the part of `body` that survives when the sink has something better for the rest.
+   *
+   * `body` is "<space> · <cwd>" for a single alert, and a `done` push can carry the agent's own
+   * opening line instead of that path (see {@link ReplyPeek}) — but the SPACE still has to be there,
+   * or two panes of the same agent produce two identical notifications. So the summary names the
+   * half it wants kept rather than making the sink parse its own string back apart. Present exactly
+   * when {@link paneId} is; a digest has no single space to name.
+   */
+  bodyLead?: string;
   /** Deep-link target when exactly one alert is outstanding; undefined for a multi-agent digest. */
   paneId?: string;
   /** The one outstanding pane's agent and status — present exactly when `paneId` is. The sink needs
@@ -65,6 +75,17 @@ export interface MuteGate {
 export type PromptPeek = (paneId: string) => Promise<BinaryPromptPeek | null>;
 
 /**
+ * FORK: the opening line of the agent's newest message, for a `done` push — bridge/reply-peek.ts over
+ * the pane's own session log.
+ *
+ * Asked ONLY for a single outstanding `done` alert, i.e. after the debounce has decided the alert is
+ * real and after the notify prefs (bridge-wide switches AND the per-pane rule) have decided it may
+ * fire at all — the coordinator owns that gate and this never second-guesses it. A digest, a blocked
+ * alert and a retraction never touch the journal. A rejection or a throw reads as "no line".
+ */
+export type ReplyPeek = (paneId: string) => Promise<string | null>;
+
+/**
  * Who the alerts flowing through a sink belong to — the `(host, session)` half of the address triple
  * (CREW_PROTOCOL.md §4). **Both halves are omitted-not-null**, and for the same reason: a stamped
  * field that is absent for the default case keeps that payload byte-identical to the shape an
@@ -96,37 +117,65 @@ export function makeNotifySink(
   herdTag: string,
   ident: NotifyIdentity = {},
   peek?: PromptPeek,
+  replyPeek?: ReplyPeek,
 ): NotifySink {
   const { session: sessionName, host } = ident;
+  /** One body, with the host prefix the crew case needs. The only place either is composed. */
+  const withHost = (body: string) => (host === undefined ? body : `${host} · ${body}`);
   return {
     render: (s) => {
       if (mute.isMuted()) return;
-      const body = host === undefined ? s.body : `${host} · ${s.body}`;
-      const msg: PushMessage = { title: s.title, body, tag: herdTag, paneId: s.paneId, renotify: s.renotify };
+      const msg: PushMessage = {
+        title: s.title,
+        body: withHost(s.body),
+        tag: herdTag,
+        paneId: s.paneId,
+        renotify: s.renotify,
+      };
       if (sessionName !== undefined) msg.session = sessionName;
       if (host !== undefined) msg.host = host;
       if (s.agent !== undefined) msg.agent = s.agent;
       // A single blocked pane may earn Yes/No buttons — but only after a look at its tail, which is
       // a multiplexer round trip. Everything else sends on the spot, exactly as before: a caller
       // without a peek gets the synchronous path it always had.
-      if (peek === undefined || s.paneId === undefined || s.status !== "blocked") {
-        void push.send(msg);
+      if (peek !== undefined && s.paneId !== undefined && s.status === "blocked") {
+        const paneId = s.paneId;
+        void (async () => {
+          let approve: BinaryPromptPeek | null = null;
+          try {
+            approve = await peek(paneId);
+          } catch {
+            approve = null;
+          }
+          if (approve !== null) {
+            msg.actions = YES_NO_ACTIONS;
+            msg.approve = approve;
+          }
+          void push.send(msg);
+        })();
         return;
       }
-      const paneId = s.paneId;
-      void (async () => {
-        let approve: BinaryPromptPeek | null = null;
-        try {
-          approve = await peek(paneId);
-        } catch {
-          approve = null;
-        }
-        if (approve !== null) {
-          msg.actions = YES_NO_ACTIONS;
-          msg.approve = approve;
-        }
-        void push.send(msg);
-      })();
+      // FORK: a single DONE pane says what it said. One journal read, on the same shape as the
+      // blocked branch above — and on exactly the same terms: THE PUSH ALWAYS GOES OUT. A missing
+      // line, a refused read or a throw leaves the body the address it already was, because "every
+      // push must still show a notification" is a promise about the service worker having something
+      // to show, and a body is not a reason to withhold one.
+      if (replyPeek !== undefined && s.paneId !== undefined && s.status === "done") {
+        const paneId = s.paneId;
+        void (async () => {
+          let line: string | null = null;
+          try {
+            line = await replyPeek(paneId);
+          } catch {
+            line = null;
+          }
+          if (line !== null && s.bodyLead !== undefined) msg.body = withHost(`${s.bodyLead} · ${line}`);
+          else if (line !== null) msg.body = withHost(line);
+          void push.send(msg);
+        })();
+        return;
+      }
+      void push.send(msg);
     },
     clear: () => {
       if (mute.isMuted()) return;
@@ -252,6 +301,8 @@ export class NotificationCoordinator<H = unknown> {
       return {
         title: `${a.agent} ${verb}`,
         body: `${a.workspaceLabel} · ${a.cwd}`,
+        // FORK: the half that survives when the sink has the agent's own line for the rest.
+        bodyLead: a.workspaceLabel,
         paneId,
         agent: a.agent,
         status: a.status,

@@ -3,14 +3,23 @@ import { join } from "node:path";
 import { BEACON_DIR_MODE, beaconFileName, beaconKey, beaconsDir } from "../bridge/beacon/paths.ts";
 import { parseProcStartTime, procStatPath } from "../bridge/beacon/liveness.ts";
 import {
+  sanitizeStatusLine,
+  statusLineFileName,
+  statusLineKey,
+  statusLinesDir,
+  STATUS_LINE_SCHEMA_VERSION,
+  type StatusLineRecord,
+} from "../bridge/beacon/status-line.ts";
+import {
   BEACON_SCHEMA_VERSION,
   type BeaconMarker,
   type BeaconRecord,
   type BeaconStatus,
 } from "../bridge/beacon/types.ts";
+import type { AgentSessionRef } from "../bridge/journal/types.ts";
 import type { JsonObject, JsonValue } from "../bridge/json.ts";
 import type { CliContext, Environment } from "./context.ts";
-import { EXIT } from "./io.ts";
+import { EXIT, type Io } from "./io.ts";
 import type { Files } from "./sys.ts";
 
 // `collie beacon emit` — the agent's own hook, telling Collie what only the agent knows.
@@ -308,5 +317,123 @@ export async function runBeaconEmit(build: () => BeaconEmitDeps): Promise<number
     return await cmdBeaconEmit(build());
   } catch {
     return EXIT.OK;
+  }
+}
+
+// ── FORK: `collie beacon status "<line>"` ─────────────────────────────────────────────────────────
+//
+// The agent says, in its own words, what it is working on; Collie shows that sentence under the pane
+// name in the herd list and nowhere else. `bridge/beacon/status-line.ts` holds the whole argument,
+// including why .adr/0024 permits it: a status line is DISPLAY-ONLY — it sets no identity, no status,
+// no session ref and no capability, arms nothing and relaxes no guard, so it is the ADR's first road
+// ("read it, and let it set nothing that acts") rather than its second.
+//
+// IT IS TYPED BY AN AGENT, NOT FIRED BY A HOOK, so it does not inherit `beacon emit`'s absolute
+// silence — an agent running a command wants to know whether it worked. It stays quiet on the happy
+// path (a status line is a side errand, not the task) and says one short thing on the two failures a
+// human can act on: no session to attach it to, and an unwritable state dir.
+//
+// THE SESSION IS READ FROM THE AGENT'S OWN ENVIRONMENT and never inferred. `beacon emit`'s marker
+// table asks the MULTIPLEXER who this pane is; this asks the HARNESS who this conversation is,
+// because the join is against the pane's session ref and herdr puts no pane marker in the
+// environment at all (see the status-line module's "keyed by the agent's session" note).
+
+/** Where each harness publishes its own session id to the processes it spawns. */
+interface HarnessSessionEnv {
+  /** The journal registry's own key for the harness — what the beacon's `harness` field would carry. */
+  readonly harness: string;
+  readonly variable: string;
+}
+
+/**
+ * Read in order; the first that is set wins.
+ *
+ * `CLAUDE_CODE_SESSION_ID` is Claude Code's (observed on 2.1.x, alongside `CLAUDECODE=1`);
+ * `CODEX_SESSION_ID` is Codex's. A harness that publishes nothing simply cannot write a status line,
+ * which the verb says out loud rather than writing a file nothing will ever join.
+ */
+const HARNESS_SESSION_ENV: readonly HarnessSessionEnv[] = [
+  { harness: "claude", variable: "CLAUDE_CODE_SESSION_ID" },
+  { harness: "codex", variable: "CODEX_SESSION_ID" },
+];
+
+/**
+ * A SUBAGENT IS NOT THE PANE, the same rule `beacon emit` applies to `agent_id`.
+ *
+ * Claude Code sets this for a Task running inside the session, and that subagent's session is not the
+ * conversation the operator has open — a line written from one would replace the pane's own.
+ */
+const CHILD_SESSION_VARS: readonly string[] = ["CLAUDE_CODE_CHILD_SESSION"];
+
+/** The session this process belongs to, or null when nothing in the environment names one. */
+export function readSessionFromEnv(env: Environment): { harness: string; session: string } | null {
+  if (CHILD_SESSION_VARS.some((name) => (env[name] ?? "") !== "")) return null;
+  for (const source of HARNESS_SESSION_ENV) {
+    const value = env[source.variable]?.trim();
+    if (value !== undefined && value !== "" && SESSION_ID.test(value)) {
+      return { harness: source.harness, session: value };
+    }
+  }
+  return null;
+}
+
+export interface BeaconStatusDeps {
+  readonly ctx: CliContext;
+  readonly files: Files;
+  readonly io: Io;
+  /** Injected so a test can pin the stamp; production leaves it. */
+  readonly now?: () => number;
+}
+
+/**
+ * `collie beacon status "<line>"` — one sentence in, one status-line file out.
+ *
+ * The line is joined arg-wise so an unquoted sentence still works: an agent typing this into a shell
+ * has already lost that argument once, and refusing `collie beacon status refactoring the adapter`
+ * teaches nothing the operator wants to learn. An EMPTY line clears the file, which is the honest way
+ * to stop saying something without inventing a second verb.
+ */
+export function cmdBeaconStatus(deps: BeaconStatusDeps, args: readonly string[]): number {
+  const identity = readSessionFromEnv(deps.ctx.env);
+  if (identity === null) {
+    deps.io.err(
+      "no agent session in this environment, so there is nothing to attach a status line to " +
+        `(looked for ${HARNESS_SESSION_ENV.map((s) => s.variable).join(", ")})`,
+    );
+    return EXIT.USAGE;
+  }
+  const session: AgentSessionRef = { kind: "id", value: identity.session };
+  const dir = statusLinesDir(deps.ctx.stateDir);
+  const file = join(dir, statusLineFileName(statusLineKey(session)));
+  const line = sanitizeStatusLine(args.join(" "));
+
+  try {
+    if (line === "") {
+      // Saying nothing is a thing to say. `remove` is already the "gone or never there" shape.
+      deps.files.remove(file);
+      return EXIT.OK;
+    }
+    const record: StatusLineRecord = {
+      schemaVersion: STATUS_LINE_SCHEMA_VERSION,
+      session,
+      line,
+      writtenMs: (deps.now ?? Date.now)(),
+    };
+    deps.files.mkdirp(dir, BEACON_DIR_MODE);
+    // Atomic, like the beacon's own write: a temp name in the same directory, then a rename, so a
+    // reader sees the previous line or this one and never half of either. The temp name carries the
+    // pid so two agents writing at once cannot collide on it.
+    const temp = join(dir, `.${statusLineKey(session)}.${process.pid}.tmp`);
+    try {
+      deps.files.write(temp, `${JSON.stringify(record)}\n`, 0o600);
+      deps.files.rename(temp, file);
+    } catch (err) {
+      deps.files.remove(temp);
+      throw err;
+    }
+    return EXIT.OK;
+  } catch (err) {
+    deps.io.err(`could not write the status line: ${err instanceof Error ? err.message : String(err)}`);
+    return EXIT.FAIL;
   }
 }

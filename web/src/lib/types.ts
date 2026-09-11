@@ -92,6 +92,18 @@ export interface AgentView {
    */
   lastSeenAt?: number;
   /**
+   * FORK — the agent's OWN sentence about what it is working on, written through
+   * `collie beacon status "<line>"`. Mirrors `AgentView.statusLine` in bridge/types.ts.
+   *
+   * TEXT AND NOTHING ELSE, the same standing {@link hint} has: nothing branches on it, it implies
+   * nothing about `agent` or `status`, and it changes no sort and no affordance. Already sanitised
+   * and clamped bridge-side, so it is rendered as-is. Absent on almost every pane.
+   */
+  statusLine?: string;
+  /** Epoch ms the line was written. A line older than fifteen minutes renders dimmed — never hidden.
+   *  Mirrors `AgentView.statusLineAt` in bridge/types.ts. */
+  statusLineAt?: number;
+  /**
    * Which member of the crew this pane lives on — the `?h=` value (CREW_PROTOCOL.md §4). Mirrors
    * `PaneWire.host` in bridge/types.ts.
    *
@@ -704,7 +716,19 @@ export type TranscriptPart =
       name: string;
       summary: string;
       result?: { text: string; truncated?: boolean; isError?: boolean; imageUrl?: string };
-    };
+    }
+  /** FORK: the agent's own checklist, kept whole (bridge/journal/todo.ts). Emitted in place of the
+   *  tool part for the one call that writes a plan, so the pane can pin the latest state as a card. */
+  | { kind: "todo"; items: TodoItem[] };
+
+/** FORK: one line of a plan. Mirrors `TodoStatus` in bridge/journal/types.ts. */
+export type TodoStatus = "pending" | "in_progress" | "completed";
+
+/** FORK: one item of a harness's checklist. Mirrors `TodoItem` in bridge/journal/types.ts. */
+export interface TodoItem {
+  text: string;
+  status: TodoStatus;
+}
 
 /**
  * One turn. `user`/`assistant` are speech; the other two are not, and render set apart so they can't

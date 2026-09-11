@@ -18,7 +18,15 @@
 
 import type { JsonObject, JsonValue } from "../json.ts";
 import type { AgentSessionRef } from "../journal/types.ts";
-import { BEACON_SCHEMA_VERSION, type BeaconMarker, type BeaconRecord, type BeaconStatus } from "./types.ts";
+import {
+  BEACON_SCHEMA_VERSION,
+  STATUS_LINE_MAX_CHARS,
+  STATUS_LINE_SCHEMA_VERSION,
+  type BeaconMarker,
+  type BeaconRecord,
+  type BeaconStatus,
+  type StatusLineRecord,
+} from "./types.ts";
 
 /** The three words a beacon may use, as a runtime list — the type alone cannot check a file. */
 const BEACON_STATUSES: readonly BeaconStatus[] = ["working", "waiting", "idle"];
@@ -148,4 +156,59 @@ export function parseBeacon(text: string): BeaconRecord | null {
   if (markers.length === 0) return null;
 
   return { schemaVersion, harness, session, status, pid, pidStartTime, markers, heartbeatMs };
+}
+
+// ── FORK: THE STATUS LINE'S PARSE ────────────────────────────────────────────────────────────────
+//
+// Same boundary, same rules, same file — the override in `.oxlintrc.json` names ONE file under
+// `bridge/beacon/`, and that claim only stays true if every unvalidated field read lives here. A
+// status line is written by `collie beacon status`, which is to say by an agent, which is to say by a
+// process Collie does not control: a torn write, a newer schema, or a file somebody else dropped in
+// the directory all answer `null`, and `null` is what the reader already handles.
+
+/**
+ * A line as it may be STORED OR SHOWN: control characters gone, whitespace collapsed, clamped.
+ *
+ * Applied at BOTH ends — by the writer on the way in, and here on the way out — because a file
+ * already on disk was written by some earlier version of that writer. A newline in a pane's subtitle
+ * is a layout bug; an escape sequence in one would be a terminal escape arriving on a phone, which is
+ * the same class of thing `journal/text.ts` strips for the same reason.
+ */
+export function sanitizeStatusLine(raw: string): string {
+  // The control-character class IS the parse here, not a stylistic choice: this is the one place a
+  // sentence from another process is made safe to render.
+  const flat = raw
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return flat.length > STATUS_LINE_MAX_CHARS ? flat.slice(0, STATUS_LINE_MAX_CHARS).trimEnd() : flat;
+}
+
+/**
+ * One status-line file's text as a record, or null when it is not one this build can read.
+ *
+ * Total over garbage, exactly as {@link parseBeacon} is. A record whose sentence sanitises away is
+ * null too — an empty line is not a line, and a pane with one would render an empty row under its
+ * name.
+ */
+export function parseStatusLine(text: string): StatusLineRecord | null {
+  let decoded: JsonValue;
+  try {
+    decoded = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const row = readObject(decoded);
+  if (row === null) return null;
+  if (readInteger(row, "schemaVersion") !== STATUS_LINE_SCHEMA_VERSION) return null;
+  const session = readSession(row);
+  if (session === null) return null;
+  const raw = row.line;
+  if (typeof raw !== "string") return null;
+  const line = sanitizeStatusLine(raw);
+  if (line === "") return null;
+  const writtenMs = readNumber(row, "writtenMs");
+  if (writtenMs === null) return null;
+  return { schemaVersion: STATUS_LINE_SCHEMA_VERSION, session, line, writtenMs };
 }

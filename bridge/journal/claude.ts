@@ -29,6 +29,7 @@ import { dirname, join } from "node:path";
 import type { JsonObject, JsonValue } from "../json.ts";
 import { containedRealpath, exists, head, loadTail, rootList, statFile } from "./files.ts";
 import { clamp, type Clamped, MAX_RESULT_CHARS, MAX_TEXT_CHARS, stripAnsi, summarizeToolInput } from "./text.ts";
+import { claudeTodoItems, isClaudeTodoTool } from "./todo.ts";
 import type {
   AgentSessionRef,
   JournalAdapter,
@@ -147,6 +148,10 @@ export function parseClaudeTranscript(
   const entries: TranscriptEntry[] = [];
   // tool_use id → the part awaiting its result, so a `tool_result` row lands on the call that made it.
   const pendingTools = new Map<string, Extract<TranscriptPart, { kind: "tool" }>>();
+  // FORK: tool_use ids whose RESULT is bookkeeping — the plan writer's "Todos have been modified
+  // successfully". The call already rendered as a `todo` part, so its answer has nothing to attach
+  // to; without this set it would surface as an orphan result and print that sentence per re-plan.
+  const swallowedResults = new Set<string>();
 
   for (const line of text.split("\n")) {
     if (line.trim() === "") continue;
@@ -192,9 +197,19 @@ export function parseClaudeTranscript(
           if (b.thinking.trim() !== "")
             parts.push({ kind: "thinking", ...clamp(stripAnsi(b.thinking), MAX_TEXT_CHARS) });
         } else if (b.type === "tool_use") {
+          const name = typeof b.name === "string" ? b.name : "tool";
+          // FORK: the plan writer's input IS the renderable thing — kept whole rather than reduced to
+          // its first string (journal/todo.ts). A `TodoWrite` whose input is not that shape falls
+          // through to the ordinary tool part, so a changed schema degrades instead of vanishing.
+          const todos = isClaudeTodoTool(name) ? claudeTodoItems(b.input) : null;
+          if (todos !== null) {
+            parts.push({ kind: "todo", items: todos });
+            if (typeof b.id === "string") swallowedResults.add(b.id);
+            continue;
+          }
           const part: Extract<TranscriptPart, { kind: "tool" }> = {
             kind: "tool",
-            name: typeof b.name === "string" ? b.name : "tool",
+            name,
             summary: summarizeToolInput(b.input),
           };
           if (typeof b.id === "string") pendingTools.set(b.id, part);
@@ -203,6 +218,8 @@ export function parseClaudeTranscript(
           // Fold onto the call that produced it. The awaited part is MUTATED in place — it already
           // sits in an emitted entry, which is exactly why results attach without reordering anything.
           const id = typeof b.tool_use_id === "string" ? b.tool_use_id : "";
+          // FORK: the plan writer's own acknowledgement, dropped where its call was kept whole.
+          if (swallowedResults.delete(id)) continue;
           const target = pendingTools.get(id);
           // Tool output routinely carries colour codes (any command run through a shell) — strip
           // them, since this view renders text nodes rather than interpreting escapes.
