@@ -169,8 +169,16 @@ export function makeNotifySink(
           } catch {
             line = null;
           }
-          if (line !== null && s.bodyLead !== undefined) msg.body = withHost(`${s.bodyLead} · ${line}`);
-          else if (line !== null) msg.body = withHost(line);
+          // FORK: when the agent's own line is there, the notification IS that line. The headline
+          // becomes the pane's address ("AI Live · claude") and the verb goes — "claude is done"
+          // above "AI Live · <what it said>" was three lines to say one thing, and the operator
+          // asked for the two that carry nothing (2026-09-11). The third, "from Meow", is iOS's own
+          // attribution for a web push and is not ours to remove. Without a line the old shape
+          // stands: the verb is then the only information there is.
+          if (line !== null && s.bodyLead !== undefined) {
+            msg.title = s.agent === undefined ? s.bodyLead : `${s.bodyLead} · ${s.agent}`;
+            msg.body = withHost(line);
+          } else if (line !== null) msg.body = withHost(line);
           void push.send(msg);
         })();
         return;
