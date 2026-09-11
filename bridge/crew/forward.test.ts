@@ -154,6 +154,21 @@ describe("which routes cross a link", () => {
     expect(forwardPaneId(`blobs/${hash}`)).toBeUndefined();
   });
 
+  test("FORK: a previewed page crosses the link as a READ — the file lives on the member's disk", () => {
+    // Same argument as a blob, one layer up: the HTML the agent wrote is on the machine that runs
+    // the pane, and a lead answering it locally would frame ITS OWN `report.html` under the peer's
+    // name. The pane and the path ride the query, which `forwardParams` carries through untouched,
+    // so the grammar here is an exact path and admits nothing shaped like a sibling route.
+    expect(crewRouteFor("/api/preview/file")).toBe("preview/file");
+    expect(apiPathFor("preview/file")).toBe("/api/preview/file");
+    expect(forwardKind("preview/file")).toBe("read");
+    expect(forwardAuditAction("preview/file")).toBeNull();
+    expect(forwardPaneId("preview/file")).toBeUndefined();
+    expect(crewRouteFor("/api/preview")).toBeNull();
+    expect(crewRouteFor("/api/preview/file/x")).toBeNull();
+    expect(crewRouteFor("/api/preview/5173")).toBeNull();
+  });
+
   test("the routes §5 excludes are excluded — and stay that way by construction", () => {
     // Push subscriptions live on the lead, notification policy is one crew-wide setting the lead
     // owns, update checking is per-machine, `config` is consumed not proxied, `snapshot` is merged.
@@ -189,7 +204,7 @@ describe("which routes cross a link", () => {
     const tab = server.match(/^const TAB_ACTION_ROUTE = (.+);$/m)![1]!;
     const alternation = /\(([a-z]+(?:\|[a-z]+)+)\)/;
     const paneActions = pane.match(alternation)![1]!.split("|").toSorted();
-    expect(paneActions).toEqual(["close", "diff", "focus", "history", "keys", "rename", "reply", "upload"]);
+    expect(paneActions).toEqual(["close", "diff", "file", "focus", "history", "keys", "rename", "reply", "upload"]);
     for (const action of paneActions) expect(crewRouteFor(`/api/pane/x/${action}`)).toBe(`pane/x/${action}`);
     const tabActions = tab.match(alternation)![1]!.split("|").toSorted();
     expect(tabActions).toEqual(["close", "rename"]);
@@ -207,6 +222,8 @@ describe("which routes cross a link", () => {
     expect(forwardKind("pane/w1:p1")).toBe("read");
     expect(forwardKind("pane/w1:p1/history")).toBe("read");
     expect(forwardKind("pane/w1:p1/diff")).toBe("read");
+    // FORK: the file viewer reads the same work tree `diff` describes and writes nothing.
+    expect(forwardKind("pane/w1:p1/file")).toBe("read");
     for (const action of ["reply", "keys", "upload", "close", "rename"]) {
       expect(forwardKind(`pane/w1:p1/${action}`)).toBe("write");
     }

@@ -1,6 +1,6 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, ExternalLink, FileCode, MonitorPlay } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { parseAnsi, type AnsiSegment } from "@/lib/ansi";
@@ -8,6 +8,7 @@ import { buildBlocks } from "@/lib/harness";
 import type { MirrorModel } from "@/hooks/use-mirror-model";
 import { buzz } from "@/lib/haptics";
 import { codeFences, type CodeFence } from "@/lib/code-fences";
+import { lineChips, type LineChips } from "@/lib/line-chips";
 import {
   dropLeadingLines,
   lineText,
@@ -137,6 +138,23 @@ export interface AnsiOutputProps {
    * today, so a bridge that publishes no document host needs no branch here at all.
    */
   onLinkOpen?: (href: string) => boolean;
+  /**
+   * FORK: the pane's own diff file list, for the file chip.
+   *
+   * A LOOKUP and never a heuristic (lib/line-chips.ts states the argument): a chip is offered only
+   * when one of these exact strings appears verbatim on a line, so the false-positive rate a path
+   * detector would have is zero here. Absent, or empty, and no line earns a file chip — which is
+   * every pane that is not a work tree, and every pane whose list has not arrived yet.
+   */
+  filePaths?: readonly string[];
+  /**
+   * FORK: a tap on a line's URL chip. `local` says the URL names a port on the machine the agent is
+   * running on — a dev server it just started — which is a different offer from an ordinary link.
+   * Absent means no URL chip is drawn at all.
+   */
+  onUrlChip?: (href: string, local: boolean) => void;
+  /** FORK: a tap on a line's file chip, with the repo-relative path from the list it matched. */
+  onFileChip?: (path: string) => void;
 }
 
 // Stable empty result so the "not searching" path keeps the same `matches` reference across polls
@@ -377,6 +395,50 @@ function CopyFenceButton({ lines, fence }: { lines: StyledLine[]; fence: CodeFen
   );
 }
 
+/** FORK: the frozen empty chip list, for a block where no line earned one. */
+const NO_CHIPS: readonly (LineChips | null)[] = Object.freeze([]);
+
+/**
+ * FORK. A chip riding one mirror line — `CopyFenceButton`'s shape, and deliberately the same one.
+ *
+ * It is a TRAILING ORNAMENT (the cheapest of the four shapes a non-text surface can take here): it
+ * sits inline after the line's own spans, inside the `<pre>`, so it adds no row to the grid, moves
+ * no character of the shared find/link offset space, and restructures nothing. "A button is not
+ * text" is the whole licence, and it is why this costs nothing rather than costing an offset walk.
+ *
+ * It also renders in the mirror's dark colour space and inverts with it under the light theme
+ * (.adr/0002), which is why the tint is the copy button's `bg-white/10` and not an app token: a
+ * `dark:` variant or a `--muted` here would come out backwards, silently.
+ */
+function LineChip({
+  label,
+  title,
+  icon: Icon,
+  onTap,
+}: {
+  label: string;
+  title: string;
+  icon: typeof ExternalLink;
+  onTap: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-slot="line-chip"
+      aria-label={title}
+      title={title}
+      onClick={() => {
+        buzz();
+        onTap();
+      }}
+      className="ml-2 inline-flex h-[1.6em] cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 align-middle font-sans text-[0.85em] leading-none text-white/80 select-none hover:bg-white/20 active:scale-95"
+    >
+      <Icon className="size-[1em]" />
+      <span>{label}</span>
+    </button>
+  );
+}
+
 export const AnsiOutput = memo(function AnsiOutput({
   text,
   model,
@@ -397,6 +459,9 @@ export const AnsiOutput = memo(function AnsiOutput({
   onLinkOpen,
   images,
   onImageClusterCount,
+  filePaths,
+  onUrlChip,
+  onFileChip,
 }: AnsiOutputProps) {
   // The mirror is agent output and is not translated — but the two strings the image cluster
   // renders are Collie's own words, so this subscribes for the same reason every t() caller does.
@@ -461,6 +526,19 @@ export const AnsiOutput = memo(function AnsiOutput({
   // stands beside. Only CLOSED fences: an open one is still being written, and copying half of it
   // is the kind of help that costs a retype.
   const fencesByBlock = useMemo(() => rawBlocks.map((b) => codeFences(b.lines)), [rawBlocks]);
+  // FORK: which lines earn a chip, by block index. Computed ONCE per mirror text rather than inside
+  // the render loop, for the reason every other grammar here is memoised: this component re-renders
+  // on every poll and a ~600-line screen would otherwise pay a per-line URL scan 40 times a minute.
+  // Nothing is computed at all when neither handler is wired, so a caller that wants no chips (the
+  // transcript, the playground) is exactly as cheap as it was.
+  const wantChips = onUrlChip !== undefined || onFileChip !== undefined;
+  const chipsByBlock = useMemo(
+    () =>
+      wantChips
+        ? rawBlocks.map((b) => lineChips(b.lines, onFileChip === undefined ? [] : (filePaths ?? [])))
+        : [],
+    [rawBlocks, wantChips, onFileChip, filePaths],
+  );
   const clusterCount = useMemo(
     () => clustersByBlock.reduce((sum, c) => sum + c.length, 0),
     [clustersByBlock],
@@ -709,6 +787,7 @@ export const AnsiOutput = memo(function AnsiOutput({
     const runs = runsByBlock[bi] ?? NO_RUNS;
     const clusters = clustersByBlock[bi] ?? NO_CLUSTERS;
     const fences = fencesByBlock[bi] ?? NO_FENCES;
+    const chips = chipsByBlock[bi] ?? NO_CHIPS;
     const nodes: ReactNode[] = [];
     let ri = 0;
     let ci = 0;
@@ -722,6 +801,43 @@ export const AnsiOutput = memo(function AnsiOutput({
       fi++;
       return <CopyFenceButton key="copy" lines={block.lines} fence={fence} />;
     };
+    // FORK: the line's own chips, on the same trailing slot and for the same reason the Copy button
+    // is there — inline after the line's spans, no row added, no offset moved. A line that earns
+    // both a URL chip and a Copy button gets both, in the order they are listed here.
+    const chipTrailing = (li: number): ReactNode => {
+      const earned = chips[li];
+      if (!earned) return null;
+      const url = earned.url;
+      const path = earned.path;
+      return (
+        <>
+          {url !== undefined && onUrlChip !== undefined && (
+            <LineChip
+              key="url"
+              label={url.local ? t("mirror.chip.preview") : t("mirror.chip.open")}
+              title={url.local ? t("mirror.chip.previewAria", { url: url.href }) : t("mirror.chip.openAria", { url: url.href })}
+              icon={url.local ? MonitorPlay : ExternalLink}
+              onTap={() => onUrlChip(url.href, url.local)}
+            />
+          )}
+          {path !== undefined && onFileChip !== undefined && (
+            <LineChip
+              key="file"
+              label={t("mirror.chip.file")}
+              title={t("mirror.chip.fileAria", { path })}
+              icon={FileCode}
+              onTap={() => onFileChip(path)}
+            />
+          )}
+        </>
+      );
+    };
+    const trailingFor = (li: number): ReactNode => (
+      <>
+        {fenceTrailing(li)}
+        {chipTrailing(li)}
+      </>
+    );
     for (let li = 0; li < block.lines.length; ) {
       const cluster: ImageCluster | undefined = clusters[ci];
       if (cluster && cluster.start === li) {
@@ -748,7 +864,7 @@ export const AnsiOutput = memo(function AnsiOutput({
       }
       const run: TableRun | undefined = runs[ri];
       if (!run || run.start !== li) {
-        nodes.push(renderLine(block.lines[li]!, li, true, false, fenceTrailing(li)));
+        nodes.push(renderLine(block.lines[li]!, li, true, false, trailingFor(li)));
         li++;
         continue;
       }

@@ -2008,16 +2008,22 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // The load-bearing claim: `?h=laptop` + `w1:p1` must never be served the DESK's `w1:p1`, and
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
-    // All ELEVEN session-scoped routes (tab create, workspace create, launch, this host's launcher
-    // rows, the folder listing, one journal blob, tab action, the pane family, "look now", the
-    // worktree listing and the worktree actions) reach their runtime through the caller's resolver
-    // and nothing else.
+    // All TWELVE session-scoped routes (tab create, workspace create, launch, this host's launcher
+    // rows, the folder listing, one journal blob, one previewed HTML file, tab action, the pane
+    // family, "look now", the worktree listing and the worktree actions) reach their runtime through
+    // the caller's resolver and nothing else.
+    //
+    // The twelfth is the fork's `/api/preview/file` (bridge/preview.ts). It is session-scoped for
+    // `/api/blobs/*`'s exact reason and not a weaker one: the file it serves sits on the disk of the
+    // machine that runs the pane it is jailed to, and the lead holds no copy — so a `?h=laptop`
+    // preview answered locally would show the LEAD's file under the laptop's name, which is the same
+    // class of fault as serving the desk's `w1:p1`.
     //
     // `/api/dirs` resolves for its FORWARD rather than for the runtime's value: a `?h=laptop` browse
     // must list the LAPTOP's disk, and resolution is what sends it there. A route that answered
     // locally without resolving would quietly show the lead's directories under a peer's name — the
     // same class of fault as serving the desk's `w1:p1`.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(11);
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(12);
     // Exactly seven `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronLeft, Copy, Loader2, RefreshCw } from "lucide-react";
+import { Check, ChevronLeft, Copy, FileCode, Loader2, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { RightSheet } from "@/components/ui/right-sheet";
@@ -32,6 +32,15 @@ interface DiffSheetProps {
   mirrorFace: MirrorFont;
   /** The answering host's home, so the repo root reads `~/git/proj`. Empty leaves it absolute. */
   home?: string;
+  /**
+   * FORK: open one file in the viewer rather than its patch (components/file-sheet.tsx).
+   *
+   * A SECOND affordance on the row, not a replacement for the first: a row's main tap still opens
+   * the patch, which is what the sheet is for. This is the escape from "+82 −11 of a file I cannot
+   * see the rest of" — and it is the viewer rather than a third view inside this sheet, because the
+   * file that most often needs reading is the one with no row here at all.
+   */
+  onOpenFile?: (path: string) => void;
 }
 
 type Loaded<T> = { phase: "loading" } | { phase: "ready"; data: T } | { phase: "failed"; message: string };
@@ -58,7 +67,7 @@ function describeFailure<TThrown>(e: TThrown): string {
   return t("diff.error.failed");
 }
 
-export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, home = "" }: DiffSheetProps) {
+export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, home = "", onOpenFile }: DiffSheetProps) {
   useLocale();
   const [stat, setStat] = useState<Loaded<PaneDiffStatResponse>>({ phase: "loading" });
   const [file, setFile] = useState<string | null>(null);
@@ -157,6 +166,14 @@ export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, 
             </Button>
           )}
           <span className="flex-1" />
+          {/* FORK: the same hop the row offers, from inside a patch — the hunk's three lines of
+              context is exactly where the question "what does the rest of this say" arrives. */}
+          {file !== null && onOpenFile !== undefined && (
+            <Button variant="ghost" size="sm" className="h-8 gap-1 px-2" onClick={() => onOpenFile(file)}>
+              <FileCode className="size-4" />
+              {t("diff.openFile")}
+            </Button>
+          )}
           {file !== null && (
             <Button variant="ghost" size="sm" className="h-8 gap-1 px-2" onClick={() => void copyPath()}>
               {copied ? <Check className="size-4 text-status-done" /> : <Copy className="size-4" />}
@@ -169,7 +186,7 @@ export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, 
         </div>
 
         {file === null ? (
-          <FileList stat={stat} onOpen={openFile} />
+          <FileList stat={stat} onOpen={openFile} onOpenFile={onOpenFile} />
         ) : (
           <Patch patch={patch} fontSize={fontSize} mirrorFace={mirrorFace} />
         )}
@@ -178,7 +195,15 @@ export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, 
   );
 }
 
-function FileList({ stat, onOpen }: { stat: Loaded<PaneDiffStatResponse>; onOpen: (path: string) => void }) {
+function FileList({
+  stat,
+  onOpen,
+  onOpenFile,
+}: {
+  stat: Loaded<PaneDiffStatResponse>;
+  onOpen: (path: string) => void;
+  onOpenFile?: (path: string) => void;
+}) {
   if (stat.phase === "loading") {
     return (
       <p className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
@@ -197,20 +222,31 @@ function FileList({ stat, onOpen }: { stat: Loaded<PaneDiffStatResponse>; onOpen
   return (
     <ul className="min-h-0 flex-1 divide-y divide-border overflow-y-auto overscroll-contain">
       {files.map((f) => (
-        <FileRow key={f.path} file={f} onOpen={onOpen} />
+        <FileRow key={f.path} file={f} onOpen={onOpen} onOpenFile={onOpenFile} />
       ))}
       {truncated && <li className="px-4 py-3 text-xs text-muted-foreground">{t("diff.truncated")}</li>}
     </ul>
   );
 }
 
-function FileRow({ file, onOpen }: { file: DiffFileView; onOpen: (path: string) => void }) {
+function FileRow({
+  file,
+  onOpen,
+  onOpenFile,
+}: {
+  file: DiffFileView;
+  onOpen: (path: string) => void;
+  onOpenFile?: (path: string) => void;
+}) {
   return (
-    <li>
+    // FORK: two controls on one row, as SIBLINGS rather than one nested in the other — a button
+    // inside a button is not a thing the browser renders, and the row's main tap has to keep meaning
+    // "show me the patch", which is what this sheet is for.
+    <li className="flex items-stretch">
       <button
         type="button"
         onClick={() => onOpen(file.path)}
-        className="flex min-h-11 w-full items-center gap-3 px-4 py-2 text-left hover:bg-accent active:bg-muted"
+        className="flex min-h-11 w-full min-w-0 flex-1 items-center gap-3 px-4 py-2 text-left hover:bg-accent active:bg-muted"
       >
         <span className={cn("w-4 shrink-0 text-center font-mono text-sm font-semibold", statusClass(file.status))}>
           {file.status}
@@ -236,6 +272,20 @@ function FileRow({ file, onOpen }: { file: DiffFileView; onOpen: (path: string) 
           )}
         </span>
       </button>
+      {/* A real 44px box, stated: it is the narrow control on a row whose other control is the whole
+          width, so it is the one that has to draw the floor rather than inherit it. A DELETED file
+          has nothing left on disk to open, so it gets no button — the sheet hides a control it has
+          nothing to point at, the same rule PaneActionsSheet's rows follow. */}
+      {onOpenFile !== undefined && file.status !== "D" && (
+        <button
+          type="button"
+          onClick={() => onOpenFile(file.path)}
+          aria-label={t("diff.openFileAria", { path: file.path })}
+          className="grid size-11 shrink-0 place-items-center self-center text-muted-foreground transition-colors hover:bg-accent active:bg-muted"
+        >
+          <FileCode className="size-4" />
+        </button>
+      )}
     </li>
   );
 }

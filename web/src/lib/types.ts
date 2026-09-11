@@ -1184,6 +1184,20 @@ export interface PaneDiffPatchResponse {
 
 export type PaneDiffResponse = PaneDiffStatResponse | PaneDiffPatchResponse;
 
+// ── FORK: one file of that same work tree (bridge/file-view.ts) ────────────────────────────────
+
+/** GET /api/pane/:id/file?path=… — one file, as text. A binary is a 415, never a body. */
+export interface PaneFileResponse {
+  ok: true;
+  mode: "file";
+  /** The repo-relative path that was asked for, echoed so a body cannot be mismatched to a request. */
+  path: string;
+  text: string;
+  /** The file's real size on disk — larger than `text` exactly when `truncated`. */
+  bytes: number;
+  truncated: boolean;
+}
+
 // ── FORK: the document browser (bridge/docs-list.ts) ───────────────────────────────────────────
 
 /** A knowledge-base document as the browser lists it. */

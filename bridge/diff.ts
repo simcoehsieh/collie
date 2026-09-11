@@ -160,14 +160,21 @@ export type DiffFailure = "not_found" | "outside_root" | "not_a_repo" | "bad_pat
 export type DiffStatResult = { ok: true; body: DiffStatBody } | { ok: false; reason: DiffFailure };
 export type DiffPatchResult = { ok: true; body: DiffPatchBody } | { ok: false; reason: DiffFailure };
 
-interface Repo {
+export interface Repo {
   cwd: string;
   repoRoot: string;
   branch: string;
 }
 
-/** Resolve the pane's cwd, jail it to home, and find the repo it sits in. */
-async function resolveRepo(
+/**
+ * Resolve the pane's cwd, jail it to home, and find the repo it sits in.
+ *
+ * EXPORTED so bridge/file-view.ts reads the same jail rather than a second copy of it. The rule it
+ * enforces — realpath both ends, refuse outside home, re-check the repo root because a symlinked
+ * `.git` walks out one level up — is the whole safety story of every route that turns a pane's cwd
+ * into a path on disk, and a second spelling of it is a second thing that can be subtly weaker.
+ */
+export async function resolveRepo(
   cwd: string,
   home: string,
   io: DiffIo,

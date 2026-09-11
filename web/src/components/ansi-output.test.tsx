@@ -650,3 +650,75 @@ describe("AnsiOutput — Copy on a closed code fence", () => {
     expect(container.querySelector("pre")!.className).toContain("[contain:layout_paint]");
   });
 });
+
+// ── FORK: the line chips ─────────────────────────────────────────────────────────────────────────
+//
+// A chip is the cheapest of the four shapes a non-text surface may take here: a trailing ornament,
+// inline after the line's own spans, inside the <pre>. Two things have to stay true of it, and both
+// are what let it exist at all — it adds no ROW to the grid, and it moves no CHARACTER of the shared
+// find/link offset space. The `textContent` assertions below are how that is checked: the chip's own
+// label is the only thing the mirror's text gains, and every other character stays where it was.
+describe("AnsiOutput — chips on a mirror line", () => {
+  const LOCAL = "vite ready at http://localhost:5173/\n";
+  const WEB = "docs: https://herdr.dev/docs\n";
+
+  it("offers Open for a page on the web, and does not move a character to do it", () => {
+    const { container, getByRole } = render(<AnsiOutput text={WEB} onUrlChip={vi.fn()} />);
+    expect(getByRole("button", { name: "Open https://herdr.dev/docs" })).toBeInTheDocument();
+    // The line's own text is untouched; the label rides after it, on the same row.
+    expect(container.querySelector("pre")!.textContent).toBe("docs: https://herdr.dev/docsOpen\n");
+    // And the anchor the autolinker drew is still there, on the same characters — a chip is a
+    // second way in, never a replacement for the link.
+    expect(container.querySelector("a")!.getAttribute("href")).toBe("https://herdr.dev/docs");
+  });
+
+  it("offers Preview for a server on this machine, and reports the URL as local", () => {
+    const onUrlChip = vi.fn();
+    const { getByRole } = render(<AnsiOutput text={LOCAL} onUrlChip={onUrlChip} />);
+    fireEvent.click(getByRole("button", { name: "Open the local server at http://localhost:5173/" }));
+    expect(onUrlChip).toHaveBeenCalledWith("http://localhost:5173/", true);
+  });
+
+  it("never turns a bare host:port into a link, and never chips one either", () => {
+    // lib/links.ts:19-26's argument, which this feature does not reopen: a schemeless host is not
+    // matched, and the answer to "I still want to reach it" is a chip on a line that HAS a scheme —
+    // never an anchor wrapped around characters that might be a file name or a version.
+    const { container, queryByRole } = render(
+      <AnsiOutput text={"listening on localhost:5173\n"} onUrlChip={vi.fn()} />,
+    );
+    expect(container.querySelector("a")).toBeNull();
+    expect(queryByRole("button", { name: /localhost/ })).toBeNull();
+    expect(container.querySelector("pre")!.textContent).toBe("listening on localhost:5173\n");
+  });
+
+  it("chips a file path only because the diff list already named it", () => {
+    const onFileChip = vi.fn();
+    const { getByRole, queryByRole, rerender } = render(
+      <AnsiOutput text={"wrote bridge/preview.ts\n"} onFileChip={onFileChip} filePaths={["bridge/preview.ts"]} />,
+    );
+    fireEvent.click(getByRole("button", { name: "Open bridge/preview.ts" }));
+    expect(onFileChip).toHaveBeenCalledWith("bridge/preview.ts");
+    // The SAME line with no list earns nothing: there is no path detector to be wrong.
+    rerender(<AnsiOutput text={"wrote bridge/preview.ts\n"} onFileChip={onFileChip} filePaths={[]} />);
+    expect(queryByRole("button", { name: /Open bridge/ })).toBeNull();
+  });
+
+  it("draws no chip at all when the caller wired no handler", () => {
+    // Every other caller of this component — the transcript, the playground — passes neither, and
+    // pays nothing: the grammar is not even run.
+    const { container, queryAllByRole } = render(<AnsiOutput text={WEB} filePaths={["a.ts"]} />);
+    expect(queryAllByRole("button")).toHaveLength(0);
+    expect(container.querySelector("pre")!.textContent).toBe(WEB);
+  });
+
+  it("leaves find offsets exactly where they were", () => {
+    // THE ASSERTION THE WHOLE SHAPE RESTS ON. A chip that was a text node, or a block box, would
+    // shift every match and every autolink below it — the bug the image-cluster comment records
+    // shipping once already. The match here sits AFTER the chipped line, so a shifted offset lands
+    // on the wrong characters and this fails.
+    const text = "see https://herdr.dev/docs\nand then find me here\n";
+    const { container } = render(<AnsiOutput text={text} onUrlChip={vi.fn()} query="find me" />);
+    const hit = container.querySelector("[data-find-match]")!;
+    expect(hit.textContent).toBe("find me");
+  });
+});

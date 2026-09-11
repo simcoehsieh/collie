@@ -27,6 +27,8 @@ import { createOperatorQuickReplies } from "./operator-quick-replies.ts";
 import { createOperatorFonts, resolveOperatorFont } from "./operator-fonts.ts";
 import { createOperatorLaunchers } from "./operator-launchers.ts";
 import { diffPatch, diffStat } from "./diff.ts";
+import { fileView } from "./file-view.ts";
+import { previewResponseHeaders, readPreview } from "./preview.ts";
 import { listDirs, resolveWithinRoots, type DirsBody } from "./dirs.ts";
 import { documentResponseHeaders, documentSlugFromPath, fetchDocument, type DocumentFailure } from "./docs.ts";
 import { listDocuments, listTags, normaliseDocumentQuery } from "./docs-list.ts";
@@ -193,7 +195,7 @@ export function isLoopbackPeer(address: string | null | undefined): boolean {
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
 }
 
-const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|focus|diff))?$/;
+const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|focus|diff|file))?$/;
 
 /**
  * A pairing claim's refusal, as an error code.
@@ -1132,6 +1134,52 @@ export function startServer(opts: {
       return dirsRoute(req, cfg.dirRoots);
     }
 
+    // ── FORK: one HTML file the agent wrote, framed beside the terminal (bridge/preview.ts) ──
+    //
+    // A READ, and gated as one: it hands back a page an agent already wrote into the pane's own
+    // working directory, which a read-only device may look at exactly as it may look at the diff of
+    // it. It is SESSION-SCOPED so `caller.resolve()` forwards a `?host=` call to the member whose
+    // disk holds the file — the lead has no copy of a peer's report, the same fact `/api/blobs`
+    // turns on. The pane is named in the query rather than in the path because the jail is that
+    // pane's `cwd` and nothing else: no pane, no directory to be inside, no answer.
+    //
+    // The policy the bytes go out under is bridge/preview.ts's, which IS bridge/docs.ts's; `secure()`
+    // adds no CSP of its own, so this response inherits none and the module's headers are the whole
+    // containment.
+    //
+    // The path is a LITERAL here and `PREVIEW_PATH` there, for bridge/docs.ts's reason: the route
+    // golden in solo-baseline.test.ts finds routes by reading this file for string literals, so a
+    // registration that imported the constant would silently escape the one test whose job is that a
+    // route arrives on purpose. bridge/preview.test.ts pins the two against each other.
+    if (pathname === "/api/preview/file" && req.method === "GET") {
+      const denied = caller.gate("read");
+      if (denied) return denied;
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      const paneId = url.searchParams.get("pane") ?? "";
+      const { agents, shellPanes } = rt.engine.current();
+      const pane = [...agents, ...shellPanes].find((a) => a.paneId === paneId);
+      if (!pane) return text("no such pane", 404);
+      const preview = await readPreview(pane.cwd, url.searchParams.get("path") ?? "", homedir());
+      if (!preview.ok) {
+        // ONE answer for the three refusals a client could otherwise probe the disk with — a path
+        // that fails the grammar, a path that escaped the pane's cwd, and a path that is not there.
+        // Telling them apart is the oracle `/api/fonts` refuses to hand out, and here it would map
+        // the operator's filesystem one 404 at a time. The other two are about SIZE and about a file
+        // that is present but unreadable, neither of which says anything about a path nobody named.
+        if (preview.reason === "too_large") return text("the page is too large to preview", 413);
+        if (preview.reason === "unreadable") return text("the page could not be read", 503);
+        return text("no such page", 404);
+      }
+      const etag = computeEtag(preview.body.html);
+      const headers = previewResponseHeaders(etag);
+      // RFC 9110 §15.4.5: a 304 echoes the validators and carries no body.
+      if (notModified(req.headers.get("if-none-match"), etag)) {
+        return secure(new Response(null, { status: 304, headers }));
+      }
+      return secure(new Response(preview.body.html, { headers }));
+    }
+
     // ── Blobs: the bytes a pi/omp journal named (`resolveImageUrl` in journal/pi.ts) ──
     //
     // A READ, and gated as one: it hands back a picture an agent already put in its own log, so a
@@ -1198,7 +1246,10 @@ export function startServer(opts: {
       // close) types into or restructures a terminal, so it additionally needs an authorised device.
       // `history` is a READ despite being an action segment — it only ever reads a log off disk.
       // `diff` likewise: three read-only git subcommands against the pane's cwd (bridge/diff.ts).
-      const isRead = !action || action === "history" || action === "diff";
+      // FORK: `file` is the same shape one step further — one file of that same work tree, read off
+      // disk and never written (bridge/file-view.ts). A read-only device may look at the file it may
+      // already read the diff of.
+      const isRead = !action || action === "history" || action === "diff" || action === "file";
       const denied = caller.gate(isRead ? "read" : "write");
       if (denied) return denied;
       const rt = await caller.resolve();
@@ -1235,6 +1286,8 @@ export function startServer(opts: {
       if (action === "history" && req.method === "GET")
         return paneHistory(cfg, journals, transcripts, rt.engine, paneId, url, req);
       if (action === "diff" && req.method === "GET") return paneDiff(rt.engine, paneId, url, req);
+      // FORK: one file of the pane's work tree (bridge/file-view.ts).
+      if (action === "file" && req.method === "GET") return paneFile(rt.engine, paneId, url, req);
       if (action === "reply" && req.method === "POST") return replyPane(herdr, cfg, paneId, req, audit_, device, session);
       if (action === "keys" && req.method === "POST") return keysPane(herdr, cfg, paneId, req, audit_, device, session);
       if (action === "upload" && req.method === "POST") return uploadPane(cfg, paneId, req, audit_, device, session);
@@ -2530,6 +2583,40 @@ async function paneDiff(engine: StateEngine, paneId: string, url: URL, req: Requ
       ? await diffPatch(pane.cwd, url.searchParams.get("path") ?? "", homedir())
       : await diffStat(pane.cwd, homedir());
   if (!result.ok) {
+    if (result.reason === "outside_root") return text("outside the allowed directories", 403);
+    if (result.reason === "not_a_repo") return text("not a git work tree", 404);
+    if (result.reason === "bad_path") return text("not a path in this repo", 400);
+    if (result.reason === "timeout") return text("git did not answer in time", 504);
+    return text("no such file", 404);
+  }
+  const body = JSON.stringify(result.body);
+  const etag = computeEtag(body);
+  if (notModified(req.headers.get("if-none-match"), etag)) {
+    return secure(new Response(null, { status: 304, headers: { etag, "cache-control": "no-store" } }));
+  }
+  return secure(jsonBodyResponse(body, req.headers.get("accept-encoding"), { etag }));
+}
+
+/**
+ * FORK: GET /api/pane/:id/file?path=<repo-relative> — one file of the pane's work tree, as text.
+ *
+ * The sibling of {@link paneDiff} and shaped like it deliberately: the pane's `cwd` comes off the
+ * engine's own snapshot so nothing here takes a directory from the client, only a path INSIDE the
+ * repo that cwd resolves to, and bridge/file-view.ts refuses one that is not. Validates on the
+ * body's hash, so re-opening a file nobody has touched is a 304 and no download.
+ *
+ * `binary` is a 415 rather than a 404, and it is the one refusal here worth distinguishing: the file
+ * IS there and the operator asked for the right thing — what this route cannot do is show it. A 404
+ * would send them looking for a path that exists. Everything else is the diff route's own mapping,
+ * because it is the same jail answering the same questions.
+ */
+async function paneFile(engine: StateEngine, paneId: string, url: URL, req: Request): Promise<Response> {
+  const { agents, shellPanes } = engine.current();
+  const pane = [...agents, ...shellPanes].find((a) => a.paneId === paneId);
+  if (!pane) return text("no such pane", 404);
+  const result = await fileView(pane.cwd, url.searchParams.get("path") ?? "", homedir());
+  if (!result.ok) {
+    if (result.reason === "binary") return text("not a text file", 415);
     if (result.reason === "outside_root") return text("outside the allowed directories", 403);
     if (result.reason === "not_a_repo") return text("not a git work tree", 404);
     if (result.reason === "bad_path") return text("not a path in this repo", 400);

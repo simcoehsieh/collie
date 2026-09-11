@@ -2572,3 +2572,125 @@ describe("AgentChat — a knowledge-base link opens in the panel", () => {
     );
   });
 });
+
+// ── FORK: the read-only surfaces beside the terminal ─────────────────────────────────────────────
+//
+// Three things arrive here at once, and they share one fact: the pane's own diff answer. The header
+// chip draws its numbers, the mirror's file chips look paths up in its list, and both are read once
+// per pane rather than on the mirror's 1 Hz cadence (hooks/use-pane-diff.ts).
+describe("AgentChat — what changed, the file viewer, and the mirror's chips", () => {
+  const CHANGED = {
+    ok: true,
+    mode: "stat",
+    cwd: "/home/you/proj",
+    repoRoot: "/home/you/proj",
+    branch: "main",
+    files: [
+      { path: "bridge/preview.ts", status: "A", staged: false, additions: 80, deletions: 0, binary: false },
+      { path: "bridge/server.ts", status: "M", staged: false, additions: 2, deletions: 11, binary: false },
+    ],
+    truncated: false,
+  };
+
+  function serveChanged() {
+    server.use(http.get(/\/api\/pane\/[^/]+\/diff/, () => HttpResponse.json(CHANGED, { headers: { etag: '"c1"' } })));
+  }
+
+  it("puts the work tree's totals in the header, and a tap opens the sheet they came from", async () => {
+    serveChanged();
+    const user = userEvent.setup();
+    renderChat();
+    const chip = await screen.findByRole("button", {
+      name: "What changed: 2 files, 82 added, 11 removed",
+    });
+    expect(chip.textContent).toContain("2 files");
+    expect(chip.textContent).toContain("+82");
+    expect(chip.textContent).toContain("−11");
+    await user.click(chip);
+    expect(await screen.findByRole("dialog", { name: "Changes" })).toBeInTheDocument();
+  });
+
+  it("draws no chip on a clean tree — the header's one flexible element keeps its width", async () => {
+    // The default handler answers an empty file list, which is what every other case in this file
+    // sees. A chip that was always there would take that width off the pane name permanently.
+    renderChat();
+    await screen.findByText("recent pane output");
+    expect(screen.queryByRole("button", { name: /What changed/ })).not.toBeInTheDocument();
+  });
+
+  it("a path from that list earns a chip on the mirror line that names it, and opens the viewer", async () => {
+    serveChanged();
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/file/, () =>
+        HttpResponse.json(
+          { ok: true, mode: "file", path: "bridge/preview.ts", text: "export const x = 1;\n", bytes: 20, truncated: false },
+          { headers: { etag: '"f1"' } },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderChat({ text: "wrote bridge/preview.ts\n" });
+    await user.click(await screen.findByRole("button", { name: "Open bridge/preview.ts" }));
+    expect(await screen.findByRole("dialog", { name: "bridge/preview.ts" })).toBeInTheDocument();
+    expect(await screen.findByText("export const x = 1;")).toBeInTheDocument();
+  });
+
+  it("a local server's chip opens the URL AND tells the app the server exists", async () => {
+    // The second half is the seam the annotate work consumes: nothing else in this app knows an
+    // agent has a dev server up. The first half is unconditional — a URL chip always opens the URL.
+    const onPreviewUrl = vi.fn();
+    const open = vi.fn();
+    vi.stubGlobal("open", open);
+    const user = userEvent.setup();
+    renderChat({ text: "vite ready at http://localhost:5173/\n", onPreviewUrl });
+    await user.click(
+      await screen.findByRole("button", { name: "Open the local server at http://localhost:5173/" }),
+    );
+    expect(open).toHaveBeenCalledWith("http://localhost:5173/", "_blank", "noopener,noreferrer");
+    expect(onPreviewUrl).toHaveBeenCalledWith("http://localhost:5173/");
+    vi.unstubAllGlobals();
+  });
+
+  it("a page on the web gets an Open chip and never reaches onPreviewUrl", async () => {
+    const onPreviewUrl = vi.fn();
+    const open = vi.fn();
+    vi.stubGlobal("open", open);
+    const user = userEvent.setup();
+    renderChat({ text: "docs at https://herdr.dev/docs\n", onPreviewUrl });
+    await user.click(await screen.findByRole("button", { name: "Open https://herdr.dev/docs" }));
+    expect(open).toHaveBeenCalledWith("https://herdr.dev/docs", "_blank", "noopener,noreferrer");
+    expect(onPreviewUrl).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("an HTML file the agent wrote opens in a sandboxed frame, jailed to the pane's own cwd", async () => {
+    // The end-to-end of the preview arm: the viewer offers the hop, `classifyDocLink` validates the
+    // path against THIS pane's cwd, and what frames it grants nothing.
+    const agent = fixtureAgents[0]!;
+    serveChanged();
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/file/, () =>
+        HttpResponse.json(
+          { ok: true, mode: "file", path: "report.html", text: "<h1>hi</h1>\n", bytes: 12, truncated: false },
+          { headers: { etag: '"f2"' } },
+        ),
+      ),
+      http.get(/\/api\/pane\/[^/]+\/diff/, () =>
+        HttpResponse.json(
+          {
+            ...CHANGED,
+            files: [{ path: "report.html", status: "?", staged: false, additions: 1, deletions: 0, binary: false }],
+          },
+          { headers: { etag: '"c2"' } },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderChat({ text: "wrote report.html\n" });
+    await user.click(await screen.findByRole("button", { name: "Open report.html" }));
+    await user.click(await screen.findByRole("button", { name: "Preview" }));
+    const frame = await screen.findByTitle("report.html");
+    expect(frame).toHaveAttribute("sandbox", "");
+    expect(frame.getAttribute("src")).toContain(`path=${encodeURIComponent(`${agent.cwd}/report.html`)}`);
+  });
+});

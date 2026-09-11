@@ -77,6 +77,20 @@ async function answer(route: Route, path: string): Promise<void> {
   if (/^\/api\/pane\/[^/]+\/(keys|close|rename)$/.test(path)) {
     return fulfillJson(route, { ok: true });
   }
+  // FORK: the pane's work-tree summary, read on every pane open for the header chip and the
+  // mirror's file chips (hooks/use-pane-diff.ts). A clean tree is the right default — the chip is
+  // then absent and every existing case sees the screen it was written against.
+  if (/^\/api\/pane\/[^/]+\/diff$/.test(path)) {
+    return fulfillJson(route, {
+      ok: true,
+      mode: "stat",
+      cwd: "/home/you/proj",
+      repoRoot: "/home/you/proj",
+      branch: "main",
+      files: [],
+      truncated: false,
+    });
+  }
   if (/^\/api\/pane\/[^/]+$/.test(path)) {
     return fulfillJson(route, {
       paneId: "w1:p1",

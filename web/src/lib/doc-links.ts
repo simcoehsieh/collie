@@ -24,8 +24,16 @@
 // chrome, where it reads as Collie's content and not as a stranger's. There is therefore no rule
 // here worth relaxing for convenience — when in doubt, be an external link.
 //
-// The module is pure and import-free, like lib/links.ts: given a string and a list of hostnames it
-// returns a verdict, and it never touches the network, the DOM, or configuration.
+// ── FORK: A SECOND FAMILY THAT OPENS IN-APP, AND THE SAME ASYMMETRY DECIDES IT ──────────────────
+// An HTML file the agent WROTE — announced as `/Users/op/proj/report.html` or as a `file://` URL —
+// is the other thing this bridge can serve from its own origin (`/api/preview/file`,
+// bridge/preview.ts). It is admitted under a STRICTER rule than the knowledge base's, because a
+// path has no host to be wrong about: the path must be absolute, must end `.html`/`.htm`, must
+// carry no `..`, `.git`, NUL or `%`, and must lie inside the CWD OF THE PANE the operator is
+// looking at. A caller that passes no cwd recognises none of it — the feature is absent, not broken.
+//
+// The module is pure and import-free, like lib/links.ts: given a string, a list of hostnames and a
+// directory it returns a verdict, and it never touches the network, the DOM, or configuration.
 
 /**
  * The verdict on one href.
@@ -41,6 +49,13 @@ export type DocLinkTarget =
    * label by (a sheet title, a "reopen the same doc" check).
    */
   | { kind: "doc"; slug: string; path: string }
+  /**
+   * FORK: an HTML file the agent WROTE, inside the pane's own working directory, which this bridge
+   * can serve back over `/api/preview/file` (bridge/preview.ts). `path` is the absolute path on the
+   * answering machine's disk — NOT a URL — because that is what the route takes and what the jail
+   * compares; the caller pairs it with the pane whose cwd it was validated against.
+   */
+  | { kind: "preview"; path: string }
   /** Anything else. Open it the way links have always opened: a new tab, out of the app. */
   | { kind: "external" };
 
@@ -61,6 +76,24 @@ export type DocLinkTarget =
  *     authentication as every other route instead of needing a second answer to "who is asking".
  */
 export const DOC_PROXY_PATH = "/api/doc/";
+
+/**
+ * FORK: the route that serves an agent-written HTML file back from Collie's own origin
+ * (bridge/preview.ts). Under `/api/` for `DOC_PROXY_PATH`'s reason and not a second one — an
+ * iframe's document load is a navigation, and `/^\/api\//` is what the service worker already
+ * passes to the network.
+ *
+ * The pane and the path ride the QUERY rather than the path, because the jail is that pane's own
+ * `cwd`: a preview with no pane has no directory to be inside, so there is no such request to make.
+ * The two halves are pinned against each other by bridge/preview.test.ts.
+ */
+export const PREVIEW_PROXY_PATH = "/api/preview/file";
+
+/** FORK: the URL the panel's iframe loads for one previewed file on one pane. */
+export function previewSrc(paneId: string, path: string): string {
+  const params = new URLSearchParams({ pane: paneId, path });
+  return `${PREVIEW_PROXY_PATH}?${params.toString()}`;
+}
 
 /**
  * The knowledge base's own document path. Not configurable: it is the kb's URL layout, the same one
@@ -98,6 +131,79 @@ const SLUG = /^[a-z0-9][a-z0-9-]*$/;
 
 /** One shared value: every non-document answer is the same answer, and it carries no state. */
 const EXTERNAL: DocLinkTarget = { kind: "external" };
+
+/**
+ * FORK: the extensions the preview route serves, lowercase. The bridge's `PREVIEW_EXTS`, restated —
+ * a client looser than the bridge produces a tappable link that always fails, which is the shape a
+ * user reports as "the panel is broken".
+ */
+const PREVIEW_EXTS = [".html", ".htm"] as const;
+
+/**
+ * FORK: whether `path` is an absolute POSIX path this client will offer to the preview route.
+ *
+ * The same closed rule bridge/preview.ts's `isPreviewPath` applies, minus the relative form — a
+ * string reaching this function has to be absolute to be comparable against a cwd at all, and a
+ * relative one is ambiguous about which directory it is relative to. No `..`, no `.git`, no NUL, no
+ * `%` (nothing is ever percent-decoded here, so a `%` that survives is a literal one and no
+ * previewable file has ever had one), and an `.html`/`.htm` ending.
+ */
+function isPreviewablePath(path: string): boolean {
+  if (!path.startsWith("/") || path.includes("\0") || path.includes("%")) return false;
+  if (path.split("/").some((segment) => segment === ".." || segment === ".git")) return false;
+  const lower = path.toLowerCase();
+  return PREVIEW_EXTS.some((ext) => lower.endsWith(ext));
+}
+
+/**
+ * FORK: whether `path` lies inside `cwd`, as strings that are both already absolute.
+ *
+ * A string comparison, exactly as the bridge's `withinRoot` is, and it carries the same caveat: it
+ * cannot see through a symlink. That is not a weakness HERE, because this side is only deciding
+ * whether to OFFER the tap — the bridge realpaths both ends and refuses the escape for real. The
+ * separator is appended so `/home/op/proj` does not contain `/home/op/project`.
+ */
+function insideCwd(path: string, cwd: string): boolean {
+  if (cwd === "" || !cwd.startsWith("/")) return false;
+  const root = cwd.endsWith("/") ? cwd.slice(0, -1) : cwd;
+  return path.startsWith(`${root}/`);
+}
+
+/**
+ * FORK: the `preview` verdict for a bare absolute path or a `file://` URL, or null when neither.
+ *
+ * `cwd` is the pane's own working directory and an empty one recognises NOTHING — the same fail
+ * direction `hosts` has above, and for the same reason: a default that switches itself on when
+ * configuration is missing is a default nobody can turn off. A phone that has not yet loaded a pane
+ * simply sees external links, which is what it saw before this feature existed.
+ *
+ * `file://` is admitted because it is what a tool prints when it wants a path to be clickable, and
+ * it is EXACTLY as safe as the bare path it wraps: the URL parser hands back an already-decoded
+ * pathname, the host must be empty or `localhost` (a `file://server/share` UNC path is somebody
+ * else's machine), and everything after that is the same grammar and the same containment.
+ */
+function previewTarget(href: string, cwd: string): DocLinkTarget | null {
+  let path = href;
+  if (href.startsWith("file:")) {
+    let url: URL;
+    try {
+      url = new URL(href);
+    } catch {
+      return null;
+    }
+    // A UNC-style `file://host/share` names another machine; `file:///…` and `file://localhost/…`
+    // are the two spellings of "this one".
+    if (url.host !== "" && url.host !== "localhost") return null;
+    if (url.search !== "" || url.hash !== "") return null;
+    try {
+      path = decodeURIComponent(url.pathname);
+    } catch {
+      return null;
+    }
+  }
+  if (!isPreviewablePath(path) || !insideCwd(path, cwd)) return null;
+  return { kind: "preview", path };
+}
 
 /**
  * Decide what tapping `href` should do.
@@ -140,7 +246,14 @@ const EXTERNAL: DocLinkTarget = { kind: "external" };
  * another origin: it is a fixed prefix, a slug that matched {@link SLUG}, and the parser's own
  * already-percent-encoded fragment.
  */
-export function classifyDocLink(href: string, hosts: readonly string[]): DocLinkTarget {
+export function classifyDocLink(href: string, hosts: readonly string[], cwd = ""): DocLinkTarget {
+  // FORK: the preview arm runs FIRST and on the raw string, because the two shapes it recognises are
+  // the two this function used to drop on the floor — a bare absolute path is not a URL at all, and
+  // `file:` would be refused by the https check below. It is gated on `cwd`, so a caller that passes
+  // none (every caller outside the pane view) gets exactly today's two answers.
+  const preview = previewTarget(href, cwd);
+  if (preview !== null) return preview;
+
   let url: URL;
   try {
     url = new URL(href);
