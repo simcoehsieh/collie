@@ -31,6 +31,7 @@ import type {
   DocsResponse,
   DocTagsResponse,
   PaneDiffResponse,
+  PaneFileResponse,
   QuotaResponse,
   WorktreeListResponse,
   WorktreeOpenResponse,
@@ -1111,6 +1112,57 @@ export async function fetchPaneDiff(
     if (diffCache.size > DIFF_CACHE_MAX) {
       const oldest = diffCache.keys().next().value;
       if (oldest !== undefined) diffCache.delete(oldest);
+    }
+  }
+  return data;
+}
+
+// ── FORK: one file of the pane's work tree (bridge/file-view.ts) ──────────────────────────────
+
+/** The last file body per (pane, path), with the ETag that names it — see {@link fetchPaneFile}. */
+const fileCache = new Map<string, { etag: string; response: PaneFileResponse }>();
+const FILE_CACHE_MAX = 20;
+
+/** Tests only. */
+export function __resetFileCache(): void {
+  fileCache.clear();
+}
+
+/**
+ * One file of the pane's work tree, as text.
+ *
+ * Validates exactly as {@link fetchPaneDiff} does and for the same reason: re-opening a file nobody
+ * has touched is a 304 and no download, which on a mobile link is the difference between a tap and
+ * half a megabyte. The cache is smaller than the diff's because a file body is an order of magnitude
+ * larger than a file list and a phone holds one at a time.
+ */
+export async function fetchPaneFile(
+  paneId: string,
+  path: string,
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<PaneFileResponse> {
+  const params = new URLSearchParams({ path });
+  const url = withScope(`/api/pane/${encodeURIComponent(paneId)}/file?${params.toString()}`, scope);
+  const cacheKey = `${paneScopeKey(scope, paneId)}|${path}`;
+  const cached = fileCache.get(cacheKey);
+  const headers = new Headers({ [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() });
+  if (cached) headers.set("if-none-match", cached.etag);
+  const res = await apiFetch(url, { signal: withTimeout(signal, GET_TIMEOUT_MS), headers });
+  captureBuild(res);
+  if (res.status === 304 && cached) return cached.response;
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    throw new ApiError(`${url} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  // SAFETY: a 200 on `/api/pane/:id/file` is the bridge's own `PaneFileResponse` by contract.
+  const data = (await res.json()) as PaneFileResponse;
+  const etag = res.headers.get("etag");
+  if (etag) {
+    fileCache.set(cacheKey, { etag, response: data });
+    if (fileCache.size > FILE_CACHE_MAX) {
+      const oldest = fileCache.keys().next().value;
+      if (oldest !== undefined) fileCache.delete(oldest);
     }
   }
   return data;

@@ -52,7 +52,7 @@ export function crewRouteFor(pathname: string): string | null {
  * but not across a link (or, worse, the reverse).
  */
 const FORWARDABLE: readonly RegExp[] = [
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|focus|diff))?$/,
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|focus|diff|file))?$/,
   /^tab$/,
   /^tab\/[^/]+\/(?:rename|close)$/,
   /^workspace$/,
@@ -66,6 +66,11 @@ const FORWARDABLE: readonly RegExp[] = [
   // `history` (CREW_PROTOCOL.md §9.1). The hash is matched as an opaque segment, mirroring
   // `BLOB_ROUTE` in bridge/server.ts one-for-one — `forward.test.ts` pins that correspondence.
   /^blobs\/[^/]+$/,
+  // FORK: an HTML file the agent wrote lives on ONE machine's disk, jailed to the cwd of a pane that
+  // also lives there — so a `?host=` preview is proxied byte for byte exactly like `blobs` and
+  // `pane/:id/history` (CREW_PROTOCOL.md §9.1). The pane and the path ride the QUERY, which
+  // `forwardParams` carries through untouched, so the grammar is an exact path and nothing else.
+  /^preview\/file$/,
 ];
 
 /** The inverse of {@link crewRouteFor}, for the peer dispatching a crew route into its own routes. */
@@ -89,11 +94,17 @@ export function forwardKind(route: string): ForwardKind {
   // A blob read serves a file off the owning member's disk and changes nothing there — the same
   // shape as `pane/:id/history`, and attempted against a stale member for the same reason (§10.3).
   if (route.startsWith("blobs/")) return "read";
+  // FORK: a preview serves a page off the owning member's disk and changes nothing there — a blob by
+  // another name, and attempted against a stale member for the same reason (§10.3).
+  if (route === "preview/file") return "read";
   if (!route.startsWith("pane/")) return "write";
   const action = route.split("/")[2];
   // `diff` is the fork's read-only `git diff` of the pane's work tree — the same shape as `history`:
-  // a GET that changes nothing, answered by whichever member owns the pane's disk.
-  return action === undefined || action === "history" || action === "diff" ? "read" : "write";
+  // a GET that changes nothing, answered by whichever member owns the pane's disk. `file` is that
+  // same read one step further in: the bytes of one file in that tree, never written.
+  return action === undefined || action === "history" || action === "diff" || action === "file"
+    ? "read"
+    : "write";
 }
 
 /** The pane id a route addresses, for the lead's own audit line. `undefined` for tab/workspace. */
@@ -120,9 +131,10 @@ export function forwardAuditAction(route: string): string | null {
   if (route === "launch") return "launch";
   if (route === "launchers") return null;
   if (route.startsWith("blobs/")) return null; // a read
+  if (route === "preview/file") return null; // a read (FORK)
   if (route.startsWith("tab/")) return route.endsWith("/close") ? "tab.close" : "tab.rename";
   const action = route.split("/")[2];
-  if (action === undefined || action === "history" || action === "diff") return null;
+  if (action === undefined || action === "history" || action === "diff" || action === "file") return null;
   if (action === "close" || action === "rename") return `pane.${action}`;
   return action; // reply | keys | upload
 }

@@ -337,6 +337,21 @@ export const handlers = [
   http.get(/\/api\/pane\/[^/]+$/, () =>
     HttpResponse.json({ paneId: "w1:p1", text: paneTextWithDraft(), truncated: false, revision: 1 }),
   ),
+  // FORK: the pane's work-tree summary. A DEFAULT handler because the pane view now reads it on
+  // every open (hooks/use-pane-diff.ts) for the header chip and the mirror's file chips — without
+  // one, every AgentChat case issues an unhandled request and pays MSW's warning for it. A clean
+  // tree is the right default: the chip is then absent, which is what every existing case expects.
+  http.get(/\/api\/pane\/[^/]+\/diff/, () =>
+    HttpResponse.json({
+      ok: true,
+      mode: "stat",
+      cwd: "/home/you/proj",
+      repoRoot: "/home/you/proj",
+      branch: "main",
+      files: [],
+      truncated: false,
+    }),
+  ),
   // Pane transcript history. Two turns, newest-anchored, with nothing older behind them.
   http.get(/\/api\/pane\/[^/]+\/history/, () =>
     HttpResponse.json({

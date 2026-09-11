@@ -139,6 +139,61 @@ describe("DiffSheet", () => {
     expect(screen.getByText("a.ts")).toBeInTheDocument();
   });
 
+  // ── FORK: the hop to the file viewer ──────────────────────────────────────────────────────────
+  //
+  // A SECOND affordance on the row, never a replacement for the first: the main tap still opens the
+  // patch, which is what this sheet is for. It exists because "+82 −11" is not a file you can read.
+  it("a row offers the file itself beside its patch, and the main tap still opens the patch", async () => {
+    serveDiff();
+    const onOpenFile = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <DiffSheet
+        open
+        onClose={vi.fn()}
+        paneId="w1:p1"
+        fontSize={12}
+        mirrorFace={FACE}
+        home="/home/op"
+        onOpenFile={onOpenFile}
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: "Open a.ts" }));
+    expect(onOpenFile).toHaveBeenCalledWith("a.ts");
+    // The row's own tap is untouched. Addressed by the row's WHOLE name — status letter, path and
+    // counts — because "Open a.ts" now matches a bare /a\.ts/ too, which is exactly the ambiguity
+    // two controls on one row creates.
+    await user.click(screen.getByText("a.ts").closest("button")!);
+    expect(await screen.findByText(/two!/)).toBeInTheDocument();
+    // And the patch view offers the same hop, which is exactly where the question "what does the
+    // rest of this say" arrives: a hunk carries three lines of context.
+    await user.click(screen.getByRole("button", { name: "Open file" }));
+    expect(onOpenFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("a DELETED file gets no viewer button — there is nothing left on disk to open", async () => {
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/diff/, () =>
+        HttpResponse.json(
+          { ...stat, files: [{ path: "gone.ts", status: "D", staged: true, additions: 0, deletions: 9, binary: false }] },
+          { headers: { etag: '"s2"' } },
+        ),
+      ),
+    );
+    render(
+      <DiffSheet open onClose={vi.fn()} paneId="w1:p1" fontSize={12} mirrorFace={FACE} onOpenFile={vi.fn()} />,
+    );
+    expect(await screen.findByText("gone.ts")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open gone.ts" })).not.toBeInTheDocument();
+  });
+
+  it("offers no viewer at all when the caller wired none", async () => {
+    serveDiff();
+    renderSheet();
+    expect(await screen.findByText("a.ts")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open a.ts" })).not.toBeInTheDocument();
+  });
+
   it("renders nothing while closed", () => {
     serveDiff();
     renderSheet(false);

@@ -15,6 +15,11 @@ import { useSheetPull } from "@/hooks/use-sheet-pull";
 import { DiffSheet } from "@/components/diff-sheet";
 import { QueuedSends } from "@/components/queued-sends";
 import { DocPanel } from "@/components/doc-panel";
+// FORK: the two read-only surfaces beside the Changes sheet — one file of the work tree, and one
+// HTML page the agent wrote.
+import { FileSheet } from "@/components/file-sheet";
+import { PreviewPanel } from "@/components/preview-panel";
+import { usePaneDiff } from "@/hooks/use-pane-diff";
 import { classifyDocLink } from "@/lib/doc-links";
 import { useDocHosts } from "@/lib/operator-config";
 import { useSpaceActions } from "@/hooks/use-spaces";
@@ -118,6 +123,20 @@ interface AgentChatProps {
   stalled?: boolean;
   onBack: () => void;
   onSelect: (paneId: string) => void;
+  /**
+   * FORK: a local server URL the operator tapped Preview on in the mirror — `http://localhost:5173`
+   * and friends, as `lib/line-chips.ts` recognises them.
+   *
+   * The chip ALWAYS opens the URL externally; this is the second, additive thing it does, so a
+   * caller that wires nothing loses none of the behaviour. It exists as a seam rather than as a
+   * feature: the annotate work (a screenshot of that page, taken by the bridge's own Chrome, that
+   * the operator can draw on and ask about) needs to know which URL the operator is looking at, and
+   * this is where it learns it.
+   *
+   * TODO(annotate worktree): consume this in the annotate surface — it is the only place the app
+   * knows an agent has a dev server up, and nothing else will tell it.
+   */
+  onPreviewUrl?: (url: string) => void;
 }
 
 /**
@@ -133,7 +152,10 @@ function foldLabelKey(tabCount: number, paneCount: number): MessageKey {
 
 // At most one drawer/sheet is open at a time; null = none. (The composer's own Keys/Quick/Agent
 // sheets are separate and live inside <Composer>.)
-type Drawer = "switcher" | "paneMenu" | "newTab" | "doc" | "diff" | null;
+// FORK: `file` and `preview` are the two read-only surfaces added beside `diff`. They join the one
+// `drawer` value rather than taking state of their own, because the invariant this type exists to
+// make unrepresentable — at most one open — is exactly as load-bearing for them.
+type Drawer = "switcher" | "paneMenu" | "newTab" | "doc" | "diff" | "file" | "preview" | null;
 
 /**
  * Is the caret in the MESSAGE COMPOSER's field, as opposed to any other input on the screen?
@@ -193,6 +215,7 @@ export function AgentChat({
   stalled = false,
   onBack,
   onSelect,
+  onPreviewUrl,
 }: AgentChatProps) {
   const revalidator = useRevalidator();
   const navigate = useNavigate();
@@ -305,9 +328,15 @@ export function AgentChat({
   // The document behind the panel, when one is open. Cleared on close so the frame unmounts and the
   // megabyte it was showing goes with it — the median kb document is ~860 KB of inlined images.
   const [doc, setDoc] = useState<{ slug: string; path: string; href: string } | null>(null);
+  // FORK: which file the viewer is showing, and which page the preview panel is framing. Both are
+  // cleared on close for `doc`'s reason — the frame unmounts and what it was holding goes with it.
+  const [filePath, setFilePath] = useState<string | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
   const closeDrawer = () => {
     setDrawer(null);
     setDoc(null);
+    setFilePath(null);
+    setPreviewPath(null);
     setPull(0);
   };
 
@@ -315,19 +344,54 @@ export function AgentChat({
   // and on every bridge older than the field, and empty means the classifier below declines
   // everything — so the mirror's links behave exactly as they did before this feature existed.
   const docHosts = useDocHosts();
+  // FORK: the pane's own working directory is the preview jail, client-side as well as on the
+  // bridge. An absent pane is an empty string, which recognises nothing — the same fail direction
+  // `docHosts` has, and the reason a phone that has not loaded a pane simply sees external links.
+  const paneCwd = agent?.cwd ?? "";
   // `useCallback` is not optional: AnsiOutput is memo()'d with the default shallow comparison and
   // this component re-renders on every 1.5s snapshot, so a fresh function per render would re-render
   // the whole mirror 40 times a minute.
   const handleLinkOpen = useCallback(
     (href: string) => {
-      const target = classifyDocLink(href, docHosts);
-      if (target.kind !== "doc") return false;
-      setDoc({ slug: target.slug, path: target.path, href });
-      setDrawer("doc");
-      return true;
+      const target = classifyDocLink(href, docHosts, paneCwd);
+      if (target.kind === "doc") {
+        setDoc({ slug: target.slug, path: target.path, href });
+        setDrawer("doc");
+        return true;
+      }
+      // FORK: an HTML file the agent wrote, inside this pane's cwd. Same contract as a document —
+      // returning true is what tells the anchor the app took the tap.
+      if (target.kind === "preview") {
+        setPreviewPath(target.path);
+        setDrawer("preview");
+        return true;
+      }
+      return false;
     },
-    [docHosts],
+    [docHosts, paneCwd],
   );
+
+  // FORK: what the agent changed, read once per pane and again when it settles (hooks/use-pane-diff).
+  // Two surfaces read it and neither is the Changes sheet: the header chip below, and the mirror's
+  // file chips, which are a LOOKUP against this list rather than a path heuristic.
+  const { summary: diffSummary, refresh: refreshDiff } = usePaneDiff(paneId, agent?.status, scope, agent !== undefined);
+  const diffPaths = useMemo(() => diffSummary.files.map((f) => f.path), [diffSummary]);
+
+  // FORK: a mirror chip's tap. Both are `useCallback` for `handleLinkOpen`'s reason — a fresh
+  // function per render would re-render the whole memo'd mirror on every poll.
+  const handleUrlChip = useCallback(
+    (href: string, local: boolean) => {
+      // The URL always opens where the operator expects a URL to open. A local server additionally
+      // tells the app it exists — see `onPreviewUrl`'s doc for who is waiting to hear that.
+      window.open(href, "_blank", "noopener,noreferrer");
+      if (local) onPreviewUrl?.(href);
+    },
+    [onPreviewUrl],
+  );
+  const handleFileChip = useCallback((path: string) => {
+    setFilePath(path);
+    setDrawer("file");
+  }, []);
 
   // ── ZEN MODE — chrome-free, mirror-only viewing ───────────────────────────────
   // On a phone the chrome IS most of the viewport: measured at 390x844 this route spends 199px above
@@ -1323,6 +1387,38 @@ export function AgentChat({
           rightLead={
             agent ? (
               <>
+                {/* FORK: "3 files · +82 −11", and a tap opens the sheet those numbers came from.
+                    It answers "did anything happen while I was away" without opening anything,
+                    which is the complaint a finished turn most often earns.
+
+                    IT STANDS HERE, NOT BESIDE THE STATUS WORD. The word left this row for the
+                    composer's status band (see the ⋮'s own note below), and that band is a
+                    <button> that folds the controls row — a second button inside it is not a
+                    thing the browser renders. So the chip joins the header's ACTION cluster,
+                    where the budget allows two and the ⋮ is spending one.
+
+                    DRAWN ONLY WHEN THERE IS SOMETHING TO SAY. A clean tree, a pane that is not a
+                    work tree, and a bridge older than the route all render nothing — which is
+                    what keeps the header's one flexible element, the pane name, at full width in
+                    the common case. The budget rule is that the newest FIXED element leaves when
+                    the row would squeeze the Identity; this one leaves on its own, most of the
+                    time, by having no numbers. */}
+                {diffSummary.fileCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setDrawer("diff")}
+                    aria-label={t("diff.chipAria", {
+                      files: String(diffSummary.fileCount),
+                      additions: String(diffSummary.additions),
+                      deletions: String(diffSummary.deletions),
+                    })}
+                    className="flex min-h-11 shrink-0 items-center gap-1 rounded-full px-2 font-mono text-[10px] tabular-nums text-muted-foreground transition-colors active:bg-muted/60"
+                  >
+                    <span>{t("diff.chipFiles", { count: String(diffSummary.fileCount) })}</span>
+                    <span className="text-status-done">+{diffSummary.additions}</span>
+                    <span className="text-status-blocked">−{diffSummary.deletions}</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setDrawer("paneMenu")}
@@ -1875,6 +1971,11 @@ export function AgentChat({
                     onLinkOpen={handleLinkOpen}
                     images={mirrorImages}
                     onImageClusterCount={setImageClusterCount}
+                    // FORK: the trailing-ornament chips. `filePaths` is the pane's own diff list, so
+                    // the file chip is a lookup and never a guess (lib/line-chips.ts).
+                    filePaths={diffPaths}
+                    onUrlChip={handleUrlChip}
+                    onFileChip={handleFileChip}
                   />
                 </>
               ) : (
@@ -2196,13 +2297,51 @@ export function AgentChat({
         {/* FORK: what the agent changed in this pane's work tree, read-only (bridge/diff.ts). */}
         <DiffSheet
           open={drawer === "diff"}
-          onClose={closeDrawer}
+          onClose={() => {
+            // Closing it re-reads the summary: the operator may have been looking at a tree the
+            // agent moved without changing state, which is the one moment `usePaneDiff`'s
+            // status trigger cannot catch.
+            refreshDiff();
+            closeDrawer();
+          }}
           paneId={paneId}
           scope={scope}
           fontSize={prefs.fontSize}
           mirrorFace={mirrorFace}
           home={launchersHome}
+          // FORK: a row's second affordance — the file itself rather than its patch. It hands over
+          // to the viewer rather than growing a third view inside the sheet, because an UNCHANGED
+          // file has no row here at all and the viewer has to stand on its own anyway.
+          onOpenFile={(path) => {
+            setFilePath(path);
+            setDrawer("file");
+          }}
         />
+        {/* FORK: one file of that same work tree (bridge/file-view.ts) — the question a patch cannot
+            answer, since an unchanged file has no diff and a hunk's context is three lines. */}
+        <FileSheet
+          open={drawer === "file"}
+          onClose={closeDrawer}
+          paneId={paneId}
+          path={filePath}
+          scope={scope}
+          fontSize={prefs.fontSize}
+          mirrorFace={mirrorFace}
+          // An `.html` in the work tree is a page this bridge can also FRAME, so the viewer offers
+          // the hop rather than making the operator find the path a second way. Validated through
+          // the same classifier a tapped link goes through — the sheet holds a repo-relative path
+          // and the preview route takes one inside the pane's cwd, so the join happens here, once.
+          onPreview={(path) => {
+            const target = classifyDocLink(`${paneCwd}/${path}`, docHosts, paneCwd);
+            if (target.kind !== "preview") return;
+            setPreviewPath(target.path);
+            setDrawer("preview");
+          }}
+        />
+        {/* FORK: an HTML page the agent WROTE, framed beside the terminal (bridge/preview.ts).
+            Mounted at THIS level for `DocPanel`'s reason — a `fixed inset-0` element is positioned
+            by its nearest transformed ancestor and the mirror lives inside a scroll container. */}
+        <PreviewPanel open={drawer === "preview"} onClose={closeDrawer} paneId={paneId} path={previewPath} />
         <PaneActionsSheet
           open={drawer === "paneMenu"}
           onClose={closeDrawer}

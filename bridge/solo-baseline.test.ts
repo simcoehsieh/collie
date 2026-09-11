@@ -581,7 +581,11 @@ describe("solo zero-tax — routes", () => {
       // `diff` is the fork's read-only "what did the agent change" view (bridge/diff.ts): three
       // read-only git subcommands against the pane's own cwd, read-gated like `history`, and it
       // is named here for the reason every other action is — a route arrives on purpose.
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|focus|diff))?$/",
+      // `file` is that same read one step further in (bridge/file-view.ts): the text of ONE file in
+      // that work tree, capped, refused when it is not UTF-8, and written never. It answers the
+      // question a patch cannot — an unchanged file has no diff, and a hunk's context is three
+      // lines — and it is read-gated beside `diff` because it reads the tree `diff` describes.
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|focus|diff|file))?$/",
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktree(?:\\/(open))?$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktrees$/",
@@ -650,6 +654,19 @@ describe("solo zero-tax — routes", () => {
       // for the same reason every other route is: it arrives on purpose, and it leaves on purpose.
       "/api/pack",
       "/api/pair",
+      // One HTML file the agent WROTE, framed beside the terminal (bridge/preview.ts) — a SOLO route
+      // that legitimately extends this list, named here rather than exempted. It exists because on a
+      // phone "I wrote the report to ~/work/report.html" is otherwise a dead end: an installed PWA
+      // has no file manager, `file://` is unreachable from a web origin, and the bytes are on the
+      // other side of a tunnel. Read-gated and session-scoped like `/api/blobs/*`, so a `?host=`
+      // call reaches the member whose disk holds the file; jailed to the PANE's own cwd, which is
+      // narrower than the repo `diff` uses and narrower again than the home `dirs` uses.
+      //
+      // It goes out under bridge/docs.ts's policy — the same constant, not a copy — so the page
+      // lands in an opaque origin and can reach neither Collie's storage nor its API. That is also
+      // why a LIVE dev server is not served here: `default-src 'none'` refuses `/@vite/client`, and
+      // relaxing it is a different feature with its own argument.
+      "/api/preview/file",
       // The usage card (bridge/quota.ts) — a SOLO route that legitimately extends this list, named
       // here rather than exempted. It runs the command the operator named in COLLIE_QUOTA_COMMAND
       // and answers its JSON normalised; read-gated like the document browser, 404 when no command

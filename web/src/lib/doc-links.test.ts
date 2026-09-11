@@ -175,6 +175,80 @@ describe("classifyDocLink", () => {
     expect(kind("")).toBe("external");
   });
 
+  // ── FORK: the preview arm ────────────────────────────────────────────────────────────────────
+  //
+  // A second family opens in-app: an HTML file the AGENT wrote, which the bridge serves back from
+  // its own origin (`/api/preview/file`). The same asymmetry the module's header states decides
+  // every case here — a rejection costs a link that stays external, an accept is Collie painting
+  // somebody's file inside its own chrome — and the jail is one directory rather than a host list,
+  // so the rules are tighter rather than looser.
+  describe("the preview arm", () => {
+    const CWD = "/home/op/proj";
+    /** The verdict for a path against this pane's cwd. */
+    const preview = (href: string, cwd = CWD) => classifyDocLink(href, [KB], cwd);
+
+    it("recognises an absolute path to an HTML file inside the pane's cwd", () => {
+      expect(preview(`${CWD}/out/report.html`)).toEqual({
+        kind: "preview",
+        path: `${CWD}/out/report.html`,
+      });
+    });
+
+    it("recognises the file:// form a tool prints when it wants the path to be clickable", () => {
+      // Exactly as safe as the bare path it wraps: the parser hands back an already-decoded
+      // pathname and everything after that is the same grammar and the same containment.
+      expect(preview(`file://${CWD}/report.html`)).toEqual({ kind: "preview", path: `${CWD}/report.html` });
+      expect(preview(`file://localhost${CWD}/report.html`)).toEqual({
+        kind: "preview",
+        path: `${CWD}/report.html`,
+      });
+    });
+
+    it("decodes a file:// pathname before the grammar, never after", () => {
+      // `%20` is an ordinary space in a filename and must survive; a double-encoded separator
+      // decodes to a literal `%2e%2e%2f`, which the `%` rule then refuses.
+      expect(preview(`file://${CWD}/my%20report.html`)).toEqual({
+        kind: "preview",
+        path: `${CWD}/my report.html`,
+      });
+      expect(preview(`file://${CWD}/%252e%252e%252fx.html`).kind).toBe("external");
+    });
+
+    it("recognises NOTHING without a cwd, which is the shape every other caller has", () => {
+      // The fail direction the module's header states: a default that switches itself on when
+      // configuration is missing is a default nobody can turn off. A phone that has not loaded a
+      // pane sees exactly the two verdicts this function had before the arm existed.
+      expect(classifyDocLink(`${CWD}/report.html`, [KB]).kind).toBe("external");
+      expect(classifyDocLink(`file://${CWD}/report.html`, [KB]).kind).toBe("external");
+    });
+
+    it.each([
+      ["a path above the cwd", "/home/op/.ssh/id_rsa.html"],
+      ["a sibling directory that merely starts the same way", "/home/op/project/report.html"],
+      ["the cwd itself", CWD],
+      ["a parent segment, however it is spelled", `${CWD}/../secrets/report.html`],
+      ["the git directory", `${CWD}/.git/config.html`],
+      ["a percent sign, which is never decoded a second time", `${CWD}/re%2fport.html`],
+      ["a NUL byte", `${CWD}/report.html\u0000.png`],
+      ["a script, which would be served as a page", `${CWD}/bundle.js`],
+      ["a key, for the same reason", `${CWD}/id_rsa`],
+      ["an extension that merely contains the word", `${CWD}/report.html.bak`],
+      ["a relative path, which names no directory to be inside", "out/report.html"],
+      ["another machine's UNC share", `file://fileserver${CWD}/report.html`],
+      ["a query, which the route has nowhere to put", `file://${CWD}/report.html?x=1`],
+    ])("leaves %s external", (_why, href) => {
+      expect(preview(href).kind).toBe("external");
+    });
+
+    it("does not shadow the document arm, and is not shadowed by it", () => {
+      // Both families are live at once on a pane view, so the order they are asked in has to be a
+      // decision rather than an accident: a kb URL is still a document, and a path is still a path.
+      expect(preview(`https://${KB}/d/notes`).kind).toBe("doc");
+      expect(preview(`${CWD}/report.html`).kind).toBe("preview");
+      expect(preview("https://example.test/report.html").kind).toBe("external");
+    });
+  });
+
   it("ships a default host list the integrator can fall back to", () => {
     // Pinned because the constant is the wiring's escape hatch when configuration is silent; if it
     // stopped naming the operator's kb, the fallback would quietly recognise nothing.

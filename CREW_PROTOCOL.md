@@ -1113,6 +1113,17 @@ answers `404` to a lead that does** — the same shape a phone gets from a solo 
 such blob, so the client's rendering of "no image here" covers both without a version check.
 `CREW_PROTOCOL_VERSION` does not move.
 
+**A file of the work tree and a previewed page are proxied the same way** *(added 2026-09-11)*. `GET
+/api/pane/<id>/file?path=…` returns one text file out of the tree `GET /api/pane/<id>/diff` already
+describes, and `GET /api/preview/file?pane=<id>&path=…` returns one HTML file the agent wrote inside
+that pane's own `cwd`. Both are reads with no write verb behind them, both name a file that exists
+only on the machine running the pane, and the lead holds neither — so `?host=` forwards each one and
+the peer's answer is re-emitted unchanged, ETag included, exactly as `history` and `blobs` are. The
+addition is additive-optional (§7.1): **a lead without the routes never calls them, and a peer
+without them answers `404` to a lead that does** — which the client already renders as "no such
+file", the same answer a local bridge gives for a path that is not there, so no version check is
+needed on either side. `CREW_PROTOCOL_VERSION` does not move.
+
 The phone's per-pane ETag/body cache is keyed by `(host, session, paneId)` (§4) so a `w1:p1` on one
 host can never 304 into another host's mirror — the same failure the session component already
 prevents (`web/src/lib/api.ts:201-203`).
