@@ -630,8 +630,10 @@ interface HistoryCacheEntry {
 }
 const historyCache = new Map<string, HistoryCacheEntry>();
 // A page is the largest body this module caches (up to 5000 turns on "show entire history"), so the
-// cap is tight: the pane being watched, the one before it, and the "load older" pages in hand.
-const HISTORY_CACHE_MAX = 8;
+// cap is tight: the pane being watched, the one before it, and the "load older" pages in hand. Named
+// apart from `lib/loaders.ts`'s `HISTORY_CACHE_MAX`, which bounds a different thing — the transcript
+// the history VIEW repaints from, keyed per pane rather than per page.
+const HISTORY_BODY_CACHE_MAX = 8;
 
 /** Tests only: forget every cached history page. */
 export function __resetHistoryCache(): void {
@@ -676,7 +678,7 @@ export async function fetchHistory(
   const etag = res.headers.get("etag");
   if (etag) {
     historyCache.set(url, { etag, response: data });
-    if (historyCache.size > HISTORY_CACHE_MAX) {
+    if (historyCache.size > HISTORY_BODY_CACHE_MAX) {
       const oldest = historyCache.keys().next().value;
       if (oldest !== undefined) historyCache.delete(oldest);
     }
