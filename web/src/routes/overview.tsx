@@ -12,7 +12,7 @@ import { useLocale } from "@/hooks/use-locale";
 import { saveDataRequested } from "@/hooks/use-polling";
 import { ambientPanes, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
-import { homePath, panePath } from "@/lib/nav";
+import { homePath, panePath, artifactPath, artifactsPath } from "@/lib/nav";
 import { tailFor, useOverviewTails } from "@/lib/overview";
 import { paneParts } from "@/lib/pane-name";
 import { useRootData } from "@/lib/route-data";
@@ -20,6 +20,9 @@ import type { Scope } from "@/lib/scope";
 import { triage } from "@/lib/triage";
 import type { AgentView } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { ArtifactCard } from "@/components/artifact-card";
+import { SectionLabel } from "@/components/ui/section-label";
+import { latestVersions, useArtifacts } from "@/lib/artifacts";
 
 // FORK: every agent pane on one screen, each with the last few lines of its mirror.
 //
@@ -51,6 +54,9 @@ export function OverviewRoute() {
   );
   const version = useOverviewTails(ordered, data.scope, data.ts, prefs.lowPower || saveDataRequested());
 
+  // FORK: the five newest artifacts across the herd (lib/artifacts.ts).
+  const { artifacts: library } = useArtifacts(data.scope);
+  const recentArtifacts = useMemo(() => latestVersions(library).slice(0, 5), [library]);
   const open = useCallback(
     (pane: AgentView) =>
       navigate(panePath(pane.paneId, paneScope(data.scope, pane, data.servers, data.sessions))),
@@ -80,6 +86,26 @@ export function OverviewRoute() {
         }
       />
       <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
+        {/* FORK: the newest things the agents made, above the herd — five rows, then the library. */}
+        {recentArtifacts.length > 0 && (
+          <section className="mb-4" data-slot="overview-artifacts">
+            <div className="mb-2 flex items-center">
+              <SectionLabel>{t("artifacts.recent")}</SectionLabel>
+              <button
+                type="button"
+                className="ml-auto text-xs font-medium text-primary"
+                onClick={() => navigate(artifactsPath(data.scope))}
+              >
+                {t("artifacts.sheet.all")}
+              </button>
+            </div>
+            <div className="flex flex-col gap-2">
+              {recentArtifacts.map((a) => (
+                <ArtifactCard key={a.id} artifact={a} showPane onOpen={(x) => navigate(artifactPath(x.id, data.scope))} />
+              ))}
+            </div>
+          </section>
+        )}
         {ordered.length === 0 ? (
           // FORK: this WAS one grey sentence and 700px of nothing — the whole route, on a phone.
           // Two states, and they are not the same claim: an outage knows nothing about the herd

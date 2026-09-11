@@ -51,6 +51,9 @@ export type NoteAnchor =
   | { kind: "diff"; file: string; hunkHeader: string; lineRange?: string; excerpt: string }
   | { kind: "transcript"; turnId: string; role: string; excerpt: string }
   | { kind: "doc"; slug: string; title: string }
+  // FORK: one artifact the agent made (lib/artifacts.ts) — the whole thing, like a document: its
+  // body is framed sandboxed, so no passage can be captured.
+  | { kind: "artifact"; id: string; slug: string; title: string; version: number }
   | {
       kind: "element";
       selector: string;
@@ -265,6 +268,8 @@ export function anchorKey(anchor: NoteAnchor): string {
       return `transcript ${anchor.turnId}`;
     case "doc":
       return `doc ${anchor.slug}`;
+    case "artifact":
+      return `artifact ${anchor.id}`;
     case "element":
       return `element ${anchor.selector}`;
   }
@@ -284,6 +289,8 @@ function clampAnchor(anchor: NoteAnchor): NoteAnchor {
     case "transcript":
       return { ...anchor, excerpt: clamp(anchor.excerpt, NOTE_EXCERPT_MAX) };
     case "doc":
+      return anchor;
+    case "artifact":
       return anchor;
     case "element":
       return { ...anchor, text: clamp(anchor.text, NOTE_EXCERPT_MAX) };
@@ -508,6 +515,8 @@ export function anchorLabel(anchor: NoteAnchor): string {
       return `Transcript · ${anchor.role}`;
     case "doc":
       return `Document · ${anchor.title || anchor.slug}`;
+    case "artifact":
+      return `Artifact · ${anchor.title}`;
     case "element":
       return `Element · ${anchor.selector}`;
   }
@@ -522,6 +531,8 @@ export function anchorTarget(anchor: NoteAnchor): string {
       return anchor.turnId.slice(0, 6);
     case "doc":
       return anchor.title || anchor.slug;
+    case "artifact":
+      return anchor.title;
     case "element":
       return anchor.selector;
   }
@@ -535,6 +546,8 @@ export function anchorExcerpt(anchor: NoteAnchor): string {
     case "transcript":
       return anchor.excerpt;
     case "doc":
+      return "";
+    case "artifact":
       return "";
     case "element":
       return anchor.text;
@@ -559,6 +572,15 @@ function anchorFields(anchor: NoteAnchor): string[] {
         // `sandbox=""` into an opaque origin, so the parent cannot read a selection out of it. An
         // agent told only "Document: x" would reasonably assume the operator pointed at a passage.
         "**Note:** the document is framed sandboxed, so no text selection could be captured — this note is anchored to the whole document.",
+      ];
+    case "artifact":
+      return [
+        `**Artifact:** ${anchor.title} (v${String(anchor.version)})`,
+        `**Id:** \`${anchor.id}\``,
+        `**Slug:** \`${anchor.slug}\``,
+        // Same fact as the document's: the body is framed sandboxed, so this note is about the whole
+        // artifact. An agent can re-read its own file by id (`collie artifact list`).
+        "**Note:** the artifact is framed sandboxed, so no text selection could be captured — this note is anchored to the whole artifact.",
       ];
     case "element": {
       const rows = [

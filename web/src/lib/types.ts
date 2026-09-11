@@ -1370,3 +1370,49 @@ export interface ProbeResponse {
   /** Present only when the page itself resolved it — never guessed. */
   sourceFile?: string;
 }
+
+// ── FORK: Artifacts — what an agent made, filed under the pane that made it (bridge/artifacts.ts) ──
+
+export type ArtifactKind = "html" | "markdown" | "image" | "text" | "file";
+
+/** The pane an artifact was stamped with once its session met a live agent; null until then. */
+export interface ArtifactPaneRef {
+  paneId: string;
+  workspaceId: string;
+  workspaceLabel: string;
+  agent: string;
+}
+
+export interface ArtifactView {
+  id: string;
+  /** Groups versions: the same slug registered again is a new version of the same artifact. */
+  slug: string;
+  version: number;
+  title: string;
+  kind: ArtifactKind;
+  ext: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  sourcePath: string | null;
+  createdMs: number;
+  tags: string[];
+  pinned: boolean;
+  /** The kb slug once promoted, else null. */
+  kbSlug: string | null;
+  harness: string | null;
+  /** A source that has no pane by design ("scheduler"), else null. */
+  origin: string | null;
+  pane: ArtifactPaneRef | null;
+}
+
+export interface ArtifactsResponse {
+  ok: true;
+  artifacts: ArtifactView[];
+}
+
+export interface ArtifactResponse {
+  ok: true;
+  artifact: ArtifactView;
+}
+

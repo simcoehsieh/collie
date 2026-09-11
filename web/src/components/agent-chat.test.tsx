@@ -26,6 +26,8 @@ import { __resetOperatorCommands } from "@/lib/operator-config";
 import { submitPromptOption } from "@/lib/prompt-action";
 import { submitWizardKeys } from "@/lib/wizard-action";
 import { fixtureAgents, fixtureShellPanes, fixtureTabs } from "@/test/handlers";
+import { fixtureArtifact } from "@/test/artifacts";
+import { __resetArtifacts } from "@/lib/artifacts";
 import { CrewProvider } from "./crew-provider";
 import type { AgentStatus, AgentView, ServerSummary, TabView } from "@/lib/types";
 import { paneScopeKey } from "@/lib/scope";
@@ -2835,3 +2837,44 @@ describe("AgentChat — chat mode", () => {
     expect(toggle()).not.toBeInTheDocument();
   });
 });
+
+// ── FORK: ARTIFACTS — the chip, the sheet, the row ──────────────────────────
+// What this pane's agent made is a header chip on the notes chip's terms (drawn only when there is
+// something to count), a sheet off it, and a row in the pane menu. All three gated on the same
+// count, so a pane that made nothing spends nothing.
+describe("AgentChat — artifacts", () => {
+  beforeEach(() => __resetArtifacts());
+  afterEach(() => __resetArtifacts());
+
+  it("shows the chip only when this pane made something, and opens the sheet with its rows", async () => {
+    server.use(
+      http.get("/api/artifacts", () =>
+        HttpResponse.json({
+          ok: true,
+          // Newest first, as the bridge lists them.
+          artifacts: [
+            fixtureArtifact({ id: "a2-00000002", slug: "q3-report", version: 2, title: "Q3 report v2" }),
+            fixtureArtifact({ id: "a1-00000001", title: "Q3 report" }),
+            fixtureArtifact({ id: "b1-00000001", slug: "other", title: "Other pane's", pane: { paneId: "w2:p1", workspaceId: "w2", workspaceLabel: "collie", agent: "codex" } }),
+          ],
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderChat();
+    // One slug, two versions: the count is of artifacts, not of versions.
+    const chip = await screen.findByRole("button", { name: "1 artifacts — open the list" });
+    await user.click(chip);
+    expect(await screen.findByText("Made by this pane")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Q3 report v2" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Other pane's" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Q3 report" })).not.toBeInTheDocument();
+  });
+
+  it("draws no chip for a pane that made nothing", async () => {
+    renderChat();
+    await screen.findByRole("button", { name: "Pane actions" });
+    expect(screen.queryByRole("button", { name: /artifacts — open the list/ })).not.toBeInTheDocument();
+  });
+});
+

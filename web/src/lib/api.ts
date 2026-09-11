@@ -38,6 +38,8 @@ import type {
   ShotResponse,
   WorktreeListResponse,
   WorktreeOpenResponse,
+  ArtifactResponse,
+  ArtifactsResponse,
 } from "./types";
 import type { SubscribeBody } from "./push";
 
@@ -1527,3 +1529,62 @@ export async function probeBridge(): Promise<BridgeProbe> {
     return "down";
   }
 }
+
+// ── FORK: Artifacts — the library the agents fill (bridge/artifacts.ts) ────────────────────────
+
+export interface ArtifactsQuery {
+  pane?: string;
+  workspace?: string;
+  slug?: string;
+}
+
+/** The library, newest first — the whole of it, or one pane's, one space's, one slug's versions. */
+export function fetchArtifacts(query: ArtifactsQuery = {}, scope?: Scope, signal?: AbortSignal): Promise<ArtifactsResponse> {
+  const params = new URLSearchParams();
+  if (query.pane) params.set("pane", query.pane);
+  if (query.workspace) params.set("workspace", query.workspace);
+  if (query.slug) params.set("slug", query.slug);
+  const q = params.toString();
+  return req<ArtifactsResponse>(withScope(q ? `/api/artifacts?${q}` : "/api/artifacts", scope), { signal });
+}
+
+export function fetchArtifact(id: string, scope?: Scope, signal?: AbortSignal): Promise<ArtifactResponse> {
+  return req<ArtifactResponse>(withScope(`/api/artifacts/${encodeURIComponent(id)}`, scope), { signal });
+}
+
+export interface ArtifactPatchBody {
+  title?: string;
+  tags?: string[];
+  pinned?: boolean;
+  kbSlug?: string | null;
+}
+
+export function patchArtifact(id: string, patch: ArtifactPatchBody, scope?: Scope): Promise<ArtifactResponse> {
+  return req<ArtifactResponse>(withScope(`/api/artifacts/${encodeURIComponent(id)}`, scope), {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+/** Keep the page the preview panel is looking at: the bridge copies it off the pane's cwd. */
+export function saveArtifactFromPane(paneId: string, path: string, title: string | null, scope?: Scope): Promise<ArtifactResponse> {
+  return req<ArtifactResponse>(withScope("/api/artifacts", scope), {
+    method: "POST",
+    body: JSON.stringify(title === null ? { pane: paneId, path } : { pane: paneId, path, title }),
+  });
+}
+
+export function deleteArtifact(id: string, scope?: Scope): Promise<void> {
+  return req<void>(withScope(`/api/artifacts/${encodeURIComponent(id)}`, scope), { method: "DELETE" });
+}
+
+/**
+ * The bytes, for a frame (`sandbox=""`) or an `<img>`. An `/api/` path for preview's two reasons
+ * (lib/doc-links.ts): the service worker hands every `/api/` request to the network, and the path
+ * is already behind the device guard. The scope rides along so a peer's artifact is fetched from
+ * the machine holding it.
+ */
+export function artifactRawSrc(id: string, scope?: Scope): string {
+  return withScope(`/api/artifacts/${encodeURIComponent(id)}/raw`, scope);
+}
+

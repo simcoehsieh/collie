@@ -2033,7 +2033,10 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // they been given a route of their own, this number would have had to move — and a route of
     // their own is exactly the shape that forgets to resolve and serves the lead's answer under a
     // peer's name.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(12);
+    // FORK: 12 → 17 for the five artifact arms (list, save-from-preview, one record / its bytes, patch, delete —
+    // bridge/artifacts.ts), each resolving through the same gate so a `?host=` call is answered by
+    // the runtime whose agents carry the sessions the records name.
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(17);
     // Exactly seven `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS

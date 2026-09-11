@@ -300,7 +300,10 @@ export class PaneReads {
  */
 export type PokeEvent =
   | { kind: "snapshot"; etag?: string }
-  | { kind: "pane"; paneId: string; etag?: string };
+  | { kind: "pane"; paneId: string; etag?: string }
+  // FORK: the artifacts directory changed — a `collie artifact add` from a pane, a delete from the
+  // phone. Carries no etag: the list is small and the phone simply refetches it (bridge/artifacts.ts).
+  | { kind: "artifacts" };
 
 export interface EventSubscriber {
   /** The panes this stream follows — only pokes for these are delivered. Empty is the herd-only
@@ -343,6 +346,11 @@ export class EventHub {
 
   /** A pane's bytes moved: the streams following it should re-read it. A stream may follow SEVERAL
    *  panes (the Overview grid), so this is a set membership test rather than an equality. */
+  /** FORK: every subscriber, because the library is global — a pane filter is the phone's. */
+  pokeArtifacts(): void {
+    this.broadcast({ kind: "artifacts" });
+  }
+
   pokePane(paneId: string, etag?: string): void {
     const event: PokeEvent = { kind: "pane", paneId };
     if (etag !== undefined) event.etag = etag;

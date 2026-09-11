@@ -20,13 +20,14 @@ import {
 import { AgentIcon } from "@/components/agent-icon";
 import { MarkdownText } from "@/components/markdown-text";
 import { TurnNoteHandle, type NotedTurn } from "@/components/note-badge";
+import { ArtifactCard } from "@/components/artifact-card";
 import { TodoCard } from "@/components/todo-card";
 import { cn } from "@/lib/utils";
 import { imageSrc } from "@/lib/api";
 import { toolKind, toolStatus, type ToolKind, type ToolStatus } from "@/lib/tool-kind";
 import { splitHighlight } from "@/lib/transcript-search";
 import type { Scope } from "@/lib/scope";
-import type { TranscriptEntry, TranscriptPart } from "@/lib/types";
+import type { ArtifactView, TranscriptEntry, TranscriptPart } from "@/lib/types";
 import { getLocaleSnapshot, t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
@@ -340,6 +341,8 @@ export function TranscriptView({
   scope,
   onTurnLongPress,
   working = false,
+  artifacts,
+  onOpenArtifact,
 }: {
   entries: TranscriptEntry[];
   /** The pane's agent name, for the per-turn brand icon. */
@@ -362,6 +365,9 @@ export function TranscriptView({
    * latest-reply card render exactly as they did before this existed.
    */
   working?: boolean;
+  /** FORK: the artifacts under each turn, keyed by turn uuid (lib/artifacts.ts attaches them). */
+  artifacts?: ReadonlyMap<string, readonly ArtifactView[]>;
+  onOpenArtifact?: (artifact: ArtifactView) => void;
 }) {
   useLocale();
   // Consecutive turns from the same speaker are GROUPED — only the first of a run carries the
@@ -422,6 +428,11 @@ export function TranscriptView({
                 working={working}
               />
             )}
+            {/* FORK: what this turn MADE — the artifacts registered while it was the latest turn
+                (lib/artifacts.ts). Rows, not parts: the journal never mentions them, the library does. */}
+            {artifacts?.get(entry.uuid)?.map((a) => (
+              <ArtifactCard key={a.id} artifact={a} onOpen={onOpenArtifact ?? (() => undefined)} />
+            ))}
           </div>
         );
       })}

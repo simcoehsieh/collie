@@ -25,7 +25,12 @@ import { normalizeScope, type Scope } from "./scope";
  * nothing rewrites the body on its way out (see the bridge's own note). A poke with no stamp, or one
  * the page cannot match, is the poke that always shipped.
  */
-export type Poke = { kind: "snapshot"; etag?: string } | { kind: "pane"; paneId: string; etag?: string };
+export type Poke =
+  | { kind: "snapshot"; etag?: string }
+  | { kind: "pane"; paneId: string; etag?: string }
+  // FORK: the artifacts library changed (bridge/artifacts.ts). No stamp: the list is small and is
+  // simply refetched by whoever is showing it (lib/artifacts.ts).
+  | { kind: "artifacts" };
 
 export interface LiveFeedHandlers {
   onPoke: (poke: Poke) => void;
@@ -123,6 +128,7 @@ export function parsePoke(data: string): Poke | null {
     if (etag) poke.etag = etag;
     return poke;
   }
+  if (kind === "artifacts") return { kind: "artifacts" };
   if (kind === "pane") {
     const paneId = asJsonString(parsed.paneId);
     if (paneId !== undefined && paneId !== "") {

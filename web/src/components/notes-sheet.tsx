@@ -62,6 +62,7 @@ const KIND_LABEL = {
   transcript: "notes.kind.transcript",
   doc: "notes.kind.doc",
   element: "notes.kind.element",
+  artifact: "notes.kind.artifact",
 } satisfies Record<NoteAnchor["kind"], MessageKey>;
 
 /** "#2 · turn 1a2b3c" — what a chip and a list row say about where a note points. */

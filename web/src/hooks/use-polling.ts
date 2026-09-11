@@ -23,6 +23,7 @@ import {
 } from "@/lib/poll-intent";
 import { getRequestedLines, type HomeData } from "@/lib/loaders";
 import { deliverTailPoke, TAIL_LINES, useWatchedTailPanes } from "@/lib/overview";
+import { deliverArtifactPoke } from "@/lib/artifacts";
 import { useLowPower } from "@/hooks/use-dash-prefs";
 import { crewMoving, runInFlight } from "@/lib/update-ribbon";
 import type { Scope } from "@/lib/scope";
@@ -96,6 +97,8 @@ export const POKE_GAP_MS = 400;
  * is an exact tag match against the map that fetch would have validated against.
  */
 export function alreadyHeld(poke: Poke, scope?: Scope, viewAll = false): boolean {
+  // FORK: an artifacts poke carries no stamp by design (lib/live-feed.ts) — never held.
+  if (poke.kind === "artifacts") return false;
   if (!poke.etag) return false;
   return poke.kind === "snapshot"
     ? holdsSnapshotEtag(poke.etag, scope, viewAll)
@@ -332,6 +335,13 @@ export function usePolling(
       // FORK: a pane poke for a card the Overview is showing is answered by re-reading THAT card,
       // not by revalidating every loader on the page for a pane no route is rendering.
       if (poke?.kind === "pane" && deliverTailPoke(poke.paneId, poke.etag)) return;
+      // FORK: the library changed — every mounted artifact list refetches itself (lib/artifacts.ts).
+      // When nothing is showing one, there is nothing to refetch and no loader that would learn
+      // anything from a revalidation either, so the poke is simply consumed.
+      if (poke?.kind === "artifacts") {
+        deliverArtifactPoke();
+        return;
+      }
       const r = ref.current;
       if (r.state !== "idle") {
         pokePending.current = true;

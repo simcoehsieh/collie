@@ -582,6 +582,9 @@ describe("solo zero-tax — routes", () => {
   test("server.ts registers exactly today's routes", () => {
     expect(declaredRoutes()).toEqual([
       "/",
+      // FORK: one artifact — its record, its bytes (`raw`), a patch or a delete (bridge/artifacts.ts).
+      // Session-scoped and gated like preview: a read for a read-only phone, writes behind the device.
+      "/^\\/api\\/artifacts\\/([a-z0-9]{1,12}-[a-f0-9]{8})(?:\\/(raw))?$/",
       // `focus` is the pane action that moves the OPERATOR's own terminal, and it is named here for
       // the reason every other one is: a route arrives on purpose or it does not arrive.
       // One content-addressed image out of a pi/omp journal's blob store — a SOLO route that
@@ -614,6 +617,8 @@ describe("solo zero-tax — routes", () => {
       // and served for this collie's own sessions only: `launchers` must come from the host that
       // runs them (§5) and a bundle is not a thing that forwards, so a `?host=` page falls back to
       // fetching the five separately, which is what it does today.
+      // FORK: the artifacts library, listed (bridge/artifacts.ts).
+      "/api/artifacts",
       "/api/boot",
       "/api/config",
       // The Crew overview (bridge/crew/status-wire.ts) — a FRONT-DOOR route, and it legitimately
@@ -930,6 +935,9 @@ describe("solo zero-tax — config", () => {
 /** Every `<stateDir>/…` path any bridge module names. `uploads` is a directory, the rest are files. */
 const STATE_DIR_ENTRIES = [
   "activity.json",
+  // FORK: the artifacts library (bridge/artifacts.ts) — a directory the CLI writes into and the
+  // bridge reads; absent until an agent registers its first file.
+  "artifacts",
   "audit.log",
   // Agent beacons (M11/01) — a directory, and one no bridge module ever writes: the bridge only ever
   // READS it, and the emitter that fills it is a CLI verb the operator installs a hook for. An

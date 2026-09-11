@@ -46,3 +46,22 @@ operator sets ssh up once, and both tools use it.
 {{COLLIE_DOCS_TABLE}}
 
 Collie {{COLLIE_VERSION}}. This text is embedded in the binary; it matches the installed version.
+
+## Artifacts — keep what you made where the phone can find it
+
+When you finish a report, a page, a screenshot, a markdown summary — anything the operator will want
+to open again — register it:
+
+```sh
+collie artifact add out/report.html --title "Q3 report"            # filed under this pane
+collie artifact add plan.html --slug meow-plan --title "Plan v2"    # same slug again = a new version
+collie artifact add notes.md --tag meow --tag ui
+collie artifact list
+collie artifact promote <id> --folder ai --summary "…" --tag meow_ops   # archive it in the knowledge base (HTML only)
+```
+
+The bytes are COPIED (5 MiB cap), so the file may be overwritten or deleted afterwards. The phone
+shows the artifact as a card under the turn that made it, in the pane's Artifacts sheet, and in
+`/artifacts`. Print the `open on the phone:` line the command answers with when you tell the operator
+about it. From a scheduler job or a plain shell there is no pane: pass `--origin <name>`.
+

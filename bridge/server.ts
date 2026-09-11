@@ -30,7 +30,16 @@ import { diffPatch, diffStat } from "./diff.ts";
 import { fileView } from "./file-view.ts";
 import { previewResponseHeaders, readPreview } from "./preview.ts";
 import { listDirs, resolveWithinRoots, type DirsBody } from "./dirs.ts";
-import { documentResponseHeaders, documentSlugFromPath, fetchDocument, type DocumentFailure } from "./docs.ts";
+import { documentResponseHeaders, documentSlugFromPath, fetchDocument, type DocumentFailure, DOCUMENT_CSP } from "./docs.ts";
+import {
+  ARTIFACT_TAG,
+  type ArtifactInput,
+  type ArtifactPatch,
+  type ArtifactPatchDraft,
+  type ArtifactRecord,
+  type ArtifactStore,
+} from "./artifacts.ts";
+import { jsonRecord, jsonStringField } from "./stt/json.ts";
 import { listDocuments, listTags, normaliseDocumentQuery } from "./docs-list.ts";
 import { QuotaSource, parseQuotaCommand, type QuotaFailure } from "./quota.ts";
 import { ShotRunner, parseShotCommand, type ShotFailure } from "./shot.ts";
@@ -244,6 +253,9 @@ const TAB_ACTION_ROUTE = /^\/api\/tab\/([^/]+)\/(rename|close)$/;
  * on the machine whose journal named it and is therefore a forwarded READ.
  */
 const BLOB_ROUTE = /^\/api\/blobs\/([^/]+)$/;
+// FORK: one artifact — its record, its bytes (`raw`), or a change to it (bridge/artifacts.ts). The
+// id grammar is in the route itself, so a string that is not an id never reaches the store.
+const ARTIFACT_ROUTE = /^\/api\/artifacts\/([a-z0-9]{1,12}-[a-f0-9]{8})(?:\/(raw))?$/;
 
 /**
  * Worktree routes, all hung off the SPACE that asked (ADR 0032).
@@ -679,6 +691,8 @@ export function startServer(opts: {
   push: Push;
   snooze: Snooze;
   notifyPrefs: NotifyPrefsStore;
+  /** FORK: the artifacts library (bridge/artifacts.ts) — read by the routes, watched for pokes. */
+  artifacts: ArtifactStore;
   updateMonitor: UpdateMonitor;
   /**
    * The two effects `POST /api/update` needs and this file must not own: the cached preflight
@@ -923,6 +937,9 @@ export function startServer(opts: {
     });
     // FORK: the pane stamp is exact — this entry is the one the route answers from.
     readsFor(rt).onChange((paneId, entry) => hub!.pokePane(paneId, entry.etag));
+    // FORK: the artifacts directory is global, so every runtime's hub hears it — a filter by pane is
+    // the phone's (bridge/artifacts.ts). The subscription lives as long as the hub, i.e. the process.
+    opts.artifacts.subscribe(() => hub!.pokeArtifacts());
     return hub;
   };
 
@@ -1190,6 +1207,116 @@ export function startServer(opts: {
     // golden in solo-baseline.test.ts finds routes by reading this file for string literals, so a
     // registration that imported the constant would silently escape the one test whose job is that a
     // route arrives on purpose. bridge/preview.test.ts pins the two against each other.
+    // ── FORK: Artifacts — what an agent made, filed under the pane that made it ──────────────
+    // bridge/artifacts.ts has the argument. Session-routed like preview so `caller.resolve()` gives
+    // the runtime whose agents carry the sessions the records name; the library itself is one per
+    // bridge. Reads are reads (a read-only phone may look); PATCH / DELETE are writes.
+    if (pathname === "/api/artifacts" && req.method === "GET") {
+      const denied = caller.gate("read");
+      if (denied) return denied;
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      const all = await opts.artifacts.resolvePanes(await opts.artifacts.list(), rt.engine.current().agents);
+      const pane = url.searchParams.get("pane");
+      const workspace = url.searchParams.get("workspace");
+      const slug = url.searchParams.get("slug");
+      const rows = all.filter(
+        (r) =>
+          (pane === null || r.pane?.paneId === pane) &&
+          (workspace === null || r.pane?.workspaceId === workspace) &&
+          (slug === null || r.slug === slug),
+      );
+      return json({ ok: true, artifacts: rows } satisfies ArtifactsResponse, req.headers.get("accept-encoding"));
+    }
+    // A SAVE FROM THE PHONE: the page the preview panel is looking at, copied into the library. The
+    // bytes come off the pane's own cwd through `readPreview` — the same grammar, jail and cap the
+    // preview route applies — so the phone names a path it can already see and nothing else.
+    if (pathname === "/api/artifacts" && req.method === "POST") {
+      const denied = caller.gate("write");
+      if (denied) return denied;
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      const ask = await artifactSaveFrom(req);
+      if (ask === null) return text("expected a JSON object with pane and path", 400);
+      const { agents, shellPanes } = rt.engine.current();
+      const pane = [...agents, ...shellPanes].find((a) => a.paneId === ask.pane);
+      if (!pane) return text("no such pane", 404);
+      const preview = await readPreview(pane.cwd, ask.path, homedir());
+      if (!preview.ok) {
+        if (preview.reason === "too_large") return text("the page is too large to keep", 413);
+        if (preview.reason === "unreadable") return text("the page could not be read", 503);
+        return text("no such page", 404);
+      }
+      const fileName = ask.path.split("/").pop() ?? ask.path;
+      const input: ArtifactInput = {
+        bytes: new TextEncoder().encode(preview.body.html),
+        fileName,
+        title: ask.title ?? fileName.replace(/\.[^.]+$/, ""),
+        sourcePath: `${pane.cwd}/${ask.path}`,
+        origin: null,
+        pane: { paneId: pane.paneId, workspaceId: pane.workspaceId, workspaceLabel: pane.workspaceLabel, agent: pane.agent },
+      };
+      const added = await opts.artifacts.add(ask.slug === null ? input : { ...input, slug: ask.slug });
+      if (!added.ok) return text(`not kept: ${added.reason}`, added.reason === "too_large" ? 413 : 400);
+      caller.audit.record({
+        action: "artifact.save",
+        paneId: pane.paneId,
+        session: rt.name,
+        device: caller.device(),
+        detail: { id: added.record.id, path: ask.path },
+      });
+      return json({ ok: true, artifact: added.record } satisfies ArtifactResponse, req.headers.get("accept-encoding"));
+    }
+    const artifactMatch = pathname.match(ARTIFACT_ROUTE);
+    if (artifactMatch) {
+      const id = artifactMatch[1]!;
+      const sub = artifactMatch[2];
+      const ae = req.headers.get("accept-encoding");
+      if (req.method === "GET") {
+        const denied = caller.gate("read");
+        if (denied) return denied;
+        const rt = await caller.resolve();
+        if (rt instanceof Response) return rt;
+        const found = await opts.artifacts.get(id);
+        if (found === null) return text("no such artifact", 404);
+        const [record] = await opts.artifacts.resolvePanes([found], rt.engine.current().agents);
+        if (sub === undefined) return json({ ok: true, artifact: record! } satisfies ArtifactResponse, ae);
+        const bytes = await opts.artifacts.readBytes(record!);
+        if (bytes === null) return text("the artifact's bytes are gone", 410);
+        return artifactRawResponse(record!, bytes, req.headers.get("if-none-match"));
+      }
+      if (sub !== undefined) return text("method not allowed", 405);
+      if (req.method === "PATCH") {
+        const denied = caller.gate("write");
+        if (denied) return denied;
+        const rt = await caller.resolve();
+        if (rt instanceof Response) return rt;
+        const patch = await artifactPatchFrom(req);
+        if (patch === null) return text("expected a JSON object with title / tags / pinned / kbSlug", 400);
+        const updated = await opts.artifacts.patch(id, patch);
+        if (updated === null) return text("no such artifact", 404);
+        caller.audit.record({
+          action: "artifact.patch",
+          paneId: updated.pane?.paneId ?? "",
+          session: rt.name,
+          device: caller.device(),
+          detail: { id, fields: Object.keys(patch) },
+        });
+        return json({ ok: true, artifact: updated } satisfies ArtifactResponse, ae);
+      }
+      if (req.method === "DELETE") {
+        const denied = caller.gate("write");
+        if (denied) return denied;
+        const rt = await caller.resolve();
+        if (rt instanceof Response) return rt;
+        const removed = await opts.artifacts.remove(id);
+        if (!removed) return text("no such artifact", 404);
+        caller.audit.record({ action: "artifact.delete", session: rt.name, device: caller.device(), detail: { id } });
+        return secure(new Response(null, { status: 204 }));
+      }
+      return text("method not allowed", 405);
+    }
+
     if (pathname === "/api/preview/file" && req.method === "GET") {
       const denied = caller.gate("read");
       if (denied) return denied;
@@ -4286,6 +4413,105 @@ export function deviceAuth(req: Request, cfg: Config): DeviceAuth {
 // Apply the shared hardening headers (nosniff / no-referrer) to any response. Every response the
 // bridge emits funnels through json(), text(), serveStatic(), or a handful of inline responses —
 // all of which pass through here — so the headers are set exactly once, consistently.
+// ── FORK: artifact route helpers (bridge/artifacts.ts) ─────────────────────────────────────────
+
+/** The list the phone reads. `ok` for the same reason every other read body carries it. */
+interface ArtifactsResponse {
+  ok: true;
+  artifacts: ArtifactRecord[];
+}
+
+interface ArtifactResponse {
+  ok: true;
+  artifact: ArtifactRecord;
+}
+
+/**
+ * The bytes, under the policy their kind earns. HTML is a DOCUMENT: bridge/docs.ts's headers, the
+ * same object preview and the kb panel serve under, so a report built from things read on the web
+ * cannot reach the app's origin. Markdown and text are served as `text/plain` — never as HTML, no
+ * matter what the file says about itself — and still carry the policy, because a browser asked to
+ * render text/plain will. An image is inline under its own mime. Anything else is an attachment:
+ * bytes nobody classified are offered to the share sheet, never to the renderer.
+ */
+function artifactRawResponse(
+  record: ArtifactRecord,
+  bytes: Uint8Array<ArrayBuffer>,
+  ifNoneMatch: string | null,
+): Response {
+  const etag = `"${record.sha256.slice(0, 32)}"`;
+  const headers: Record<string, string> =
+    record.kind === "html"
+      ? documentResponseHeaders(etag)
+      : {
+          "content-type": record.kind === "markdown" || record.kind === "text" ? "text/plain; charset=utf-8" : record.mime,
+          "cache-control": "no-cache",
+          "content-security-policy": DOCUMENT_CSP,
+          etag,
+        };
+  if (record.kind === "file") {
+    headers["content-disposition"] = `attachment; filename="${record.slug}-v${String(record.version)}.${record.ext}"`;
+  }
+  if (notModified(ifNoneMatch, etag)) return secure(new Response(null, { status: 304, headers }));
+  return secure(new Response(bytes, { headers }));
+}
+
+/** A phone-side save: which pane's page, and what to call it. */
+interface ArtifactSaveAsk {
+  pane: string;
+  path: string;
+  title: string | null;
+  slug: string | null;
+}
+
+async function artifactSaveFrom(req: Request): Promise<ArtifactSaveAsk | null> {
+  let raw: JsonValue;
+  try {
+    // SAFETY: `req.json()` is the untyped body; each field is narrowed through the stt/json.ts readers.
+    raw = (await req.json()) as JsonValue;
+  } catch {
+    return null;
+  }
+  const rec = jsonRecord(raw);
+  if (rec === null) return null;
+  const pane = jsonStringField(rec.pane);
+  const path = jsonStringField(rec.path);
+  if (pane === null || pane === "" || path === null || path === "") return null;
+  const slug = jsonStringField(rec.slug);
+  return { pane, path, title: jsonStringField(rec.title), slug: slug === "" ? null : slug };
+}
+
+/** The PATCH body, narrowed: only the four fields a client may change, each only in its own shape. */
+async function artifactPatchFrom(req: Request): Promise<ArtifactPatch | null> {
+  let raw: JsonValue;
+  try {
+    // SAFETY: `req.json()` is the untyped body; every field is narrowed below through the stt/json.ts
+    // readers, and an unrecognised shape answers null.
+    raw = (await req.json()) as JsonValue;
+  } catch {
+    return null;
+  }
+  const rec = jsonRecord(raw);
+  if (rec === null) return null;
+  const patch: ArtifactPatchDraft = {};
+  const title = jsonStringField(rec.title);
+  if (title !== null) patch.title = title;
+  if (Array.isArray(rec.tags)) {
+    patch.tags = rec.tags.flatMap((v) => {
+      const s = jsonStringField(v);
+      return s !== null && ARTIFACT_TAG.test(s) ? [s] : [];
+    });
+  }
+  if (rec.pinned === true || rec.pinned === false) patch.pinned = rec.pinned;
+  if (rec.kbSlug === null) patch.kbSlug = null;
+  else {
+    const kb = jsonStringField(rec.kbSlug);
+    if (kb !== null) patch.kbSlug = kb === "" ? null : kb;
+  }
+  if (Object.keys(patch).length === 0) return null;
+  return patch;
+}
+
 function secure(res: Response): Response {
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.headers.set(k, v);
   return res;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { ExternalLink, RefreshCw, BookmarkPlus, Check } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { RightSheet } from "@/components/ui/right-sheet";
@@ -7,6 +7,8 @@ import { useLocale } from "@/hooks/use-locale";
 import { previewSrc } from "@/lib/doc-links";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { saveArtifactFromPane } from "@/lib/api";
+import { loadArtifacts } from "@/lib/artifacts";
 
 // FORK: an HTML file the agent WROTE, framed beside the terminal (bridge/preview.ts).
 //
@@ -51,6 +53,10 @@ export function PreviewPanel({ open, onClose, paneId, path }: PreviewPanelProps)
   const [nonce, setNonce] = useState(0);
   const [panelWidth, setPanelWidth] = useState(0);
   const hostRef = useRef<HTMLDivElement>(null);
+  // FORK: "keep this" — the page goes into the artifacts library (bridge/artifacts.ts), filed under
+  // this pane. Idle → saving → saved for the panel's lifetime; a second tap saves a new version.
+  const [saving, setSaving] = useState<"idle" | "saving" | "saved" | "failed">("idle");
+  useEffect(() => setSaving("idle"), [path]);
 
   // A fresh open starts at "fit": the operator asked to see the page, not to see it at whatever
   // width they were checking a different page at ten minutes ago.
@@ -107,6 +113,25 @@ export function PreviewPanel({ open, onClose, paneId, path }: PreviewPanelProps)
             ))}
           </div>
           <span className="flex-1" />
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn("h-8 gap-1 px-2", saving === "saved" && "text-status-done")}
+            disabled={saving === "saving"}
+            aria-label={t("preview.save")}
+            onClick={() => {
+              setSaving("saving");
+              void saveArtifactFromPane(paneId, path, null)
+                .then(() => {
+                  setSaving("saved");
+                  return loadArtifacts();
+                })
+                .catch(() => setSaving("failed"));
+            }}
+          >
+            {saving === "saved" ? <Check className="size-4" /> : <BookmarkPlus className="size-4" />}
+            {saving === "saved" ? t("preview.saved") : saving === "failed" ? t("preview.saveFailed") : t("preview.save")}
+          </Button>
           <Button
             variant="ghost"
             size="sm"

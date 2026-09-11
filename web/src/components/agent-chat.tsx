@@ -94,7 +94,7 @@ import { canGrowRequestedLines, growRequestedLines } from "@/lib/loaders";
 import { cwdBeyondName } from "@/lib/pane-name";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { hasJournalAdapter } from "@/lib/journal-agents";
-import { historyPath, spacePath } from "@/lib/nav";
+import { historyPath, spacePath, artifactPath } from "@/lib/nav";
 import { isReadOnly, paneDisplayName, statusLabel } from "@/lib/types";
 import { usePairing } from "@/lib/pairing";
 import type { AgentView, BridgeStatus, DeviceAuth, TabView } from "@/lib/types";
@@ -106,6 +106,9 @@ import type {
   WizardModel,
 } from "@/lib/blocks";
 import { paneScopeKey, type Scope } from "@/lib/scope";
+import { ArtifactSheet } from "@/components/artifact-sheet";
+import { ArtifactCountChip } from "@/components/artifact-card";
+import { artifactsForPane, latestVersions, useArtifacts } from "@/lib/artifacts";
 
 interface AgentChatProps {
   paneId: string;
@@ -173,7 +176,19 @@ function foldLabelKey(tabCount: number, paneCount: number): MessageKey {
 // FORK: `file`, `preview`, `notes` and `annotate` join `diff` as drawer arms rather than taking state of their
 // own, because the invariant this type exists to make unrepresentable — at most one open — is
 // exactly as load-bearing for them.
-type Drawer = "switcher" | "paneMenu" | "newTab" | "doc" | "diff" | "file" | "preview" | "notes" | "annotate" | null;
+type Drawer =
+  | "switcher"
+  | "paneMenu"
+  | "newTab"
+  | "doc"
+  | "diff"
+  | "file"
+  | "preview"
+  | "notes"
+  | "annotate"
+  // FORK: the pane's artifacts (components/artifact-sheet.tsx).
+  | "artifacts"
+  | null;
 
 /**
  * Is the caret in the MESSAGE COMPOSER's field, as opposed to any other input on the screen?
@@ -930,6 +945,9 @@ export function AgentChat({
   // Neither writes the preference: they are conditions, not choices, and the pane returns to the
   // operator's own view the moment they clear.
   const paneKey = paneScopeKey(scope, paneId);
+  // FORK: what this pane's agent made — the chip's count and the sheet's rows (lib/artifacts.ts).
+  const { artifacts: artifactLibrary } = useArtifacts(scope);
+  const paneArtifactCount = latestVersions(artifactsForPane(artifactLibrary, paneId)).length;
   // A pane with no journal has no transcript to show, so it is never offered one — and a bare shell
   // is a screen you watch rather than a thread you read, which is the other half of the same test.
   const transcriptOffered = historyAvailable && !isShell;
@@ -1552,6 +1570,11 @@ export function AgentChat({
                     element and the thing the budget protects. The alternative, a permanent chip
                     reading "0", spends that width on a fact nobody needs. */}
                 {notes.length > 0 && <NoteCountChip count={notes.length} onClick={() => setDrawer("notes")} />}
+                {/* FORK: the artifacts this pane made, on the notes chip's terms — drawn only when
+                    there are any, so the common case spends nothing (components/artifact-sheet.tsx). */}
+                {paneArtifactCount > 0 && (
+                  <ArtifactCountChip count={paneArtifactCount} onClick={() => setDrawer("artifacts")} />
+                )}
                 <button
                   type="button"
                   onClick={() => setDrawer("paneMenu")}
@@ -2059,6 +2082,8 @@ export function AgentChat({
                   mirrorText={display}
                   lastSeenAt={agent?.lastSeenAt}
                   onShowTerminal={() => setPaneView(paneKey, "terminal")}
+                  // FORK: a card under a turn opens the artifact route (lib/artifacts.ts).
+                  onOpenArtifact={(a) => navigate(artifactPath(a.id, scope))}
                 />
               ) : display ? (
                 <>
@@ -2533,6 +2558,8 @@ export function AgentChat({
         {/* FORK: the pane's anchored notes — edit, delete, mark sent, and the one button that turns
             what is waiting into a single prompt. A `drawer` arm like every other sheet here, so it
             cannot be open at the same time as the switcher, the pane menu or either panel. */}
+        {/* FORK: the pane's artifacts (bridge/artifacts.ts), a `drawer` arm like the rest. */}
+        <ArtifactSheet open={drawer === "artifacts"} onClose={closeDrawer} paneId={paneId} scope={scope} />
         <NotesSheet
           open={drawer === "notes"}
           onClose={closeDrawer}
@@ -2610,6 +2637,8 @@ export function AgentChat({
           // FORK: hidden entirely when this bridge has no shot command — a row with no callback is
           // a row the sheet does not draw, which is the same gate find, history and zen ride.
           onAnnotate={shotEnabled ? () => setDrawer("annotate") : undefined}
+          // FORK: the pane's artifacts — a row whenever the pane has any (components/artifact-sheet.tsx).
+          onArtifacts={paneArtifactCount > 0 ? () => setDrawer("artifacts") : undefined}
           onDocs={
             docHosts.length > 0
               ? () => {

@@ -74,6 +74,16 @@ const crewRoute = lazyRoute(
   () => import("@/routes/crew").then((m) => ({ default: m.CrewRoute })),
   <CrewSkeleton />,
 );
+// FORK: the artifacts library and one artifact (bridge/artifacts.ts). History's skeleton, because
+// both are a list of things to read under a takeover header.
+const artifactsRoute = lazyRoute(
+  () => import("@/routes/artifacts").then((m) => ({ default: m.ArtifactsRoute })),
+  <HistorySkeleton />,
+);
+const artifactRoute = lazyRoute(
+  () => import("@/routes/artifact").then((m) => ({ default: m.ArtifactRoute })),
+  <HistorySkeleton />,
+);
 const historyRoute = lazyRoute(
   () => import("@/routes/history").then((m) => ({ default: m.HistoryRoute })),
   <HistorySkeleton />,
@@ -97,6 +107,8 @@ export const router = createBrowserRouter([
       // FORK: every agent's last lines on one screen. Eager, like the dashboard: for a herd of
       // long-lived panes it is a first screen, not a once-a-week one.
       { path: "overview", element: <OverviewRoute /> },
+      { path: "artifacts", element: artifactsRoute },
+      { path: "artifacts/:id", element: artifactRoute },
       // FORK: the pane this device opened last (lib/last-pane.ts) — the target an iOS Shortcut or
       // the share sheet can name without knowing a pane id. `replace`, so Back does not return to
       // a redirect. Nothing remembered falls back to the dashboard.

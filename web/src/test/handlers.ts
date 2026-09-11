@@ -339,6 +339,10 @@ export const handlers = [
   // bundle overrides this with `server.use(...)` and asserts what it primed (lib/boot.test.ts).
   // Named rather than left unhandled so an absent route reads as a decision, not as MSW's warning.
   http.get("/api/boot", () => new HttpResponse("not found", { status: 404 })),
+  // FORK: the artifacts library (bridge/artifacts.ts) — read by every pane view for the header chip
+  // and by the thread for the cards. Empty by default: no chip, no cards, which is what every
+  // existing case expects.
+  http.get("/api/artifacts", () => HttpResponse.json({ ok: true, artifacts: [] })),
   http.get(/\/api\/pane\/[^/]+$/, () =>
     HttpResponse.json({ paneId: "w1:p1", text: paneTextWithDraft(), truncated: false, revision: 1 }),
   ),

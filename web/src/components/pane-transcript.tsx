@@ -25,8 +25,9 @@ import { timeAgoShort } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import type { Scope } from "@/lib/scope";
 import type { ToolKind } from "@/lib/tool-kind";
-import type { TodoItem, TranscriptEntry } from "@/lib/types";
+import type { ArtifactView, TodoItem, TranscriptEntry } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { artifactsForPane, attachArtifactsToTurns, useArtifacts } from "@/lib/artifacts";
 
 // FORK — CHAT MODE: the pane, read as the conversation it is.
 //
@@ -218,6 +219,7 @@ export function PaneTranscript({
   mirrorText,
   lastSeenAt,
   onShowTerminal,
+  onOpenArtifact,
 }: {
   paneId: string;
   scope?: Scope;
@@ -231,6 +233,8 @@ export function PaneTranscript({
   lastSeenAt?: number;
   /** Hand the screen to the mirror. The transcript must never be a view you can get stuck in. */
   onShowTerminal: () => void;
+  /** FORK: a tap on an artifact card under a turn — the pane view routes it (lib/artifacts.ts). */
+  onOpenArtifact?: (artifact: ArtifactView) => void;
 }) {
   useLocale();
   const { entries, hasMore, loading, loadOlder, ready, unavailable } = usePaneTranscript({
@@ -246,6 +250,12 @@ export function PaneTranscript({
   const shown = useMemo(
     () => (renderCount >= entries.length ? entries : entries.slice(entries.length - renderCount)),
     [entries, renderCount],
+  );
+  // FORK: the artifacts this pane's turns made, under the turn that made each (lib/artifacts.ts).
+  const { artifacts: library } = useArtifacts(scope);
+  const artifactsByTurn = useMemo(
+    () => attachArtifactsToTurns(shown, artifactsForPane(library, paneId)),
+    [shown, library, paneId],
   );
   const allRendered = renderCount >= entries.length;
 
@@ -323,7 +333,14 @@ export function PaneTranscript({
       )}
       {/* The plan, above the thread and out of its flow — it is the state of the job, not a turn. */}
       {todo !== null && <TodoCard items={todo} pinned className="mb-3" />}
-      <TranscriptView entries={shown} agent={agent} scope={scope} working={working} />
+      <TranscriptView
+        entries={shown}
+        agent={agent}
+        scope={scope}
+        working={working}
+        artifacts={artifactsByTurn}
+        onOpenArtifact={onOpenArtifact}
+      />
       {/* ── THE WAY ACROSS, AND THE LIMIT IT ADMITS ────────────────────────────
           A turn that is still streaming has not been written to the harness's JSONL yet, so it
           cannot be here — and a thread that simply stops while the agent is plainly busy reads as a

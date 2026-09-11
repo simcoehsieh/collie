@@ -168,6 +168,19 @@ export const ACK_MANIFEST = {
     channel: "inline",
     why: "A failed revoke leaves the row it was aimed at still on screen, and that row is the only place the message is unambiguous about WHICH device is still paired.",
   },
+  // FORK: the artifacts library (bridge/artifacts.ts).
+  patchArtifact: {
+    channel: "silent",
+    why: "The one field the phone changes is the pin, and the pin icon flips in place on the same tap after the bridge answers (routes/artifact.tsx); a toast would announce a fact already on screen.",
+  },
+  deleteArtifact: {
+    channel: "silent",
+    why: "The acknowledgement is the viewer leaving for the library without the row it was showing — the absence IS the confirmation, and it needs a second tap to happen at all.",
+  },
+  saveArtifactFromPane: {
+    channel: "inline",
+    why: "The Keep button becomes Kept (or Couldn't keep) on the same row the operator tapped (components/preview-panel.tsx); the fact belongs where the intent was expressed.",
+  },
   uploadFile: {
     channel: "status",
     why: "Success appends a host path to the draft, which is easy to miss in a box the operator was already typing in, so the status line names what just went into it (components/composer.tsx).",

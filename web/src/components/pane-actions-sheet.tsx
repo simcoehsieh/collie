@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Camera, FileDiff, Maximize2, Monitor, Pencil, ScrollText, Search, XCircle } from "lucide-react";
+import { BookOpen, Camera, FileDiff, Maximize2, Monitor, Pencil, ScrollText, Search, XCircle, FileCode2 } from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { ActionRow, DestructiveActionRow, RenameView } from "@/components/action-sheet-rows";
@@ -64,6 +64,8 @@ interface PaneActionsSheetProps {
   onAnnotate?: () => void;
   /** FORK: open the knowledge-base browser. Absent when this bridge serves no documents. */
   onDocs?: () => void;
+  /** FORK: the pane's artifacts sheet (components/artifact-sheet.tsx). Absent ⇒ no row. */
+  onArtifacts?: () => void;
 }
 
 type Mode = "actions" | "rename";
@@ -92,6 +94,7 @@ export function PaneActionsSheet({
   onDiff,
   onAnnotate,
   onDocs,
+  onArtifacts,
 }: PaneActionsSheetProps) {
   useLocale();
   const [mode, setMode] = useState<Mode>("actions");
@@ -269,7 +272,7 @@ export function PaneActionsSheet({
           sheet; rename and close are the half you arrive at deliberately.
           Hidden in `rename` mode with the rest of the list — that view is a sub-screen, not a
           section. */}
-      {mode === "actions" && (onFind || onHistory || onZen || onDiff || onDocs || onAnnotate) && (
+      {mode === "actions" && (onFind || onHistory || onZen || onDiff || onDocs || onAnnotate || onArtifacts) && (
         <div className="mb-1 flex flex-col gap-1">
           {onFind && (
             <ActionRow
@@ -327,6 +330,18 @@ export function PaneActionsSheet({
               onClick={() => {
                 onClose();
                 onDocs();
+              }}
+            />
+          )}
+          {/* FORK: what this pane's agent MADE (bridge/artifacts.ts) — beside Documents because it is
+              the same family: things to read, not things to send. */}
+          {onArtifacts && (
+            <ActionRow
+              icon={<FileCode2 className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("artifacts.row.label")}
+              onClick={() => {
+                onClose();
+                onArtifacts();
               }}
             />
           )}

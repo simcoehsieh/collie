@@ -366,8 +366,17 @@ const HARNESS_SESSION_ENV: readonly HarnessSessionEnv[] = [
 const CHILD_SESSION_VARS: readonly string[] = ["CLAUDE_CODE_CHILD_SESSION"];
 
 /** The session this process belongs to, or null when nothing in the environment names one. */
-export function readSessionFromEnv(env: Environment): { harness: string; session: string } | null {
-  if (CHILD_SESSION_VARS.some((name) => (env[name] ?? "") !== "")) return null;
+export function readSessionFromEnv(
+  env: Environment,
+  // FORK: `collie artifact add` reads the id THROUGH the child marker. A status line belongs to the
+  // pane, so a subagent's must be refused here; an artifact's pane is decided by the BRIDGE, which
+  // joins the id against the multiplexer's own agent list — a subagent's id matches nothing there
+  // and the artifact simply lands with no pane. The marker is also inherited by some interactive
+  // sessions (observed 2026-09-11: a session whose `claude` was launched from one), where refusing
+  // would strip a real pane's artifacts of their pane for no gain.
+  options: { allowChild?: boolean } = {},
+): { harness: string; session: string } | null {
+  if (!options.allowChild && CHILD_SESSION_VARS.some((name) => (env[name] ?? "") !== "")) return null;
   for (const source of HARNESS_SESSION_ENV) {
     const value = env[source.variable]?.trim();
     if (value !== undefined && value !== "" && SESSION_ID.test(value)) {

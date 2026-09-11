@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { LayoutGrid } from "lucide-react";
+import { LayoutGrid, Library } from "lucide-react";
 import { useNavigate } from "react-router";
 
 import { RouteHeader, SettingsGear } from "@/components/app-header";
@@ -21,7 +21,7 @@ import { useSpaceActions } from "@/hooks/use-spaces";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { useQuotaEnabled } from "@/lib/operator-config";
 import { ambientPanes, leadHost, paneScope, sessionsOnHost } from "@/lib/hosts";
-import { panePath, spacePath } from "@/lib/nav";
+import { panePath, spacePath, artifactsPath } from "@/lib/nav";
 import { overviewPath } from "@/lib/overview";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
@@ -138,6 +138,16 @@ export function HomeRoute() {
             {/* FORK: the overview — every agent's last lines on one screen (routes/overview.tsx).
                 A plain glyph like the gear, ahead of the switchers, because it is a place to go
                 rather than a dimension to change. */}
+            {/* FORK: the artifacts library — what the agents made (routes/artifacts.tsx). A glyph like
+                the overview's, for the same reason: a place to go. */}
+            <button
+              type="button"
+              onClick={() => navigate(artifactsPath(data.scope))}
+              aria-label={t("artifacts.nav.aria")}
+              className="grid size-11 place-items-center text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <Library className="size-5" />
+            </button>
             <button
               type="button"
               onClick={() => navigate(overviewPath(data.scope))}

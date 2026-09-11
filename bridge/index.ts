@@ -44,6 +44,7 @@ import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
 import { TranscriptStore } from "./journal/store.ts";
 import { NotificationCoordinator, makeNotifySink, type NotifyClock } from "./notifications.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
+import { ArtifactStore } from "./artifacts.ts";
 import { peekBinaryPrompt } from "./prompt-peek.ts";
 import { replyFirstLine } from "./reply-peek.ts";
 import { filePairingIo, PairingStore } from "./pairing.ts";
@@ -551,6 +552,8 @@ await snooze.load();
 
 const notifyPrefs = new NotifyPrefsStore(cfg);
 await notifyPrefs.load();
+// FORK: the artifacts library. No load step — listing is the directory (bridge/artifacts.ts).
+const artifacts = new ArtifactStore(cfg.stateDir);
 
 // Device pairing (bridge/pairing.ts). Constructed unconditionally and holding no state of its own:
 // it re-reads `<stateDir>/paired-devices.json` per request (cached on mtime), so `collie pair` and
@@ -1741,6 +1744,7 @@ const server = startServer({
   push,
   snooze,
   notifyPrefs,
+  artifacts,
   updateMonitor,
   // The preflight and the handoff, or undefined on an install with no compiled binary to run —
   // where the route answers 503 and the phone says so (M15/05).
