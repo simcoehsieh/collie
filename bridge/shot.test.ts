@@ -319,9 +319,9 @@ describe("the routes", () => {
   const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
 
   test("both verbs are in the pane family, so they are session-scoped and write-gated", () => {
-    expect(src).toContain("reply|keys|upload|close|rename|history|focus|diff|shot|probe");
+    expect(src).toContain("reply|keys|upload|close|rename|history|focus|diff|file|shot|probe");
     // NOT in `isRead`: a read-only device may watch a terminal, it may not start a browser.
-    expect(src).toContain('const isRead = !action || action === "history" || action === "diff";');
+    expect(src).toContain('const isRead = !action || action === "history" || action === "diff" || action === "file";');
   });
 
   test("unset is no route and no capability — declined by doing nothing", () => {

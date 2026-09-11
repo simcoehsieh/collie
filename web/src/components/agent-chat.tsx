@@ -25,7 +25,7 @@ import { NoteCountChip } from "@/components/note-badge";
 import { NotesSheet } from "@/components/notes-sheet";
 import { useNotes } from "@/hooks/use-notes";
 import { NOTES_EVENT } from "@/hooks/use-hotkeys";
-import { pruneNotesForScope } from "@/lib/notes";
+import { addNote, pruneNotesForScope } from "@/lib/notes";
 import { classifyDocLink } from "@/lib/doc-links";
 import { lastLocalUrl } from "@/lib/links";
 import { uploadLimits } from "@/lib/attachments";
@@ -2549,6 +2549,24 @@ export function AgentChat({
           initialUrl={annotateUrl}
           onPreviewUrl={onPreviewUrl}
           maxUploadBytes={uploadCap.maxBytes}
+          // FORK: the probed element becomes an anchored note beside the text draft, so it rides in
+          // the next "Send N notes" prompt with the selector, bounds and component the bridge's
+          // Chrome read — the `{kind:"element"}` arm lib/notes.ts reserved for exactly this.
+          onElementNote={(p) =>
+            addNote({
+              paneId,
+              scope,
+              anchor: {
+                kind: "element",
+                selector: p.selector,
+                box: { x: p.probe.box.x, y: p.probe.box.y, w: p.probe.box.width, h: p.probe.box.height },
+                text: p.probe.text,
+                screenshotPath: p.screenshotPath,
+                component: p.probe.reactComponents,
+              },
+              comment: p.note,
+            })
+          }
           onDraft={(seed) => {
             // The composer reads its draft once, in its own `useState` initialiser, so the seed has
             // to be on disk before it next mounts — which is exactly what `saveDraft` does and

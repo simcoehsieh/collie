@@ -107,9 +107,10 @@ touch between releases (zero commits to any of them across v1.5.0 → v1.8.0):
 
 | Layer | Where | What changed |
 | --- | --- | --- |
-| Tokens | `web/src/index.css` `:root` + `@theme` | `--radius` 2px → a real ramp (8/12/16/20/24), cool-tinted neutrals (hue ~258), one indigo `--primary`, tinted elevation (`--elev-*` → `shadow-card` / `shadow-float`), the system font as the default stack |
+| Tokens | `web/src/index.css` `:root` + `@theme` | `--radius` 2px → a real ramp (8/12/16/20/24), cool-tinted neutrals (hue ~258), one indigo `--primary`, tinted elevation (`--elev-*` → `shadow-card` / `shadow-float`), the system font as the default stack; the status palette split into a text half and a `--status-*-mark` fill half; `--trough` (the composer's segmented row); `--control-on-hover`/`-pressed`; `--destructive` retuned onto `--status-blocked`'s hue |
 | Primitives | `web/src/components/ui/*.tsx` | button (tonal `outline`, softer press), card, chip (pill), badge (pill), switch (stadium track), list-group, chat-input (filled field), sheet (3xl top corners, blurred scrim), notice box |
-| Skin | `web/src/skin.css` — **fork-only, new file** | everything reachable by a `data-slot` selector: the blurred header, the composer's rounded chrome block, the segmented controls row, the mirror's own ground, the route entrance animation |
+| Mark | `web/src/components/meow-mark.tsx` | four herd states (idle / working / blocked / done) driven from `lib/triage.ts` through the header; `loading` stays an alias of `working`, `cm-live` still means working only |
+| Skin | `web/src/skin.css` — **fork-only, new file** | everything reachable by a `data-slot` selector: the blurred header, the composer's rounded chrome block, the segmented controls row, the mirror's own ground, the route entrance animation (push / pop / modal since 2026-09-11), the mirror's well (border-block + inset shadow) and its own typography, the tab strip's overflow mask, the 260 ms boot hand-off |
 
 Only a handful of component files carry className edits beyond that (`agent-card`, `agent-list`,
 `composer` send buttons, `nav-tray` inherits the button change), plus one `data-slot="mirror"`
@@ -170,6 +171,55 @@ and pokes on change; that is 2.5 cheap local reads a second per followed pane in
 bridge test run is now `bun test --timeout 20000 ${=FILES}`** with `crew/harness.test.ts` left out
 of `FILES` — in zsh an unquoted `$FILES` is one word, and bun then reports that no test file
 matched, which reads like an empty suite rather than a shell quirk.
+
+## The second pass — chat mode, notes, surfaces, annotate, and the component layer (2026-09-11)
+
+The day after the first pass, a four-line research round (interactive output, a measured
+performance audit, a design audit with rendered pixels, and a read of Orca's own bundle) was
+turned into seven parallel worktrees and merged in one go. The headline was a defect, not a
+feature: `SSE_PING_MS` (15 s) was longer than Bun's default `idleTimeout` (10 s), so the live feed
+died every nine quiet seconds and reconnected through the tunnel — the 30 s relaxation the first
+pass built had never held. Everything else is in [`CHANGELOG.fork.md`](./CHANGELOG.fork.md) →
+*On top of 1.8.0*; this table is the map for the next merge. The research itself is at
+`https://knowledge.agnex.dev/d/meow-product-roadmap-2026-09-11`.
+
+| Piece | Where | On a conflict |
+| --- | --- | --- |
+| Cold-boot bundle `GET /api/boot` | new `bridge/boot.ts`, `bridge/server.ts` (one route block + the extracted `configBody` closure), `web/src/lib/api.ts` (`fetchBootSnapshot`/`primeBoot`), one identifier in `web/src/lib/loaders.ts` | Fork-only file plus two small hunks. Keep upstream's dispatch and re-register the route; if upstream rewrites `/api/config`, re-extract `configBody` rather than letting the bundle grow a second copy |
+| SSE keepalive + explicit `Bun.serve` idleTimeout | `bridge/events.ts` (`SSE_PING_MS`, `IDLE_TIMEOUT_S`), `bridge/server.ts` (one option) | `events.ts` is fork-only; re-apply the one `idleTimeout:` line. The ping must never exceed the runtime's idle window |
+| Multi-pane `?pane=` streams, version-stamped pokes | `bridge/events.ts`, `bridge/server.ts` (`watchedPanes`, `eventStream`), `web/src/lib/live-feed.ts`, `web/src/hooks/use-polling.ts` | Fork-only files. If upstream ships its own stream, take theirs and drop these |
+| ETag + brotli for the non-hashed dist files | `bridge/server.ts` — `serveStatic`, `isCompressibleAsset`, `staticEtag`, `compressedMutable` | Adds to the hunk the first row already names. Keep upstream's structure, re-apply. **`no-cache` stays on `sw.js`** |
+| History ETag | `bridge/server.ts` `paneHistory`, `web/src/lib/api.ts` `fetchHistory` | Mirrors `paneDiff`; a dozen lines each, re-apply |
+| One `/api/config` per boot | `web/src/lib/api.ts` (`configMemo`), one `beforeEach` in `web/src/test/setup.ts` | On the "re-apply, a dozen lines each" list. Keep it to the one memoised wrapper |
+| Overview tails on the live feed, and the last reply on a resting card | `web/src/lib/overview.ts`, `web/src/routes/overview.tsx`, one call in `web/src/hooks/use-polling.ts` | Fork-only files; only the `use-polling.ts` call site can conflict |
+| Precache trim | `web/vite.config.ts` `globIgnores` | Already fork-touched. Re-apply the list and re-check `precache N entries` after a build |
+| Chat mode: an agent pane's default view is its transcript | new `web/src/components/pane-transcript.tsx`, `view-toggle.tsx`, `todo-card.tsx`, `web/src/hooks/use-pane-transcript.ts`, `web/src/lib/tool-kind.ts`, `away.ts`; hunks in `agent-chat.tsx` (the `transcriptMode` block + one branch in the mirror slot), `composer.tsx` (a `viewToggle` slot), `transcript-view.tsx` (kind icons, the `todo` part, a `working` prop), `use-display-prefs.ts` (`paneView` + `seedPaneView`), `playground/harness.tsx` (cards pin the terminal) | The feature is in the fork-only files; the upstream hunks are small and re-appliable. If upstream ever ships its own in-pane transcript, take theirs and keep `use-pane-transcript.ts`'s settle trigger — the mirror stays the mirror (ADR 0008) |
+| The plan tool's input, kept whole | new `bridge/journal/todo.ts`, a `todo` arm on `TranscriptPart` in `bridge/journal/types.ts` + `web/src/lib/types.ts`, one branch each in `journal/claude.ts` / `codex.ts` + their result-swallow set | ~12 lines per adapter, around the `tool_use` / `function_call` branch. Keep upstream's parse and re-apply the plan branch **with** its swallow set, or the tool's acknowledgement comes back as an orphan result |
+| The "done" push carries the reply's first line | new `bridge/reply-peek.ts`, `bridge/notifications.ts` (`ReplyPeek`, `HerdSummary.bodyLead`, a `done` branch in `makeNotifySink`), `bridge/index.ts` (its own journal registry + store for the peek) | Shaped exactly like the fork's `PromptPeek` branch beside it — if upstream restructures the sink, re-apply both together. **Every push must still show a notification** |
+| Agent-authored status line | new `bridge/beacon/status-line.ts`, `bridge/status-lines.ts`, `cli/beacon.ts` (`cmdBeaconStatus`), `bridge/beacon/parse.ts` (`parseStatusLine`, in the ONE file the lint override names), `beacon/types.ts`, `beacon-io.ts`, `server.ts` (`withActivity`), `bridge/types.ts` + `web/src/lib/types.ts`, `agent-card.tsx`, `cli/program.ts` | Fork-only but for four one-liners. Keep it display-only: .adr/0024 permits it *because* nothing is armed, no identity is set and it has exactly one consumer |
+| Anchored notes: store, prompt builder, sheets, pins | new `web/src/lib/notes.ts`, `web/src/hooks/use-notes.ts`, `web/src/components/note-badge.tsx`, `notes-sheet.tsx`; hunks in `diff-sheet.tsx` and `doc-panel.tsx` | Fork-only files, upstream has none — nothing to conflict on. The prompt's shape and the fence helper are the two things not to "simplify" |
+| Note entry points in upstream's own files | `transcript-view.tsx` (one optional `onTurnLongPress` prop + one wrapper), `composer.tsx` (a `paneName` prop, a chip row, one notice, `sendWithNotes`), `agent-chat.tsx` (a `Drawer` arm, a header chip, a prune effect), `routes/history.tsx`, `hooks/use-hotkeys.ts` (`NOTES_EVENT` + the `n` case) | Keep upstream's structure and re-apply; each is a dozen lines. If upstream ever grows its own per-turn actions, take theirs and hang `TurnNoteHandle` off it |
+| File viewer | new `bridge/file-view.ts`, `web/src/components/file-sheet.tsx`; `bridge/diff.ts` exports `resolveRepo`; one word in `PANE_ROUTE` + `isRead` + `crew/forward.ts` | Fork-only files. Re-apply `file` to upstream's regex, `isRead` and the forward grammar; keep the export |
+| Preview panel | new `bridge/preview.ts`, `web/src/components/preview-panel.tsx`, `web/src/lib/doc-links.ts` preview arm; one `serveSessionRoute` route, `CREW_PROTOCOL.md` §9.1 | Fork-only. `PREVIEW_CSP` must stay `DOCUMENT_CSP` itself, never a copy; iframe `sandbox=""` never gains a token |
+| Mirror chips + "what changed" | new `web/src/lib/line-chips.ts`, `web/src/hooks/use-pane-diff.ts`; `// FORK` hunks in `ansi-output.tsx`, header cluster + mounts in `agent-chat.tsx` | Keep upstream's render loop, re-apply the `trailingFor` slot and the chip memo. Chips stay ornaments — never wrap mirror characters in an `<a>` |
+| Annotate-and-ask: shot + element probe | new `bridge/shot.ts`, `bridge/server.ts` (`PANE_ROUTE` + two dispatch lines + `shotPane`/`probePane`), `bridge/config.ts` (`shotCommand`, `shotHosts`), new `web/src/components/annotate-sheet.tsx`, new `web/src/lib/markup.ts`, `agent-chat.tsx` mount, `links.ts` (`lastLocalUrl`) | Fork-only files; only the `server.ts` route lines, the `agent-chat.tsx` mount and the `pane-actions-sheet.tsx` row can conflict. The CDP half lives outside the repo (`ai-live/tools/collie_shot`) |
+| Draw on an attached image | `composer.tsx` (a chip + `ImageMarkupSheet` mount), `web/src/lib/markup.ts` | Keep upstream's composer, re-apply the chip — it hangs off the existing `uploadFile` success branch |
+| Tonal-state rule (`--control-on` for state, `--primary` for the one action) | `pane-strip.tsx`, `ui/chip.tsx`, `theme-control.tsx`, `doc-panel.tsx`, `nav-tray.tsx` | One class string each — keep upstream's structure, re-apply |
+| Skeletons | new `ui/skeleton.tsx`, `route-skeleton.tsx`; `router.tsx` fallbacks; `skin.css` FORK · SCREENS block | Fork-only files; only `router.tsx`'s `lazyRoute` signature can conflict |
+| Directional route entrance | `routes/root.tsx` (`routeEnter`), `skin.css` **appended block** | Append-only by design — take both sides |
+| Keys pad | `nav-tray.tsx` (grid + keycaps), `composer.tsx` `ComposerDock` one class | Keep upstream's pad geometry, re-apply the grid spans and `KEYCAP` |
+| Empty / error states | new `components/empty-state.tsx`; `agent-list.tsx`, `routes/overview.tsx`, `routes/root.tsx` `RootError` | Fork-only file; the mounts are a few lines each |
+| Agent tile | `agent-icon.tsx` fallback branch | Keep upstream's brand table, re-apply the svg monogram |
+| i18n overrides | new `lib/i18n/fork-overrides.ts` + 3 lines in `lib/i18n/index.ts` | **Never edit a dictionary value** — add to the layer instead |
+| Cinema mode | `hooks/use-sheet-pull.ts` (`onPullUp`), new `cinema-capsule.tsx`, five small hunks in `agent-chat.tsx` | Keep upstream's screen, re-apply `cinema` state, the two gates and the capsule mount |
+
+Three things to know when operating it. **`/api/boot` is a bundle, so its snapshot tag rides in the
+body (`snapshotEtag`), not in an HTTP `ETag`** — a validator names one document and this answers
+four. **`caller.resolve()` is counted twelve times** in `bridge/server.test.ts`: the twelfth is
+`/api/preview/file`; `shot`, `probe` and `file` are pane-family actions and share the pane block's
+one resolve. And **the annotate half outside the repo** — the CDP screenshot/probe command — lives
+in `ai-live/tools/collie_shot/` and is named by `COLLIE_SHOT_COMMAND` in `~/.config/collie/.env`;
+unset means no route, no capability and no button, exactly like `COLLIE_QUOTA_COMMAND`.
 
 ## Taking upstream's changes
 

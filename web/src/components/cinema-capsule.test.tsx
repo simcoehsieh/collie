@@ -22,7 +22,7 @@ describe("CinemaCapsule", () => {
     const { container } = render(<CinemaCapsule name="docs" status="blocked" onExit={vi.fn()} />);
     // The dot is colour-only and deliberately unnamed here (the capsule's own label is the
     // accessible name for the control) — so it is found as the element it is, not by text.
-    expect(container.querySelector(".bg-status-blocked, .border-status-blocked")).not.toBeNull();
+    expect(container.querySelector(".bg-status-blocked, .bg-status-blocked-mark, .border-status-blocked, .border-status-blocked-mark")).not.toBeNull();
   });
 
   it("draws no dot for a shell pane, which has no agent status to report", () => {
