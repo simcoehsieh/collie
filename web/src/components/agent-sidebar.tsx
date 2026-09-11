@@ -241,11 +241,15 @@ function PaneRow({
         !active && isAttention(pane.status) && "bg-status-blocked/5",
       )}
     >
+      {/* FORK: ONE SIZE IN THIS SLOT. The two branches were 14px and 20px, so the avatar column of a
+          single list changed width depending on what kind of pane the row held — the same "three
+          systems" fault AgentIcon's own fallback had, one level up. 16px is the dashboard row's
+          size, and this row is the dashboard's own list in a narrower column. */}
       {isShell ? (
-        <TerminalSquare className="size-3.5 shrink-0 text-muted-foreground" />
+        <TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
       ) : (
         // Status is conveyed by the section grouping; the row leads with the agent's logo.
-        <AgentIcon agent={pane.agent} className="size-5" />
+        <AgentIcon agent={pane.agent} className="size-4" />
       )}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-baseline gap-1 text-sm">

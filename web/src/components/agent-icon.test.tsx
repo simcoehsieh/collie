@@ -67,7 +67,8 @@ describe("AgentIcon", () => {
   ])("resolves label variant '%s' to a brand logo", (variant) => {
     const { container } = render(<AgentIcon agent={variant} />);
     // Either kind of mark counts — what this pins is that the VARIANT resolved to a brand at all,
-    // rather than falling through to the initials tile, which renders no <svg> whatsoever.
+    // rather than falling through to the monogram tile. That tile is now an <svg> too (fork: one
+    // squircle for every agent), so the discriminator is the MARK inside it, not the element.
     expect(container.querySelector("svg path, svg image")).not.toBeNull();
   });
 
@@ -109,11 +110,20 @@ describe("AgentIcon", () => {
     expect(container.querySelector("svg g")?.getAttribute("fill")).toBe("#FFFFFF");
   });
 
-  it("falls back to an initials tile for unknown agents", () => {
+  // FORK: the fallback is the same tile as every brand — same viewBox, same rx, same inset — so a
+  // column of agents is one shape at one size whether we have a logo or not. It was `rounded-md` on
+  // an HTML span, and `--radius-md` is a CONSTANT: at 16px that is very nearly a circle beside the
+  // brands' 22%-of-the-box squircles. What is pinned is the geometry, the quiet palette and the
+  // absence of any brand mark — not the element type, which is how the old shape got away with it.
+  it("falls back to a monogram on the same squircle for unknown agents", () => {
     render(<AgentIcon agent="gemini" />);
     const el = screen.getByRole("img", { name: "gemini icon" });
+    expect(el.tagName.toLowerCase()).toBe("svg");
     expect(el).toHaveTextContent("GE");
-    expect(el.querySelector("svg")).toBeNull(); // fallback is text, not a brand mark
+    const tile = el.querySelector("rect")!;
+    expect(tile.getAttribute("rx")).toBe("5.3");
+    expect(tile.getAttribute("fill")).toBe("var(--muted)");
+    expect(el.querySelector("path, image")).toBeNull(); // a monogram, never a brand mark
   });
 
   it("renders a fallback (no crash) for null / undefined agents", () => {
