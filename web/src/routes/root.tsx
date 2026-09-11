@@ -29,6 +29,8 @@ import { describeThrownError } from "@/lib/api-error-message";
 import { homePath } from "@/lib/nav";
 import { scopeFromUrl } from "@/lib/session";
 import { PANE_ROUTE_ID, type HomeData, type PaneData } from "@/lib/loaders";
+import { worstTriage, type TriageKey } from "@/lib/triage";
+import type { MarkState } from "@/components/meow-mark";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
@@ -55,6 +57,19 @@ export function shownLastSeenAt(home: HomeData, pane: PaneData | undefined): num
 // The data root: owns the snapshot loader, drives polling, and fans the herd out to the child
 // routes (home + pane detail) via the router's loader data. Mounted only while unlocked (the
 // idle-lock in App swaps the whole RouterProvider out), so polling pauses when the app is locked.
+// FORK: triage bucket -> what the mark shows. The two vocabularies are deliberately not the same
+// size: `pinned` and `recent` are ORDERING, not urgency, so both land on the rest drawing, and the
+// three buckets that mean something is happening each get their own. Written as a Record so a new
+// bucket in lib/triage.ts fails this file at compile time rather than silently falling through to
+// idle — a herd state the mark quietly stops reporting is the worst failure this feature has.
+const HERD_MARK: Record<TriageKey, MarkState> = {
+  pinned: "idle",
+  needs: "blocked",
+  ready: "done",
+  working: "working",
+  recent: "idle",
+};
+
 export function RootLayout() {
   // SAFETY: this component IS the root route's element, and `rootLoader` — the loader `router.tsx`
   // pairs with it — returns `HomeData`. React Router types `useLoaderData()` as `unknown` in data
@@ -106,6 +121,13 @@ export function RootLayout() {
   usePushSetup();
   // FORK: desktop shortcuts, live only with a fine pointer (hooks/use-hotkeys.ts).
   const hotkeys = useHotkeys(data);
+  // FORK: the herd in one word, for the mark in the header of every screen (components/meow-mark.tsx
+  // says what the drawing does with it). `worstTriage` is the app's existing "what is the most urgent
+  // thing in this set" — the same function the tab and space chips advertise themselves with — so the
+  // mark can never disagree with the dots under it. Derived HERE because this is where the snapshot
+  // is, and passed down as a prop; the header deriving it again would be a second answer.
+  // `null` is an empty herd, which has nothing to report: idle, the rest drawing.
+  const herd: MarkState = HERD_MARK[worstTriage(data.agents) ?? "recent"];
 
   // A viewport-height flex column: the top banners (when shown) are in-flow rows at the top and the
   // active route fills the rest (each route root is `min-h-0 flex-1`). This is what keeps a banner
@@ -152,7 +174,7 @@ export function RootLayout() {
             `bridge` and `error` are read here, once, off the root snapshot every route was
             forwarding them from anyway — six copies of the same two fields was six chances to
             disagree with the ConnectionBanner two lines up. */}
-        <AppHeaderHost bridge={data.bridge} error={data.error}>
+        <AppHeaderHost bridge={data.bridge} error={data.error} herd={herd}>
           {/* FORK: the route's entrance. Keyed by the KIND of route (dashboard / space / pane /
               settings / crew), so a dashboard→pane tap replays the 220ms rise in skin.css while a
               pane→pane hop — which must keep DetailRoute mounted (routes/detail.tsx) — does not

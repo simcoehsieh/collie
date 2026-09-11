@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
-import { MeowMark } from "@/components/meow-mark";
+import { MeowMark, type MarkState } from "@/components/meow-mark";
 import { t } from "@/lib/i18n";
 import { useStatus } from "@/lib/status";
 import { useOperatorBusy } from "@/lib/busy";
@@ -18,6 +18,12 @@ interface CollieHomeProps {
    *  the mark goes still again, muted — a mark that blooms forever reads as "still trying" when
    *  we've in fact given up; muted says "not connected" at a glance, matching the boot splash. */
   lost?: boolean;
+  /** FORK: what the HERD is doing, from the triage the dashboard already computes (lib/triage.ts)
+   *  — see <MeowMark/> for what the drawing does with it. Purely a pass-through: this component
+   *  decides nothing about the value, and the CONNECTION outranks it in both directions. A bloom is
+   *  `loading`, which the mark reads as `working`; `lost` puts the drawing back to rest, because a
+   *  mark flattening its ears at a herd it cannot reach is reporting yesterday's news. */
+  state?: MarkState;
   className?: string;
 }
 
@@ -114,7 +120,7 @@ export function spinRate(elapsedMs: number, totalMs = ORBIT_TURN_MS): number {
   return (1 - Math.cos(2 * Math.PI * u)) * du;
 }
 
-export function CollieHome({ onHome, trouble, lost = false, className }: CollieHomeProps) {
+export function CollieHome({ onHome, trouble, lost = false, state = "idle", className }: CollieHomeProps) {
   useLocale();
   const bloom = trouble && !lost;
 
@@ -339,6 +345,7 @@ export function CollieHome({ onHome, trouble, lost = false, className }: CollieH
           size={40}
           weight="header"
           loading={bloom || ((round || busy) && !lost)}
+          state={lost ? "idle" : state}
           paper="var(--background)"
           className={cn("transition-opacity", lost && "opacity-40 grayscale")}
         />
