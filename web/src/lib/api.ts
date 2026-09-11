@@ -11,6 +11,7 @@ import { isLead, normalizeScope, paneScopeKey, type Scope } from "./scope";
 import { observeServerBuild, SERVER_BUILD_HEADER } from "./server-build";
 import type {
   ActionResponse,
+  BootResponse,
   BridgeConfig,
   CreateResponse,
   DismissScope,
@@ -402,6 +403,93 @@ export function __resetSnapshotCache(): void {
   snapshotCache.clear();
 }
 
+// ── FORK: the cold boot, as one round trip (bridge/boot.ts) ───────────────────────────────────
+//
+// `rootLoader` used to open the app with `GET /api/snapshot`, alone, behind the boot splash — and
+// only once THAT resolved did the page mount and fire `/api/config` (three times), `/api/launchers`,
+// `/api/subscribe` and then `/api/quota`. Serial, and every step a ~175 ms round trip through
+// Cloudflare. `GET /api/boot` answers all of them at once.
+//
+// WHAT THIS IS NOT: a new source of truth. Every field is the body of the route that owns it; the
+// page polls those same routes from the next tick onward; and this is used ONCE, for the first fetch
+// of a page's life. Everything after it is exactly what shipped before.
+//
+// THE FALLBACK IS THE WHOLE SAFETY STORY. An older bridge 404s, a member scope has no bundle, a
+// widened view is not what the bundle carries — each of those simply fetches the snapshot the way it
+// always did, and each costs one wasted request at most, once per page load.
+
+/** Whether the bundle has already been tried. A page gets one attempt, whatever the outcome. */
+let bootAttempted = false;
+
+/** Tests only: let the next root load try the bundle again. */
+export function __resetBoot(): void {
+  bootAttempted = false;
+  seededLaunchers = null;
+  seededNotifyPrefs = null;
+  seededQuota = null;
+}
+
+/**
+ * The snapshot for the FIRST root load of a page, taken out of `/api/boot` when that route is
+ * available and out of `/api/snapshot` otherwise. Every later load calls `fetchSnapshot` directly.
+ *
+ * Signature-identical to {@link fetchSnapshot} on purpose: `lib/loaders.ts`'s hunk is one identifier,
+ * which is the smallest a contested file can be asked to carry (FORK.md).
+ */
+export async function fetchBootSnapshot(
+  scope?: Scope,
+  signal?: AbortSignal,
+  all = false,
+): Promise<SnapshotResponse> {
+  // A widened view and a member host are both fetched the old way: the bundle answers this
+  // machine's narrow snapshot, and answering a DIFFERENT body than the one asked for would be worse
+  // than an extra round trip. `all` is rare (a switch on the home screen) and `host` never reaches
+  // the bundle at all — the bridge 404s it.
+  if (bootAttempted || all || scope?.host !== undefined) return fetchSnapshot(scope, signal, all);
+  bootAttempted = true;
+  try {
+    const boot = await req<BootResponse>(withScope("/api/boot", scope), { signal });
+    primeBoot(boot, scope);
+    if (boot.snapshot.bridge !== "disconnected") markLive();
+    return boot.snapshot;
+  } catch (e) {
+    // An abort is the loader being superseded and must propagate — everything else (a 404 from a
+    // bridge without the route, a refusal, a transport failure) falls back to the fetch that has
+    // always worked, so a bundle that cannot be had costs one request and nothing else.
+    // An AbortError is a DOMException, which is an Error subclass in every engine Collie runs in.
+    if (e instanceof Error && e.name === "AbortError") throw e;
+    return fetchSnapshot(scope, signal, all);
+  }
+}
+
+/**
+ * Hand each part of the bundle to the cache the route that owns it already reads from.
+ *
+ * The snapshot and the quota go into ETag maps, so the first POLL of each is a 304 rather than a
+ * second full body. The config goes into the memo all three of its callers share. The launcher rows
+ * and the notification prefs have no cache of their own — by design, both are read live on every
+ * mount — so they are held as ONE-SHOT seeds: the next call takes the value and the seed is gone,
+ * which leaves "fresh on every later mount" exactly as it was.
+ *
+ * Every field but the snapshot is read defensively: a bridge that grows this route before it grows
+ * one of the bodies must not be able to seed `undefined` into a cache the page then trusts.
+ */
+function primeBoot(boot: BootResponse, scope?: Scope): void {
+  const snapshotUrl = withScope("/api/snapshot", scope);
+  if (boot.snapshotEtag) snapshotCache.set(snapshotUrl, { etag: boot.snapshotEtag, response: boot.snapshot });
+  if (boot.config) {
+    configMemo.set(withScope("/api/config", scope), { at: Date.now(), promise: Promise.resolve(boot.config) });
+  }
+  if (boot.launchers) seededLaunchers = { path: withScope("/api/launchers", scope), value: boot.launchers };
+  if (boot.notifyPrefs) seededNotifyPrefs = boot.notifyPrefs;
+  if (boot.quota && boot.quotaEtag) seededQuota = { etag: boot.quotaEtag, response: boot.quota };
+}
+
+/** The one-shot seeds `primeBoot` leaves for the first caller of each. */
+let seededLaunchers: { path: string; value: LaunchersResponse } | null = null;
+let seededNotifyPrefs: NotifyPrefs | null = null;
+let seededQuota: { etag: string; response: QuotaResponse } | null = null;
+
 // Per-pane cache of the last ETag AND the body it belongs to, kept together on purpose. We send
 // If-None-Match on the next poll to skip re-transferring unchanged scrollback; on a 304 we return
 // the cached body (with its text) so the mirror stays populated. Two invariants make this safe:
@@ -741,7 +829,15 @@ export function launch(command: string, besidePaneId?: string, scope?: Scope): P
  * scope changes (lib/operator-config.ts's `useLaunchers`).
  */
 export function fetchLaunchers(scope?: Scope): Promise<LaunchersResponse> {
-  return req<LaunchersResponse>(withScope("/api/launchers", scope));
+  const path = withScope("/api/launchers", scope);
+  // FORK: the boot bundle already carried this scope's rows — take them ONCE, then go back to
+  // reading them live on every mount, which is what the comment above promises.
+  if (seededLaunchers?.path === path) {
+    const seeded = seededLaunchers.value;
+    seededLaunchers = null;
+    return Promise.resolve(seeded);
+  }
+  return req<LaunchersResponse>(path);
 }
 
 /** The worktrees of the repo a space sits in. Empty-handed when the space is not in one. */
@@ -807,12 +903,12 @@ export function fetchConfig(scope?: Scope): Promise<BridgeConfig> {
   const path = withScope("/api/config", scope);
   const held = configMemo.get(path);
   if (held && Date.now() - held.at < CONFIG_MEMO_MS) return held.promise;
-  // A rejection is dropped from the memo the moment it settles, so a bridge that was briefly down
-  // is retried by the next caller rather than remembered as broken for the rest of the window.
-  const promise = req<BridgeConfig>(path).catch((err: unknown) => {
-    configMemo.delete(path);
-    throw err;
-  });
+  const promise = req<BridgeConfig>(path);
+  // A rejection is dropped from the memo the moment it settles, so a bridge that was briefly down is
+  // retried by the next caller rather than remembered as broken for the rest of the window. The
+  // handler is attached to a DERIVED promise and discarded, so the caller still sees the rejection
+  // (and the original is not left looking unhandled).
+  void promise.catch(() => configMemo.delete(path));
   configMemo.set(path, { at: Date.now(), promise });
   return promise;
 }
@@ -856,6 +952,13 @@ export function setSnooze(snoozedUntil: number | null): Promise<{ snoozedUntil: 
 
 /** Fetch the bridge-wide notification-type preferences (which agent statuses push). */
 export function getNotifyPrefs(): Promise<NotifyPrefs> {
+  // FORK: the boot bundle already carried them — taken ONCE, so the first open of Settings paints
+  // its switches with no round trip and every later open reads the bridge as it always did.
+  if (seededNotifyPrefs !== null) {
+    const seeded = seededNotifyPrefs;
+    seededNotifyPrefs = null;
+    return Promise.resolve(seeded);
+  }
   return req<NotifyPrefs>("/api/notifications/prefs");
 }
 
@@ -1236,6 +1339,15 @@ const QUOTA_REFRESH_TIMEOUT_MS = 25_000;
  * a memoised row stays still. `refresh` asks the bridge to rerun its command and wait for it.
  */
 export async function fetchQuota(refresh = false, signal?: AbortSignal): Promise<QuotaResponse> {
+  // FORK: the boot bundle already carried this, with its tag. Taken ONCE and promoted into the
+  // cache, so the card paints with no round trip and the next poll validates against the same tag
+  // the bridge holds. A `refresh` is the operator asking for the command to be RERUN and never
+  // takes the seed — that would answer a rerun with the body it was meant to replace.
+  if (!refresh && seededQuota !== null) {
+    quotaCache = seededQuota;
+    seededQuota = null;
+    return quotaCache.response;
+  }
   const url = refresh ? "/api/quota?refresh=1" : "/api/quota";
   const headers = new Headers({ [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() });
   if (quotaCache) headers.set("if-none-match", quotaCache.etag);

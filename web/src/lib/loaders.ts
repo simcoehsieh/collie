@@ -18,7 +18,7 @@ import {
   fetchHistory,
   fetchCrew,
   fetchPane,
-  fetchSnapshot,
+  fetchBootSnapshot,
   isApiErrorStatus,
 } from "@/lib/api";
 import { parseAnsi } from "@/lib/ansi";
@@ -361,7 +361,11 @@ export async function rootLoader({ request }: { request?: Request } = {}): Promi
   if (cached) return { ...toHomeData(cached, scope, viewAll, false), pending: true };
 
   try {
-    const snap = await fetchSnapshot(scope, request?.signal, viewAll);
+    // FORK: the FIRST fetch of a page's life takes `GET /api/boot`, which answers the snapshot
+    // together with the four bodies that used to be fetched one after another once this resolved
+    // (bridge/boot.ts). It is signature-identical to `fetchSnapshot` and falls back to it on
+    // anything — an older bridge, a member scope, a widened view — so this line is the whole hunk.
+    const snap = await fetchBootSnapshot(scope, request?.signal, viewAll);
     lastSnapshot.set(snapshotKey(scope, viewAll), snap);
     // Write-through: the same body, dated, in a store that outlives this page (lib/last-seen.ts).
     saveLastSnapshot(scope, snap, undefined, viewAll);

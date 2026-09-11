@@ -334,6 +334,11 @@ export function paneTextWithDraft(base = "hello from the pane"): string {
 // Default happy-path handlers; individual tests can override via server.use(...).
 export const handlers = [
   http.get("/api/snapshot", () => HttpResponse.json(fixtureSnapshot)),
+  // FORK: the cold-boot bundle answers 404 by default — i.e. "a bridge without the route", which is
+  // the fallback path every other suite in this tree should be exercising. A suite that wants the
+  // bundle overrides this with `server.use(...)` and asserts what it primed (lib/boot.test.ts).
+  // Named rather than left unhandled so an absent route reads as a decision, not as MSW's warning.
+  http.get("/api/boot", () => new HttpResponse("not found", { status: 404 })),
   http.get(/\/api\/pane\/[^/]+$/, () =>
     HttpResponse.json({ paneId: "w1:p1", text: paneTextWithDraft(), truncated: false, revision: 1 }),
   ),

@@ -1256,3 +1256,23 @@ export interface QuotaResponse {
   /** Always all three, in the order claude, codex, agy. */
   agents: QuotaAgent[];
 }
+
+/**
+ * FORK: `GET /api/boot` — the five bodies a cold boot used to fetch one after another, as one
+ * response. Mirrors `BootBody` in bridge/boot.ts.
+ *
+ * It REPLACES nothing: every field is exactly the body of the route that owns it, the page polls
+ * those same routes afterwards, and a bridge too old to serve this answers 404 — which is why every
+ * field but the snapshot is read defensively by `primeBoot` (lib/api.ts) and why `quota` is absent
+ * rather than null when the usage card is off.
+ */
+export interface BootResponse {
+  snapshot: SnapshotResponse;
+  /** The tag `/api/snapshot` would answer for `snapshot`, so the first poll can be a 304. */
+  snapshotEtag: string;
+  config: BridgeConfig;
+  launchers: LaunchersResponse;
+  notifyPrefs: NotifyPrefs;
+  quota?: QuotaResponse;
+  quotaEtag?: string;
+}

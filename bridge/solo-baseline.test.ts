@@ -585,6 +585,16 @@ describe("solo zero-tax — routes", () => {
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktree(?:\\/(open))?$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktrees$/",
+      // The cold boot as one round trip (bridge/boot.ts) — a SOLO route that legitimately extends
+      // this list, named here rather than exempted. It REPLACES no endpoint and adds no capability:
+      // it answers the five bodies a page fetches before it can draw anything — the snapshot, the
+      // config, the launcher rows, the notification prefs and (only when the config says the card is
+      // on) the quota — in one response, and the page then polls exactly the routes it always
+      // polled. Read-gated through the same `guard` all five use, which is the strictest of them,
+      // and served for this collie's own sessions only: `launchers` must come from the host that
+      // runs them (§5) and a bundle is not a thing that forwards, so a `?host=` page falls back to
+      // fetching the five separately, which is what it does today.
+      "/api/boot",
       "/api/config",
       // The Crew overview (bridge/crew/status-wire.ts) — a FRONT-DOOR route, and it legitimately
       // extends this list rather than being exempted, exactly as pairing and STT do. It is not a

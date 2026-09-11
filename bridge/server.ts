@@ -17,6 +17,7 @@ import {
   pickEncoding,
   type Encoding,
 } from "./http-cache.ts";
+import { bootBody, snapshotEtagOf } from "./boot.ts";
 import { EventHub, IDLE_TIMEOUT_S, PaneReads, SSE_PING, SSE_PING_MS, sseFrame } from "./events.ts";
 import { pluginRoot } from "./root.ts";
 import { parseNotifyPrefsPatch as parsePrefsPatch, type NotifyPrefs, type NotifyPrefsStore } from "./notify-prefs.ts";
@@ -879,7 +880,7 @@ export function startServer(opts: {
     rt.engine.onUpdate(() => {
       const body = localSnapshot(rt.name, null);
       if (!body) return;
-      const next = computeEtag(JSON.stringify({ ...body, ts: 0 }));
+      const next = snapshotEtagOf(body);
       if (next === fingerprint) return;
       fingerprint = next;
       // FORK: the fingerprint rides the poke as its version stamp. It is computed the same way the
@@ -968,6 +969,64 @@ export function startServer(opts: {
     // Only report device state when the feature is on, so an off deployment sends nothing new.
     if (device !== null) body.device = device;
     return body;
+  };
+
+  /**
+   * The `/api/config` body, as a closure — so `/api/config` and FORK's `/api/boot` bundle answer it
+   * by calling one expression rather than by agreeing.
+   *
+   * It sits beside {@link localSnapshot} for the same reason that one does: two spellings of "what
+   * this collie can do" would be two chances to drift, and a boot bundle that reported a slightly
+   * different config from the route the page polls is the worst possible place for a disagreement —
+   * the page acts on the first one it sees.
+   *
+   * `memberMux` is the only thing a `?host=<member>` read changes (M22/03); every other field is the
+   * lead's own, and the no-host call builds the byte-identical body it always did.
+   */
+  const configBody = async (memberMux?: MuxConfig): Promise<BridgeConfig> => {
+    // Re-read per request behind an mtime check, like buildId() — editing commands.toml is live,
+    // with no restart. The path is cfg's, never the request's.
+    const mine = await operatorCommands();
+    const myKeys = await operatorKeys();
+    const myReplies = await operatorQuickReplies();
+    // Same mtime-checked re-read, same reason: an operator who adds a face to theme.toml wants
+    // it in the picker on the next page load, not after a restart.
+    const myFonts = await operatorFonts();
+    // The PRIMARY session's adapter, because one collie drives one multiplexer: every session in
+    // the registry is built by the same factory off the same `cfg.mux`, so which runtime answers
+    // is not a choice. `?.` only because `get()` is total over a Map — the primary is created
+    // eagerly in the constructor and never disposed.
+    const activeMux = registry.get();
+    // Re-resolved per request for the same reason `commands.toml` is: `collie stt setup` is
+    // live, and this is where the phone learns whether to draw a microphone at all. `?? undefined`
+    // because "no provider" must OMIT the key, never send a null one (CREW_PROTOCOL.md §11).
+    const sttWire = (await sttCapability(await stt())) ?? undefined;
+    return bridgeConfigBody({
+      push: push.enabled,
+      vapidPublicKey: push.publicKey,
+      build: await buildId(),
+      mode: crew.mode,
+      operatorCommands: mine,
+      operatorKeys: myKeys,
+      operatorQuickReplies: myReplies,
+      operatorFonts: myFonts,
+      mux: activeMux?.herdr,
+      // Assigned through `?? undefined` rather than conditionally, so the no-`host=` request
+      // builds the byte-identical body it always did (CREW_PROTOCOL.md §11).
+      muxWire: memberMux ?? undefined,
+      stt: sttWire,
+      // This host's own limits, read from cfg on every request like everything else here.
+      // A crew member answers with ITS number, which is the number that will judge the bytes.
+      upload: {
+        maxBytes: cfg.maxUploadBytes,
+        imageTypes: [...IMAGE_EXTS],
+        textTypes: [...TEXT_EXTS, ...cfg.uploadExtraTypes],
+      },
+      // Gated on the bridge being ABLE to serve a document, not merely on the hostnames being
+      // named — see the field's own comment. Both halves of the credential must be present.
+      docHosts: cfg.kbOrigin !== "" && cfg.kbToken !== "" ? cfg.docHosts : undefined,
+      quota: quota !== null ? true : undefined,
+    });
   };
 
   /**
@@ -1478,10 +1537,10 @@ export function startServer(opts: {
         const wire = crewLead ? crewLead.merge(body, plan) : body;
         // THE SNAPSHOT VALIDATES LIKE THE PANE READ DOES. Polled at up to 3 Hz, and until now
         // re-serialised, re-compressed and re-sent on every beat whether or not the herd had moved.
-        // The tag is computed with `ts` zeroed, because `ts` is stamped per call and would otherwise
-        // make every body unique — the client learns the time from the header-less 304 no worse than
-        // it did from a body that only differed in that one number.
-        const etag = computeEtag(JSON.stringify({ ...wire, ts: 0 }));
+        // The tag is computed with `ts` zeroed (see `snapshotEtagOf`, which is the ONE expression
+        // this, the live feed's fingerprint and FORK's `/api/boot` bundle all use — three spellings
+        // of the same hash would be three chances to disagree about one body's version).
+        const etag = snapshotEtagOf(wire);
         const build = await buildId();
         if (notModified(req.headers.get("if-none-match"), etag)) {
           return withBuildHeader(
@@ -1532,6 +1591,55 @@ export function startServer(opts: {
       });
       if (sessionRouted) return sessionRouted;
 
+      // ── The cold boot, as one round trip (bridge/boot.ts) ────────────────
+      // `GET /api/boot` answers the five bodies a page fetches before it can draw anything, in the
+      // order they used to arrive one after another. The assembly is bridge/boot.ts; this is the
+      // gate, the host rule and the response.
+      //
+      // READ-GATED THROUGH THE SAME `guard` THE FIVE ROUTES USE — not a looser gate that happens to
+      // agree today. Every field is a body a read client may already have, so the bundle discloses
+      // nothing new; what it must not do is disclose it under a weaker check than the route it came
+      // from, and `guard` is the strictest of the five (it contains `checkAccess`, which is all
+      // `/api/snapshot` asks).
+      //
+      // LOCAL ONLY, exactly like `/api/events` and for the same reason: `launchers` must come from
+      // the host that RUNS them (§5) and a bundle is not a thing that forwards. A `?host=` page
+      // falls back to fetching the five routes it always fetched, which is what it does today.
+      if (pathname === "/api/boot" && req.method === "GET") {
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        if (host.kind !== "local") return text("no boot bundle for a member host", 404);
+        const device = whois(req);
+        const view = selectView(url);
+        const snapshot = localSnapshot(view.session, device.enforced ? device : null, view.widen);
+        if (!snapshot) return unknownSession();
+        // The quota is asked for unconditionally and gated INSIDE `bootBody` on what the config
+        // says, so the two answers cannot disagree; a source that is off answers `not_configured`
+        // here and costs nothing. `false` is never a refresh — a boot reads the cache the card
+        // reads, and the refresh button is the only thing that may run the command.
+        const got = quota === null ? null : await quota.get(false);
+        return withBuildHeader(
+          secure(
+            jsonBodyResponse(
+              JSON.stringify(
+                bootBody({
+                  snapshot,
+                  config: await configBody(),
+                  launchers: await launchersBody(operatorLaunchers),
+                  notifyPrefs: notifyPrefs.current(),
+                  quota: got !== null && got.ok ? { body: got.body, etag: got.etag } : null,
+                }),
+              ),
+              req.headers.get("accept-encoding"),
+              // NO `etag` header: the bundle is four documents and a validator names one. The
+              // snapshot's tag rides in the body as `snapshotEtag` — see bridge/boot.ts.
+              { "cache-control": "no-store" },
+            ),
+          ),
+          await buildId(),
+        );
+      }
+
       // ── Misc API ─────────────────────────────────────────────────────────
       if (pathname === "/api/config") {
         // Read-level, like the other non-terminal endpoints. Nothing Collie puts here is a
@@ -1544,19 +1652,6 @@ export function startServer(opts: {
         // short-circuits to AuthErrorBanner before its red-state probe runs. Noted in #32.
         const denied = guard(req, cfg, "read", pairing);
         if (denied) return denied;
-        // Re-read per request behind an mtime check, like buildId() — editing commands.toml is live,
-        // with no restart. The path is cfg's, never the request's.
-        const mine = await operatorCommands();
-        const myKeys = await operatorKeys();
-        const myReplies = await operatorQuickReplies();
-        // Same mtime-checked re-read, same reason: an operator who adds a face to theme.toml wants
-        // it in the picker on the next page load, not after a restart.
-        const myFonts = await operatorFonts();
-        // The PRIMARY session's adapter, because one collie drives one multiplexer: every session in
-        // the registry is built by the same factory off the same `cfg.mux`, so which runtime answers
-        // is not a choice. `?.` only because `get()` is total over a Map — the primary is created
-        // eagerly in the constructor and never disposed.
-        const activeMux = registry.get();
         // ── `?host=<member>`: THIS MEMBER's capability declaration (M22/03) ──────────────────
         //
         // Answered from what the lead already holds, and never forwarded: `config` is on
@@ -1580,39 +1675,9 @@ export function startServer(opts: {
         // "use the lead's" — which is byte for byte the reading the phone gives every pane today.
         // The lead's own entry resolves `local`, so it takes its own branch and its own adapter.
         const memberMux = scoped?.kind === "peer" ? crewLead?.muxFor(scoped.link.memberId) : null;
-        // Re-resolved per request for the same reason `commands.toml` is: `collie stt setup` is
-        // live, and this is where the phone learns whether to draw a microphone at all. `?? undefined`
-        // because "no provider" must OMIT the key, never send a null one (CREW_PROTOCOL.md §11).
-        const sttWire = (await sttCapability(await stt())) ?? undefined;
-        return json(
-          bridgeConfigBody({
-            push: push.enabled,
-            vapidPublicKey: push.publicKey,
-            build: await buildId(),
-            mode: crew.mode,
-            operatorCommands: mine,
-            operatorKeys: myKeys,
-            operatorQuickReplies: myReplies,
-            operatorFonts: myFonts,
-            mux: activeMux?.herdr,
-            // Assigned through `?? undefined` rather than conditionally, so the no-`host=` request
-            // builds the byte-identical body it always did (CREW_PROTOCOL.md §11).
-            muxWire: memberMux ?? undefined,
-            stt: sttWire,
-            // This host's own limits, read from cfg on every request like everything else here.
-            // A crew member answers with ITS number, which is the number that will judge the bytes.
-            upload: {
-              maxBytes: cfg.maxUploadBytes,
-              imageTypes: [...IMAGE_EXTS],
-              textTypes: [...TEXT_EXTS, ...cfg.uploadExtraTypes],
-            },
-            // Gated on the bridge being ABLE to serve a document, not merely on the hostnames being
-            // named — see the field's own comment. Both halves of the credential must be present.
-            docHosts: cfg.kbOrigin !== "" && cfg.kbToken !== "" ? cfg.docHosts : undefined,
-            quota: quota !== null ? true : undefined,
-          }),
-          req.headers.get("accept-encoding"),
-        );
+        // The body itself is `configBody` above — ONE expression, shared with FORK's `/api/boot`
+        // bundle, so the route the page polls and the bundle it booted from cannot disagree.
+        return json(await configBody(memberMux ?? undefined), req.headers.get("accept-encoding"));
       }
       if (pathname === MUX_LOGO_PATH && req.method === "GET") {
         // Read-level, exactly like the `/api/config` block that publishes its URL — an image the
@@ -3513,8 +3578,16 @@ export async function launchersRoute(
   getLaunchers: () => Promise<Launcher[]>,
   acceptEncoding: string | null,
 ): Promise<Response> {
+  return json(await launchersBody(getLaunchers), acceptEncoding);
+}
+
+/** The same body without the Response around it — what FORK's `/api/boot` bundle embeds, so the
+ *  bundle and the route cannot answer different rows. */
+export async function launchersBody(
+  getLaunchers: () => Promise<Launcher[]>,
+): Promise<LaunchersResponse> {
   const rows = await getLaunchers();
-  return json({ launchers: rows, home: homedir() } satisfies LaunchersResponse, acceptEncoding);
+  return { launchers: rows, home: homedir() } satisfies LaunchersResponse;
 }
 
 // Launch one allowlisted command, either in a new throwaway Space (from the dashboard, no pane
