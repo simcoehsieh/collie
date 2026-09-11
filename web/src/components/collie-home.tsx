@@ -306,7 +306,7 @@ export function CollieHome({ onHome, trouble, lost = false, className }: CollieH
             : t("nav.home.aria.reconnecting")
       }
       className={cn(
-        "-mx-1 flex items-center rounded px-1 transition-opacity active:opacity-70",
+        "-mx-1 flex items-center rounded-sm px-1 transition-opacity active:opacity-70",
         className,
       )}
     >

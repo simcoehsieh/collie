@@ -102,7 +102,7 @@ function CheckboxPhase({
               <span
                 aria-hidden
                 className={cn(
-                  "mt-px flex size-4 shrink-0 items-center justify-center rounded border",
+                  "mt-px flex size-4 shrink-0 items-center justify-center rounded-sm border",
                   option.checked
                     ? "border-primary bg-primary/20 text-primary"
                     : "border-border bg-background",

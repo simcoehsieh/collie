@@ -98,7 +98,7 @@ export function SectionHeader({
             {...(controls && open ? { "aria-controls": controls } : {})}
             // min-h-9 keeps the row on the 36px touch floor even though the text is tiny.
             className={cn(
-              "flex min-h-9 min-w-0 flex-1 items-center gap-1.5 rounded text-left transition-colors",
+              "flex min-h-9 min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left transition-colors",
               type,
               tone,
             )}

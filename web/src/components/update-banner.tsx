@@ -136,7 +136,7 @@ export function UpdateBanner({ className }: { className?: string }) {
             type="button"
             onClick={copy}
             aria-label={t("settings.updateBanner.copyAria", { command: notice.command })}
-            className="inline-flex items-center gap-1 align-middle rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground/80"
+            className="inline-flex items-center gap-1 align-middle rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground/80"
           >
             <code>{notice.command}</code>
             {copied ? (
