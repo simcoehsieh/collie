@@ -95,12 +95,13 @@ describe("restingPane — which cards are read for what they SAID", () => {
     ...over,
   });
 
-  it("a finished, blocked or idle agent rests; a working one and a shell never do", () => {
+  it("a finished or idle agent rests; working, blocked and a shell never do", () => {
     expect(restingPane(pane({ status: "done" }))).toBe(true);
-    expect(restingPane(pane({ status: "blocked" }))).toBe(true);
     expect(restingPane(pane({ status: "idle" }))).toBe(true);
     // A card quoting the last reply mid-answer would be showing the previous message.
     expect(restingPane(pane({ status: "working" }))).toBe(false);
+    // A blocked pane's QUESTION is on its screen — quoting what came before it buries the ask.
+    expect(restingPane(pane({ status: "blocked" }))).toBe(false);
     // A shell has no journal; its mirror IS the content.
     expect(restingPane(pane({ status: "idle", kind: "shell" }))).toBe(false);
   });

@@ -215,13 +215,18 @@ export function replyLines(prose: string, shown: number = TAIL_SHOWN): string[] 
 /**
  * Whether a pane is one the operator reads for WHAT IT SAID rather than for what it is doing.
  *
- * A shell has no journal and never rests in this sense — its mirror IS the content. `working` is
- * the other exclusion, and it is the important one: a card quoting the last reply while the agent is
- * mid-answer would be showing the previous message under a spinner.
+ * Exactly `done` and `idle` — an agent that has finished and is sitting at its input box, where the
+ * bottom six rows are that box and its status line and are identical across every finished agent.
+ * Three exclusions, each for its own reason:
+ *   - `working`: a card quoting the last reply mid-answer would show the PREVIOUS message under a
+ *     spinner, which is worse than showing nothing;
+ *   - `blocked`: what a blocked pane needs the operator to read is the question on its screen — the
+ *     permission dialog IS the content, and the journal's last spoken turn is what came before it;
+ *   - a shell: no journal, and its mirror is the content by definition.
  */
 export function restingPane(pane: AgentView): boolean {
   if (pane.kind === "shell") return false;
-  return pane.status === "done" || pane.status === "blocked" || pane.status === "idle";
+  return pane.status === "done" || pane.status === "idle";
 }
 
 /** Test seam. */
