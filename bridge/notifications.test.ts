@@ -437,7 +437,7 @@ describe("makeNotifySink — the reply's first line", () => {
     const peeked: string[] = [];
     const sink = makeNotifySink(push, { isMuted: () => false }, "collie:herd", {}, undefined, async (paneId) => {
       peeked.push(paneId);
-      return "All 114 tests pass.";
+      return { text: "All 114 tests pass.", turn: "t1" };
     });
     sink.render(done);
     await flush();
@@ -459,7 +459,7 @@ describe("makeNotifySink — the reply's first line", () => {
       "collie:herd:attic",
       { host: "attic", session: "work" },
       undefined,
-      async () => "Migration applied.",
+      async () => ({ text: "Migration applied.", turn: "t1" }),
     );
     sink.render(done);
     await flush();
@@ -491,6 +491,30 @@ describe("makeNotifySink — the reply's first line", () => {
     ]);
   });
 
+  test("the same turn is pushed once: a done that comes round again with no new turn sends nothing", async () => {
+    const push = new RecordingPush();
+    let turn = "t1";
+    const sink = makeNotifySink(push, { isMuted: () => false }, "collie:herd", {}, undefined, async () => ({
+      text: "Deployed.",
+      turn,
+    }));
+    sink.render(done);
+    await flush();
+    // The status flapped done → idle → done while the phone was looking; the journal is unchanged.
+    sink.render(done);
+    await flush();
+    expect(push.sent).toHaveLength(1);
+    // A new turn is a new completion, and it goes out.
+    turn = "t2";
+    sink.render(done);
+    await flush();
+    expect(push.sent).toHaveLength(2);
+    // Another pane's first turn is its own: the memory is per pane.
+    sink.render({ ...done, paneId: "p2" });
+    await flush();
+    expect(push.sent).toHaveLength(3);
+  });
+
   test("without a reply peek the done alert sends synchronously, as it always did", () => {
     const push = new RecordingPush();
     makeNotifySink(push, { isMuted: () => false }, "collie:herd").render(done);
@@ -503,7 +527,7 @@ describe("makeNotifySink — the reply's first line", () => {
     let peeks = 0;
     const sink = makeNotifySink(push, { isMuted: () => true }, "collie:herd", {}, undefined, async () => {
       peeks++;
-      return "something";
+      return { text: "something", turn: "t1" };
     });
     sink.render(done);
     await flush();

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { firstProseLine, replyFirstLine, REPLY_PEEK_CHARS } from "./reply-peek.ts";
+import { firstProseLine, replyFirstLine, replyLine, REPLY_PEEK_CHARS } from "./reply-peek.ts";
 import type { TranscriptEntry } from "./journal/types.ts";
 
 // The grammar half of the `done` push body. What is pinned here is what the operator sees on a lock
@@ -96,5 +96,18 @@ describe("replyFirstLine", () => {
   test("a line at the budget is not marked", () => {
     const exact = "y".repeat(REPLY_PEEK_CHARS);
     expect(replyFirstLine([say(exact)])).toBe(exact);
+  });
+});
+
+describe("replyLine — the line and the turn it came from", () => {
+  test("names the newest assistant turn's own id beside its line", () => {
+    const entries: TranscriptEntry[] = [
+      { uuid: "u1", ts: "", role: "user", parts: [{ kind: "text", text: "go" }] },
+      { uuid: "a1", ts: "", role: "assistant", parts: [{ kind: "text", text: "First." }] },
+      { uuid: "a2", ts: "", role: "assistant", parts: [{ kind: "text", text: "Deployed, all green." }] },
+    ];
+    expect(replyLine(entries)).toEqual({ text: "Deployed, all green.", turn: "a2" });
+    expect(replyFirstLine(entries)).toBe("Deployed, all green.");
+    expect(replyLine([entries[0]!])).toBeNull();
   });
 });

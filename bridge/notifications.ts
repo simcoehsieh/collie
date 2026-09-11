@@ -1,5 +1,6 @@
 import type { BinaryPromptPeek } from "./prompt-peek.ts";
 import { YES_NO_ACTIONS, type PushMessage } from "./push.ts";
+import type { ReplyLine } from "./reply-peek.ts";
 import type { AgentStatus, AgentView } from "./types.ts";
 
 // A notification shouldn't be fire-and-forget. This coordinator gives every blocked/done alert a
@@ -83,7 +84,7 @@ export type PromptPeek = (paneId: string) => Promise<BinaryPromptPeek | null>;
  * fire at all — the coordinator owns that gate and this never second-guesses it. A digest, a blocked
  * alert and a retraction never touch the journal. A rejection or a throw reads as "no line".
  */
-export type ReplyPeek = (paneId: string) => Promise<string | null>;
+export type ReplyPeek = (paneId: string) => Promise<ReplyLine | null>;
 
 /**
  * Who the alerts flowing through a sink belong to — the `(host, session)` half of the address triple
@@ -122,6 +123,12 @@ export function makeNotifySink(
   const { session: sessionName, host } = ident;
   /** One body, with the host prefix the crew case needs. The only place either is composed. */
   const withHost = (body: string) => (host === undefined ? body : `${host} · ${body}`);
+  // FORK: the assistant turn each pane's last `done` push carried. A `done` that arrives with the
+  // SAME turn is a status that flapped (`done` → `idle` → `done`, which Herdr's seen-tracking can
+  // produce while the phone is looking at the pane), not a new completion — and the operator was
+  // already told. One entry per pane, replaced by the next real turn; a pane that vanishes leaves a
+  // string behind, which is nothing.
+  const pushedTurn = new Map<string, string>();
   return {
     render: (s) => {
       if (mute.isMuted()) return;
@@ -163,12 +170,19 @@ export function makeNotifySink(
       if (replyPeek !== undefined && s.paneId !== undefined && s.status === "done") {
         const paneId = s.paneId;
         void (async () => {
-          let line: string | null = null;
+          let peeked: ReplyLine | null = null;
           try {
-            line = await replyPeek(paneId);
+            peeked = await replyPeek(paneId);
           } catch {
-            line = null;
+            peeked = null;
           }
+          // FORK: the same turn is pushed once. Decided only when the journal named a turn — a pane
+          // with no readable log keeps the old contract, every push goes out.
+          if (peeked !== null) {
+            if (pushedTurn.get(paneId) === peeked.turn) return;
+            pushedTurn.set(paneId, peeked.turn);
+          }
+          const line = peeked?.text ?? null;
           // FORK: when the agent's own line is there, the notification IS that line. The headline
           // becomes the pane's address ("AI Live · claude") and the verb goes — "claude is done"
           // above "AI Live · <what it said>" said nothing the line did not (2026-09-11). An EMPTY

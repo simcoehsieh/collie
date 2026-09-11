@@ -58,6 +58,24 @@ export function replyFirstLine(
   entries: readonly TranscriptEntry[],
   max: number = REPLY_PEEK_CHARS,
 ): string | null {
+  return replyLine(entries, max)?.text ?? null;
+}
+
+/**
+ * The line AND the turn it came from.
+ *
+ * `turn` is the journal's own id for the assistant turn (its paging cursor — stable across reads of
+ * the same log, journal/types.ts), and it is what lets the sink say "I already pushed this one": a
+ * pane whose status flaps `done` → `idle` → `done` with no new turn in between has not finished
+ * anything new, and the same line buzzing the phone twice is the bug this field exists to stop
+ * (2026-09-11: "in the app, one push, then the same one again a few seconds later").
+ */
+export interface ReplyLine {
+  readonly text: string;
+  readonly turn: string;
+}
+
+export function replyLine(entries: readonly TranscriptEntry[], max: number = REPLY_PEEK_CHARS): ReplyLine | null {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
     if (entry === undefined || entry.role !== "assistant") continue;
@@ -69,7 +87,7 @@ export function replyFirstLine(
       .join("\n");
     const line = firstProseLine(prose);
     if (line === "") continue;
-    return line.length > max ? `${line.slice(0, max).trimEnd()}…` : line;
+    return { text: line.length > max ? `${line.slice(0, max).trimEnd()}…` : line, turn: entry.uuid };
   }
   return null;
 }

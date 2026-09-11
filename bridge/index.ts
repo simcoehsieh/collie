@@ -46,7 +46,7 @@ import { NotificationCoordinator, makeNotifySink, type NotifyClock } from "./not
 import { NotifyPrefsStore } from "./notify-prefs.ts";
 import { ArtifactStore } from "./artifacts.ts";
 import { peekBinaryPrompt } from "./prompt-peek.ts";
-import { replyFirstLine } from "./reply-peek.ts";
+import { replyLine, type ReplyLine } from "./reply-peek.ts";
 import { filePairingIo, PairingStore } from "./pairing.ts";
 import { createSttGate } from "./stt/index.ts";
 import { runBootGate } from "./crew/boot-gate.ts";
@@ -1036,7 +1036,7 @@ const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
   const replyPeek =
     journals === null || transcriptPeeks === null
       ? undefined
-      : async (paneId: string): Promise<string | null> => {
+      : async (paneId: string): Promise<ReplyLine | null> => {
           const { agents, shellPanes } = engine.current();
           const pane = [...agents, ...shellPanes].find((p) => p.paneId === paneId);
           if (!pane?.agentSession) return null;
@@ -1045,7 +1045,7 @@ const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
           const page = await transcriptPeeks.page(adapter, pane.agentSession, {
             limit: REPLY_PEEK_TURNS,
           });
-          return page === null ? null : replyFirstLine(page.entries);
+          return page === null ? null : replyLine(page.entries);
         };
   const sink = makeNotifySink(
     push,
