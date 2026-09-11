@@ -59,15 +59,6 @@ export function DocPanel({ open, onClose, initial, paneId, scope }: DocPanelProp
   useLocale();
   // The stack of documents opened in this session of the panel; empty means the browser is showing.
   const [stack, setStack] = useState<DocRef[]>([]);
-  const wasOpen = useRef(false);
-  useEffect(() => {
-    if (open && !wasOpen.current) setStack(initial ? [initial] : []);
-    if (!open) setStack([]);
-    wasOpen.current = open;
-  }, [open, initial]);
-
-  const current = stack.length > 0 ? stack[stack.length - 1]! : null;
-
   // FORK: a note about the document on screen.
   //
   // It anchors to the slug and the title and NOTHING ELSE, which is a platform fact rather than a
@@ -78,6 +69,19 @@ export function DocPanel({ open, onClose, initial, paneId, scope }: DocPanelProp
   // as well as in the sheet (`lib/notes.ts` → the doc anchor's `**Note:**` row), rather than letting
   // an agent assume the operator pointed at a passage.
   const [noting, setNoting] = useState(false);
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpen.current) setStack(initial ? [initial] : []);
+    if (!open) {
+      setStack([]);
+      // The note sheet is a sibling of this panel now, so closing the panel takes it down too.
+      setNoting(false);
+    }
+    wasOpen.current = open;
+  }, [open, initial]);
+
+  const current = stack.length > 0 ? stack[stack.length - 1]! : null;
+
   const anchor: NoteAnchor | null =
     current === null ? null : { kind: "doc", slug: current.slug, title: current.title ?? current.slug };
   const note = useNoteAt(scope, paneId, anchor);
@@ -93,6 +97,7 @@ export function DocPanel({ open, onClose, initial, paneId, scope }: DocPanelProp
   }
 
   return (
+    <>
     <RightSheet
       open={open}
       onClose={onClose}
@@ -128,14 +133,18 @@ export function DocPanel({ open, onClose, initial, paneId, scope }: DocPanelProp
       ) : (
         <DocBrowser onOpen={openDoc} />
       )}
-      <NoteSheet
-        open={noting && anchor !== null}
-        onClose={() => setNoting(false)}
-        paneId={paneId}
-        scope={scope}
-        anchor={anchor}
-      />
     </RightSheet>
+    {/* Beside the panel, not inside it: the panel plays a `translateX` entrance, and a transform
+        makes its subtree the containing block for anything `position: fixed` — a sheet mounted
+        within it would rise from the panel's bottom edge rather than the viewport's. */}
+    <NoteSheet
+      open={noting && anchor !== null}
+      onClose={() => setNoting(false)}
+      paneId={paneId}
+      scope={scope}
+      anchor={anchor}
+    />
+    </>
   );
 }
 

@@ -118,6 +118,9 @@ export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, 
       inFlight.current?.abort();
       setFile(null);
       setCopied(false);
+      // The note sheet is a sibling of this panel now, so closing the panel has to take it down —
+      // it would otherwise be left standing over the terminal with nothing behind it.
+      setNoting(null);
       return;
     }
     void loadStat();
@@ -156,6 +159,7 @@ export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, 
   const subtitle = ready ? t("diff.subtitle", { branch: ready.branch, root: shortenHome(ready.repoRoot, home) }) : undefined;
 
   return (
+    <>
     <RightSheet open={open} onClose={onClose} title={file ?? t("diff.title")} subtitle={file ? undefined : subtitle}>
       <div className="flex h-full flex-col">
         {/* The tool row: back (in a patch), refresh, copy path (in a patch). */}
@@ -184,11 +188,15 @@ export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, 
           <Patch patch={patch} fontSize={fontSize} mirrorFace={mirrorFace} notes={notes} onNote={setNoting} />
         )}
       </div>
-      {/* FORK: anchored notes. Mounted inside the panel for the reason above, and it is a
-          `BottomSheet` rather than a third panel because `ui/sheet.tsx` is the app's only floating
-          layer (DESIGN.md §1) — this is one more thing standing in it, not a new kind of thing. */}
-      <NoteSheet open={noting !== null} onClose={() => setNoting(null)} paneId={paneId} scope={scope} anchor={noting} />
     </RightSheet>
+    {/* FORK: anchored notes. A `BottomSheet`, because `ui/sheet.tsx` is the app's only floating
+        layer (DESIGN.md §1) — this is one more thing standing in it, not a new kind of thing.
+        Mounted BESIDE the panel rather than inside it: the panel plays a `translateX` entrance, and
+        a transform makes its subtree the containing block for anything `position: fixed`, so a
+        sheet mounted within it would rise from the panel's bottom edge instead of the viewport's.
+        Same z-rung, later in the document, so it paints over the panel it was opened from. */}
+    <NoteSheet open={noting !== null} onClose={() => setNoting(null)} paneId={paneId} scope={scope} anchor={noting} />
+    </>
   );
 }
 
