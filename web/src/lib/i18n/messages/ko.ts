@@ -364,6 +364,8 @@ export const ko: Dictionary = {
 
   // --- keys (the inline Keys tray + its staging strip) ---
   "keys.tab.keys": "키",
+  // FORK: the pad's own name, so "Keys" stops naming three different things on one screen.
+  "keys.tab.keyboard": "키보드",
   "keys.presets.label": "프리셋",
   "keys.fkeys.label": "기능 키",
   "keys.confirm.label": "확인",

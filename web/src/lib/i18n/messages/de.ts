@@ -371,6 +371,8 @@ export const de: Dictionary = {
 
   // --- keys (the inline Keys tray + its staging strip) ---
   "keys.tab.keys": "Tasten",
+  // FORK: the pad's own name, so "Keys" stops naming three different things on one screen.
+  "keys.tab.keyboard": "Tastatur",
   "keys.presets.label": "Voreinstellungen",
   "keys.fkeys.label": "F-Tasten",
   "keys.confirm.label": "Bestätigen",

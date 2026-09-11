@@ -385,6 +385,8 @@ export const en = {
 
   // --- keys (the inline Keys tray + its staging strip) ---
   "keys.tab.keys": "Keys",
+  // FORK: the pad's own name, so "Keys" stops naming three different things on one screen.
+  "keys.tab.keyboard": "Keyboard",
   "keys.presets.label": "Presets",
   "keys.fkeys.label": "F keys",
   "keys.confirm.label": "Confirm?",

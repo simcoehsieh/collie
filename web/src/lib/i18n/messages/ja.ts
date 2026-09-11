@@ -366,6 +366,8 @@ export const ja: Dictionary = {
 
   // --- keys (the inline Keys tray + its staging strip) ---
   "keys.tab.keys": "キー",
+  // FORK: the pad's own name, so "Keys" stops naming three different things on one screen.
+  "keys.tab.keyboard": "キーボード",
   "keys.presets.label": "プリセット",
   "keys.fkeys.label": "ファンクションキー",
   "keys.confirm.label": "確認",

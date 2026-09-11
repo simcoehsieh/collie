@@ -353,6 +353,8 @@ export const zh: Dictionary = {
 
   // --- keys (the inline Keys tray + its staging strip) ---
   "keys.tab.keys": "按键",
+  // FORK: the pad's own name, so "Keys" stops naming three different things on one screen.
+  "keys.tab.keyboard": "键盘",
   "keys.presets.label": "预设配置",
   "keys.fkeys.label": "功能键",
   "keys.confirm.label": "确认操作？",
