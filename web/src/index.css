@@ -136,8 +136,20 @@
        screen; a second one is the signal that the screen has not decided what it is for.
 
      This block retunes the tokens only. The pill classes that spend them are screen files. */
-  /* THE accent — one, desaturated indigo-blue. Dark carries dark text on it (9:1), light white. */
-  --primary: light-dark(oklch(0.5 0.17 258), oklch(0.74 0.13 258));
+  /* THE accent — one, desaturated indigo-blue. Dark carries dark text on it (9:1), light white.
+     The two halves have to read as ONE colour wearing two clothes, and they did not: light was
+     oklch(0.5 0.17) = #145ec1, a saturated corporate blue, against dark's oklch(0.74 0.13) =
+     #76acfc, a pastel periwinkle. On a light screen a filled pill in it was the loudest object on
+     the page; on a dark screen the same element whispered. The chroma is what separates them — 0.17
+     against 0.13 — so light drops to 0.135 and takes 0.045 of lightness to pay for it:
+       before  #145ec1  6.02:1 under --primary-foreground (#fcfcfc)
+       after   #3a6fbd  4.89:1 under the same
+     Rasterised at DPR 1, both. 4.89 clears 4.5 with ~0.39 of headroom and no more, so this is the
+     floor of the move and not a waypoint: any further desaturation has to come out of lightness
+     going DOWN, not up. Dark is untouched and still carries dark ink at 8.40:1.
+     It pairs with the rule above — the accent stops being the app's largest fill, so the value no
+     longer has to survive being drawn across a whole pill row. */
+  --primary: light-dark(oklch(0.545 0.135 258), oklch(0.74 0.13 258));
   --primary-foreground: light-dark(oklch(0.99 0 0), oklch(0.16 0.02 262));
   /* The "this control is ON" tint — a very light sky. Its own token pair rather than reusing
      --secondary because the two say different things: secondary is a quieter surface, this is a
