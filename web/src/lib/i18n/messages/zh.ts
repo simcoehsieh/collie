@@ -1159,6 +1159,21 @@ export const zh: Dictionary = {
   "transcript.tool.failed": "失败",
   "agentCard.statusLine.stale": "{age} 前的状态",
 
+  // --- handoff (FORK: components/handoff-sheet.tsx) ---
+  "handoff.row.label": "交接给另一个 agent",
+  "handoff.sheet.title": "交接",
+  "handoff.noTargets": "没有可以接手的 launcher。在 launchers.toml 加一行 claude、codex 或 agy。",
+  "handoff.target.label": "谁接手",
+  "handoff.instruction.label": "接手后要做什么",
+  "handoff.instruction.placeholder": "从当前进度继续，然后…",
+  "handoff.summary.label": "先请 {agent} 写一份交接摘要",
+  "handoff.summary.hint": "这里会多一轮对话；下一个 agent 从摘要开始，而不是从原始记录。",
+  "handoff.stage.summary": "等待 {agent} 写完交接摘要…",
+  "handoff.stage.launch": "正在带着交接文档启动 {label}…",
+  "handoff.button": "交接给 {label}",
+  "handoff.button.now": "不等了，现在交接",
+  "handoff.failed": "交接失败：{reason}",
+
   // --- annotate (fork) ---
   "annotate.row.label": "截图并标注…",
   "annotate.title": "标注",

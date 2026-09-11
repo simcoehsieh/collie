@@ -1242,6 +1242,21 @@ export const en = {
   "transcript.tool.failed": "failed",
   "agentCard.statusLine.stale": "as of {age}",
 
+  // --- handoff (FORK: components/handoff-sheet.tsx) ---
+  "handoff.row.label": "Hand off to another agent",
+  "handoff.sheet.title": "Hand off",
+  "handoff.noTargets": "No launcher starts another agent. Add a claude, codex or agy row to launchers.toml.",
+  "handoff.target.label": "Who takes over",
+  "handoff.instruction.label": "What should they do next",
+  "handoff.instruction.placeholder": "Continue where this left off, then…",
+  "handoff.summary.label": "Ask {agent} to write a handoff summary first",
+  "handoff.summary.hint": "One more turn here; the next agent starts from it instead of from the raw transcript.",
+  "handoff.stage.summary": "Waiting for {agent} to write the summary…",
+  "handoff.stage.launch": "Starting {label} with the handoff…",
+  "handoff.button": "Hand off to {label}",
+  "handoff.button.now": "Hand off now, without the rest",
+  "handoff.failed": "Handoff failed: {reason}",
+
   // --- annotate (fork: annotate-and-ask — bridge/shot.ts, components/annotate-sheet.tsx) ---
   "annotate.row.label": "Screenshot & annotate…",
   "annotate.title": "Annotate",

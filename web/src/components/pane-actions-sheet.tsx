@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Camera, FileDiff, Maximize2, Monitor, Pencil, ScrollText, Search, XCircle, FileCode2 } from "lucide-react";
+import { ArrowRightLeft, BookOpen, Camera, FileDiff, Maximize2, Monitor, Pencil, ScrollText, Search, XCircle, FileCode2 } from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { ActionRow, DestructiveActionRow, RenameView } from "@/components/action-sheet-rows";
@@ -66,6 +66,12 @@ interface PaneActionsSheetProps {
   onDocs?: () => void;
   /** FORK: the pane's artifacts sheet (components/artifact-sheet.tsx). Absent ⇒ no row. */
   onArtifacts?: () => void;
+  /**
+   * FORK: hand this pane's conversation to another harness (components/handoff-sheet.tsx). Absent
+   * when nothing could take it — a shell, a read-only device, or no launcher row that starts a
+   * harness other than this one — and absent is the row not being drawn.
+   */
+  onHandoff?: () => void;
 }
 
 type Mode = "actions" | "rename";
@@ -95,6 +101,7 @@ export function PaneActionsSheet({
   onAnnotate,
   onDocs,
   onArtifacts,
+  onHandoff,
 }: PaneActionsSheetProps) {
   useLocale();
   const [mode, setMode] = useState<Mode>("actions");
@@ -272,7 +279,7 @@ export function PaneActionsSheet({
           sheet; rename and close are the half you arrive at deliberately.
           Hidden in `rename` mode with the rest of the list — that view is a sub-screen, not a
           section. */}
-      {mode === "actions" && (onFind || onHistory || onZen || onDiff || onDocs || onAnnotate || onArtifacts) && (
+      {mode === "actions" && (onFind || onHistory || onZen || onDiff || onDocs || onAnnotate || onArtifacts || onHandoff) && (
         <div className="mb-1 flex flex-col gap-1">
           {onFind && (
             <ActionRow
@@ -342,6 +349,18 @@ export function PaneActionsSheet({
               onClick={() => {
                 onClose();
                 onArtifacts();
+              }}
+            />
+          )}
+          {/* FORK: hand the conversation to another harness (components/handoff-sheet.tsx) — the
+              one row here that ends this pane's part of the work and starts another pane's. */}
+          {onHandoff && (
+            <ActionRow
+              icon={<ArrowRightLeft className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("handoff.row.label")}
+              onClick={() => {
+                onClose();
+                onHandoff();
               }}
             />
           )}

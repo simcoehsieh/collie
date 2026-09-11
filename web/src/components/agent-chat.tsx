@@ -33,6 +33,7 @@ import { saveDraft } from "@/lib/drafts";
 import { useDocHosts, useShotEnabled, useUploadCapability } from "@/lib/operator-config";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
+import { handoffTargets } from "@/lib/handoff";
 import { pinnedLauncher, useLaunchers } from "@/lib/launchers";
 import { buzz } from "@/lib/haptics";
 import { mirrorFont, paneViewFor, useDisplayPrefs } from "@/hooks/use-display-prefs";
@@ -94,7 +95,7 @@ import { canGrowRequestedLines, growRequestedLines } from "@/lib/loaders";
 import { cwdBeyondName } from "@/lib/pane-name";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { hasJournalAdapter } from "@/lib/journal-agents";
-import { historyPath, spacePath, artifactPath } from "@/lib/nav";
+import { historyPath, spacePath, artifactPath, panePath } from "@/lib/nav";
 import { isReadOnly, paneDisplayName, statusLabel } from "@/lib/types";
 import { usePairing } from "@/lib/pairing";
 import type { AgentView, BridgeStatus, DeviceAuth, TabView } from "@/lib/types";
@@ -107,6 +108,7 @@ import type {
 } from "@/lib/blocks";
 import { paneScopeKey, type Scope } from "@/lib/scope";
 import { ArtifactSheet } from "@/components/artifact-sheet";
+import { HandoffSheet } from "@/components/handoff-sheet";
 import { ArtifactCountChip } from "@/components/artifact-card";
 import { artifactsForPane, latestVersions, useArtifacts } from "@/lib/artifacts";
 
@@ -188,6 +190,8 @@ type Drawer =
   | "annotate"
   // FORK: the pane's artifacts (components/artifact-sheet.tsx).
   | "artifacts"
+  // FORK: hand the conversation to another harness (components/handoff-sheet.tsx).
+  | "handoff"
   | null;
 
 /**
@@ -2532,6 +2536,19 @@ export function AgentChat({
             cannot be open at the same time as the switcher, the pane menu or either panel. */}
         {/* FORK: the pane's artifacts (bridge/artifacts.ts), a `drawer` arm like the rest. */}
         <ArtifactSheet open={drawer === "artifacts"} onClose={closeDrawer} paneId={paneId} scope={scope} />
+        {/* FORK: hand the conversation to another harness (bridge/handoff.ts). Mounted only for a live
+            agent pane; on success the phone goes straight into the new pane, the same way a launch does. */}
+        {agent && !isShell && (
+          <HandoffSheet
+            open={drawer === "handoff"}
+            onClose={closeDrawer}
+            pane={agent}
+            status={agent.status}
+            scope={scope}
+            launchers={launchers}
+            onLaunched={(newPaneId) => navigate(panePath(newPaneId, scope))}
+          />
+        )}
         <NotesSheet
           open={drawer === "notes"}
           onClose={closeDrawer}
@@ -2611,6 +2628,13 @@ export function AgentChat({
           onAnnotate={shotEnabled ? () => setDrawer("annotate") : undefined}
           // FORK: the pane's artifacts — a row whenever the pane has any (components/artifact-sheet.tsx).
           onArtifacts={paneArtifactCount > 0 ? () => setDrawer("artifacts") : undefined}
+          // FORK: offered only when a launcher row starts a harness other than this pane's, and
+          // never on a shell or from a read-only device — the sheet would have nothing to do.
+          onHandoff={
+            agent && !isShell && !readOnly && handoffTargets(launchers, agent.agent).length > 0
+              ? () => setDrawer("handoff")
+              : undefined
+          }
           onDocs={
             docHosts.length > 0
               ? () => {

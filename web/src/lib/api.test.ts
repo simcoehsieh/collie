@@ -7,6 +7,7 @@ import { __resetConnectionHealth, isLongUpload, isLostLatched, lastHealthyAt } f
 import { isConnecting } from "./connection";
 import { __resetSnapshotCache } from "./api";
 import {
+  handoffPane,
   checkForUpdates,
   createTab,
   fetchConfig,
@@ -705,5 +706,25 @@ describe("probeBridge", () => {
     expect(await probeBridge()).toBe("gateway");
     server.use(http.get("/api/health", () => HttpResponse.error()));
     expect(await probeBridge()).toBe("down");
+  });
+});
+
+// FORK: a handoff names a launcher row and carries the instruction verbatim (bridge/handoff.ts).
+describe("handoffPane", () => {
+  it("posts the row's command and the instruction, and returns the new pane with the document", async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      http.post("/api/pane/w1%3Ap1/handoff", async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json({
+          ok: true,
+          pane: { paneId: "w1:p7", workspaceId: "w1", workspaceLabel: "webapp", tabId: "w1:t7", cwd: "/home" },
+          artifact: { id: "h1-00000001" },
+        });
+      }),
+    );
+    const res = await handoffPane("w1:p1", "codex", "Finish the tests");
+    expect(bodies).toEqual([{ command: "codex", instruction: "Finish the tests" }]);
+    expect(res).toMatchObject({ ok: true, pane: { paneId: "w1:p7" }, artifact: { id: "h1-00000001" } });
   });
 });

@@ -1194,6 +1194,21 @@ export const de: Dictionary = {
   "transcript.tool.failed": "fehlgeschlagen",
   "agentCard.statusLine.stale": "Stand vor {age}",
 
+  // --- handoff (FORK: components/handoff-sheet.tsx) ---
+  "handoff.row.label": "An einen anderen Agenten übergeben",
+  "handoff.sheet.title": "Übergabe",
+  "handoff.noTargets": "Kein Launcher startet einen anderen Agenten. Füge launchers.toml eine Zeile für claude, codex oder agy hinzu.",
+  "handoff.target.label": "Wer übernimmt",
+  "handoff.instruction.label": "Was als Nächstes zu tun ist",
+  "handoff.instruction.placeholder": "Dort weitermachen, wo es aufgehört hat, und dann …",
+  "handoff.summary.label": "{agent} zuerst eine Übergabe-Zusammenfassung schreiben lassen",
+  "handoff.summary.hint": "Ein Zug mehr hier; der nächste Agent beginnt damit statt mit dem rohen Protokoll.",
+  "handoff.stage.summary": "Warte, bis {agent} die Zusammenfassung geschrieben hat …",
+  "handoff.stage.launch": "{label} wird mit der Übergabe gestartet …",
+  "handoff.button": "An {label} übergeben",
+  "handoff.button.now": "Jetzt übergeben, ohne den Rest",
+  "handoff.failed": "Übergabe fehlgeschlagen: {reason}",
+
   // --- annotate (fork) ---
   "annotate.row.label": "Screenshot & markieren…",
   "annotate.title": "Markieren",

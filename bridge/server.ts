@@ -38,7 +38,18 @@ import {
   type ArtifactPatchDraft,
   type ArtifactRecord,
   type ArtifactStore,
+  slugify,
 } from "./artifacts.ts";
+import {
+  HANDOFF_INSTRUCTION_CHARS,
+  HANDOFF_RECENT_TURNS,
+  HANDOFF_TAG,
+  buildHandoffDocument,
+  handoffCommandLine,
+  handoffPrompt,
+  hasControlChar,
+  type HandoffResponse,
+} from "./handoff.ts";
 import { jsonRecord, jsonStringField } from "./stt/json.ts";
 import { listDocuments, listTags, normaliseDocumentQuery } from "./docs-list.ts";
 import { QuotaSource, parseQuotaCommand, type QuotaFailure } from "./quota.ts";
@@ -66,7 +77,7 @@ import { TranscriptStore } from "./journal/store.ts";
 // FORK: the agent-authored status line — one sentence per pane, read through a cache.
 import { fileStatusLineDirectory } from "./beacon-io.ts";
 import { StatusLineStore } from "./status-lines.ts";
-import type { JournalAdapter } from "./journal/types.ts";
+import type { JournalAdapter, TranscriptEntry } from "./journal/types.ts";
 import { isBlobHash, resolveBlobPath } from "./journal/pi.ts";
 import { statFile } from "./journal/files.ts";
 import {
@@ -209,7 +220,7 @@ export function isLoopbackPeer(address: string | null | undefined): boolean {
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
 }
 
-const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|focus|diff|file|shot|probe))?$/;
+const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|focus|diff|file|shot|probe|handoff))?$/;
 
 /**
  * A pairing claim's refusal, as an error code.
@@ -1458,6 +1469,18 @@ export function startServer(opts: {
       // FORK: one file of the pane's work tree (bridge/file-view.ts).
       if (action === "file" && req.method === "GET") return paneFile(rt.engine, paneId, url, req);
       if (action === "reply" && req.method === "POST") return replyPane(herdr, cfg, paneId, req, audit_, device, session);
+      // FORK: hand this pane's conversation to another harness (bridge/handoff.ts) — a launch
+      // beside it, with the handoff document as the new agent's opening prompt.
+      if (action === "handoff" && req.method === "POST") {
+        return handoffPane(
+          { herdr, engine: rt.engine, cfg, journals, transcripts, artifacts: opts.artifacts, getLaunchers: operatorLaunchers },
+          paneId,
+          req,
+          audit_,
+          device,
+          session,
+        );
+      }
       if (action === "keys" && req.method === "POST") return keysPane(herdr, cfg, paneId, req, audit_, device, session);
       if (action === "upload" && req.method === "POST") return uploadPane(cfg, paneId, req, audit_, device, session);
       // FORK: annotate-and-ask (bridge/shot.ts). Session-scoped and write-gated like the upload
@@ -4001,6 +4024,142 @@ export async function launch(
     } satisfies CreateResponse,
     ae,
   );
+}
+
+// ── FORK: handoff — this pane's conversation, continued by another harness ──────────────────────
+// A session cannot move between harnesses (bridge/handoff.ts says why), so what moves is a
+// document: the previous agent's own summary and recent turns, the pane's artifacts, and what the
+// operator wants next, kept as an artifact OF THIS PANE and handed to the new agent as the path in
+// its opening prompt. The launch itself is `launch` above, unchanged: the route derives one shell
+// line from the operator's own row (`<row.command> '<prompt>'`, or `-i` for agy) and hands `launch`
+// a one-row allowlist holding exactly that line, so the allowlist argument still holds — the phone
+// named a row, and the only thing added to the operator's command is a path this bridge wrote.
+
+/** What the route reads and starts with — the same objects the history and launch routes hold. */
+interface HandoffDeps {
+  herdr: MuxAdapter;
+  engine: StateEngine;
+  cfg: Config;
+  journals: Record<string, JournalAdapter> | null;
+  transcripts: TranscriptStore | null;
+  artifacts: ArtifactStore;
+  getLaunchers: () => Promise<Launcher[]>;
+}
+
+export async function handoffPane(
+  deps: HandoffDeps,
+  paneId: string,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+  wait: PaneReadyOptions = {},
+): Promise<Response> {
+  const ae = req.headers.get("accept-encoding");
+  let body: JsonValue;
+  try {
+    // SAFETY: as createWorkspace — every field is checked below, none trusted as declared.
+    body = (await req.json()) as JsonValue;
+  } catch {
+    return text("bad body", 400);
+  }
+  const fields = asJsonRecord(body) ?? {};
+  const command = typeof fields.command === "string" ? fields.command.trim() : "";
+  if (command === "") return text("bad body", 400);
+  const instruction =
+    typeof fields.instruction === "string" ? fields.instruction.slice(0, HANDOFF_INSTRUCTION_CHARS) : "";
+
+  const { agents, shellPanes } = deps.engine.current();
+  const pane = [...agents, ...shellPanes].find((p) => p.paneId === paneId);
+  if (!pane) return text("no such pane", 404);
+  const rows = await deps.getLaunchers();
+  const row = rows.find((r) => r.command === command);
+  if (!row) return json({ ok: false, ...apiError("launch.not_allowlisted") } satisfies HandoffResponse, ae, 400);
+  // The line is derived BEFORE anything is written, so a row this cannot start costs no artifact.
+  const probe = handoffCommandLine(row.command, "");
+  if (probe === null) return text("the launcher is not a harness a handoff can start (claude, codex or agy)", 400);
+
+  // The pane's newest turns, resolved exactly as the history route resolves them: the ref off the
+  // live snapshot, the harness that wrote it keying the adapter, the store doing the containment.
+  // A pane with no journal hands off what it has — the facts and the operator's instruction.
+  let entries: TranscriptEntry[] = [];
+  if (deps.cfg.transcript && deps.journals !== null && deps.transcripts !== null && pane.agentSession) {
+    const adapter = adapterFor(deps.journals, journalAgentOf(pane));
+    if (adapter !== undefined) {
+      try {
+        const page = await deps.transcripts.page(adapter, pane.agentSession, { limit: HANDOFF_RECENT_TURNS + 4 });
+        if (page !== null) entries = page.entries;
+      } catch {
+        // The document says "nothing on record"; an unreadable log is not a reason to refuse the handoff.
+      }
+    }
+  }
+  const library = await deps.artifacts.resolvePanes(await deps.artifacts.list(), agents);
+  const made = library
+    .filter((a) => a.pane?.paneId === pane.paneId && !a.tags.includes(HANDOFF_TAG))
+    .map((a) => ({ title: a.title, path: deps.artifacts.filePath(a), id: a.id }));
+  const document = buildHandoffDocument(
+    {
+      fromAgent: pane.agent,
+      toLabel: row.label,
+      workspaceLabel: pane.workspaceLabel,
+      cwd: pane.cwd,
+      paneId: pane.paneId,
+      whenMs: Date.now(),
+      instruction,
+      artifacts: made,
+    },
+    entries,
+  );
+  const input: ArtifactInput = {
+    bytes: new TextEncoder().encode(document),
+    fileName: "handoff.md",
+    title: `Handoff · ${pane.agent} → ${row.label}`,
+    tags: [HANDOFF_TAG],
+    sourcePath: null,
+    harness: pane.agent,
+    session: pane.agentSession ?? null,
+    origin: null,
+    pane: { paneId: pane.paneId, workspaceId: pane.workspaceId, workspaceLabel: pane.workspaceLabel, agent: pane.agent },
+  };
+  // One slug per (space, agent), so a second handoff from the same pane is a new VERSION of the
+  // first — the library shows one card, the viewer offers both.
+  const slug = slugify(`handoff ${pane.workspaceLabel} ${pane.agent}`);
+  const added = await deps.artifacts.add(slug === "" ? input : { ...input, slug });
+  if (!added.ok) return text(`handoff not kept: ${added.reason}`, 500);
+
+  const line = handoffCommandLine(row.command, handoffPrompt(deps.artifacts.filePath(added.record), pane.agent));
+  // `probe` above already proved the row starts a known harness; only the path could have changed the answer.
+  if (line === null || hasControlChar(line)) return text("the launch line carries a control character", 400);
+  const synthetic: Launcher = { command: line, label: row.label };
+  if (row.cwd !== undefined) synthetic.cwd = row.cwd;
+  // `launch` reads what a phone would have posted; no accept-encoding, so its answer is plain JSON.
+  const launched = await launch(
+    deps.herdr,
+    deps.engine,
+    new Request("http://collie/api/launch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: line, paneId: pane.paneId }),
+    }),
+    audit,
+    device,
+    session,
+    () => Promise.resolve([synthetic]),
+    wait,
+  );
+  if (launched.status !== 200) return launched;
+  // SAFETY: `launch` answers 200 only with a body it built `satisfies CreateResponse` (above).
+  const created = (await launched.json()) as CreateResponse;
+  if (!created.ok) return json(created satisfies HandoffResponse, ae);
+  audit.record({
+    action: "pane.handoff",
+    paneId: pane.paneId,
+    session,
+    device,
+    detail: { to: created.pane.paneId, artifact: added.record.id, command: row.command },
+  });
+  return json({ ok: true, pane: created.pane, artifact: added.record } satisfies HandoffResponse, ae);
 }
 
 /**

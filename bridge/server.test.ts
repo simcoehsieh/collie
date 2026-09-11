@@ -14,6 +14,7 @@ import {
   cacheControlFor,
   checkAccess,
   launch,
+  handoffPane,
   marksPaneSeen,
   SEEN_HEADER,
   deviceAuth,
@@ -44,11 +45,13 @@ import {
   type ReplySender,
 } from "./server.ts";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { ArtifactStore } from "./artifacts.ts";
 import { AuditLog, type AuditEntry } from "./audit.ts";
+import type { HandoffResponse } from "./handoff.ts";
 import type { Config } from "./config.ts";
 import { declareCapabilities, MUX_CAPABILITIES } from "./mux/capabilities.ts";
 import { withAgentBeacons } from "./beacon/decorate.ts";
@@ -2748,6 +2751,101 @@ describe("launch — an allowlisted space create, then the command and Enter", (
       expect(mux.createArgs).toEqual({ cwd: "/home/op/project", label: "Runs & quota" });
       expect(mux.createTabArgs).toBeNull();
       expect(entries[0]?.action).toBe("workspace.launch");
+    });
+  });
+
+  // FORK: a handoff is a launch beside the pane with the handoff document as the opening prompt
+  // (bridge/handoff.ts). Pinned: the document is an artifact OF THE PANE before anything is typed,
+  // the line typed is the operator's row plus that one quoted path, and a row that cannot take a
+  // prompt is refused before any artifact is written.
+  describe("handoff — the pane's conversation, continued by another harness", () => {
+    function handoffRequest(body: { command?: string; instruction?: string }): Request {
+      return new Request("http://localhost/api/pane/w3%3Ap1/handoff", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
+    const CODEX: Launcher = { command: "codex", label: "codex" };
+
+    test("writes the document as the pane's artifact, then launches the row with its path", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "collie-handoff-"));
+      try {
+        const clock = fakeClock();
+        const mux = new FakeLaunchMux(clock.now);
+        const { audit, entries } = launchAudit();
+        const artifacts = new ArtifactStore(dir);
+        const pane = fakePane({ agent: "claude", status: "done" });
+        const res = await handoffPane(
+          {
+            herdr: asLaunchMux(mux),
+            engine: engineWithPanes([pane]),
+            cfg: cfg({ transcript: false }),
+            journals: null,
+            transcripts: null,
+            artifacts,
+            getLaunchers: rowsOf([PEEK, CODEX]),
+          },
+          "w3:p1",
+          handoffRequest({ command: "codex", instruction: "Finish the tests, then lint." }),
+          audit,
+          "phone@example.com",
+          "default",
+          clock,
+        );
+        expect(res.status).toBe(200);
+        // SAFETY: `handoffPane` answers 200 only with a body it built `satisfies HandoffResponse`.
+        const body = (await res.json()) as HandoffResponse;
+        if (!body.ok) throw new Error(body.error);
+        expect(body.pane.paneId).toBe("w2:p9");
+        expect(body.artifact.tags).toEqual(["handoff"]);
+        expect(body.artifact.kind).toBe("markdown");
+        expect(body.artifact.title).toBe("Handoff · claude → codex");
+        expect(body.artifact.pane?.paneId).toBe("w3:p1");
+        // A tab BESIDE the pane, in its directory, labelled by the row.
+        expect(mux.createTabArgs).toEqual({ spaceId: "w3", label: "codex", cwd: "/home/op/beside" });
+        // The operator's row, plus exactly one quoted argument: the path this bridge wrote.
+        const path = artifacts.filePath(body.artifact);
+        expect(mux.texts).toEqual([["w2:p9", `codex 'Read ${path} first. It is the handoff from the previous agent (claude) in this directory. Then continue with its section "What to do next".'`]]);
+        expect(mux.keys).toEqual([["w2:p9", ["Enter"]]]);
+        const written = await readFile(path, "utf8");
+        expect(written).toContain("# Handoff — claude → codex");
+        expect(written).toContain("Finish the tests, then lint.");
+        expect(entries.map((e) => e.action)).toEqual(["tab.launch", "pane.handoff"]);
+        expect(entries[1]?.detail).toEqual({ to: "w2:p9", artifact: body.artifact.id, command: "codex" });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("a row that cannot take a prompt, or an unlisted one, is refused with nothing written", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "collie-handoff-"));
+      try {
+        const clock = fakeClock();
+        const mux = new FakeLaunchMux(clock.now);
+        const { audit } = launchAudit();
+        const artifacts = new ArtifactStore(dir);
+        const deps = {
+          herdr: asLaunchMux(mux),
+          engine: engineWithPanes([fakePane({ agent: "claude" })]),
+          cfg: cfg({ transcript: false }),
+          journals: null,
+          transcripts: null,
+          artifacts,
+          getLaunchers: rowsOf([PEEK, CODEX]),
+        };
+        const peek = await handoffPane(deps, "w3:p1", handoffRequest({ command: "rumen-peek" }), audit, null, "default", clock);
+        expect(peek.status).toBe(400);
+        const unlisted = await handoffPane(deps, "w3:p1", handoffRequest({ command: "intruder" }), audit, null, "default", clock);
+        expect(unlisted.status).toBe(400);
+        expect(await unlisted.json()).toMatchObject({ ok: false, code: "launch.not_allowlisted" });
+        const gone = await handoffPane(deps, "w9:p9", handoffRequest({ command: "codex" }), audit, null, "default", clock);
+        expect(gone.status).toBe(404);
+        expect(await artifacts.list()).toEqual([]);
+        expect(mux.createTabArgs).toBeNull();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
     });
   });
 });

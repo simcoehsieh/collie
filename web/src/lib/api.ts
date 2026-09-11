@@ -40,6 +40,7 @@ import type {
   WorktreeOpenResponse,
   ArtifactResponse,
   ArtifactsResponse,
+  HandoffResponse,
 } from "./types";
 import type { SubscribeBody } from "./push";
 
@@ -1583,6 +1584,18 @@ export function saveArtifactFromPane(paneId: string, path: string, title: string
 
 export function deleteArtifact(id: string, scope?: Scope): Promise<void> {
   return req<void>(withScope(`/api/artifacts/${encodeURIComponent(id)}`, scope), { method: "DELETE" });
+}
+
+/**
+ * FORK: hand this pane's conversation to another harness (bridge/handoff.ts). `command` names a
+ * launcher row exactly as `launch` does — the bridge derives the whole line; the phone never sends
+ * one. `instruction` is what the next agent should do, verbatim into the handoff document.
+ */
+export function handoffPane(paneId: string, command: string, instruction: string, scope?: Scope): Promise<HandoffResponse> {
+  return req<HandoffResponse>(withScope(`/api/pane/${encodeURIComponent(paneId)}/handoff`, scope), {
+    method: "POST",
+    body: JSON.stringify({ command, instruction }),
+  });
 }
 
 /**

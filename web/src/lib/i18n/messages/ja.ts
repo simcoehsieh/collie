@@ -1181,6 +1181,21 @@ export const ja: Dictionary = {
   "transcript.tool.failed": "失敗",
   "agentCard.statusLine.stale": "{age} 前の状態",
 
+  // --- handoff (FORK: components/handoff-sheet.tsx) ---
+  "handoff.row.label": "別のエージェントに引き継ぐ",
+  "handoff.sheet.title": "引き継ぎ",
+  "handoff.noTargets": "引き継げるランチャーがありません。launchers.toml に claude、codex、agy の行を追加してください。",
+  "handoff.target.label": "引き継ぎ先",
+  "handoff.instruction.label": "次にやること",
+  "handoff.instruction.placeholder": "ここまでの続きから、そして…",
+  "handoff.summary.label": "先に {agent} に引き継ぎ要約を書いてもらう",
+  "handoff.summary.hint": "ここで 1 ターン増えますが、次のエージェントは生の記録ではなく要約から始められます。",
+  "handoff.stage.summary": "{agent} が要約を書くのを待っています…",
+  "handoff.stage.launch": "引き継ぎ文書付きで {label} を起動しています…",
+  "handoff.button": "{label} に引き継ぐ",
+  "handoff.button.now": "待たずに今すぐ引き継ぐ",
+  "handoff.failed": "引き継ぎに失敗しました: {reason}",
+
   // --- annotate (fork) ---
   "annotate.row.label": "スクリーンショットに書き込む…",
   "annotate.title": "書き込み",

@@ -2869,3 +2869,34 @@ describe("AgentChat — artifacts", () => {
   });
 });
 
+
+// ── FORK: HAND OFF TO ANOTHER HARNESS ────────────────────────────────────────
+// The pane menu offers the row only when a launcher starts a harness other than this pane's
+// (lib/handoff.ts); the row opens the sheet (components/handoff-sheet.tsx).
+describe("AgentChat: hand off", () => {
+  it("offers the row when another harness is declared, and the row opens the sheet", async () => {
+    server.use(
+      http.get("/api/launchers", () =>
+        HttpResponse.json({ launchers: [{ command: "codex", label: "codex" }], home: "/home" }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderChat();
+    await openPaneMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Hand off to another agent" }));
+    expect(await screen.findByRole("radiogroup", { name: "Who takes over" })).toHaveTextContent("codex");
+  });
+
+  it("does not offer the row when the only launcher is this pane's own harness", async () => {
+    server.use(
+      http.get("/api/launchers", () =>
+        HttpResponse.json({ launchers: [{ command: "claude", label: "claude" }], home: "/home" }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderChat();
+    await openPaneMenu(user);
+    expect(screen.getByRole("button", { name: "Rename" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Hand off to another agent" })).not.toBeInTheDocument();
+  });
+});

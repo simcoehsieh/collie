@@ -417,3 +417,19 @@ describe("PaneActionsSheet — title row names the machine", () => {
     );
   });
 });
+
+// FORK: the handoff row (components/handoff-sheet.tsx) — drawn only when the header has a callback
+// for it, like every other read row here, and it closes the sheet before firing.
+describe("PaneActionsSheet — hand off", () => {
+  it("draws the row only when given a callback, and fires it after closing", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<PaneActionsSheet {...renderProps()} />);
+    expect(screen.queryByRole("button", { name: "Hand off to another agent" })).not.toBeInTheDocument();
+    unmount();
+    const onHandoff = vi.fn();
+    const props = renderSheet({ onHandoff });
+    await user.click(screen.getByRole("button", { name: "Hand off to another agent" }));
+    expect(props.onClose).toHaveBeenCalled();
+    expect(onHandoff).toHaveBeenCalledTimes(1);
+  });
+});

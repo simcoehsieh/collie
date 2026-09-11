@@ -177,6 +177,10 @@ export const ACK_MANIFEST = {
     channel: "silent",
     why: "The acknowledgement is the viewer leaving for the library without the row it was showing — the absence IS the confirmation, and it needs a second tap to happen at all.",
   },
+  handoffPane: {
+    channel: "inline",
+    why: "Success closes the sheet and the app navigates straight into the new agent's pane, where the terminal shows it starting from the handoff — the new screen IS the acknowledgement, as a launch's is; a refusal (an unlisted row, a harness a handoff cannot start, a failed send) stays in the sheet as an alert beside the button that asked (components/handoff-sheet.tsx).",
+  },
   saveArtifactFromPane: {
     channel: "inline",
     why: "The Keep button becomes Kept (or Couldn't keep) on the same row the operator tapped (components/preview-panel.tsx); the fact belongs where the intent was expressed.",

@@ -604,7 +604,7 @@ describe("solo zero-tax — routes", () => {
       // and its answer is drafted INTO that pane's composer. Being in this regex is also what keeps
       // them session-scoped and write-gated through the block every other pane action rides — see
       // the `caller.resolve()` count in server.test.ts, which did not move.
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|focus|diff|file|shot|probe))?$/",
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|focus|diff|file|shot|probe|handoff))?$/",
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktree(?:\\/(open))?$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktrees$/",

@@ -1173,6 +1173,21 @@ export const ko: Dictionary = {
   "transcript.tool.failed": "실패",
   "agentCard.statusLine.stale": "{age} 전 기준",
 
+  // --- handoff (FORK: components/handoff-sheet.tsx) ---
+  "handoff.row.label": "다른 에이전트에게 인계",
+  "handoff.sheet.title": "인계",
+  "handoff.noTargets": "인계할 런처가 없습니다. launchers.toml에 claude, codex 또는 agy 행을 추가하세요.",
+  "handoff.target.label": "누가 이어받나요",
+  "handoff.instruction.label": "다음에 할 일",
+  "handoff.instruction.placeholder": "여기까지의 진행을 이어서, 그다음…",
+  "handoff.summary.label": "먼저 {agent}에게 인계 요약을 쓰게 하기",
+  "handoff.summary.hint": "여기서 한 턴이 더 걸리지만, 다음 에이전트는 원본 기록 대신 요약에서 시작합니다.",
+  "handoff.stage.summary": "{agent}이(가) 요약을 쓰는 중…",
+  "handoff.stage.launch": "인계 문서와 함께 {label} 시작 중…",
+  "handoff.button": "{label}에게 인계",
+  "handoff.button.now": "기다리지 않고 지금 인계",
+  "handoff.failed": "인계 실패: {reason}",
+
   // --- annotate (fork) ---
   "annotate.row.label": "스크린샷에 표시하기…",
   "annotate.title": "표시하기",

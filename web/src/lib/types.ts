@@ -1416,3 +1416,12 @@ export interface ArtifactResponse {
   artifact: ArtifactView;
 }
 
+/**
+ * FORK: POST /api/pane/:id/handoff — the pane the next agent now runs in (navigate straight into
+ * it) and the handoff document, kept as this pane's artifact. Mirrors HandoffResponse in
+ * bridge/handoff.ts; the failure arm is a launch's own.
+ */
+export type HandoffResponse =
+  | { ok: true; pane: CreatedPane; artifact: ArtifactView }
+  | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
+

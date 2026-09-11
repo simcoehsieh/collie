@@ -1190,6 +1190,21 @@ export const es: Dictionary = {
   "transcript.tool.failed": "con error",
   "agentCard.statusLine.stale": "hace {age}",
 
+  // --- handoff (FORK: components/handoff-sheet.tsx) ---
+  "handoff.row.label": "Pasar a otro agente",
+  "handoff.sheet.title": "Traspaso",
+  "handoff.noTargets": "Ningún lanzador inicia otro agente. Añade una fila claude, codex o agy en launchers.toml.",
+  "handoff.target.label": "Quién continúa",
+  "handoff.instruction.label": "Qué debe hacer a continuación",
+  "handoff.instruction.placeholder": "Continuar donde se quedó y luego…",
+  "handoff.summary.label": "Pedir primero a {agent} un resumen de traspaso",
+  "handoff.summary.hint": "Un turno más aquí; el siguiente agente parte de él en vez de la transcripción en bruto.",
+  "handoff.stage.summary": "Esperando a que {agent} escriba el resumen…",
+  "handoff.stage.launch": "Iniciando {label} con el traspaso…",
+  "handoff.button": "Pasar a {label}",
+  "handoff.button.now": "Pasar ahora, sin esperar",
+  "handoff.failed": "El traspaso falló: {reason}",
+
   // --- annotate (fork) ---
   "annotate.row.label": "Captura y anota…",
   "annotate.title": "Anotar",
