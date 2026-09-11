@@ -6,6 +6,7 @@ import { STRIP_TAP_TARGET_SQUARE } from "@/components/ui/labelled-strip";
 import { TabActionsSheet } from "@/components/tab-actions-sheet";
 import { StatusDot } from "@/components/status-badge";
 import { useLongPress } from "@/hooks/use-long-press";
+import { useOverflowFade } from "@/hooks/use-overflow-fade";
 import { cn } from "@/lib/utils";
 import { TRIAGE_STATUS, worstTriage, type TriageKey } from "@/lib/triage";
 import { hostKey } from "@/lib/hosts";
@@ -133,6 +134,9 @@ export const TabStrip = memo(function TabStrip({
     node.addEventListener("selectstart", refuse);
     return () => node.removeEventListener("selectstart", refuse);
   }, [onNewTabHold]);
+  // FORK: bound unconditionally, like `newTabHold` above and for the same reason — the hook order
+  // must not depend on whether this row happens to overflow today.
+  const overflowFade = useOverflowFade<HTMLDivElement>();
   // Actions need both callbacks wired (revalidate on rename, fall back on close); without them the
   // tabs stay plain tap-to-switch — long-press is inert.
   const actionsEnabled = !!onRenamed && !!onClosed;
@@ -162,6 +166,10 @@ export const TabStrip = memo(function TabStrip({
         className={cn("shrink-0 border-b border-rule px-4", trailing && "flex items-stretch")}
       >
         <div
+          // FORK: the overflow fade's two halves — the slot skin.css draws on, and the observer that
+          // says when. See hooks/use-overflow-fade.ts for why CSS cannot ask this on its own.
+          data-slot="tab-scroller"
+          ref={overflowFade}
           // -mx-4 px-4: the gutter moves onto the scroller and is cancelled by the negative margin,
           // so the last tab scrolls clean off the screen edge while the first still starts on the
           // route's 16px gutter. The two halves are ONE number and must move together.
