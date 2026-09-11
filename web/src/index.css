@@ -79,6 +79,31 @@
      mirror. One name, because it answers one question: what does chrome stand on when it cannot
      stand on the page. */
   --chrome: light-dark(oklch(0.935 0.007 255), oklch(0.21 0.014 262));
+  /* THE GROUND UNDER THE CHROME — a trough cut INTO --chrome, and the only one: the composer's
+     segmented row (Keys · Type · Quick · Agent). It is a token rather than a value in skin.css
+     because the two offered answers were both measured and both fail, and the measurement is the
+     reason this value exists at all:
+       · move --chrome one step up off --muted (they are byte-identical in light, #e6eaee, so the
+         `color-mix(--muted 70%)` the skin painted composited to exactly the ground and the
+         container did not exist). At oklch(0.955) chrome vs muted is 1.058 — but chrome vs the
+         INVERTED MIRROR it sits on goes 1.109 -> 1.048, i.e. it buys the trough by spending the
+         one step --chrome was created to hold (see its comment above). Declined.
+       · paint the container --secondary + a 1px --border ring. --secondary on --chrome measures
+         1.018 in light. That is not a step, it is the same bug spelled differently. Declined.
+     Every existing token near this lightness was measured the same way: --accent 1.067, --border
+     1.097, --muted 1.000. None clears 1.08, which is the floor this fork treats as "a real step"
+     (the mirror's own well is built to it, skin.css). So the trough is its own value, one notch
+     below every one of them in light and one notch DARKER than the page in dark — a trough is a
+     hole, and a hole is darker than the surface in both themes.
+
+     Rasterised: #dadee4 light, #0b0e14 dark.
+       vs --chrome        1.12 light · 1.09 dark   (the cut itself)
+       vs --control-on    1.06 light · 1.57 dark   (the ON tile inside it)
+       vs --card          1.35 light               (a white tile, if one is ever drawn here)
+       1px --border ring  1.10 light · 1.32 dark against --chrome
+     The light ON tile is separated by CHROMA and not by luminance, exactly as --control-on's own
+     comment argues: #cfe7ff is the one saturated thing in a neutral trough. */
+  --trough: light-dark(oklch(0.9 0.009 255), oklch(0.165 0.014 262));
   /* Pinned to --card, not a value of its own. `bg-popover` / `text-popover-foreground` appear ZERO
      times in src/ — Collie's floating layer is the BottomSheet (ui/sheet.tsx), which is
      `bg-background` over a `bg-black/50` scrim. The pair is kept rather than deleted only so a
@@ -403,6 +428,7 @@
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-chrome: var(--chrome);
+  --color-trough: var(--trough);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);

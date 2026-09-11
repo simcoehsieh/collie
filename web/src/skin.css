@@ -65,9 +65,27 @@ header:has(> [data-slot="collapse"] [data-slot="header-row"]) {
   border-color: transparent;
   color: var(--muted-foreground);
 }
-/* The Keys · Type · Quick · Agent row reads as one segmented control. */
+/* The Keys · Type · Quick · Agent row reads as one segmented control.
+
+   IT DID NOT. The fill was `color-mix(in oklab, var(--muted) 70%, transparent)` over --chrome, and
+   --muted and --chrome are the SAME VALUE in light (#e6eaee both, index.css:81 / :117) — so the
+   mix composited to exactly the ground and the container was not drawn at all. In dark it was
+   #21252d at 70% over #15181f, 1.15:1, a rumour. Four labelled icons floating on the chrome with
+   nothing grouping them.
+
+   --trough is the value that fixes it and index.css carries the measurements, including the two
+   cheaper answers that were tried and declined. The ring is kept as well as the fill: in light it
+   adds little (1.10:1 against --chrome, against the fill's 1.12) but in dark it is the stronger of
+   the two (1.32 against the fill's 1.09), and one rule that works in both themes beats a pair that
+   each work in one. `inset` so it costs no box — this row's width is spoken for down to the pixel
+   (composer.tsx sizes four buttons into 366px on a 390px phone).
+
+   THE ACTIVE SEGMENT IS ALREADY THE ONE FILLED TILE: composer.tsx's CONTROL_ON paints it
+   `bg-control-on text-control-on-foreground`, which is the fork's tonal ON state and is exactly
+   what this trough was missing a ground for. Nothing here needs to paint it a second time. */
 [data-slot="composer-controls"] {
-  background-color: color-mix(in oklab, var(--muted) 70%, transparent);
+  background-color: var(--trough);
+  box-shadow: inset 0 0 0 1px var(--border);
   border-radius: var(--radius-lg);
   padding: 0.25rem;
   margin-inline: 0;
