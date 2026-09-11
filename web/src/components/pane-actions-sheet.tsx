@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, FileDiff, Maximize2, Monitor, Pencil, ScrollText, Search, XCircle } from "lucide-react";
+import { BookOpen, Camera, FileDiff, Maximize2, Monitor, Pencil, ScrollText, Search, XCircle } from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { ActionRow, DestructiveActionRow, RenameView } from "@/components/action-sheet-rows";
@@ -56,6 +56,12 @@ interface PaneActionsSheetProps {
   onZen?: () => void;
   /** FORK: open the Changes sheet — what the agent changed in this pane's work tree (read-only). */
   onDiff?: () => void;
+  /**
+   * FORK: open annotate-and-ask for this pane. Absent when this bridge has no shot command
+   * configured (`/api/config` → `shot`), and absent is the row not being drawn — the same
+   * a-row-with-no-callback-is-hidden rule find, history and zen already ride.
+   */
+  onAnnotate?: () => void;
   /** FORK: open the knowledge-base browser. Absent when this bridge serves no documents. */
   onDocs?: () => void;
 }
@@ -84,6 +90,7 @@ export function PaneActionsSheet({
   onHistory,
   onZen,
   onDiff,
+  onAnnotate,
   onDocs,
 }: PaneActionsSheetProps) {
   useLocale();
@@ -262,7 +269,7 @@ export function PaneActionsSheet({
           sheet; rename and close are the half you arrive at deliberately.
           Hidden in `rename` mode with the rest of the list — that view is a sub-screen, not a
           section. */}
-      {mode === "actions" && (onFind || onHistory || onZen || onDiff || onDocs) && (
+      {mode === "actions" && (onFind || onHistory || onZen || onDiff || onDocs || onAnnotate) && (
         <div className="mb-1 flex flex-col gap-1">
           {onFind && (
             <ActionRow
@@ -320,6 +327,19 @@ export function PaneActionsSheet({
               onClick={() => {
                 onClose();
                 onDocs();
+              }}
+            />
+          )}
+          {/* FORK: the third of them, and the only one that starts something rather than reading:
+              it asks the Mac's headless browser for a picture of a local page (bridge/shot.ts).
+              Last, because it is the row an operator reaches for least often. */}
+          {onAnnotate && (
+            <ActionRow
+              icon={<Camera className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("annotate.row.label")}
+              onClick={() => {
+                onClose();
+                onAnnotate();
               }}
             />
           )}

@@ -124,6 +124,8 @@ function cfg(overrides: Partial<Config> = {}): Config {
     kbToken: "",
     docHosts: [],
     quotaCommand: "",
+    shotCommand: "",
+    shotHosts: [],
     port: 8787,
     host: "127.0.0.1",
     pollMs: 1500,
@@ -1966,14 +1968,21 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
     // All ELEVEN session-scoped routes (tab create, workspace create, launch, this host's launcher
-    // rows, the folder listing, one journal blob, tab action, the pane family, "look now", the
-    // worktree listing and the worktree actions) reach their runtime through the caller's resolver
-    // and nothing else.
+    // rows, the folder listing, one journal blob, tab action, the pane family — reply, keys,
+    // upload, close, rename, history, focus, diff, shot, probe — "look now", the worktree listing
+    // and the worktree actions) reach their runtime through the caller's resolver and nothing else.
     //
     // `/api/dirs` resolves for its FORWARD rather than for the runtime's value: a `?h=laptop` browse
     // must list the LAPTOP's disk, and resolution is what sends it there. A route that answered
     // locally without resolving would quietly show the lead's directories under a peer's name — the
     // same class of fault as serving the desk's `w1:p1`.
+    //
+    // STILL ELEVEN after the fork's annotate-and-ask landed, and that is the claim rather than an
+    // accident: `shot` and `probe` are ACTIONS IN THE PANE FAMILY (bridge/shot.ts, `PANE_ROUTE`),
+    // so they reach their runtime through the pane block's single resolve like `upload` does. Had
+    // they been given a route of their own, this number would have had to move — and a route of
+    // their own is exactly the shape that forgets to resolve and serves the lead's answer under a
+    // peer's name.
     expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(11);
     // Exactly seven `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single

@@ -933,6 +933,12 @@ export interface BridgeConfig {
    * feature off, which is also what every bridge older than the field sends.
    */
   quota?: boolean;
+  /**
+   * FORK: `true` when `POST /api/pane/:id/shot` answers (bridge/shot.ts) — annotate-and-ask's gate.
+   * Absent is the feature off, which is also what every bridge older than the field sends, and the
+   * pane menu hides the "Screenshot & annotate…" row entirely.
+   */
+  shot?: boolean;
 }
 
 /**
@@ -1025,4 +1031,79 @@ export interface QuotaResponse {
   fetchedAt: string;
   /** Always all three, in the order claude, codex, agy. */
   agents: QuotaAgent[];
+}
+
+// ── FORK: a picture of a local page, and one element out of it (bridge/shot.ts) ────────────────
+// The wire shapes of `POST /api/pane/:id/shot` and `POST /api/pane/:id/probe`. Both are normalised
+// from the operator's own command so the phone never sees its vocabulary, and the probe's every
+// field is budgeted here as well as there — see the module header for why twice.
+
+/**
+ * The element's computed CSS, by property name.
+ *
+ * An interface rather than `Record<string, string>` so the index signature has a NAMED owner —
+ * ADR 0019's rule, and the same arrangement `TemplateVars` in the i18n runtime uses. At most the
+ * sixteen properties bridge/shot.ts names, and never a key that is not a CSS property name.
+ */
+export interface ProbeStyles {
+  readonly [property: string]: string;
+}
+
+/** The size a page is laid out at, in CSS pixels — the phone's own, or a tablet's, or a desktop's. */
+export interface Viewport {
+  width: number;
+  height: number;
+}
+
+/** What a phone asks for: a page, and the screen to pretend it is being read on. */
+export interface ShotAsk extends Viewport {
+  url: string;
+  dpr: number;
+}
+
+/** A rectangle in the shot's own CSS pixels, so the phone can draw a pin on it. */
+export interface ProbeBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** POST /api/pane/:id/shot */
+export interface ShotResponse {
+  ok: true;
+  /** `data:image/webp;base64,…` — inline, so there is no new file-serving route and no new jail. */
+  image: string;
+  mime: "image/webp" | "image/png";
+  /** The viewport the page was laid out at, after clamping — what the phone must draw at. */
+  width: number;
+  height: number;
+  dpr: number;
+  /** The URL as the bridge parsed it, which is the one the command was given. */
+  url: string;
+}
+
+/** POST /api/pane/:id/probe — one element, in the words a question about it would use. */
+export interface ProbeResponse {
+  ok: true;
+  tag: string;
+  id: string | null;
+  classes: string;
+  selector: string;
+  elementPath: string;
+  text: string;
+  box: ProbeBox;
+  role: string;
+  accessibleName: string;
+  /** At most sixteen properties, the noisy defaults already dropped by the command. */
+  computedStyles: ProbeStyles;
+  htmlSnippet: string;
+  nearbyText: string[];
+  nearbyElements: string[];
+  /** The page's own URL, sanitised — never the raw `location.href`. */
+  url: string;
+  /** The React component chain, when the page is a React build that says so. */
+  reactComponents?: string;
+  /** The file the element was written in, ONLY when the page resolved it. Never guessed. */
+  sourceFile?: string;
 }

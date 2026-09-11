@@ -581,7 +581,12 @@ describe("solo zero-tax — routes", () => {
       // `diff` is the fork's read-only "what did the agent change" view (bridge/diff.ts): three
       // read-only git subcommands against the pane's own cwd, read-gated like `history`, and it
       // is named here for the reason every other action is — a route arrives on purpose.
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|focus|diff))?$/",
+      // `shot` and `probe` are the fork's annotate-and-ask verbs (bridge/shot.ts): the pane family
+      // grows two actions rather than the app growing a route, because a shot is taken FOR a pane
+      // and its answer is drafted INTO that pane's composer. Being in this regex is also what keeps
+      // them session-scoped and write-gated through the block every other pane action rides — see
+      // the `caller.resolve()` count in server.test.ts, which did not move.
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|focus|diff|shot|probe))?$/",
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktree(?:\\/(open))?$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktrees$/",
@@ -750,6 +755,8 @@ const CONFIG_KEYS = {
   kbToken: true,
   docHosts: true,
   quotaCommand: true,
+  shotCommand: true,
+  shotHosts: true,
 } satisfies Record<keyof Config, true>;
 
 describe("solo zero-tax — config", () => {
@@ -785,6 +792,8 @@ describe("solo zero-tax — config", () => {
       "quickRepliesFile",
       "quotaCommand",
       "readLines",
+      "shotCommand",
+      "shotHosts",
       "skipServe",
       "socketPath",
       "stateDir",
@@ -852,6 +861,11 @@ describe("solo zero-tax — config", () => {
       "COLLIE_PUBLIC_HOSTS",
       "COLLIE_QUOTA_COMMAND",
       "COLLIE_READ_LINES",
+      // FORK: annotate-and-ask's two keys (bridge/shot.ts), named here rather than exempted for the
+      // reason every other key is. Both are off by default and a solo instance with neither set
+      // spawns nothing and registers no capability — the `COLLIE_QUOTA_COMMAND` shape exactly.
+      "COLLIE_SHOT_COMMAND",
+      "COLLIE_SHOT_HOSTS",
       "COLLIE_SKIP_SERVE",
       "COLLIE_STATE_DIR",
       "COLLIE_SUBMIT_KEYS",

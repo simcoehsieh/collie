@@ -66,6 +66,12 @@ let currentUpload: UploadCapability | null = null;
 let currentDocHosts: readonly string[] = [];
 /** FORK: whether the bridge answers `/api/quota` — the dashboard's usage section gate. */
 let currentQuota = false;
+/**
+ * FORK: whether the bridge can take a screenshot of a local page (bridge/shot.ts) — annotate-and-
+ * ask's gate. `false` until the config has loaded, and on every bridge with no command configured;
+ * the two are the same value on purpose, because both mean "no button for this here".
+ */
+let currentShot = false;
 let inflight: Promise<void> | null = null;
 let loaded = false;
 const listeners = new Set<() => void>();
@@ -95,6 +101,7 @@ export function loadOperatorCommands(): Promise<void> {
       currentUpload = cfg.upload ?? null;
       currentDocHosts = cfg.docHosts ?? [];
       currentQuota = cfg.quota === true;
+      currentShot = cfg.shot === true;
       loaded = true;
       emit();
     } catch {
@@ -306,6 +313,19 @@ export function useQuotaEnabled(): boolean {
   return useSyncExternalStore(subscribeOperatorConfig, getQuotaEnabled, getQuotaEnabled);
 }
 
+/** FORK: whether "Screenshot & annotate…" can be offered. `false` until the config has loaded. */
+export function getShotEnabled(): boolean {
+  return currentShot;
+}
+
+/** Reactive read of the annotate gate. Same one-shot fetch, same contract. */
+export function useShotEnabled(): boolean {
+  useEffect(() => {
+    void loadOperatorCommands();
+  }, []);
+  return useSyncExternalStore(subscribeOperatorConfig, getShotEnabled, getShotEnabled);
+}
+
 /** Reactive read of the Quick-dock groups. Same one-shot fetch, same contract. */
 export function useOperatorQuickReplies(): readonly OperatorQuickReplyRow[] {
   useEffect(() => {
@@ -331,6 +351,7 @@ export function __resetOperatorCommands(): void {
   currentUpload = null;
   currentDocHosts = [];
   currentQuota = false;
+  currentShot = false;
   inflight = null;
   loaded = false;
   listeners.clear();

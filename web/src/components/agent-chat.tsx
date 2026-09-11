@@ -13,10 +13,14 @@ import {
 import { useKeyboardOpen } from "@/hooks/use-keyboard";
 import { useSheetPull } from "@/hooks/use-sheet-pull";
 import { DiffSheet } from "@/components/diff-sheet";
+import { AnnotateSheet } from "@/components/annotate-sheet";
 import { QueuedSends } from "@/components/queued-sends";
 import { DocPanel } from "@/components/doc-panel";
 import { classifyDocLink } from "@/lib/doc-links";
-import { useDocHosts } from "@/lib/operator-config";
+import { lastLocalUrl } from "@/lib/links";
+import { uploadLimits } from "@/lib/attachments";
+import { saveDraft } from "@/lib/drafts";
+import { useDocHosts, useShotEnabled, useUploadCapability } from "@/lib/operator-config";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
 import { pinnedLauncher, useLaunchers } from "@/lib/launchers";
@@ -116,6 +120,23 @@ interface AgentChatProps {
   bridge?: BridgeStatus | undefined;
   error?: boolean;
   stalled?: boolean;
+  /**
+   * FORK: the URL a preview surface beside this pane is showing, when there is one.
+   *
+   * It PREFILLS the annotate sheet's address field, and it takes precedence over the last
+   * `localhost:PORT` the mirror printed — a preview the operator is actually looking at is a better
+   * guess than the newest line of scrollback. Absent leaves the mirror's answer in place, which is
+   * what every caller does today.
+   */
+  previewUrl?: string;
+  /**
+   * FORK: told which URL is being annotated, whenever the sheet opens or takes a shot.
+   *
+   * The other half of the pair, and the wire a "Preview" chip hangs off: a surface that owns a
+   * preview of its own follows this to stay pointed at the same page as the screenshot. Optional,
+   * and nothing here depends on it — with no listener the sheet is simply self-contained.
+   */
+  onPreviewUrl?: (url: string) => void;
   onBack: () => void;
   onSelect: (paneId: string) => void;
 }
@@ -133,7 +154,7 @@ function foldLabelKey(tabCount: number, paneCount: number): MessageKey {
 
 // At most one drawer/sheet is open at a time; null = none. (The composer's own Keys/Quick/Agent
 // sheets are separate and live inside <Composer>.)
-type Drawer = "switcher" | "paneMenu" | "newTab" | "doc" | "diff" | null;
+type Drawer = "switcher" | "paneMenu" | "newTab" | "doc" | "diff" | "annotate" | null;
 
 /**
  * Is the caret in the MESSAGE COMPOSER's field, as opposed to any other input on the screen?
@@ -191,6 +212,8 @@ export function AgentChat({
   bridge = "connected",
   error = false,
   stalled = false,
+  previewUrl,
+  onPreviewUrl,
   onBack,
   onSelect,
 }: AgentChatProps) {
@@ -315,6 +338,16 @@ export function AgentChat({
   // and on every bridge older than the field, and empty means the classifier below declines
   // everything — so the mirror's links behave exactly as they did before this feature existed.
   const docHosts = useDocHosts();
+  // FORK: whether this bridge can take a screenshot at all (bridge/shot.ts). False on every bridge
+  // with no `COLLIE_SHOT_COMMAND`, and false until `/api/config` has landed — both mean "draw no
+  // button for it", so the pane menu's row is absent rather than disabled.
+  const shotEnabled = useShotEnabled();
+  const uploadCap = uploadLimits(useUploadCapability());
+  // The address the annotate sheet opens on. A preview surface's own URL wins; otherwise it is the
+  // LAST loopback URL this pane printed, which is what a dev server announces when it starts.
+  // Memoised on the mirror text because `findLinks` walks the whole scrollback and this component
+  // re-renders on every poll.
+  const annotateUrl = useMemo(() => previewUrl ?? lastLocalUrl(text) ?? "", [previewUrl, text]);
   // `useCallback` is not optional: AnsiOutput is memo()'d with the default shallow comparison and
   // this component re-renders on every 1.5s snapshot, so a fresh function per render would re-render
   // the whole mirror 40 times a minute.
@@ -2203,6 +2236,27 @@ export function AgentChat({
           mirrorFace={mirrorFace}
           home={launchersHome}
         />
+        {/* FORK: annotate-and-ask (components/annotate-sheet.tsx). Shares the one `drawer` value, so
+            it cannot be open alongside the diff sheet or the switcher. It NEVER sends: "Attach &
+            ask" uploads the flattened picture through the existing chain and seeds this pane's
+            draft, and the operator taps Send — the same rule `routes/detail.tsx` states for
+            `?send=`. */}
+        <AnnotateSheet
+          open={drawer === "annotate"}
+          onClose={closeDrawer}
+          paneId={paneId}
+          scope={scope}
+          initialUrl={annotateUrl}
+          onPreviewUrl={onPreviewUrl}
+          maxUploadBytes={uploadCap.maxBytes}
+          onDraft={(seed) => {
+            // The composer reads its draft once, in its own `useState` initialiser, so the seed has
+            // to be on disk before it next mounts — which is exactly what `saveDraft` does and
+            // exactly how the `?send=` seed reaches it.
+            saveDraft(scope, paneId, seed);
+            revalidator.revalidate();
+          }}
+        />
         <PaneActionsSheet
           open={drawer === "paneMenu"}
           onClose={closeDrawer}
@@ -2229,6 +2283,9 @@ export function AgentChat({
           // has a cwd too; the bridge answers "not a repo" honestly. Documents only when this
           // bridge serves any (the same `docHosts` gate the mirror's links use).
           onDiff={() => setDrawer("diff")}
+          // FORK: hidden entirely when this bridge has no shot command — a row with no callback is
+          // a row the sheet does not draw, which is the same gate find, history and zen ride.
+          onAnnotate={shotEnabled ? () => setDrawer("annotate") : undefined}
           onDocs={
             docHosts.length > 0
               ? () => {
