@@ -1,11 +1,12 @@
 import { memo } from "react";
-import { ArrowDown, ArrowUp, Check, Inbox, WifiOff } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, WifiOff } from "lucide-react";
 
 import { clockTime } from "@/lib/format";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { SectionHeader } from "@/components/section-header";
 import { ListGroup } from "@/components/ui/list-group";
 import { PaneRowsSkeleton } from "@/components/route-skeleton";
+import { EmptyState } from "@/components/empty-state";
 import { flipDir, sectionHeaderProps, triage, type RecentDir, type TriageKey } from "@/lib/triage";
 import type { AgentView, BridgeStatus } from "@/lib/types";
 import { paneRowKey } from "@/lib/hosts";
@@ -86,14 +87,18 @@ export const AgentList = memo(function AgentList({
     // `bridge` is no help on its own: a cached snapshot still says "connected".
     if (error) {
       return (
-        <div className="flex flex-col items-center justify-center gap-3 px-4 py-24 text-muted-foreground">
-          <WifiOff className="size-7" />
-          <span className="text-sm">
-            {lastSeenAt === undefined
+        // FORK: the app's one empty-state shape. The mark is a glyph and NOT the cat here — a lost
+        // connection is a narrower fact than "the app has nothing to show", and the brand has no
+        // business presiding over an outage.
+        <EmptyState
+          mark={<WifiOff className="size-7" />}
+          heading={
+            lastSeenAt === undefined
               ? t("home.empty.disconnected")
-              : t("home.empty.disconnectedAt", { time: clockTime(lastSeenAt) })}
-          </span>
-        </div>
+              : t("home.empty.disconnectedAt", { time: clockTime(lastSeenAt) })
+          }
+          body={t("home.empty.disconnectedBody")}
+        />
       );
     }
     // FORK: "waiting for the multiplexer" is not an empty herd, it is an UNKNOWN one — and the
@@ -102,22 +107,22 @@ export const AgentList = memo(function AgentList({
     // rows because three is the count at which a run reads as a list; the skeleton holds its paint
     // for 120ms (ui/skeleton.tsx), so a bridge that answers immediately never flashes it.
     if (bridge !== "connected") return <PaneRowsSkeleton />;
+    // PRESENTATION, not a gate (M10/06). Without `agentDetection` every pane arrives as a shell
+    // with an unknown status, so this list is empty on a machine that may be running plenty — and
+    // "No agents running." is then a claim the bridge cannot actually make. The adapter's own
+    // sentence says why, and the rest says where the panes went, so the dashboard reads as one
+    // coherent screen instead of an empty one. On a multiplexer that reports agents (i.e. on Herdr)
+    // the body is the plain one.
+    const undetected = !agentDetection.capable && agentDetection.note !== "";
     return (
-      <div className="flex flex-col items-center justify-center gap-3 px-4 py-24 text-muted-foreground">
-        <Inbox className="size-7" />
-        <span className="text-sm">{t("home.empty.noAgents")}</span>
-        {/* PRESENTATION, not a gate (M10/06). Without `agentDetection` every pane arrives as a
-            shell with an unknown status, so this list is empty on a machine that may be running
-            plenty — and "No agents running." is then a claim the bridge cannot actually make. The
-            adapter's own sentence says why, and the second line says where the panes went, so the
-            dashboard reads as one coherent screen instead of an empty one. Renders nothing on a
-            multiplexer that reports agents, i.e. nothing on Herdr. */}
-        {bridge === "connected" && !agentDetection.capable && agentDetection.note !== "" && (
-          <p className="max-w-xs text-center text-xs leading-snug">
-            {agentDetection.note} {t("home.empty.panesHint")}
-          </p>
-        )}
-      </div>
+      <EmptyState
+        heading={t("home.empty.noAgents")}
+        body={
+          undetected
+            ? `${agentDetection.note} ${t("home.empty.panesHint")}`
+            : t("home.empty.body")
+        }
+      />
     );
   }
 

@@ -1,9 +1,10 @@
 import { memo, useCallback, useMemo } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, WifiOff } from "lucide-react";
 import { useNavigate } from "react-router";
 
 import { RouteHeader, SettingsGear } from "@/components/app-header";
 import { AgentIcon } from "@/components/agent-icon";
+import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { useDashPrefs } from "@/hooks/use-dash-prefs";
@@ -80,9 +81,27 @@ export function OverviewRoute() {
       />
       <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
         {ordered.length === 0 ? (
-          <p className="py-24 text-center text-sm text-muted-foreground">
-            {data.error ? t("home.empty.disconnected") : t("home.empty.noAgents")}
-          </p>
+          // FORK: this WAS one grey sentence and 700px of nothing — the whole route, on a phone.
+          // Two states, and they are not the same claim: an outage knows nothing about the herd
+          // (and offers no action, because there is nothing here to act on), while a genuinely
+          // empty herd is a fact plus the one place worth going next.
+          data.error ? (
+            <EmptyState
+              mark={<WifiOff className="size-7" />}
+              heading={t("home.empty.disconnected")}
+              body={t("home.empty.disconnectedBody")}
+            />
+          ) : (
+            <EmptyState
+              heading={t("overview.empty.title")}
+              body={t("overview.empty.body")}
+              action={
+                <Button size="lg" onClick={() => navigate(homePath(data.scope))}>
+                  {t("empty.goToDashboard")}
+                </Button>
+              }
+            />
+          )
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" data-slot="overview-grid">
             {ordered.map((pane) => (

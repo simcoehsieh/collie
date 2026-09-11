@@ -96,9 +96,14 @@ describe("OverviewRoute", () => {
     expect(router.state.location.pathname).toBe(`/pane/${encodeURIComponent(target)}`);
   });
 
-  it("an empty herd says so rather than drawing an empty grid", async () => {
+  // FORK: the copy moved from the dashboard's sentence ("No agents running.") onto this route's own
+  // empty state, which is the app's shared `<EmptyState/>` — a heading, a sentence saying what would
+  // fill the space, and the one action worth taking from a screen with nothing on it. The claim
+  // pinned here is unchanged: say something, and do not draw an empty grid.
+  it("an empty herd says so, offers the way back, and draws no grid", async () => {
     renderOverview(homeData([]));
-    expect(await screen.findByText("No agents running.")).toBeInTheDocument();
+    expect(await screen.findByText("Nothing is running")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Go to the dashboard" })).toBeInTheDocument();
     expect(document.querySelector('[data-slot="overview-grid"]')).toBeNull();
   });
 });

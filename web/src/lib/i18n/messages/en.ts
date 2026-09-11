@@ -410,6 +410,9 @@ export const en = {
   "home.empty.noAgents": "No agents running.",
   "home.empty.waiting": "Waiting for Herdr…",
   "home.empty.panesHint": "Your panes are under Spaces.",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "home.empty.body": "Panes you open in the multiplexer show up here.",
+  "home.empty.disconnectedBody": "The last read did not come back, so this is what was on screen before.",
   "home.allClear": "Nothing needs you",
   "home.sort.newest": "Newest",
   "home.sort.oldest": "Oldest",
@@ -633,6 +636,11 @@ export const en = {
   "error.root.title": "Something went wrong",
   "error.root.unknown": "Unknown error",
   "error.root.reload": "Reload",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "error.root.body": "Reloading re-runs the page from scratch, which clears most of these.",
+  "error.notFound.title": "No such page",
+  "error.notFound.body": "That address does not match anything in this app.",
+  "empty.goToDashboard": "Go to the dashboard",
 
   // --- idle (the idle-pause cover) ---
   "idle.dialogAria": "Collie paused",
@@ -1044,6 +1052,9 @@ export const en = {
   "home.pin.moveUp": "Move up",
   "home.pin.moveDown": "Move down",
   "overview.title": "Overview",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "overview.empty.title": "Nothing is running",
+  "overview.empty.body": "Panes you open show up here, each with the last few lines of its terminal.",
   "overview.tailAria": "Last lines of the terminal",
   "overview.loading": "…",
   "hotkeys.title": "Keyboard shortcuts",

@@ -395,6 +395,9 @@ export const es: Dictionary = {
   "home.empty.noAgents": "No hay agentes en ejecución.",
   "home.empty.waiting": "Esperando a Herdr...",
   "home.empty.panesHint": "Los paneles están en Espacios.",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "home.empty.body": "Los paneles que abras en el multiplexor aparecen aquí.",
+  "home.empty.disconnectedBody": "La última lectura no volvió, así que esto es lo que había en pantalla.",
   "home.allClear": "Sin tareas pendientes",
   "home.sort.newest": "Más reciente",
   "home.sort.oldest": "Más antiguo",
@@ -611,6 +614,11 @@ export const es: Dictionary = {
   "error.root.title": "Error en la aplicación",
   "error.root.unknown": "Error desconocido",
   "error.root.reload": "Recargar",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "error.root.body": "Recargar vuelve a ejecutar la página desde cero, lo que resuelve la mayoría de estos casos.",
+  "error.notFound.title": "Esta página no existe",
+  "error.notFound.body": "Esa dirección no corresponde a nada en esta aplicación.",
+  "empty.goToDashboard": "Ir al panel principal",
 
   // --- idle (the idle-pause cover) ---
   "idle.dialogAria": "Collie en pausa",
@@ -992,6 +1000,9 @@ export const es: Dictionary = {
   "home.pin.moveUp": "Subir",
   "home.pin.moveDown": "Bajar",
   "overview.title": "Vista general",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "overview.empty.title": "No hay nada en marcha",
+  "overview.empty.body": "Los paneles que abras aparecen aquí, cada uno con las últimas líneas de su terminal.",
   "overview.tailAria": "Últimas líneas del terminal",
   "overview.loading": "…",
   "hotkeys.title": "Atajos de teclado",

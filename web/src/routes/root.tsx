@@ -1,4 +1,5 @@
 import {
+  isRouteErrorResponse,
   Outlet,
   useLoaderData,
   useLocation,
@@ -12,6 +13,7 @@ import {
 } from "react-router";
 
 import { useEffect, useRef } from "react";
+import { TriangleAlert } from "lucide-react";
 
 import { usePolling } from "@/hooks/use-polling";
 import { usePollBusy } from "@/hooks/use-poll-busy";
@@ -26,6 +28,8 @@ import { ConnectionBanner } from "@/components/connection-banner";
 import { AppHeaderHost } from "@/components/app-header";
 import { CrewProvider } from "@/components/crew-provider";
 import { MeowMark } from "@/components/meow-mark";
+import { EmptyState } from "@/components/empty-state";
+import { Button } from "@/components/ui/button";
 import { describeThrownError } from "@/lib/api-error-message";
 import { homePath } from "@/lib/nav";
 import { scopeFromUrl } from "@/lib/session";
@@ -268,27 +272,55 @@ export function BootSplash() {
 
 // Last-resort recovery screen for a render-phase error or a loader throw — a full reload re-runs the
 // loaders from scratch, which clears most transient failures.
+//
+// FORK — AND IT IS THE NOT-FOUND SCREEN TOO. There is no splat route in router.tsx and there should
+// not be one: an address that matches nothing already arrives here as a 404 ErrorResponse, so a
+// `path: "*"` would only be a second door onto the same room. What it needs is to stop calling that
+// "Something went wrong / Unknown error" — a mistyped URL is not a crash, and "Unknown error" is the
+// app admitting it did not look. `isRouteErrorResponse` is that look.
+//
+// The screen itself was a red line, a muted line and "Reload" as a BARE UNDERLINED LINK — the only
+// underlined link in an app where every other action is a button. It is now the house empty state
+// with a solid-primary action: a screen with nothing else on it is the one place in the app where
+// the accent is unambiguous.
 export function RootError() {
   useLocale();
   const error = useRouteError();
+  const notFound = isRouteErrorResponse(error) && error.status === 404;
   // An ApiError knows the bridge's code and can therefore say the refusal in the operator's
   // language; anything else (a render-phase throw, a router error) keeps its own message.
   const message = error instanceof Error ? describeThrownError(error) : t("error.root.unknown");
+  // Reload home, but stay on the machine and in the session you were in (read from the live URL,
+  // since the router context may be the throwing one). Lead + primary → "/".
+  const goHome = () => window.location.assign(homePath(scopeFromUrl(window.location.href)));
   return (
-    <div className="app-viewport flex flex-col items-center justify-center gap-3 p-6 text-center">
-      <p className="font-medium text-destructive">{t("error.root.title")}</p>
-      <p className="max-w-xs text-sm text-muted-foreground">{message}</p>
-      <button
-        type="button"
-        onClick={() => {
-          // Reload home, but stay on the machine and in the session you were in (read from the
-          // live URL, since the router context may be the throwing one). Lead + primary → "/".
-          window.location.assign(homePath(scopeFromUrl(window.location.href)));
-        }}
-        className="text-sm underline underline-offset-4"
-      >
-        {t("error.root.reload")}
-      </button>
+    <div className="app-viewport flex flex-col items-center justify-center">
+      {notFound ? (
+        <EmptyState
+          heading={t("error.notFound.title")}
+          body={t("error.notFound.body")}
+          action={
+            <Button size="lg" onClick={goHome}>
+              {t("empty.goToDashboard")}
+            </Button>
+          }
+        />
+      ) : (
+        <EmptyState
+          mark={<TriangleAlert className="size-7 text-destructive" />}
+          heading={t("error.root.title")}
+          body={t("error.root.body")}
+          // The machine's own words, as a QUOTE rather than as prose the app wrote — the previous
+          // screen set them in the same muted body type as its own sentence, so "Unknown error"
+          // read as something Collie had decided rather than something it had been handed.
+          detail={message}
+          action={
+            <Button size="lg" onClick={goHome}>
+              {t("error.root.reload")}
+            </Button>
+          }
+        />
+      )}
     </div>
   );
 }

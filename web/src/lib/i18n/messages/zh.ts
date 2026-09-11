@@ -378,6 +378,9 @@ export const zh: Dictionary = {
   "home.empty.noAgents": "无运行中的 Agent。",
   "home.empty.waiting": "等待 Herdr 响应...",
   "home.empty.panesHint": "窗格位于“空间”列表中。",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "home.empty.body": "你在多路复用器里打开的窗格会出现在这里。",
+  "home.empty.disconnectedBody": "最后一次读取没有返回，这里显示的是此前的画面。",
   "home.allClear": "无待处理项",
   "home.sort.newest": "最新优先",
   "home.sort.oldest": "最早优先",
@@ -592,6 +595,11 @@ export const zh: Dictionary = {
   "error.root.title": "发生错误",
   "error.root.unknown": "未知错误",
   "error.root.reload": "重新加载",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "error.root.body": "重新载入会从头运行这个页面，多数情况下这样就能恢复。",
+  "error.notFound.title": "没有这个页面",
+  "error.notFound.body": "这个地址在本应用中没有对应的画面。",
+  "empty.goToDashboard": "回到主面板",
 
   // --- idle (the idle-pause cover) ---
   "idle.dialogAria": "Collie 连接已挂起",
@@ -961,6 +969,9 @@ export const zh: Dictionary = {
   "home.pin.moveUp": "上移",
   "home.pin.moveDown": "下移",
   "overview.title": "总览",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "overview.empty.title": "当前没有任何运行中的窗格",
+  "overview.empty.body": "你打开的窗格会出现在这里，并各自附上终端的最后几行。",
   "overview.tailAria": "终端最后几行",
   "overview.loading": "…",
   "hotkeys.title": "键盘快捷键",

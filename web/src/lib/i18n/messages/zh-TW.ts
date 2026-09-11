@@ -374,6 +374,9 @@ export const zhTW: Dictionary = {
   "home.empty.noAgents": "沒有執行中的 Agent。",
   "home.empty.waiting": "等待 Herdr 回應...",
   "home.empty.panesHint": "窗格位於「空間」清單中。",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "home.empty.body": "你在多工器裡開啟的窗格會出現在這裡。",
+  "home.empty.disconnectedBody": "最後一次讀取沒有回來，這裡顯示的是先前的畫面。",
   "home.allClear": "沒有待處理項目",
   "home.sort.newest": "最新優先",
   "home.sort.oldest": "最早優先",
@@ -588,6 +591,11 @@ export const zhTW: Dictionary = {
   "error.root.title": "發生錯誤",
   "error.root.unknown": "未知錯誤",
   "error.root.reload": "重新載入",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "error.root.body": "重新載入會從頭執行這個頁面，多數情況這樣就能恢復。",
+  "error.notFound.title": "沒有這個頁面",
+  "error.notFound.body": "這個網址在本應用中沒有對應的畫面。",
+  "empty.goToDashboard": "回到主面板",
 
   // --- idle (the idle-pause cover) ---
   "idle.dialogAria": "Collie 連線已暫停",
@@ -955,6 +963,9 @@ export const zhTW: Dictionary = {
   "home.pin.moveUp": "上移",
   "home.pin.moveDown": "下移",
   "overview.title": "總覽",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "overview.empty.title": "目前沒有任何執行中的窗格",
+  "overview.empty.body": "你開啟的窗格會出現在這裡，各自附上終端機的最後幾行。",
   "overview.tailAria": "終端機最後幾行",
   "overview.loading": "…",
   "hotkeys.title": "鍵盤快速鍵",

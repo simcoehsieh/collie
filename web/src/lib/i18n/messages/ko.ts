@@ -389,6 +389,9 @@ export const ko: Dictionary = {
   "home.empty.noAgents": "실행 중인 에이전트 없음",
   "home.empty.waiting": "Herdr 대기 중",
   "home.empty.panesHint": "창 목록은 Spaces에 있습니다.",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "home.empty.body": "멀티플렉서에서 연 페인이 여기에 표시됩니다.",
+  "home.empty.disconnectedBody": "마지막 읽기가 돌아오지 않아 직전 화면을 그대로 보여주고 있습니다.",
   "home.allClear": "확인 필요한 항목 없음",
   "home.sort.newest": "최신순",
   "home.sort.oldest": "오래된순",
@@ -603,6 +606,11 @@ export const ko: Dictionary = {
   "error.root.title": "오류 발생",
   "error.root.unknown": "알 수 없는 오류",
   "error.root.reload": "새로고침",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "error.root.body": "새로 고치면 페이지를 처음부터 다시 실행합니다. 대부분은 이것으로 해결됩니다.",
+  "error.notFound.title": "없는 페이지입니다",
+  "error.notFound.body": "이 주소와 일치하는 화면이 앱에 없습니다.",
+  "empty.goToDashboard": "대시보드로 이동",
 
   // --- idle (the idle-pause cover) ---
   "idle.dialogAria": "Collie 일시 중지됨",
@@ -975,6 +983,9 @@ export const ko: Dictionary = {
   "home.pin.moveUp": "위로 이동",
   "home.pin.moveDown": "아래로 이동",
   "overview.title": "한눈에 보기",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "overview.empty.title": "실행 중인 것이 없습니다",
+  "overview.empty.body": "연 페인이 여기에 모이고, 각 터미널의 마지막 몇 줄이 함께 표시됩니다.",
   "overview.tailAria": "터미널 마지막 줄",
   "overview.loading": "…",
   "hotkeys.title": "키보드 단축키",
