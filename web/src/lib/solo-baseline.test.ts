@@ -208,6 +208,11 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
       "session",
       "sessionName",
       "status",
+      // FORK, and not a third address field: the agent's own sentence and its stamp. Neither is
+      // turned on by a REQUEST — an agent publishes one with `collie beacon status` or no pane has
+      // one — so the claim this case makes about the two address dimensions is untouched.
+      "statusLine",
+      "statusLineAt",
       "tabId",
       "tabLabel",
       "terminalTitle",

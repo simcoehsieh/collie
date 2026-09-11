@@ -143,7 +143,10 @@ describe("PaneTranscript", () => {
     const user = userEvent.setup();
     const onShowTerminal = vi.fn();
     renderTranscript({ onShowTerminal });
-    await user.click(await screen.findByRole("button", { name: /show the terminal/i }));
+    // Wait for the EMPTY STATE itself before clicking: the loading render carries the same offer in
+    // its footer, and clicking that one mid-swap would land on a node React has already replaced.
+    await screen.findByText(/no conversation/i);
+    await user.click(screen.getByRole("button", { name: /show the terminal/i }));
     expect(onShowTerminal).toHaveBeenCalled();
   });
 });

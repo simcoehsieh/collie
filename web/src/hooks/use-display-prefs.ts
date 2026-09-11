@@ -125,6 +125,28 @@ export function paneViewFor(
   return isAgent ? "transcript" : "terminal";
 }
 
+/**
+ * FORK: write ONE pane's view into the stored prefs from outside the hook.
+ *
+ * For a surface that mounts a pane with no live bridge behind it — the states playground, whose
+ * whole subject is captured TERMINAL screens and whose own docstring promises "no fetch anywhere".
+ * Chat mode would otherwise make every card there open on a transcript it would have to go and
+ * fetch, which is both the wrong picture and a broken promise.
+ *
+ * Written through the real store rather than pushed in as a prop, on the same argument
+ * `playground/harness.tsx` already makes for seeding a composer draft: the app restores this on
+ * mount, so writing the store IS how a choice arrives. Call it BEFORE the pane mounts.
+ */
+export function seedPaneView(paneKey: string, view: PaneView): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    const current = loadPrefs();
+    savePrefs({ ...current, paneView: { ...current.paneView, [paneKey]: view } });
+  } catch {
+    // Ignore quota / SSR write errors — the pane simply opens on its default view.
+  }
+}
+
 /** The terminal font families offered in Settings. A closed list, not a free-text box: an
  *  unvalidatable font name typed on a phone is a footgun, and every entry here has to satisfy two
  *  invariants that a typed name cannot. */
