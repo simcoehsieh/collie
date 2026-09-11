@@ -114,8 +114,16 @@ describe("ThreadSidebar", () => {
         onSelect={vi.fn()}
       />,
     );
-    // One dot per section, colored by the same status palette the badges use.
-    for (const cls of ["bg-status-blocked", "bg-status-working", "bg-status-idle", "bg-status-unknown"]) {
+    // One dot per section, colored by the same status palette the badges use — the palette's MARK
+    // half, since a bullet is a fill and not a word (FORK, index.css `--status-X-mark`). This
+    // pinned the text half before the split and would pass on a dot drawn in the brown that split
+    // exists to retire, so the exact class names are the assertion.
+    for (const cls of [
+      "bg-status-blocked-mark",
+      "bg-status-working-mark",
+      "bg-status-idle-mark",
+      "bg-status-unknown-mark",
+    ]) {
       expect(container.getElementsByClassName(cls).length).toBeGreaterThan(0);
     }
   });

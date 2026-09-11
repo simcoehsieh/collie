@@ -125,7 +125,7 @@ export function ThreadSidebar({
           id="switch-shells"
           label={t("home.sidebar.shells")}
           count={shellPanes.length}
-          dot="bg-status-unknown"
+          dot="bg-status-unknown-mark"
           {...(onShellsOpenChange ? { open: shellsOpen, onToggle: onShellsOpenChange } : {})}
         >
           {shellPanes.map((p) => (
@@ -144,7 +144,7 @@ export function ThreadSidebar({
           id="switch-launch"
           label="Launch"
           count={launchers.length}
-          dot="bg-status-unknown"
+          dot="bg-status-unknown-mark"
           {...(onLaunchOpenChange ? { open: launchOpen, onToggle: onLaunchOpenChange } : {})}
         >
           {launchers.map((launcher) => (

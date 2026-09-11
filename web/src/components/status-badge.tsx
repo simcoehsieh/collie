@@ -5,12 +5,16 @@ import { type AgentStatus, statusLabel } from "@/lib/types";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
+// FORK: a dot is a FILL, so it wears the palette's mark half (`--status-X-mark`), never the text
+// half. index.css says why at length: the text values are tuned to 4.5:1 on a chip, which in light
+// puts `working` at a brown and `done` at a forest green — correct for a word, unreadable as an 8px
+// disc. The chip's own colours below are untouched, so nothing loses a contrast ratio.
 const DOT = {
-  blocked: "bg-status-blocked",
-  working: "bg-status-working",
-  done: "bg-status-done",
-  idle: "bg-status-idle",
-  unknown: "bg-status-unknown",
+  blocked: "bg-status-blocked-mark",
+  working: "bg-status-working-mark",
+  done: "bg-status-done-mark",
+  idle: "bg-status-idle-mark",
+  unknown: "bg-status-unknown-mark",
 } satisfies Record<AgentStatus, string>;
 
 const CHIP = {
@@ -31,11 +35,11 @@ const CHIP = {
 const RESTING: ReadonlySet<AgentStatus> = new Set(["idle", "unknown"]);
 
 const RING = {
-  blocked: "border-status-blocked",
-  working: "border-status-working",
-  done: "border-status-done",
-  idle: "border-status-idle/60",
-  unknown: "border-status-unknown/60",
+  blocked: "border-status-blocked-mark",
+  working: "border-status-working-mark",
+  done: "border-status-done-mark",
+  idle: "border-status-idle-mark/60",
+  unknown: "border-status-unknown-mark/60",
 } satisfies Record<AgentStatus, string>;
 
 export function StatusDot({

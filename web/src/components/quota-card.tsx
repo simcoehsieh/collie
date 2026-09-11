@@ -22,11 +22,16 @@ import { cn } from "@/lib/utils";
 // bridge serves a body up to a minute old and the phone re-reads every five, and a "3h 43m" that
 // only moved when a request happened to land would read as stuck.
 
-/** The bar's fill by how full it is — the theme's own status hues, never a hex. */
+/** The bar's fill by how full it is — the theme's own status hues, never a hex.
+ *
+ *  FORK: the MARK half of those hues (`--status-X-mark`), because a 6px bar is a fill and not a
+ *  word — the text values light `warn` at #804a00, which reads as a dirty stripe rather than as
+ *  "getting full". The percentage BESIDE the bar keeps `text-status-blocked` below: that one is
+ *  text, and text is what the text half is tuned for. */
 const TONE = {
   ok: "bg-primary",
-  warn: "bg-status-working",
-  high: "bg-status-blocked",
+  warn: "bg-status-working-mark",
+  high: "bg-status-blocked-mark",
 } satisfies Record<UsageTone, string>;
 
 /** Once a minute, so a countdown ticks without a request. */

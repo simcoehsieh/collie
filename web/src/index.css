@@ -234,6 +234,59 @@
   --status-idle: light-dark(oklch(0.45 0.02 250), oklch(0.73 0.03 250));
   --status-unknown: light-dark(oklch(0.43 0.02 250), oklch(0.68 0.03 250));
 
+  /* ── THE MARK HALF OF THE STATUS PALETTE ────────────────────────────────────────────────────
+     FORK (2026-09-11). The block above ends "if that costs the dashboard its glance-ability
+     outdoors, the fallback is splitting fill and text into separate tokens." It cost it, and this
+     is that fallback taken: `--status-X` stays the TEXT value, tuned for 4.5:1 on a chip;
+     `--status-X-mark` is the same state drawn as an 8px disc, a hollow ring or a 6px progress
+     fill, where the only question is whether the operator can find it across a room.
+
+     WHY THE TEXT VALUES CANNOT DO BOTH JOBS. Rasterised, light `working` is #804a00 — a brown —
+     `done` is #006a29, a forest green, and `blocked` is #ac0010, an oxblood. Those are correct
+     for a word and wrong for a dot: at 8px hue is all that survives (status-badge.tsx's StatusWord
+     comment measures how little), and a hue at L 0.45 has no chroma left to carry it. Light and
+     dark therefore read as two different products — the dark halves already glow, because they
+     were tuned against near-black where "clears 4.5:1" and "glows" are the same instruction.
+
+     SO ONLY THE LIGHT HALVES MOVED. Each keeps its hue exactly (25 / 72 / 152 / 250) and gains
+     lightness and chroma; the dark halves are the values above restated verbatim, which is why
+     nothing in dark changes by a pixel. They are restated rather than aliased through `var()`
+     because a nested `light-dark()` is not something to bet a palette on.
+
+     RASTERISED, not arithmetic — same method as the table above, each cell painted by the browser
+     at DPR 1 and the pixel read back. A mark is a SOLID, so these are the plain ratios and not the
+     chip's /15 wash:
+
+       mark        light hex   on --background  on --card    (dark hex   on --bg  on --card)
+       blocked     #d93539       4.21             4.65        #ff5e5e     6.40     5.77
+       working     #e48f00       2.31             2.55        #f4b93c    10.81     9.75
+       done        #1a9951       3.33             3.67        #4ac777     8.87     8.00
+       idle        #6f7c89       3.87             4.27        #9aaaba     8.06     7.27
+       unknown     #677380       4.38             4.84        #8b9aab     6.67     6.01
+
+     `working` IS THE ONE CELL UNDER 3:1, and it is under it deliberately. Hue 72 is amber, and
+     amber's identity is high luminance: measured on this hue, reaching 3:1 against the page needs
+     L <= 0.635, which rasterises to #c37700 — a brown-orange, i.e. the exact failure this token
+     exists to fix. The floor it misses is WCAG 1.4.11, which binds a graphic REQUIRED to
+     understand the content, and this dot is not one: every place it is drawn either carries the
+     word beside it (StatusWordSlot) or is one of several encodings of the same fact, which is
+     status-badge.tsx's own argument for why the word exists at all. index.css already makes the
+     matching case one block up, for --control-on: a value can be found by CHROMA rather than by
+     luminance when it is the only saturated thing in a neutral row.
+
+     THE RESTING PAIR GOT QUIETER, NOT LOUDER, AND THAT IS THE POINT. idle/unknown are drawn as
+     HOLLOW RINGS (status-badge.tsx RESTING), so lifting them lightens the ring while the three
+     active states brighten — the gap between "something is happening" and "nothing is" widens in
+     both directions at once.
+
+     NO `--status-info-mark`: nothing in the app draws an info dot or an info fill. The one
+     surface that uses `--status-info` is the prerelease strip, which is text on a wash. */
+  --status-blocked-mark: light-dark(oklch(0.585 0.2 25), oklch(0.7 0.2 24));
+  --status-working-mark: light-dark(oklch(0.72 0.17 72), oklch(0.82 0.15 82));
+  --status-done-mark: light-dark(oklch(0.6 0.15 152), oklch(0.74 0.16 152));
+  --status-idle-mark: light-dark(oklch(0.58 0.025 250), oklch(0.73 0.03 250));
+  --status-unknown-mark: light-dark(oklch(0.55 0.025 250), oklch(0.68 0.03 250));
+
   /* Calm-info sky blue — same shape as the lifecycle palette above (dark brighter to glow on
      near-black). It is the palette's tightest light value: on the old rgb(235) header band its chip
      measured 4.41 — under the floor the block above claims. Chrome is the page now, so the one
@@ -375,6 +428,13 @@
   --color-status-idle: var(--status-idle);
   --color-status-unknown: var(--status-unknown);
   --color-status-info: var(--status-info);
+
+  /* FORK: the fill half of the same five states — `bg-status-X-mark`, `border-status-X-mark`. */
+  --color-status-blocked-mark: var(--status-blocked-mark);
+  --color-status-working-mark: var(--status-working-mark);
+  --color-status-done-mark: var(--status-done-mark);
+  --color-status-idle-mark: var(--status-idle-mark);
+  --color-status-unknown-mark: var(--status-unknown-mark);
 
   --color-host-0: var(--host-0);
   --color-host-1: var(--host-1);

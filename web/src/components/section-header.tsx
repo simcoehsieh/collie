@@ -8,7 +8,9 @@ interface SectionHeaderProps {
   label: string;
   /** Item count shown beside the label. Omit to show no count. */
   count?: number;
-  /** Bullet colour class from the status palette (e.g. "bg-status-blocked"). */
+  /** Bullet colour class from the status palette's MARK half (e.g. "bg-status-blocked-mark").
+   *  A bullet is a FILL: the `--status-X` values are tuned as TEXT and rasterise to a brown and a
+   *  forest green in light, which is unreadable at 8px. See index.css. */
   dot?: string;
   /** Render the label in the alert colour — the "Needs you" section. */
   accent?: boolean;
