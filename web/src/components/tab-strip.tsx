@@ -261,7 +261,7 @@ export const TabStrip = memo(function TabStrip({
             is a control beside the tabs, not a tab, so it centres in the row rather than hanging
             from the top line. */}
         {trailing !== undefined && (
-          <div className="flex shrink-0 self-center pl-1">{trailing}</div>
+          <div className="flex shrink-0 items-center gap-1 self-center pl-1">{trailing}</div>
         )}
       </nav>
 

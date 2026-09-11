@@ -73,18 +73,26 @@ function renderChat(overrides: Partial<ComponentProps<typeof AgentChat>> = {}) {
   return { props, container };
 }
 
-// ── FORK: CHAT MODE CHANGED WHAT AN AGENT PANE OPENS ON ──────────────────────
-// A pane that HAS a transcript now opens on its conversation, not on the mirror (agent-chat.tsx
-// § chat mode), so every case below that is about the MIRROR of such a pane has to say which of the
-// two views it is looking at. This writes the operator's own per-pane choice exactly as the app
-// writes it — the stored display prefs — rather than reaching past the preference with a prop, so
-// what these tests exercise is still the shipped path. `localStorage` is cleared between cases by
-// the shared setup, so nothing leaks forward.
-function pinTerminalView(paneId: string = fixtureAgents[0]!.paneId) {
+// ── FORK: CHAT MODE GAVE AN AGENT PANE A SECOND VIEW ─────────────────────────
+// A pane that HAS a transcript can show it instead of the mirror (agent-chat.tsx § chat mode). The
+// default is the TERMINAL (it was the transcript for one morning — use-display-prefs.ts says why it
+// flipped), so a case about the mirror needs no pin; the pin is kept where a case wants to SAY it
+// is on the mirror, and its twin below puts a pane on the transcript for the cases about leaving
+// it. Both write the operator's own per-pane choice exactly as the app writes it — the stored
+// display prefs — rather than reaching past the preference with a prop, so what these tests
+// exercise is still the shipped path. `localStorage` is cleared between cases by the shared setup,
+// so nothing leaks forward.
+function pinPaneView(view: "terminal" | "transcript", paneId: string = fixtureAgents[0]!.paneId) {
   localStorage.setItem(
     "collie:display-prefs:v4",
-    JSON.stringify({ paneView: { [paneScopeKey(undefined, paneId)]: "terminal" } }),
+    JSON.stringify({ paneView: { [paneScopeKey(undefined, paneId)]: view } }),
   );
+}
+function pinTerminalView(paneId: string = fixtureAgents[0]!.paneId) {
+  pinPaneView("terminal", paneId);
+}
+function pinTranscriptView(paneId: string = fixtureAgents[0]!.paneId) {
+  pinPaneView("transcript", paneId);
 }
 
 // Find and History are ROWS in the pane's actions sheet now — the header spends ONE ⋮ on the whole
@@ -2726,32 +2734,34 @@ describe("AgentChat — what changed, the file viewer, and the mirror's chips", 
 
 // ── FORK: CHAT MODE — WHICH OF THE PANE'S TWO REPRESENTATIONS IS ON SCREEN ───
 //
-// An agent pane is a conversation that happens to be rendered in a terminal, so it opens on the
-// conversation. What is pinned here is everything that keeps that from being a view you can get
-// stuck in: the mirror is one tap away, and two states take it back WITHOUT asking — a dialog that
-// owns the keyboard, and an open find bar. Neither writes the preference.
+// An agent pane is a conversation that happens to be rendered in a terminal. It OPENS on the
+// terminal (the default flipped back from the transcript on 2026-09-11 — use-display-prefs.ts), with
+// the conversation one tap away; what is pinned here is everything that keeps the transcript from
+// being a view you can get stuck in: the mirror is one tap away, and two states take it back WITHOUT
+// asking — a dialog that owns the keyboard, and an open find bar. Neither writes the preference.
 describe("AgentChat — chat mode", () => {
   const sessionAgent = () => ({ ...fixtureAgents[0]!, hasSession: true, readableLines: 51 });
   const toggle = () => screen.queryByRole("radiogroup", { name: /pane view/i });
-  /** The switch rides in the composer's Controls row, which this fork folds away by default — so a
-   *  test that is about the switch opens the row the way the operator does, through the status band.
-   *  (The mirror is still ONE tap from the transcript itself: its scroller ends in a "Show the
-   *  terminal" row, which the cases below also exercise.) */
-  const openControls = async (user: User) => {
-    const band = screen.queryByRole("button", { name: /show the controls row/i });
-    if (band) await user.click(band);
-  };
+  /** The switch rides in the TAB ROW's trailing slot, beside the fold chevron — so a test that is
+   *  about the switch renders the pane with its space's tab, the way a real pane always has one.
+   *  `tabs: []` (renderChat's default) draws no TabStrip and therefore no switch. (The mirror is
+   *  still ONE tap from the transcript itself: its scroller ends in a "Show the terminal" row, which
+   *  the cases below also exercise.) */
+  const withTab = { tabs: [fixtureTabs[0]!] }; // w1:t1 — fixtureAgents[0]'s own tab
   const transcriptTab = () => screen.getByRole("radio", { name: "Transcript" });
   const terminalTab = () => screen.getByRole("radio", { name: "Terminal" });
   /** The mirror's own <pre>: present exactly when the terminal view is the one on screen. */
   const mirror = () => document.querySelector("pre");
 
-  it("an agent pane with a transcript opens on the conversation", async () => {
+  it("an agent pane with a transcript opens on the terminal, the conversation one tap away", async () => {
     const user = userEvent.setup();
-    renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
-    expect(mirror()).toBeNull();
-    await openControls(user);
+    renderChat({ ...withTab, agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    expect(mirror()).not.toBeNull();
     await waitFor(() => expect(toggle()).toBeInTheDocument());
+    expect(terminalTab()).toHaveAttribute("aria-checked", "true");
+
+    await user.click(transcriptTab());
+    await waitFor(() => expect(mirror()).toBeNull());
     expect(transcriptTab()).toHaveAttribute("aria-checked", "true");
   });
 
@@ -2759,7 +2769,9 @@ describe("AgentChat — chat mode", () => {
   // on the Controls row being open.
   it("the thread's own footer hands the screen back to the terminal in one tap", async () => {
     const user = userEvent.setup();
+    pinTranscriptView();
     renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    expect(mirror()).toBeNull();
     await user.click(await screen.findByRole("button", { name: /show the terminal/i }));
     await waitFor(() => expect(mirror()).not.toBeNull());
     expect(mirror()).toHaveTextContent("recent pane output");
@@ -2767,16 +2779,15 @@ describe("AgentChat — chat mode", () => {
 
   it("the switch remembers the choice per pane and per device", async () => {
     const user = userEvent.setup();
-    const { props } = renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
-    await openControls(user);
+    const { props } = renderChat({ ...withTab, agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
     await waitFor(() => expect(toggle()).toBeInTheDocument());
 
-    await user.click(terminalTab());
-    await waitFor(() => expect(mirror()).not.toBeNull());
+    await user.click(transcriptTab());
+    await waitFor(() => expect(mirror()).toBeNull());
 
     // The choice is in the stored display prefs, under THIS pane's address — not a global switch.
     const stored = JSON.parse(localStorage.getItem("collie:display-prefs:v4") ?? "{}");
-    expect(stored.paneView[paneScopeKey(undefined, props.paneId)]).toBe("terminal");
+    expect(stored.paneView[paneScopeKey(undefined, props.paneId)]).toBe("transcript");
   });
 
   // THE RULE THAT MAKES CHAT MODE SAFE TO DEFAULT ON. Answering a prompt means seeing the prompt,
@@ -2786,10 +2797,9 @@ describe("AgentChat — chat mode", () => {
       join(import.meta.dirname, "..", "fixtures", "panes", "claude--permission-bash.txt"),
       "utf8",
     );
-    const user = userEvent.setup();
-    renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text });
+    pinTranscriptView();
+    renderChat({ ...withTab, agent: sessionAgent(), agents: [sessionAgent()], text });
     await waitFor(() => expect(mirror()).not.toBeNull());
-    await openControls(user);
     // The control says what is ON SCREEN rather than what is stored, and cannot be moved right now.
     expect(terminalTab()).toHaveAttribute("aria-checked", "true");
     expect(terminalTab()).toBeDisabled();
@@ -2799,6 +2809,7 @@ describe("AgentChat — chat mode", () => {
   // the one on screen.
   it("opening find hands the mirror back too", async () => {
     const user = userEvent.setup();
+    pinTranscriptView();
     renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
     expect(mirror()).toBeNull();
 
@@ -2806,21 +2817,21 @@ describe("AgentChat — chat mode", () => {
     await waitFor(() => expect(mirror()).not.toBeNull());
   });
 
-  it("a shell pane is never offered a transcript it has no journal for", async () => {
-    const user = userEvent.setup();
+  // Both negative cases render WITH the tab, and pin the fold chevron beside the (absent) switch:
+  // a row that never drew would make "no switch" trivially true and prove nothing.
+  it("a shell pane is never offered a transcript it has no journal for", () => {
     const shell = { ...fixtureAgents[0]!, kind: "shell" as const, hasSession: false };
-    renderChat({ agent: shell, agents: [shell], text: "recent pane output" });
+    renderChat({ ...withTab, agent: shell, agents: [shell], text: "recent pane output" });
     expect(mirror()).not.toBeNull();
-    await openControls(user);
+    expect(screen.getByRole("button", { name: "Hide tabs" })).toBeInTheDocument();
     expect(toggle()).not.toBeInTheDocument();
   });
 
-  it("an agent pane that never reported a session keeps the mirror and the toggle stays away", async () => {
-    const user = userEvent.setup();
+  it("an agent pane that never reported a session keeps the mirror and the toggle stays away", () => {
     const noSession = { ...fixtureAgents[0]!, hasSession: false };
-    renderChat({ agent: noSession, agents: [noSession], text: "recent pane output" });
+    renderChat({ ...withTab, agent: noSession, agents: [noSession], text: "recent pane output" });
     expect(mirror()).not.toBeNull();
-    await openControls(user);
+    expect(screen.getByRole("button", { name: "Hide tabs" })).toBeInTheDocument();
     expect(toggle()).not.toBeInTheDocument();
   });
 });

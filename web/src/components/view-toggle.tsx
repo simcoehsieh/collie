@@ -6,11 +6,17 @@ import type { PaneView } from "@/hooks/use-display-prefs";
 
 // FORK — THE PANE'S TWO REPRESENTATIONS, AS ONE CONTROL.
 //
-// It rides in the composer's EXISTING Controls row (Keys / Type / Quick / Agent / ⚙), at its head,
-// rather than as a row of its own — upstream #186 is the standing complaint that this screen has too
-// many persistent bands, and a view switch is exactly the sort of thing that grows one. The row
-// already folds away with the rest of the dock, which means chat mode inherits the fold instead of
-// needing a second rule for it.
+// It rides in the TAB ROW's trailing slot, beside the fold chevron (agent-chat.tsx hands both to
+// TabStrip's `trailing`). That row is the header's "which pane" strip, and this is "which face of
+// that pane" — the two are one decision about what is on screen, so they share a row. It was first
+// placed at the head of the composer's Controls row (Keys / Type / Quick / Agent / ⚙), to avoid
+// growing a band of its own; the cost was that its two labelled options took half of a 366px row
+// and the four controls beside it ellipsised to their first letter on every phone. Up here it
+// takes the pixels the 44px tab row was already spending, the way the chevron does.
+//
+// ICON-ONLY, because the row it now sits in is the tab scroller's, and every pixel the trailing
+// slot takes is a pixel the last tab can no longer scroll into. The selected face is the one
+// with the raised background; the accessible name carries the word.
 //
 // A SEGMENTED CONTROL AND NOT A TOGGLE BUTTON, because there are two NAMED destinations and the
 // operator has to be able to see which one they are in without tapping to find out. `radiogroup` is
@@ -21,6 +27,10 @@ import type { PaneView } from "@/hooks/use-display-prefs";
 // stored choice is (agent-chat.tsx says why), so the control reflects the SCREEN — otherwise it
 // would claim "Transcript" over a terminal — while `disabled` says the operator cannot move it right
 // now. The stored choice is untouched and comes back when the dialog clears.
+//
+// Folding the strips takes this with them: the 24px summary bar that stands in for the rows has
+// no room for a 32px control, and a folded band is the operator asking for the mirror's space,
+// not for more chrome. Unfold to switch.
 
 export function ViewToggle({
   value,
@@ -42,7 +52,9 @@ export function ViewToggle({
       role="radiogroup"
       data-slot="view-toggle"
       aria-label={t("chat.view.label")}
-      className="flex shrink-0 items-center gap-0.5 rounded-lg bg-muted/60 p-0.5"
+      // 32px tall, the same square recipe as the "+" and the fold chevron it sits beside: three
+      // controls of one rank in one row, drawn to one height so none of them outranks the others.
+      className="flex h-8 shrink-0 items-center gap-0.5 rounded-full bg-muted/60 p-0.5"
     >
       {options.map(({ view, label, Icon }) => {
         const on = value === view;
@@ -53,22 +65,16 @@ export function ViewToggle({
             role="radio"
             aria-checked={on}
             aria-label={label}
+            title={label}
             disabled={disabled}
             onClick={() => onChange(view)}
             className={cn(
-              // 40px tall, matching the Controls row's own buttons — a control that sits among them
-              // and measures differently makes the row look broken before it looks small.
-              "flex h-10 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors",
-              on
-                ? "bg-background text-foreground shadow-xs"
-                : "text-muted-foreground active:bg-muted",
+              "flex size-7 items-center justify-center rounded-full transition-colors",
+              on ? "bg-background text-foreground shadow-xs" : "text-muted-foreground active:bg-muted",
               disabled && "opacity-60",
             )}
           >
             <Icon className="size-4 shrink-0" aria-hidden />
-            {/* The word is hidden on the narrowest phones, where five controls already compete for
-                366px; the icon plus the accessible name still carries it. */}
-            <span className="hidden min-[380px]:inline">{label}</span>
           </button>
         );
       })}

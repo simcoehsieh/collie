@@ -99,9 +99,12 @@ export interface DisplayPrefs {
    * host or another herdr session is a different pane, and a shared key would let one machine's
    * choice decide another's.
    *
-   * ABSENT IS NOT "terminal" — it is "no choice made", which `paneViewFor` resolves per pane kind
-   * (agent → transcript, shell → mirror). That is what lets the default change without rewriting
-   * everyone's stored map, and what keeps a shell pane out of a view it has no journal for.
+   * ABSENT IS NOT "terminal" — it is "no choice made", which `paneViewFor` resolves to the default
+   * for the pane's kind. That is what lets the default change without rewriting everyone's stored
+   * map (it did: transcript-first shipped on 2026-09-11 and was flipped back to terminal-first the
+   * same day — Simcoe wants a new tab to open on the screen the agent is actually drawing, with the
+   * thread one tap away rather than the other way round), and what keeps a shell pane out of a view
+   * it has no journal for.
    */
   paneView: Record<string, PaneView>;
 }
@@ -117,10 +120,13 @@ export type PaneView = "transcript" | "terminal";
 export const PANE_VIEW_MAX = 80;
 
 /**
- * The view a pane opens in: the operator's own choice for THIS pane, or the default for its kind.
+ * The view a pane opens in: the operator's own choice for THIS pane, or the default — the TERMINAL,
+ * for every kind. The transcript is offered, remembered per pane, and one tap away; it is not what
+ * a pane opens on (see the `paneView` field for the history of that default).
  *
  * `isAgent` is the caller's answer, not a guess made here — the pane view already knows whether it
- * is looking at an agent or a bare shell, and a shell has no transcript to show.
+ * is looking at an agent or a bare shell, and a shell has no transcript to show, so a stored
+ * "transcript" for one is ignored rather than honoured.
  */
 export function paneViewFor(
   prefs: DisplayPrefs,
@@ -128,8 +134,8 @@ export function paneViewFor(
   isAgent: boolean,
 ): PaneView {
   const chosen = Object.hasOwn(prefs.paneView, paneKey) ? prefs.paneView[paneKey] : undefined;
-  if (chosen === "transcript" || chosen === "terminal") return chosen;
-  return isAgent ? "transcript" : "terminal";
+  if (chosen === "transcript") return isAgent ? "transcript" : "terminal";
+  return "terminal";
 }
 
 /**

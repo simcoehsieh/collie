@@ -920,8 +920,10 @@ export function AgentChat({
   //  • A DIALOG OWNS THE KEYBOARD (`dialogPresent`, from the dialog contract). Answering a prompt
   //    means seeing the prompt, the up-levelled option buttons live in the mirror, and the journal
   //    has not been written yet anyway — so a pane that blocks swaps itself back. This is the rule
-  //    that makes chat mode safe to default ON: there is no state in which the operator is left
-  //    looking at a thread while the agent waits on a question they cannot see.
+  //    that makes chat mode safe to leave ON for a pane: there is no state in which the operator is
+  //    left looking at a thread while the agent waits on a question they cannot see. (It was the
+  //    DEFAULT for one morning; a pane opens on the terminal again since 2026-09-11 — the
+  //    `paneView` field in use-display-prefs.ts has the why — and the thread is one tap away.)
   //  • FIND IS OPEN. Find searches the mirror's buffer and highlights inside it (the transcript has
   //    its own find, on the history route), so the surface it searches has to be the one on screen.
   //
@@ -1911,7 +1913,24 @@ export function AgentChat({
                     // the space has nothing left to land on. Closing any other tab just revalidates so it
                     // drops out of the strip.
                     onClosed={onTabClosed}
-                    trailing={foldControl}
+                    // FORK: chat mode's one control rides here, beside the fold chevron — the tab
+                    // row says which pane, this says which face of it. Offered only on a pane that
+                    // HAS a transcript; the value is what is ON SCREEN (a dialog forces the mirror
+                    // without touching the stored choice), and the switch is disabled while it is
+                    // forced — see `transcriptMode` above. It used to lead the composer's Controls
+                    // row and ellipsised the four controls beside it; view-toggle.tsx has the rest.
+                    trailing={
+                      <>
+                        {transcriptOffered && (
+                          <ViewToggle
+                            value={transcriptMode ? "transcript" : "terminal"}
+                            disabled={dialogPresent || findOpen}
+                            onChange={(view) => setPaneView(paneKey, view)}
+                          />
+                        )}
+                        {foldControl}
+                      </>
+                    }
                   />
                 )}
 
@@ -2360,19 +2379,6 @@ export function AgentChat({
                   setTapToFocus={setTapToFocus}
                   setExpandClippedReply={setExpandClippedReply}
                   setControlsOpen={setControlsOpen}
-                  // FORK: chat mode's one control, in the row that already exists. Offered only on a
-                  // pane that HAS a transcript; the value is what is ON SCREEN (a dialog forces the
-                  // mirror without touching the stored choice), and the switch is disabled while it
-                  // is forced — see `transcriptMode` above.
-                  viewToggle={
-                    transcriptOffered ? (
-                      <ViewToggle
-                        value={transcriptMode ? "transcript" : "terminal"}
-                        disabled={dialogPresent || findOpen}
-                        onChange={(view) => setPaneView(paneKey, view)}
-                      />
-                    ) : undefined
-                  }
                   onSent={onSent}
                   // FORK: the `## Feedback:` heading of a send that carries anchored notes.
                   paneName={paneName}
