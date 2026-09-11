@@ -168,6 +168,78 @@ header:has(> [data-slot="collapse"] [data-slot="header-row"]) {
   padding-bottom: 0.625rem;
 }
 
+/* ── Motion: the boot splash handing off to the header ──────────────────────────────────── */
+/* The splash puts a 64px mark at the centre of the screen and the header puts a 40px one in its
+   top-left corner, and between them was a hard cut: two pictures of the same drawing in two places,
+   with nothing saying they are the same drawing. 260ms of travel says it.
+
+   IT IS PLAYED BY THE ARRIVING MARK, NOT THE LEAVING ONE, and that is forced rather than chosen.
+   The first-paint splash lives inside #root and `createRoot().render()` replaces those children in
+   one commit; React's own BootSplash is a HydrateFallback and unmounts the same way. Neither can
+   animate its own exit — there is no frame in which the old element still exists. So the header's
+   mark starts where the splash's mark was, at the splash's size, and travels home: the same 260ms
+   read backwards, and the app appears to BECOME its own header rather than replace it.
+
+   THE GEOMETRY IS STATED, NOT MEASURED, so it costs no JavaScript and no layout read:
+     · the header mark's own centre is 38px from the left (the row's `pl-4`, minus CollieHome's
+       `-mx-1`, plus its `px-1`, plus half of the 44px box) and 30px from the top of the header row
+       (a 60px `min-h-15` row centring a 44px box), under the safe-area inset the header carries;
+     · the splash's mark is centred in the viewport;
+     · 1.6 = 64/40, so the scaled 44px box draws the svg at exactly the splash's 64px.
+   Translate first, then scale: the translate moves the box's centre onto the viewport's, and the
+   scale is about that centre. If the header row's padding or the mark's box ever change, these two
+   numbers change with them — they are the only things here that know about app-header.tsx.
+
+   It runs on MOUNT and there is nothing to guard: AppHeaderHost is mounted once for the life of the
+   app (its own comment says why), so this plays exactly when the splash goes away. The one other
+   time it plays is coming back from the idle lock, which swaps the whole RouterProvider out — and
+   that screen is also a centred mark, so the same motion is the right one there too.
+
+   `both` holds the first frame before paint, so the mark never flashes at its home position first.
+   Reduced motion drops the travel and keeps the colour, which is this app's rule for every mark
+   animation (meow-mark.tsx).
+
+   IT IS DELIBERATELY NOT `cm-`-PREFIXED. collie-home.tsx collects `getAnimations({subtree: true})`
+   from THIS element and rates every animation whose name starts with `cm-` — that is the round's
+   ramp, and it runs the curve down to a playback rate of 0 at each end. A hand-off caught by it
+   would stop dead, 64px wide, in the middle of the screen, for up to the round's 1.8s. The prefix
+   is the mark's OWN contract (FORK.md), for animations inside the drawing; this one is the skin
+   moving the box the drawing sits in, and it must stay outside that net. */
+[data-slot="header-mark"] {
+  animation: mark-handoff 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes mark-handoff {
+  from {
+    transform: translate(
+        calc(50vw - 38px),
+        calc(50dvh - 30px - env(safe-area-inset-top))
+      )
+      scale(1.6);
+  }
+  to {
+    transform: none;
+  }
+}
+/* The caption's half, on the React splash. index.html's first-paint splash carries the same rule in
+   its own inline <style>, because index.css and this file have not loaded at that point. */
+[data-slot="boot-caption"] {
+  animation: boot-caption 260ms ease-out 140ms both;
+}
+@keyframes boot-caption {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="header-mark"],
+  [data-slot="boot-caption"] {
+    animation: none;
+  }
+}
+
 /* ── Motion: a route arriving ───────────────────────────────────────────────────────────── */
 /* The outlet wrapper in routes/root.tsx carries `data-route-enter`; the key on it changes when the
    KIND of route changes (dashboard ↔ pane ↔ settings), which remounts the wrapper and replays the

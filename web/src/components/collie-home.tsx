@@ -334,7 +334,7 @@ export function CollieHome({ onHome, trouble, lost = false, className }: CollieH
       {/* The ramp's scope, and the reason this wrapper carries a ref at all: `getAnimations` is
           collected from HERE and not from the button, so the button's own `transition-opacity` — and
           anything a caller's `className` animates — is never handed a playback rate. */}
-      <span ref={mark} className="grid size-11 shrink-0 place-items-center">
+      <span data-slot="header-mark" ref={mark} className="grid size-11 shrink-0 place-items-center">
         <MeowMark
           size={40}
           weight="header"

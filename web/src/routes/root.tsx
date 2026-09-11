@@ -188,9 +188,16 @@ export function BootSplash() {
             `prefers-reduced-motion` stops the orbit and cannot stop the accents. `paper` is this
             screen's ground, `bg-background`, the knockout that puts a near-side bead in front of
             the head. The "Connecting to the herd…" copy below carries the accessible meaning, so
-            the mark is decorative. */}
-        <MeowMark size={64} weight="header" loading paper="var(--background)" />
-        <span className="text-sm">{t("error.boot.connecting")}</span>
+            the mark is decorative.
+            FORK: `text-foreground`, and it is a fix rather than a flourish. This screen's own colour
+            is --muted-foreground (the caption's), the mark drew in `currentColor`, and so the first
+            thing the app ever shows was painted in the token reserved for text you are not meant to
+            read. The CURSOR stays --primary — `loading` sets --cm-a1 — which keeps the one moving
+            stroke as the one accented stroke, exactly as index.html's first-paint splash now does.
+            `data-slot` is for the caption's own fade in skin.css; this element takes no animation
+            of its own, because the hand-off is played by the ARRIVING header mark (see there). */}
+        <MeowMark size={64} weight="header" loading paper="var(--background)" className="text-foreground" />
+        <span data-slot="boot-caption" className="text-sm">{t("error.boot.connecting")}</span>
       </div>
     );
   }

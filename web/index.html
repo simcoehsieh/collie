@@ -151,12 +151,17 @@
         align-items: center;
         justify-content: center;
         gap: 0.75rem;
-        /* --background / --muted-foreground rasterized, because index.css has not loaded yet:
-           oklch(0.97)/oklch(0.48) light, oklch(0.145)/oklch(0.708) dark. The light pair used to be
-           #ffffff/#8a8a8a, which is neither token — the page stepped from white to rgb(245) on
-           hand-off to React, and the caption sat at 3.45:1. Keep in step with index.css. */
-        background: light-dark(#f5f5f5, #0a0a0a);
-        color: light-dark(#5d5d5d, #a1a1a1);
+        /* --background / --muted-foreground RASTERISED, because index.css has not loaded yet.
+           FORK: all four were upstream's numbers and this fork moved both tokens, so the splash was
+           painting the MIRROR's ground (#f5f5f5 / #0a0a0a) under a caption that was neither token —
+           the page stepped a full shade on hand-off to React, which is the seam this whole block
+           exists to close. Measured in the browser at DPR 1:
+             --background       oklch(0.965 0.005 255) #f1f4f7 · oklch(0.17 0.012 262) #0d0f15
+             --muted-foreground oklch(0.48 0.018 258)  #575e68 · oklch(0.71 0.018 258) #9ba2ad
+           Keep in step with index.css, and with the theme-color metas above, which are the same
+           --background pair. */
+        background: light-dark(#f1f4f7, #0d0f15);
+        color: light-dark(#575e68, #9ba2ad);
         font:
           500 0.875rem/1.4 var(--font-sans);
       }
@@ -189,15 +194,56 @@
       }
       .boot-splash__dog {
         --dog-size: 4rem;
+        position: relative;
         width: var(--dog-size);
         height: var(--dog-size);
-        /* The drawing is the mask, the colour is the text's: no sprite, no second colour to keep
-           in step with the theme, and the window's interior is the page showing through. Static —
-           the cursor blinks once React's mark takes over, and a still frame needs no reduced-motion
-           branch. */
-        background-color: currentColor;
-        -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 18 144 144'><polygon points='52,60 60,22 84,54'/><polygon points='128,60 120,22 96,54'/><path fill-rule='evenodd' d='M56,70 a34,26 0 0 1 68,0 Z M69,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z M101,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z'/><rect x='24' y='66' width='132' height='92' rx='14' fill='none' stroke='black' stroke-width='9'/><path d='M46,98 l14,12 l-14,12' fill='none' stroke='black' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/><rect x='72' y='97' width='12' height='27' rx='2'/></svg>") no-repeat center / contain;
-        mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 18 144 144'><polygon points='52,60 60,22 84,54'/><polygon points='128,60 120,22 96,54'/><path fill-rule='evenodd' d='M56,70 a34,26 0 0 1 68,0 Z M69,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z M101,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z'/><rect x='24' y='66' width='132' height='92' rx='14' fill='none' stroke='black' stroke-width='9'/><path d='M46,98 l14,12 l-14,12' fill='none' stroke='black' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/><rect x='72' y='97' width='12' height='27' rx='2'/></svg>") no-repeat center / contain;
+        /* THE BRAND MOMENT IS NOT PAINTED IN THE QUIET-TEXT TOKEN. This was `currentColor`, and the
+           colour it inherited is the caption's --muted-foreground: the first thing the app ever
+           shows was drawn in the colour reserved for text you are not meant to read. It is
+           --foreground now, rasterised here because index.css has not loaded — oklch(0.18 0.012
+           262) #0f1217 light, oklch(0.965 0.006 255) #f1f4f8 dark. The window's interior is still
+           the page showing through, and the cursor is the one part that is not this colour (see
+           ::after). Static — the cursor starts blinking once React's mark takes over, and a still
+           frame needs no reduced-motion branch. */
+        background-color: light-dark(#0f1217, #f1f4f8);
+        -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 18 144 144'><polygon points='52,60 60,22 84,54'/><polygon points='128,60 120,22 96,54'/><path fill-rule='evenodd' d='M56,70 a34,26 0 0 1 68,0 Z M69,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z M101,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z'/><rect x='24' y='66' width='132' height='92' rx='14' fill='none' stroke='black' stroke-width='9'/><path d='M46,98 l14,12 l-14,12' fill='none' stroke='black' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat center / contain;
+        mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 18 144 144'><polygon points='52,60 60,22 84,54'/><polygon points='128,60 120,22 96,54'/><path fill-rule='evenodd' d='M56,70 a34,26 0 0 1 68,0 Z M69,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z M101,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z'/><rect x='24' y='66' width='132' height='92' rx='14' fill='none' stroke='black' stroke-width='9'/><path d='M46,98 l14,12 l-14,12' fill='none' stroke='black' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat center / contain;
+      }
+      /* THE CURSOR IS THE ONE PART IN THE ACCENT, and it is a second layer because a CSS mask paints
+         ONE colour. The body above is the same drawing minus this rect; this is the rect alone, over
+         it, in --primary rasterised — oklch(0.545 0.135 258) #3a6fbd light, oklch(0.74 0.13 258)
+         #76acfc dark. Why the cursor and not the ears: it is already the part React's mark animates
+         while loading (meow-mark.tsx blinks it at a terminal's own 0.6s), so the splash and the app
+         agree about which stroke carries the signal. Keep both hexes in step with index.css. */
+      .boot-splash__dog::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-color: light-dark(#3a6fbd, #76acfc);
+        -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 18 144 144'><rect x='72' y='97' width='12' height='27' rx='2'/></svg>") no-repeat center / contain;
+        mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 18 144 144'><rect x='72' y='97' width='12' height='27' rx='2'/></svg>") no-repeat center / contain;
+      }
+      /* The caption arrives AFTER the mark, and leaves with it. The splash is the mark plus one
+         line; fading the line in over the mark's own 260ms makes the mark the thing that is here
+         first and the words the thing that explains it — and on hand-off the mark visibly travels to
+         the header slot (skin.css `cm-handoff`) while the caption is simply gone, which is the same
+         260ms read backwards. `both` holds it invisible through the delay, so there is no flash of a
+         caption before the mark. */
+      .boot-splash > span:not(.boot-splash__dog) {
+        animation: boot-caption 260ms ease-out 140ms both;
+      }
+      @keyframes boot-caption {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-splash > span:not(.boot-splash__dog) {
+          animation: none;
+        }
       }
     </style>
   </head>
