@@ -2084,12 +2084,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             // types, the slot is Send again — a new message while the agent works still queues.
             <Button
               size="icon"
-              variant="secondary"
+              // The Send button's own variant: a filled disc. `secondary` was tried and is a muted
+              // fill that all but vanishes on the composer's ground — the operator saw a bare square.
               className="size-11 shrink-0 rounded-full"
               onClick={() => void recallLastSend()}
               aria-label={translate("composer.recall.button")}
             >
-              <Square className="size-4" />
+              <Square className="size-4 fill-current" />
             </Button>
           ) : (
             <Button

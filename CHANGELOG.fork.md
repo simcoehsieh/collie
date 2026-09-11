@@ -13,6 +13,7 @@ stays true).
 
 ## On top of 1.8.0
 
+- **The "/rc" row is gone from the pane's status area.** Claude Code's remote-control indicator, painted right-aligned among its status rows, is about the desktop's own link and said nothing on the phone. (harness/claude/chrome.ts)
 - **Stop, and edit what you just sent — in the Send button's own slot.** After a send, while the agent works and the box is empty, Send becomes Stop: one tap sends Esc to the pane and puts the message back in the box to change and send again. Typing brings Send back (a new message while the agent works still queues). Offered only for the message that put the agent to work, and dropped by any outcome that already restores the draft. (components/composer.tsx)
 - **The pane header no longer shows the work tree's totals.** The "N files · +a −b" chip took width off the pane name and was never tapped; the Changes row in the pane menu still opens the same sheet, and the mirror's file chips still draw from the same read. (components/agent-chat.tsx)
 - **No more "Nothing needs you" after every reply on the iPhone.** A retraction push is not sent to Apple's endpoints at all: WebKit revokes a subscription after three silent pushes, so the worker had to draw a placeholder for each one, and every reply the operator sent settled a `done` alert and produced one. The alert now stays until the next one replaces it in the same slot; other push services still get the silent close. (bridge/push.ts)

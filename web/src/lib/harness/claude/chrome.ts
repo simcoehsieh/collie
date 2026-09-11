@@ -171,10 +171,17 @@ export function extractStatusLines(lines: StyledLine[]): StyledLine[] {
 
   const rows: StyledLine[] = [];
   for (let j = box.bottomBorder + 1; j < box.statusEnd; j++) {
-    if (!isBlank(texts[j]!)) rows.push(lines[j]!);
+    if (!isBlank(texts[j]!) && !RC_INDICATOR.test(texts[j]!.trim())) rows.push(lines[j]!);
   }
   return rows;
 }
+
+// FORK: Claude Code's remote-control indicator — "/rc", "/rc connecting…" — painted right-aligned
+// among the status rows. It is about the desktop's own remote link, not about the pane, and on the
+// phone it was a whole row of chrome saying nothing (Simcoe, 2026-09-11). Matched on the trimmed
+// row so the right-alignment padding cannot hide it; the one exception to "positional, never by
+// content" this file otherwise keeps, because this row is the TUI's, not the operator's statusline.
+const RC_INDICATOR = /^\/rc(\s|$)/;
 
 /**
  * The user's draft text stranded on the input box's "❯" prompt line. When a message is queued while
