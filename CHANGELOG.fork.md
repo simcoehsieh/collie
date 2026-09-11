@@ -13,6 +13,7 @@ stays true).
 
 ## On top of 1.8.0
 
+- **No more "Nothing needs you" after every reply on the iPhone.** A retraction push is not sent to Apple's endpoints at all: WebKit revokes a subscription after three silent pushes, so the worker had to draw a placeholder for each one, and every reply the operator sent settled a `done` alert and produced one. The alert now stays until the next one replaces it in the same slot; other push services still get the silent close. (bridge/push.ts)
 - **A "done" push that carries the agent's line is that line, and nothing else.** "AI Live · <what it said>" with an empty title, instead of "claude is done" over it — the verb line said nothing the body did not. ("from Meow" is iOS's own attribution for a web push and stays.) (bridge/notifications.ts)
 - **Attaching a photo no longer trips the outage banner.** A picture upload is a long upload exactly as a voice clip is: the poll stands down and the connection clock does not escalate while it is in flight. Before, the megabytes going up a mobile uplink queued the snapshot poll behind them, the bar went amber at 4 s and red with Reload at 15 s, and Reload killed the upload it was blaming — no phone-attached picture had ever reached the bridge. (lib/api.ts, lib/connection-health.ts)
 - **Drawing on a camera photo no longer kills the app.** The annotate canvas capped its backing store at 12 Mpx: a 4032×3024 photo at DPR 3 asked for 109 Mpx, past iOS Safari's 16.7 Mpx ceiling. (`canvasScaleFor`, lib/markup.ts)

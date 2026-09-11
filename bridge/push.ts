@@ -165,6 +165,25 @@ const EVICT_AFTER = 5;
 /** The push service an endpoint belongs to, used to tell "this device is dead" from "this service
  *  is rejecting us". Falls back to the raw endpoint if it won't parse — an unparseable endpoint is
  *  then its own origin, which can never witness a sibling's success, so it is never evicted. */
+/**
+ * FORK: whether an endpoint is Apple's. WebKit enforces `userVisibleOnly` literally — three pushes
+ * that show no notification and the subscription is revoked — so the service worker turns a silent
+ * retraction into a "Nothing needs you" line on the lock screen (web/src/lib/push-decision.ts). The
+ * operator reads that line after every reply they send, because their reply is what settles the
+ * `done` alert. The bridge therefore does not send retractions to Apple at all: the alert simply
+ * stays until the next one replaces it in the same slot, which is what a lock screen does anyway.
+ * Same rule as the worker's `enforcesUserVisible`, restated because the two trees are type-checked
+ * apart.
+ */
+export function isApplePushEndpoint(endpoint: string): boolean {
+  try {
+    const { hostname } = new URL(endpoint);
+    return hostname === "push.apple.com" || hostname.endsWith(".push.apple.com");
+  } catch {
+    return false;
+  }
+}
+
 function pushServiceOrigin(endpoint: string): string {
   try {
     return new URL(endpoint).origin;
@@ -371,7 +390,9 @@ export class Push {
     const { agent: _agent, approve: _approve, ...wire } = msg;
     // Per-message collapse topic — update alerts must not share the herd slot (see UPDATE_SEND_OPTIONS).
     const options = msg.type === "update" ? UPDATE_SEND_OPTIONS : SEND_OPTIONS;
-    await this.broadcast(JSON.stringify({ ...wire, data }), options);
+    // FORK: a retraction skips Apple's endpoints — see `isApplePushEndpoint`.
+    const to = msg.type === "clear" ? (endpoint: string) => !isApplePushEndpoint(endpoint) : undefined;
+    await this.broadcast(JSON.stringify({ ...wire, data }), options, to);
   }
 
   /** Convenience for a one-off render (used by the manual push-test script). */
@@ -379,13 +400,19 @@ export class Push {
     await this.send({ title, body, paneId: data.paneId });
   }
 
-  private async broadcast(payload: string, options: SendOptions): Promise<void> {
+  private async broadcast(
+    payload: string,
+    options: SendOptions,
+    to: ((endpoint: string) => boolean) | undefined = undefined,
+  ): Promise<void> {
     if (!this.enabled) return;
     const dead: string[] = [];
+    // FORK: `to` narrows the fan-out (a retraction, to everyone but Apple); absent means everyone.
+    const targets = [...this.subs.values()].filter((sub) => to === undefined || to(sub.endpoint));
     // One entry per subscription attempted this round, so the eviction pass below can ask which
     // push services proved themselves healthy before it holds a failure against any one device.
     const results = await Promise.all(
-      [...this.subs.values()].map(async (sub) => {
+      targets.map(async (sub) => {
         try {
           // `{ endpoint, keys }` and nothing else: the stored row also carries operator metadata,
           // and web-push serialises what it is handed.

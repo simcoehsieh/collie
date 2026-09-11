@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { Push, topicIsSendable } from "./push.ts";
+import { Push, topicIsSendable, isApplePushEndpoint } from "./push.ts";
 import type { PushSender, PushSubscription } from "./push.ts";
 import { loadConfig } from "./config.ts";
 
@@ -380,6 +380,25 @@ describe("Push — per-message collapse topic (update must not share the herd sl
     // Disabled push has nothing on file.
     push["_enabled"] = false;
     expect(await push.addSubscription(sub("fresh"))).toEqual({ known: false });
+  });
+
+  // FORK: Apple revokes a subscription after three silent pushes, so the worker would have to draw
+  // "Nothing needs you" for every retraction — one per reply the operator sends. So Apple simply
+  // does not get retractions; the alert stays until the next one replaces it in the same slot.
+  test("a clear skips Apple's endpoints and reaches everyone else; a render reaches all", async () => {
+    const cfg = await tempCfg();
+    const seen: string[] = [];
+    const push = new Push(cfg, async (target) => {
+      seen.push(target.endpoint);
+    });
+    enable(push, [sub("https://web.push.apple.com/QPHp"), sub("https://fcm.googleapis.com/fcm/send/dCVu"), sub("a")]);
+    await push.send({ title: "claude needs you", body: "…", tag: "collie:herd", paneId: "w1:p1" });
+    expect(seen.length).toBe(3);
+    await push.send({ type: "clear", tag: "collie:herd" });
+    expect(seen.length).toBe(5);
+    expect(seen.slice(3).toSorted()).toEqual(["a", "https://fcm.googleapis.com/fcm/send/dCVu"]);
+    expect(isApplePushEndpoint("https://web.push.apple.com/x")).toBe(true);
+    expect(isApplePushEndpoint("not a url")).toBe(false);
   });
 
   test("a clear stays on the herd topic (it closes the herd slot)", async () => {
