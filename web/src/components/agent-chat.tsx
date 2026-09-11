@@ -347,10 +347,18 @@ export function AgentChat({
   // A note whose pane is gone points at nothing. Pruned from here because this is the screen that
   // holds a pane list AND an address to scope it by — and only against a snapshot that is actually
   // live, so a poll that failed can never delete something the operator wrote (see the store).
+  //
+  // The dependency is the JOINED list, not the two arrays: the loader hands this component fresh
+  // arrays on every poll, so an identity dep would re-run this once a second forever on a screen
+  // where nothing about which panes exist had changed.
+  const livePaneIds = useMemo(
+    () => [...agents, ...shellPanes].map((p) => p.paneId).join(" "),
+    [agents, shellPanes],
+  );
   useEffect(() => {
     if (bridge !== "connected" || error) return;
-    pruneNotesForScope(scope, [...agents, ...shellPanes].map((p) => p.paneId));
-  }, [bridge, error, scope, agents, shellPanes]);
+    pruneNotesForScope(scope, livePaneIds.split(" "));
+  }, [bridge, error, scope, livePaneIds]);
 
   // ── ZEN MODE — chrome-free, mirror-only viewing ───────────────────────────────
   // On a phone the chrome IS most of the viewport: measured at 390x844 this route spends 199px above
