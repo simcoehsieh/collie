@@ -225,7 +225,7 @@ export function RootLayout() {
 // router's HydrateFallback, so it stays mounted until the FIRST loader run settles — and over a dead
 // tailnet that initial fetch can hang well past its timeout (or forever on a WebView without
 // AbortSignal.timeout). Left as-is, a PWA reopened while the host is unreachable would bloom the mark
-// on "Connecting to the herd…" indefinitely, with no way to retry. So once we've been stuck here for
+// on "Connecting…" indefinitely, with no way to retry. So once we've been stuck here for
 // CONNECTION_LOST_MS (the same wall-clock threshold as the in-app prompt — `connecting` is trivially
 // true the whole time we're mounted), the splash escalates to an honest, actionable "Not connected"
 // state: the mark stills, the copy says we can't reach Collie, and a Retry
@@ -241,7 +241,7 @@ export function BootSplash() {
             a COLOUR as well as motion, which is the half a reduced-motion reader still gets —
             `prefers-reduced-motion` stops the orbit and cannot stop the accents. `paper` is this
             screen's ground, `bg-background`, the knockout that puts a near-side bead in front of
-            the head. The "Connecting to the herd…" copy below carries the accessible meaning, so
+            the head. The "Connecting…" copy below carries the accessible meaning, so
             the mark is decorative. */}
         <MeowMark size={64} weight="header" loading paper="var(--background)" />
         <span className="text-sm">{t("error.boot.connecting")}</span>

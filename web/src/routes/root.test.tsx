@@ -20,13 +20,13 @@ describe("BootSplash — escalates a stuck cold start", () => {
 
   it("blooms the mark on the connecting splash before the threshold", () => {
     const { container } = render(<BootSplash />);
-    expect(screen.getByText("Connecting to the herd…")).toBeInTheDocument();
+    expect(screen.getByText("Connecting…")).toBeInTheDocument();
     // The bloom is a colour as well as turning — a reduced-motion reader gets the accents only.
     expect(markIsLive(container)).toBe(true);
     expect(markPaper(container)).toBe("var(--background)");
     // still the plain splash a beat before the threshold
     act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS - 1));
-    expect(screen.getByText("Connecting to the herd…")).toBeInTheDocument();
+    expect(screen.getByText("Connecting…")).toBeInTheDocument();
     expect(markIsLive(container)).toBe(true);
     expect(screen.queryByText("Not connected")).not.toBeInTheDocument();
   });
@@ -34,15 +34,14 @@ describe("BootSplash — escalates a stuck cold start", () => {
   it("escalates to 'Not connected' with a Retry once stuck past the threshold", () => {
     const { container } = render(<BootSplash />);
     act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS));
-    expect(screen.queryByText("Connecting to the herd…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Connecting…")).not.toBeInTheDocument();
     expect(screen.getByText("Not connected")).toBeInTheDocument();
     expect(screen.getByText(/Can.t reach Collie/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     // Same mark throughout — it is never swapped for a second drawing, it only stops blooming: the
     // rest state is that mark still, muted. No bloom, because we have stopped trying, and a
-    // blooming mark would say otherwise. No gallop sprite on this screen either (the app mounts one
-    // animal).
-    expect(container.querySelector(".dog-gallop")).toBeNull();
+    // blooming mark would say otherwise. (The "no gallop sprite here" assertion went with the
+    // sprite itself — `dog-gallop` no longer exists to match, so the check had become vacuous.)
     const mark = collieMark(container);
     expect(markIsLive(container)).toBe(false);
     expect(mark?.getAttribute("class")).toMatch(/grayscale/);

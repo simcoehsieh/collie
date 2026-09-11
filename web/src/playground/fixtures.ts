@@ -494,7 +494,7 @@ export const rosterFive: ServerSummary[] = [
 /** Nine machines — enough that the formation's V has to wrap onto a third and fourth row. */
 export const rosterNine: ServerSummary[] = [
   lead,
-  ...["workshop", "attic", "cellar", "garage", "loft", "shed", "barn", "kennel"].map(
+  ...["workshop", "attic", "cellar", "garage", "loft", "shed", "barn", "pantry"].map(
     (id, i): ServerSummary => ({
       id,
       name: id,
@@ -567,7 +567,7 @@ const selfMember: CrewMemberStatus = {
   provisional: false,
 };
 
-const crewMeta = { id: "pk1", name: "kennel", secretGeneration: 4, rotatedAt: TS - 9 * DAY };
+const crewMeta = { id: "pk1", name: "studio", secretGeneration: 4, rotatedAt: TS - 9 * DAY };
 const crewSelf = { id: "bluefin", name: "bluefin", version: LEAD_VERSION };
 
 /** One machine, leading nobody but itself — the smallest census a lead can serve. */
@@ -632,7 +632,7 @@ export const censusNine: CrewStatusResponse = {
   deputy: { id: "workshop", warrantGeneration: 3 },
   members: [
     selfMember,
-    ...["workshop", "attic", "cellar", "garage", "loft", "shed", "barn", "kennel"].map((id, i) =>
+    ...["workshop", "attic", "cellar", "garage", "loft", "shed", "barn", "pantry"].map((id, i) =>
       member(id, i === 5 ? "unreachable" : "reachable", {
         lastSeenAt: i === 5 ? TS - 22 * MIN : TS - (3 + i) * SEC,
         version: i % 3 === 0 ? "0.30.2" : LEAD_VERSION,
