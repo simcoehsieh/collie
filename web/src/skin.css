@@ -39,7 +39,7 @@ header:has(> [data-slot="collapse"] [data-slot="header-row"]) {
 
                                  light              dark
      ground vs page (before)     1.013              1.034
-     rule vs the page            1.338              1.561
+     rule vs the page            1.338              1.566
      rule vs the ground          1.354              1.522
      inset shadow's darkest row  1.157 (#e4e5e6)    1.023 (#060606)
 
@@ -60,18 +60,36 @@ header:has(> [data-slot="collapse"] [data-slot="header-row"]) {
    0, which makes it indistinguishable from a NEW line: a two-line comment reads as two sibling
    comments and a numbered listing's indentation collapses. The terminal's structure is exactly
    what a mirror is for, and the wrap was eating it.
-   A hanging indent says which lines are continuations: `text-indent: -2ch` pulls the first line
-   back and `padding-left: 2ch` puts it where it started, so every wrapped row sits two columns in
-   under its own line. `2ch` and not `2em` — this is a monospace grid and a column is the unit it
-   is measured in.
-   1.4 rather than ansi-output's 1.25 because the indent only reads if the rows are separable;
-   measured over the app's own fixtures the two changes together cost ~1.5 rows of a phone screen
-   and give back every wrap that was masquerading as a line. The `pre` is the only thing this
-   touches, so the statusline strip and the interactive blocks beside the mirror are unaffected. */
+   A hanging indent says which lines are continuations: `text-indent: -2ch` pulls the line's first
+   fragment back and `padding-left: 2ch` puts it where it started, so every wrapped row sits two
+   columns in under its own line. `2ch` and not `2em` — this is a monospace grid and a column is the
+   unit it is measured in.
+
+   `each-line` IS THE WHOLE RULE, and it took a measurement to find that out. The mirror is ONE
+   `<pre>` holding the entire buffer, with "\n" TEXT NODES between the lines (ansi-output.tsx says
+   so, and the find offsets, the link offsets and a clipboard copy are all defined against those
+   nodes) — so `text-indent` on its own indents the first line OF THE BLOCK and nothing else. Range
+   rects over the live mirror, counted at the pre's own left edge: 11 without the keyword, 74 with
+   it. Without it this rule was a 13px nudge on one line in the scrollback.
+
+   AND IT IS BEHIND `@supports` RATHER THAN STACKED AFTER A PLAIN FALLBACK. Chrome implements
+   `each-line`; Safari does not, and this app's own phone is on iOS 18. A plain `text-indent: -2ch`
+   left underneath would not degrade to "no indent" there — it would degrade to that one wrong line,
+   which is worse than nothing. So a browser without the keyword gets the line-height and none of
+   the indent, and the day Safari ships it the phone gets the rest for free with no edit here.
+
+   1.4 rather than ansi-output's 1.25 applies EVERYWHERE, because the indent only reads once the
+   rows are separable and the extra leading is worth having on its own. The `pre` is the only thing
+   any of this touches, so the statusline strip and the interactive blocks beside the mirror are
+   unaffected. */
 [data-slot="mirror"] pre {
   line-height: 1.4;
-  text-indent: -2ch;
-  padding-left: 2ch;
+}
+@supports (text-indent: -2ch each-line) {
+  [data-slot="mirror"] pre {
+    text-indent: -2ch each-line;
+    padding-left: 2ch;
+  }
 }
 
 /* ── Terminal chrome block (the composer's ground under the mirror) ──────────────────────── */

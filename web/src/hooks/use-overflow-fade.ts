@@ -55,11 +55,13 @@ export function useOverflowFade<T extends HTMLElement>() {
 
     update();
     el.addEventListener("scroll", update, { passive: true });
-    // `typeof`, not a truthiness check: jsdom under test has no ResizeObserver, and the strip is
-    // then simply never re-measured — which is correct, because nothing in a test resizes.
-    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(update) : null;
+    // `in window`, the same feature probe collie-home.tsx uses for `getAnimations`: the question
+    // is whether this DOM implementation HAS the constructor — jsdom under test does not have
+    // ResizeObserver — which is a fact about the object and not about the shape of a value. Absent,
+    // the strip is simply never re-measured, which is correct: nothing in a test resizes.
+    const ro = "ResizeObserver" in window ? new ResizeObserver(update) : null;
     ro?.observe(el);
-    const mo = typeof MutationObserver === "function" ? new MutationObserver(update) : null;
+    const mo = "MutationObserver" in window ? new MutationObserver(update) : null;
     mo?.observe(el, { childList: true, subtree: true, characterData: true });
 
     teardown.current = () => {

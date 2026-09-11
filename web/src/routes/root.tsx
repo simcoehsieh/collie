@@ -62,13 +62,13 @@ export function shownLastSeenAt(home: HomeData, pane: PaneData | undefined): num
 // three buckets that mean something is happening each get their own. Written as a Record so a new
 // bucket in lib/triage.ts fails this file at compile time rather than silently falling through to
 // idle — a herd state the mark quietly stops reporting is the worst failure this feature has.
-const HERD_MARK: Record<TriageKey, MarkState> = {
+const HERD_MARK = {
   pinned: "idle",
   needs: "blocked",
   ready: "done",
   working: "working",
   recent: "idle",
-};
+} satisfies Record<TriageKey, MarkState>;
 
 export function RootLayout() {
   // SAFETY: this component IS the root route's element, and `rootLoader` — the loader `router.tsx`

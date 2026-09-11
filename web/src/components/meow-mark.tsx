@@ -87,22 +87,22 @@ export type MarkState = "idle" | "working" | "blocked" | "done";
 
 /** The state class, or `""` for idle — which is the rest drawing and carries no class at all, so
  *  nothing is animating and there is nothing for the round's ramp to collect. */
-const STATE_CLASS: Record<MarkState, string> = {
+const STATE_CLASS = {
   idle: "",
   working: "cm-live",
   blocked: "cm-blocked",
   done: "cm-done",
-};
+} satisfies Record<MarkState, string>;
 
 /** The cursor's colour per state — the half a reduced-motion reader still gets, which is why
  *  `blocked` has one at all. `--status-blocked-mark`, not `--status-blocked`: this is a filled rect
  *  about 3px wide at header size, and index.css's mark tokens exist for exactly that. */
-const STATE_ACCENT: Record<MarkState, string> = {
+const STATE_ACCENT = {
   idle: "currentColor",
   working: "var(--primary)",
   blocked: "var(--status-blocked-mark)",
   done: "currentColor",
-};
+} satisfies Record<MarkState, string>;
 
 const vars = (state: MarkState, paper: string): CSSProperties => {
   const set = {
