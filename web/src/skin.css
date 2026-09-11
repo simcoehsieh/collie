@@ -54,6 +54,26 @@ header:has(> [data-slot="collapse"] [data-slot="header-row"]) {
   box-shadow: inset 0 2px 4px -2px var(--shadow-ink-1);
 }
 
+/* The terminal's own typography — the half of the mirror that is not colour.
+   A phone is ~62 columns at the default size and an agent emits 80-100, so nearly every line wraps
+   (`whitespace-pre-wrap break-words`, ansi-output.tsx). A wrapped continuation restarts at column
+   0, which makes it indistinguishable from a NEW line: a two-line comment reads as two sibling
+   comments and a numbered listing's indentation collapses. The terminal's structure is exactly
+   what a mirror is for, and the wrap was eating it.
+   A hanging indent says which lines are continuations: `text-indent: -2ch` pulls the first line
+   back and `padding-left: 2ch` puts it where it started, so every wrapped row sits two columns in
+   under its own line. `2ch` and not `2em` — this is a monospace grid and a column is the unit it
+   is measured in.
+   1.4 rather than ansi-output's 1.25 because the indent only reads if the rows are separable;
+   measured over the app's own fixtures the two changes together cost ~1.5 rows of a phone screen
+   and give back every wrap that was masquerading as a line. The `pre` is the only thing this
+   touches, so the statusline strip and the interactive blocks beside the mirror are unaffected. */
+[data-slot="mirror"] pre {
+  line-height: 1.4;
+  text-indent: -2ch;
+  padding-left: 2ch;
+}
+
 /* ── Terminal chrome block (the composer's ground under the mirror) ──────────────────────── */
 [data-slot="chrome-block"] {
   border-top-left-radius: var(--radius-2xl);

@@ -20,7 +20,7 @@ describe("useDisplayPrefs", () => {
 
   it("returns defaults when localStorage is empty", () => {
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false });
+    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false });
   });
 
   it("persists wrap=true and reloads it on mount", () => {
@@ -138,14 +138,14 @@ describe("useDisplayPrefs", () => {
 
   it("stepFontSize increments within range", () => {
     const { result } = renderHook(() => useDisplayPrefs());
-    act(() => result.current.stepFontSize(2)); // 10 + 2 = 12
-    expect(result.current.prefs.fontSize).toBe(12);
+    act(() => result.current.stepFontSize(2)); // 11 + 2 = 13
+    expect(result.current.prefs.fontSize).toBe(13);
   });
 
   it("stepFontSize does not exceed max", () => {
     const { result } = renderHook(() => useDisplayPrefs());
-    act(() => result.current.stepFontSize(10)); // 10 + 10 = 20, still under the ceiling
-    expect(result.current.prefs.fontSize).toBe(20);
+    act(() => result.current.stepFontSize(10)); // 11 + 10 = 21, still under the ceiling
+    expect(result.current.prefs.fontSize).toBe(21);
     act(() => result.current.stepFontSize(10)); // …and the next one clamps
     expect(result.current.prefs.fontSize).toBe(FONT_MAX);
   });
@@ -190,7 +190,7 @@ describe("useDisplayPrefs", () => {
     const { result } = renderHook(() => useDisplayPrefs());
     act(() => result.current.stepDraftFontSize(1));
     expect(result.current.prefs.draftFontSize).toBe(15);
-    expect(result.current.prefs.fontSize).toBe(10); // the two knobs are two settings
+    expect(result.current.prefs.fontSize).toBe(11); // the two knobs are two settings
   });
 
   it("clamps the draft size to its own 13–16, not the mirror's 9–16", () => {
@@ -261,13 +261,13 @@ describe("useDisplayPrefs — the rest", () => {
   it("falls back to defaults on malformed JSON", () => {
     localStorage.setItem(STORAGE_KEY, "not-json{{{");
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false });
+    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false });
   });
 
   it("falls back to defaults when stored value is not an object", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(42));
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false });
+    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false });
   });
 });
 
