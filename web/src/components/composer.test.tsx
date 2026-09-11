@@ -70,7 +70,7 @@ function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}
     text: "pane output",
     terminalDraft: null,
     rawTerminalDraft: null,
-    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true },
+    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
     setWrap: vi.fn(),
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
@@ -123,7 +123,7 @@ function renderComposerWithStatus(
     text: "pane output",
     terminalDraft: null,
     rawTerminalDraft: null,
-    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true },
+    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
     setWrap: vi.fn(),
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
@@ -500,7 +500,7 @@ describe("Composer — send", () => {
               text="pane output"
               terminalDraft={null}
               rawTerminalDraft="leftover"
-              prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true }}
+              prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
               setWrap={vi.fn()}
               stepFontSize={vi.fn()}
               setRawTerminal={vi.fn()}
@@ -595,7 +595,7 @@ describe("Composer — send", () => {
       text: "pane output",
       terminalDraft: null,
       rawTerminalDraft: null,
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true },
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
@@ -693,7 +693,7 @@ describe("Composer — typing into the terminal", () => {
             text="pane output"
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true }}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
@@ -827,7 +827,7 @@ describe("Composer — typing into the terminal", () => {
             text="pane output"
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true }}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
@@ -1020,7 +1020,7 @@ describe("Composer — typing into the terminal", () => {
             text="pane output"
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true }}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
@@ -1137,6 +1137,7 @@ describe("Composer — the draft field wears its own size", () => {
         rawTerminal: false,
         tapToFocus: true,
         controlsOpen: true,
+        paneView: {},
       },
     });
     const box = screen.getByPlaceholderText(/type a reply/i);
@@ -1758,7 +1759,7 @@ function renderDraftHarness(overrides: Partial<ComponentProps<typeof Composer>> 
       readOnly: false,
       dialogPresent: false,
       text: "pane output",
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true },
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
@@ -2031,7 +2032,7 @@ describe("Composer — in-flight echo suppression (match-last-sent)", () => {
       text: "pane output",
       terminalDraft: draft,
       rawTerminalDraft: draft,
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true },
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
@@ -2669,7 +2670,7 @@ describe("Composer — draft persistence", () => {
       text: "pane output",
       terminalDraft: null,
       rawTerminalDraft: null,
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true },
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
@@ -2958,6 +2959,7 @@ describe("Composer — the Controls row can be put away", () => {
   const chevron = () => band().querySelector<SVGElement>("svg")!;
   /** The shipped defaults, so a case that only wants the row closed says only that. */
   const OPEN_PREFS: DisplayPrefs = {
+    paneView: {},
     wrap: true,
     fontSize: 11,
     draftFontSize: 14,
@@ -3173,7 +3175,7 @@ describe("Composer — the field clears on the tap", () => {
             text={text}
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true }}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}

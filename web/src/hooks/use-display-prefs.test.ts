@@ -20,7 +20,7 @@ describe("useDisplayPrefs", () => {
 
   it("returns defaults when localStorage is empty", () => {
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false });
+    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false, paneView: {} });
   });
 
   it("persists wrap=true and reloads it on mount", () => {
@@ -43,7 +43,7 @@ describe("useDisplayPrefs", () => {
       JSON.stringify({ wrap: false, fontSize: 14, rawTerminal: true, tapToFocus: false, expandClippedReply: false }),
     );
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: false, fontSize: 14, draftFontSize: 14, fontFamily: "system", rawTerminal: true, tapToFocus: false, expandClippedReply: false, controlsOpen: false });
+    expect(result.current.prefs).toEqual({ wrap: false, fontSize: 14, draftFontSize: 14, fontFamily: "system", rawTerminal: true, tapToFocus: false, expandClippedReply: false, controlsOpen: false, paneView: {} });
   });
 
   it("persists rawTerminal and reloads it on mount (the escape hatch survives a reload)", () => {
@@ -70,7 +70,7 @@ describe("useDisplayPrefs", () => {
   it("reads a pre-tapToFocus payload without discarding the prefs it does have", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ wrap: false, fontSize: 15, rawTerminal: true }));
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: false, fontSize: 15, draftFontSize: 14, fontFamily: "system", rawTerminal: true, tapToFocus: true, expandClippedReply: true, controlsOpen: false });
+    expect(result.current.prefs).toEqual({ wrap: false, fontSize: 15, draftFontSize: 14, fontFamily: "system", rawTerminal: true, tapToFocus: true, expandClippedReply: true, controlsOpen: false, paneView: {} });
   });
 
   it("persists fontFamily and reloads it on mount", () => {
@@ -261,13 +261,13 @@ describe("useDisplayPrefs — the rest", () => {
   it("falls back to defaults on malformed JSON", () => {
     localStorage.setItem(STORAGE_KEY, "not-json{{{");
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false });
+    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false, paneView: {} });
   });
 
   it("falls back to defaults when stored value is not an object", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(42));
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false });
+    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false, paneView: {} });
   });
 });
 

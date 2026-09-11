@@ -127,6 +127,15 @@ interface ComposerProps {
    *  is a standing choice about how much of the screen the mirror gets — see `controlsOpen` on
    *  {@link DisplayPrefs}. */
   setControlsOpen: (open: boolean) => void;
+  /**
+   * FORK: one control the PANE owns, rendered at the head of the Controls row — the Transcript /
+   * Terminal segmented switch (components/view-toggle.tsx).
+   *
+   * A node rather than a pair of props, and it lives HERE rather than in a row of its own, because
+   * the row already exists and already folds: upstream #186 is the complaint that this screen grows
+   * persistent bands. The composer neither reads it nor knows what it does — it is a slot.
+   */
+  viewToggle?: ReactNode;
   /** Snap the mirror to the live tail (follow + revalidate + scroll) after a successful send. */
   onSent: () => void;
 }
@@ -242,7 +251,7 @@ function ComposerDock({
 const ATTACH_PRESS_MS = 220;
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { paneId, scope, agent, isShell, status, stale, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, setControlsOpen, onSent },
+  { paneId, scope, agent, isShell, status, stale, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, setControlsOpen, viewToggle, onSent },
   ref,
 ) {
   const revalidator = useRevalidator();
@@ -1435,6 +1444,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <SectionLabel id="composer-controls-label" className="sr-only">
               {translate("composer.controls.label")}
             </SectionLabel>
+            {/* FORK: the pane's own Transcript / Terminal switch, at the head of the row. A slot —
+                the composer neither reads it nor knows what it does (see `viewToggle` on the props).
+                It leads because it is the only control here that changes WHAT YOU ARE LOOKING AT
+                rather than what you are about to send. */}
+            {viewToggle}
             {/* Keys and Quick are TOGGLES for the in-flow dock above (not overlays): tap to open, tap
                 again to close. aria-expanded ties each to the dock; secondary variant marks it pressed
                 while open. Both share the single-valued `drawer`, so opening one closes the other. */}

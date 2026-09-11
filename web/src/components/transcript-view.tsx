@@ -1,10 +1,28 @@
 import { useState } from "react";
-import { ChevronRight, Info, TriangleAlert, User, Wrench } from "lucide-react";
+import {
+  ArrowRightLeft,
+  Brain,
+  Check,
+  ChevronRight,
+  FileText,
+  Globe,
+  Info,
+  Loader2,
+  Pencil,
+  Search,
+  Terminal,
+  Trash2,
+  TriangleAlert,
+  User,
+  Wrench,
+} from "lucide-react";
 
 import { AgentIcon } from "@/components/agent-icon";
 import { MarkdownText } from "@/components/markdown-text";
+import { TodoCard } from "@/components/todo-card";
 import { cn } from "@/lib/utils";
 import { imageSrc } from "@/lib/api";
+import { toolKind, toolStatus, type ToolKind, type ToolStatus } from "@/lib/tool-kind";
 import { splitHighlight } from "@/lib/transcript-search";
 import type { Scope } from "@/lib/scope";
 import type { TranscriptEntry, TranscriptPart } from "@/lib/types";
@@ -94,6 +112,47 @@ function JournalImage({
   );
 }
 
+// ── FORK: THE ACP TOOL VOCABULARY, AS ONE GLYPH PER KIND ────────────────────────
+// Nine kinds, nine icons (lib/tool-kind.ts holds the table and the argument for adopting Zed's ACP
+// list rather than inventing one). The icon is DECORATIVE — the tool's own name is right beside it
+// as text, so a reader who cannot see the glyph loses nothing.
+const KIND_ICON = {
+  read: FileText,
+  edit: Pencil,
+  delete: Trash2,
+  move: ArrowRightLeft,
+  search: Search,
+  execute: Terminal,
+  think: Brain,
+  fetch: Globe,
+  other: Wrench,
+} satisfies Record<ToolKind, typeof Wrench>;
+
+/** The four ACP states as a trailing mark. `pending` draws nothing — an absent answer on a resting
+ *  pane is the ordinary case, and a glyph for it would put a mark on most rows of a finished thread. */
+function ToolStatusMark({ status }: { status: ToolStatus }) {
+  if (status === "failed") {
+    return (
+      <TriangleAlert
+        className="size-3.5 shrink-0 text-destructive"
+        aria-label={t("transcript.tool.failed")}
+      />
+    );
+  }
+  if (status === "in_progress") {
+    return (
+      <Loader2
+        className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+        aria-label={t("transcript.tool.running")}
+      />
+    );
+  }
+  if (status === "completed") {
+    return <Check className="size-3.5 shrink-0 text-muted-foreground/70" aria-hidden />;
+  }
+  return null;
+}
+
 /**
  * A tool call: its one-line summary always, its output behind a tap. Collapsed by default because a
  * thread is mostly tool traffic (705 of 914 turns in a real session) and expanding it all would bury
@@ -103,14 +162,22 @@ function ToolPart({
   part,
   query,
   scope,
+  working = false,
 }: {
   part: Extract<TranscriptPart, { kind: "tool" }>;
   query: string;
   scope?: Scope;
+  /** FORK: is the pane still moving? The only thing that tells a call awaiting its answer from one
+   *  that never got one — see `toolStatus`. */
+  working?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const result = part.result;
   const isError = result?.isError === true;
+  // FORK: kind decides the leading glyph, status the trailing mark. Both are pure functions of what
+  // is already on the wire, so nothing here needs a bridge field.
+  const KindIcon = KIND_ICON[toolKind(part.name)];
+  const status = toolStatus(part, working);
 
   return (
     <div className="rounded-md border bg-muted/40">
@@ -121,11 +188,10 @@ function ToolPart({
         aria-expanded={result ? open : undefined}
         className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left disabled:opacity-100"
       >
-        {isError ? (
-          <TriangleAlert className="size-3.5 shrink-0 text-destructive" />
-        ) : (
-          <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
+        <KindIcon
+          className={cn("size-3.5 shrink-0", isError ? "text-destructive" : "text-muted-foreground")}
+          aria-hidden
+        />
         <span className="shrink-0 font-mono text-xs font-semibold">{part.name}</span>
         {part.summary && (
           <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
@@ -133,6 +199,9 @@ function ToolPart({
             <Highlight text={part.summary} query={query} />
           </span>
         )}
+        <span className={cn("shrink-0", part.summary ? "" : "ml-auto")}>
+          <ToolStatusMark status={status} />
+        </span>
         {result && (
           <ChevronRight
             className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
@@ -160,9 +229,23 @@ function ToolPart({
   );
 }
 
-function Part({ part, query, scope }: { part: TranscriptPart; query: string; scope?: Scope }) {
+function Part({
+  part,
+  query,
+  scope,
+  working,
+}: {
+  part: TranscriptPart;
+  query: string;
+  scope?: Scope;
+  working?: boolean;
+}) {
   // Tool output is COMMAND output, not prose — it stays verbatim in a monospace block (see ToolPart).
-  if (part.kind === "tool") return <ToolPart part={part} query={query} scope={scope} />;
+  if (part.kind === "tool")
+    return <ToolPart part={part} query={query} scope={scope} working={working} />;
+  // FORK: the agent's own checklist, in place. The pane view pins the LATEST one at the top as well
+  // (components/pane-transcript.tsx); this is the one that keeps the plan's history where it happened.
+  if (part.kind === "todo") return <TodoCard items={part.items} />;
   if (part.kind === "image") {
     return (
       <div className="my-1.5">
@@ -192,6 +275,7 @@ function Turn({
   showHeader,
   query,
   scope,
+  working,
 }: {
   entry: TranscriptEntry;
   agent?: string;
@@ -200,6 +284,8 @@ function Turn({
   query: string;
   /** Which machine + session this pane lives on — an image's bytes live there, not on the lead. */
   scope?: Scope;
+  /** FORK: the pane is still moving — a tool call with no result yet is running, not abandoned. */
+  working?: boolean;
 }) {
   const time = clockTime(entry.ts);
 
@@ -214,7 +300,7 @@ function Turn({
           {time && ` · ${time}`}
         </div>
         {entry.parts.map((part, i) => (
-          <Part key={i} part={part} query={query} scope={scope} />
+          <Part key={i} part={part} query={query} scope={scope} working={working} />
         ))}
       </div>
     );
@@ -238,7 +324,7 @@ function Turn({
       )}
       <div className="space-y-1.5">
         {entry.parts.map((part, i) => (
-          <Part key={i} part={part} query={query} scope={scope} />
+          <Part key={i} part={part} query={query} scope={scope} working={working} />
         ))}
       </div>
     </div>
@@ -251,6 +337,7 @@ export function TranscriptView({
   query = "",
   focusedUuid,
   scope,
+  working = false,
 }: {
   entries: TranscriptEntry[];
   /** The pane's agent name, for the per-turn brand icon. */
@@ -262,6 +349,14 @@ export function TranscriptView({
   /** Which machine + session this pane lives on. An image's bytes sit on the host whose journal
    *  named them, so a blob URL takes the same scope every other per-pane request takes. */
   scope?: Scope;
+  /**
+   * FORK: is the pane this transcript belongs to still WORKING?
+   *
+   * Read for one thing only — a tool call with no result yet is `in_progress` while the pane moves
+   * and `pending` once it stops (lib/tool-kind.ts). Default false, so the history route and the
+   * latest-reply card render exactly as they did before this existed.
+   */
+  working?: boolean;
 }) {
   useLocale();
   // Consecutive turns from the same speaker are GROUPED — only the first of a run carries the
@@ -301,7 +396,14 @@ export function TranscriptView({
                 <div className="h-px flex-1 bg-border" />
               </div>
             )}
-            <Turn entry={entry} agent={agent} showHeader={showHeader} query={query} scope={scope} />
+            <Turn
+              entry={entry}
+              agent={agent}
+              showHeader={showHeader}
+              query={query}
+              scope={scope}
+              working={working}
+            />
           </div>
         );
       })}

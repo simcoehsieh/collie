@@ -21,8 +21,10 @@ import { useSpaceActions } from "@/hooks/use-spaces";
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
 import { pinnedLauncher, useLaunchers } from "@/lib/launchers";
 import { buzz } from "@/lib/haptics";
-import { mirrorFont, useDisplayPrefs } from "@/hooks/use-display-prefs";
+import { mirrorFont, paneViewFor, useDisplayPrefs } from "@/hooks/use-display-prefs";
 import { useLatestReply } from "@/hooks/use-latest-reply";
+import { PaneTranscript } from "@/components/pane-transcript";
+import { ViewToggle } from "@/components/view-toggle";
 import { useMirrorImages } from "@/hooks/use-mirror-images";
 import { useStableTerminalDraft } from "@/hooks/use-terminal-draft";
 import { useLocale } from "@/hooks/use-locale";
@@ -88,7 +90,7 @@ import type {
   PromptModel,
   WizardModel,
 } from "@/lib/blocks";
-import type { Scope } from "@/lib/scope";
+import { paneScopeKey, type Scope } from "@/lib/scope";
 
 interface AgentChatProps {
   paneId: string;
@@ -206,7 +208,7 @@ export function AgentChat({
   const { newTab, launch, launching, creatingTab } = useSpaceActions();
   const { launchers, home: launchersHome } = useLaunchers(scope);
   // Single display-prefs instance: the View controls (in <Composer>) write it, the mirror reads it.
-  const { prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, setControlsOpen } =
+  const { prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, setControlsOpen, setPaneView } =
     useDisplayPrefs();
   // The chosen terminal font (Settings → Terminal font), applied by re-pointing `--font-mono` on
   // the two mirror surfaces below and NOWHERE else — see mirrorFont() for how, and why it is not a
@@ -752,6 +754,34 @@ export function AgentChat({
     requestedLines < agent.readableLines &&
     canGrowRequestedLines(paneId, scope);
 
+  // ── FORK: CHAT MODE — THE PANE'S TWO REPRESENTATIONS, AND WHICH ONE IS ON SCREEN ──────────────
+  //
+  // An agent pane is a CONVERSATION that happens to be rendered in a terminal, and until now Collie
+  // only ever showed the terminal — a 51-row photograph whose top edge cuts every long answer in
+  // half, because an agent's TUI runs on the alternate screen and keeps no scrollback ring. The
+  // journal has the thread; `components/pane-transcript.tsx` renders it, in the SAME slot the
+  // latest-reply card and `hiddenMirrorLines` already share, so this adds no row to the screen.
+  //
+  // THE MIRROR IS NEVER MORE THAN ONE TAP AWAY, AND TWO STATES TAKE IT BACK WITHOUT ASKING:
+  //
+  //  • A DIALOG OWNS THE KEYBOARD (`dialogPresent`, from the dialog contract). Answering a prompt
+  //    means seeing the prompt, the up-levelled option buttons live in the mirror, and the journal
+  //    has not been written yet anyway — so a pane that blocks swaps itself back. This is the rule
+  //    that makes chat mode safe to default ON: there is no state in which the operator is left
+  //    looking at a thread while the agent waits on a question they cannot see.
+  //  • FIND IS OPEN. Find searches the mirror's buffer and highlights inside it (the transcript has
+  //    its own find, on the history route), so the surface it searches has to be the one on screen.
+  //
+  // Neither writes the preference: they are conditions, not choices, and the pane returns to the
+  // operator's own view the moment they clear.
+  const paneKey = paneScopeKey(scope, paneId);
+  // A pane with no journal has no transcript to show, so it is never offered one — and a bare shell
+  // is a screen you watch rather than a thread you read, which is the other half of the same test.
+  const transcriptOffered = historyAvailable && !isShell;
+  const chosenView = paneViewFor(prefs, paneKey, transcriptOffered);
+  const transcriptMode =
+    transcriptOffered && chosenView === "transcript" && !dialogPresent && !findOpen;
+
   // The newest reply, REPLACING the mirror rows that could only hold its end.
   //
   // The mirror IS the viewport for an agent pane (alternate screen, no scrollback ring), so a reply
@@ -771,7 +801,10 @@ export function AgentChat({
   const latestReply = useLatestReply({
     paneId,
     scope,
-    enabled: historyAvailable && prefs.expandClippedReply,
+    // FORK: not while the transcript is on screen — the card exists to put back what the MIRROR
+    // clipped, and in chat mode the whole thread is already there. Leaving it on would also mean two
+    // journal readers on one pane, each re-parsing the same log on the same settle.
+    enabled: historyAvailable && prefs.expandClippedReply && !transcriptMode,
     mirrorText: display,
   });
   const placement = useMemo(
@@ -1760,9 +1793,13 @@ export function AgentChat({
             className={cn(
               mirrorGap,
               "min-h-0 min-w-0 flex-1 border-t border-rule",
-              mirrorFace.className,
+              // FORK: the terminal FACE dresses the terminal and nothing else. In chat mode this
+              // wrapper holds agent PROSE, which DESIGN.md § "Chrome wears the app face" puts in
+              // `font-content` — an inline `font-family` here would be inherited by every word of it
+              // and quietly re-render the thread in the operator's chosen terminal stack.
+              !transcriptMode && mirrorFace.className,
             )}
-            style={mirrorFace.style}
+            style={transcriptMode ? undefined : mirrorFace.style}
             onClick={focusFromMirror}
           >
             <ChatMessageList
@@ -1778,7 +1815,20 @@ export function AgentChat({
               // composer.
               className="px-2 pt-0 pb-3"
             >
-              {display ? (
+              {/* FORK: chat mode takes this slot whole — the thread instead of the screen. It is one
+                  branch and not a second scroller, so the bottom-pinning, the re-pin observer and
+                  every wrapper above are exactly the ones the mirror already had. */}
+              {transcriptMode ? (
+                <PaneTranscript
+                  paneId={paneId}
+                  scope={scope}
+                  agent={agent?.agent}
+                  working={agent?.status === "working"}
+                  mirrorText={display}
+                  lastSeenAt={agent?.lastSeenAt}
+                  onShowTerminal={() => setPaneView(paneKey, "terminal")}
+                />
+              ) : display ? (
                 <>
                   {/* Top-of-buffer affordance, reached by scrolling up. WHICH button appears is decided
                       by what the pane can actually offer, because the two are never both possible:
@@ -2092,6 +2142,19 @@ export function AgentChat({
                   setTapToFocus={setTapToFocus}
                   setExpandClippedReply={setExpandClippedReply}
                   setControlsOpen={setControlsOpen}
+                  // FORK: chat mode's one control, in the row that already exists. Offered only on a
+                  // pane that HAS a transcript; the value is what is ON SCREEN (a dialog forces the
+                  // mirror without touching the stored choice), and the switch is disabled while it
+                  // is forced — see `transcriptMode` above.
+                  viewToggle={
+                    transcriptOffered ? (
+                      <ViewToggle
+                        value={transcriptMode ? "transcript" : "terminal"}
+                        disabled={dialogPresent || findOpen}
+                        onChange={(view) => setPaneView(paneKey, view)}
+                      />
+                    ) : undefined
+                  }
                   onSent={onSent}
                 />
                 </Collapse>

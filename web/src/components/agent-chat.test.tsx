@@ -28,6 +28,7 @@ import { submitWizardKeys } from "@/lib/wizard-action";
 import { fixtureAgents, fixtureShellPanes, fixtureTabs } from "@/test/handlers";
 import { CrewProvider } from "./crew-provider";
 import type { AgentStatus, AgentView, ServerSummary, TabView } from "@/lib/types";
+import { paneScopeKey } from "@/lib/scope";
 import { withHeaderHost } from "@/test/header-host";
 import { COLLAPSE_MS } from "./ui/collapse";
 import { AgentChat } from "./agent-chat";
@@ -70,6 +71,20 @@ function renderChat(overrides: Partial<ComponentProps<typeof AgentChat>> = {}) {
   const router = createMemoryRouter([{ path: "/", element: withHeaderHost(<AgentChat {...props} />) }]);
   const { container } = render(<RouterProvider router={router} />);
   return { props, container };
+}
+
+// ── FORK: CHAT MODE CHANGED WHAT AN AGENT PANE OPENS ON ──────────────────────
+// A pane that HAS a transcript now opens on its conversation, not on the mirror (agent-chat.tsx
+// § chat mode), so every case below that is about the MIRROR of such a pane has to say which of the
+// two views it is looking at. This writes the operator's own per-pane choice exactly as the app
+// writes it — the stored display prefs — rather than reaching past the preference with a prop, so
+// what these tests exercise is still the shipped path. `localStorage` is cleared between cases by
+// the shared setup, so nothing leaks forward.
+function pinTerminalView(paneId: string = fixtureAgents[0]!.paneId) {
+  localStorage.setItem(
+    "collie:display-prefs:v4",
+    JSON.stringify({ paneView: { [paneScopeKey(undefined, paneId)]: "terminal" } }),
+  );
 }
 
 // Find and History are ROWS in the pane's actions sheet now — the header spends ONE ⋮ on the whole
@@ -1083,6 +1098,7 @@ describe("AgentChat — top-of-mirror history affordance", () => {
   it("an agent pane with a transcript offers the full history, not scrollback paging", () => {
     // A Claude pane: alt-screen, so readableLines is just its viewport — there IS no scrollback.
     const agent = { ...fixtureAgents[0]!, hasSession: true, readableLines: 51 };
+    pinTerminalView();
     renderChat({ agent, agents: [agent], requestedLines: 600 });
     expect(showHistory()).toBeInTheDocument();
     expect(loadOlder()).not.toBeInTheDocument();
@@ -1118,6 +1134,7 @@ describe("AgentChat — top-of-mirror history affordance", () => {
 
   it("a transcript wins even when the pane also reports scrollback", () => {
     const agent = { ...fixtureAgents[0]!, hasSession: true, readableLines: 6946 };
+    pinTerminalView();
     renderChat({ agent, agents: [agent], requestedLines: 600 });
     expect(showHistory()).toBeInTheDocument();
     expect(loadOlder()).not.toBeInTheDocument();
@@ -1145,6 +1162,7 @@ describe("AgentChat — no session reported", () => {
 
   it("says nothing once the pane has reported a session", () => {
     const agent = { ...fixtureAgents[0]!, agent: "claude", hasSession: true };
+    pinTerminalView();
     renderChat({ agent, agents: [agent] });
     expect(noSessionNote()).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /show entire history/i })).toBeInTheDocument();
@@ -2397,6 +2415,10 @@ describe("AgentChat — full latest reply", () => {
     return () => hits;
   }
 
+  // Every case here is about the MIRROR of a pane that has a transcript, which chat mode now opens
+  // on the transcript instead — so the whole describe looks at the terminal view.
+  beforeEach(() => pinTerminalView());
+
   const card = () => screen.queryByRole("button", { name: /full reply/i });
   const sessionAgent = () => ({ ...fixtureAgents[0]!, hasSession: true, readableLines: 51 });
   /** Just the terminal mirror's text — the card renders the same words, so a screen-wide query can't
@@ -2467,9 +2489,16 @@ describe("AgentChat — full latest reply", () => {
   // The pref is the whole opt-out: off, the pane is exactly what it was before this existed — and it
   // costs no journal read either, which is the reason it is a pref rather than always-on.
   it("reads no journal at all once the operator turns it off", async () => {
+    // This case writes the whole prefs object, so it carries the terminal view itself — the
+    // describe's `pinTerminalView` is overwritten by this very line.
     localStorage.setItem(
       "collie:display-prefs:v4",
-      JSON.stringify({ wrap: true, fontSize: 12, expandClippedReply: false }),
+      JSON.stringify({
+        wrap: true,
+        fontSize: 12,
+        expandClippedReply: false,
+        paneView: { [paneScopeKey(undefined, fixtureAgents[0]!.paneId)]: "terminal" },
+      }),
     );
     const hits = withJournalReply(REPLY);
     renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: REPLY.slice(120) });

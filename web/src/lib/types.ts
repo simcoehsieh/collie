@@ -704,7 +704,19 @@ export type TranscriptPart =
       name: string;
       summary: string;
       result?: { text: string; truncated?: boolean; isError?: boolean; imageUrl?: string };
-    };
+    }
+  /** FORK: the agent's own checklist, kept whole (bridge/journal/todo.ts). Emitted in place of the
+   *  tool part for the one call that writes a plan, so the pane can pin the latest state as a card. */
+  | { kind: "todo"; items: TodoItem[] };
+
+/** FORK: one line of a plan. Mirrors `TodoStatus` in bridge/journal/types.ts. */
+export type TodoStatus = "pending" | "in_progress" | "completed";
+
+/** FORK: one item of a harness's checklist. Mirrors `TodoItem` in bridge/journal/types.ts. */
+export interface TodoItem {
+  text: string;
+  status: TodoStatus;
+}
 
 /**
  * One turn. `user`/`assistant` are speech; the other two are not, and render set apart so they can't
