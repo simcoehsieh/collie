@@ -184,6 +184,13 @@ export function isApplePushEndpoint(endpoint: string): boolean {
   }
 }
 
+/** The kind of a payload about to fan out, for the log line — read back off the JSON we just built. */
+function payloadKind(payload: string): string {
+  if (payload.includes('"type":"clear"')) return "clear";
+  if (payload.includes('"type":"update"')) return "update";
+  return "render";
+}
+
 function pushServiceOrigin(endpoint: string): string {
   try {
     return new URL(endpoint).origin;
@@ -409,6 +416,8 @@ export class Push {
     const dead: string[] = [];
     // FORK: `to` narrows the fan-out (a retraction, to everyone but Apple); absent means everyone.
     const targets = [...this.subs.values()].filter((sub) => to === undefined || to(sub.endpoint));
+    // FORK: one line per fan-out, so "did the phone get a retraction" is answerable from the log.
+    console.log(`[push] ${payloadKind(payload)} → ${String(targets.length)} of ${String(this.subs.size)} endpoint(s)`);
     // One entry per subscription attempted this round, so the eviction pass below can ask which
     // push services proved themselves healthy before it holds a failure against any one device.
     const results = await Promise.all(

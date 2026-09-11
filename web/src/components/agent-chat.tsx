@@ -1531,38 +1531,10 @@ export function AgentChat({
           rightLead={
             agent ? (
               <>
-                {/* FORK: "3 files · +82 −11", and a tap opens the sheet those numbers came from.
-                    It answers "did anything happen while I was away" without opening anything,
-                    which is the complaint a finished turn most often earns.
-
-                    IT STANDS HERE, NOT BESIDE THE STATUS WORD. The word left this row for the
-                    composer's status band (see the ⋮'s own note below), and that band is a
-                    <button> that folds the controls row — a second button inside it is not a
-                    thing the browser renders. So the chip joins the header's ACTION cluster,
-                    where the budget allows two and the ⋮ is spending one.
-
-                    DRAWN ONLY WHEN THERE IS SOMETHING TO SAY. A clean tree, a pane that is not a
-                    work tree, and a bridge older than the route all render nothing — which is
-                    what keeps the header's one flexible element, the pane name, at full width in
-                    the common case. The budget rule is that the newest FIXED element leaves when
-                    the row would squeeze the Identity; this one leaves on its own, most of the
-                    time, by having no numbers. */}
-                {diffSummary.fileCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setDrawer("diff")}
-                    aria-label={t("diff.chipAria", {
-                      files: String(diffSummary.fileCount),
-                      additions: String(diffSummary.additions),
-                      deletions: String(diffSummary.deletions),
-                    })}
-                    className="flex min-h-11 shrink-0 items-center gap-1 rounded-full px-2 font-mono text-[10px] tabular-nums text-muted-foreground transition-colors active:bg-muted/60"
-                  >
-                    <span>{t("diff.chipFiles", { count: String(diffSummary.fileCount) })}</span>
-                    <span className="text-status-done">+{diffSummary.additions}</span>
-                    <span className="text-status-blocked">−{diffSummary.deletions}</span>
-                  </button>
-                )}
+                {/* FORK: the "3 files · +82 −11" chip that stood here is gone (2026-09-11, Simcoe:
+                    it took header width and was never tapped). The numbers are still one tap away
+                    in the pane menu's Changes row, and the mirror's own file chips still draw from
+                    the same `usePaneDiff` read. */}
                 {/* FORK: the notes waiting on this pane, and the door to the list. It appears only
                     when there ARE notes, which the header's own budget allows because it costs no
                     HEIGHT — the chip is 28px inside the row's stated 60px floor (DESIGN.md §6) — and

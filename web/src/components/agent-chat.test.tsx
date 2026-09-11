@@ -2635,26 +2635,17 @@ describe("AgentChat — what changed, the file viewer, and the mirror's chips", 
     server.use(http.get(/\/api\/pane\/[^/]+\/diff/, () => HttpResponse.json(CHANGED, { headers: { etag: '"c1"' } })));
   }
 
-  it("puts the work tree's totals in the header, and a tap opens the sheet they came from", async () => {
+  // FORK (2026-09-11): the header no longer draws the "2 files · +82 −11" chip — it took header
+  // width and was never tapped. The numbers stay one tap away, in the pane menu's Changes row.
+  it("draws no totals in the header even on a changed tree; the Changes row still opens the sheet", async () => {
     serveChanged();
     const user = userEvent.setup();
     renderChat();
-    const chip = await screen.findByRole("button", {
-      name: "What changed: 2 files, 82 added, 11 removed",
-    });
-    expect(chip.textContent).toContain("2 files");
-    expect(chip.textContent).toContain("+82");
-    expect(chip.textContent).toContain("−11");
-    await user.click(chip);
-    expect(await screen.findByRole("dialog", { name: "Changes" })).toBeInTheDocument();
-  });
-
-  it("draws no chip on a clean tree — the header's one flexible element keeps its width", async () => {
-    // The default handler answers an empty file list, which is what every other case in this file
-    // sees. A chip that was always there would take that width off the pane name permanently.
-    renderChat();
     await screen.findByText("recent pane output");
     expect(screen.queryByRole("button", { name: /What changed/ })).not.toBeInTheDocument();
+    await openPaneMenu(user);
+    await user.click(screen.getByRole("button", { name: "What changed" }));
+    expect(await screen.findByRole("dialog", { name: "Changes" })).toBeInTheDocument();
   });
 
   it("a path from that list earns a chip on the mirror line that names it, and opens the viewer", async () => {
