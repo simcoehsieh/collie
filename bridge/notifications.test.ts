@@ -106,6 +106,7 @@ describe("NotificationCoordinator — debounce", () => {
       agent: "claude",
       status: "blocked",
       renotify: true,
+      count: 1,
     });
   });
 
@@ -138,6 +139,7 @@ describe("NotificationCoordinator — coalescing", () => {
       body: "claude, codex",
       paneId: undefined,
       renotify: true,
+      count: 2,
     });
   });
 
@@ -166,6 +168,7 @@ describe("NotificationCoordinator — coalescing", () => {
       agent: "claude",
       status: "blocked",
       renotify: false, // a retraction update must not re-buzz
+      count: 1,
     });
   });
 });
@@ -288,7 +291,8 @@ describe("makeNotifySink", () => {
   test("clear maps to a clear push on the herd tag", () => {
     const push = new RecordingPush();
     makeNotifySink(push, { isMuted: () => false }, "collie:herd").clear();
-    expect(push.sent).toEqual([{ type: "clear", tag: "collie:herd" }]);
+    // FORK: `badge: 0` rides along — nothing outstanding, so the icon's dot goes too.
+    expect(push.sent).toEqual([{ type: "clear", tag: "collie:herd", badge: 0 }]);
   });
 
   test("an active snooze suppresses both render and clear", () => {
@@ -513,6 +517,16 @@ describe("makeNotifySink — the reply's first line", () => {
     sink.render({ ...done, paneId: "p2" });
     await flush();
     expect(push.sent).toHaveLength(3);
+  });
+
+  test("FORK: a render carries the summary's count as the badge; a clear carries zero", () => {
+    const push = new RecordingPush();
+    const sink = makeNotifySink(push, { isMuted: () => false }, "collie:herd");
+    sink.render({ ...done, count: 1 });
+    sink.render({ title: "2 agents done", body: "claude, codex", renotify: true, count: 2 });
+    sink.render(done); // no count on the summary → no badge on the message
+    sink.clear();
+    expect(push.sent.map((m) => m.badge)).toEqual([1, 2, undefined, 0]);
   });
 
   test("without a reply peek the done alert sends synchronously, as it always did", () => {

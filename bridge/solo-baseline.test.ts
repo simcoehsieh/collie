@@ -1108,7 +1108,8 @@ describe("solo zero-tax — notifications", () => {
     sink.clear();
     expect(sent).toEqual([
       { title: "claude needs you", body: "demo · /home/you", tag: "collie:herd", paneId: "p1", renotify: true },
-      { type: "clear", tag: "collie:herd" },
+      // FORK: `badge: 0` on a clear — the icon's dot goes with the notification (app-badge).
+      { type: "clear", tag: "collie:herd", badge: 0 },
     ]);
     expect(sent.every((m) => !("host" in m))).toBe(true);
   });

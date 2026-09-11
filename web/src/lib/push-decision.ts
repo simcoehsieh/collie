@@ -24,6 +24,11 @@ export interface PushPayload {
   /** Re-alert when replacing the slot (a new agent arrived) vs. update it silently (a retraction). */
   renotify?: boolean;
   /**
+   * FORK: what the app icon's badge should say — outstanding alerts, 0 on a retraction. Absent on a
+   * push that has no view of the herd, and the worker then leaves the badge as it is.
+   */
+  badge?: number;
+  /**
    * `session` is the registry name the pane lives in — carried so the click deep-links into it.
    * `host` is the crew member the pane lives ON, stamped by the bridge for a peer's pane only
    * (`bridge/push.ts` adds it to `data` exactly the way it adds `session`, so a solo/lead payload is
@@ -77,7 +82,7 @@ export interface NotifData {
 
 export type PushDecision =
   /** Close any notification on this tag (retraction) — runs regardless of client visibility. */
-  | { kind: "clear"; tag: string }
+  | { kind: "clear"; tag: string; badge?: number }
   /** A Collie tab is already visible and showing this; don't raise a redundant system notification. */
   | { kind: "suppress" }
   /** Show (or replace) the notification on this tag. */
@@ -100,6 +105,8 @@ export type PushDecision =
       /** What those buttons send — present exactly when `actions` is. */
       approve?: ApproveSpec;
       renotify: boolean;
+      /** FORK: the app icon's badge after this push; absent = leave it. */
+      badge?: number;
     };
 
 /**
@@ -188,11 +195,15 @@ export function decidePush(
   // close it — so `clear` and `show` resolve the slot on this single line, before they diverge.
   const tag = payload.tag ?? tagFor(paneId, host);
   if (payload.type === "clear") {
-    if (!mustShow) return { kind: "clear", tag };
+    if (!mustShow) {
+      const cleared: Extract<PushDecision, { kind: "clear" }> = { kind: "clear", tag };
+      if (payload.badge !== undefined) cleared.badge = payload.badge;
+      return cleared;
+    }
     // Same tag, so this REPLACES the alert it retracts rather than stacking beside it — the slot
     // ends up saying the true thing instead of a stale "claude needs you". No `paneId`: the pane it
     // came from no longer wants anything, so the tap goes to the herd, not to a settled agent.
-    return {
+    const replaced: Extract<PushDecision, { kind: "show" }> = {
       kind: "show",
       title: payload.title ?? ALL_CLEAR_TITLE,
       body: payload.body ?? "",
@@ -202,6 +213,8 @@ export function decidePush(
       target,
       renotify: false,
     };
+    if (payload.badge !== undefined) replaced.badge = payload.badge;
+    return replaced;
   }
   if (hasVisibleClient && !mustShow) return { kind: "suppress" };
   const shown: Extract<PushDecision, { kind: "show" }> = {
@@ -221,6 +234,7 @@ export function decidePush(
   // did (the tests compare whole decisions).
   const agent = payload.data?.agent;
   if (agent !== undefined) shown.agent = agent;
+  if (payload.badge !== undefined) shown.badge = payload.badge;
   const approve = approveSpec(payload.data?.approve);
   const actions = approve === undefined ? undefined : honouredActions(payload.actions, paneId);
   if (actions !== undefined) {

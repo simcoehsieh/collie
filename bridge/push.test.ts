@@ -367,6 +367,19 @@ describe("Push — per-message collapse topic (update must not share the herd sl
     expect("agent" in withButtons).toBe(false); // in `data`, not beside it
   });
 
+  test("FORK: `badge` stays top-level on the wire, and only when the message carries one", async () => {
+    const cfg = await tempCfg();
+    const { sender, sends } = capturing();
+    const push = new Push(cfg, sender);
+    enable(push, [sub("a")]);
+    await push.send({ title: "t", body: "b", tag: "collie:herd", paneId: "w1:p1", badge: 2 });
+    const withBadge = JSON.parse(sends[0]!.payload);
+    expect(withBadge.badge).toBe(2);
+    expect("badge" in withBadge.data).toBe(false);
+    await push.send({ title: "t", body: "b", tag: "collie:herd", paneId: "w1:p1" });
+    expect("badge" in JSON.parse(sends[1]!.payload)).toBe(false);
+  });
+
   test("addSubscription says whether the endpoint was already on file", async () => {
     const cfg = await tempCfg();
     const push = new Push(cfg);

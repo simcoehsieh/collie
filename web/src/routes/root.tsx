@@ -19,6 +19,7 @@ import { usePolling } from "@/hooks/use-polling";
 import { usePollBusy } from "@/hooks/use-poll-busy";
 import { useBusyWhile } from "@/lib/busy";
 import { useAgentTransitions } from "@/hooks/use-transitions";
+import { useAppBadge } from "@/hooks/use-app-badge";
 import { usePushSetup } from "@/hooks/use-push";
 import { useConnectionLost } from "@/hooks/use-connection-lost";
 import { useHotkeys } from "@/hooks/use-hotkeys";
@@ -170,6 +171,8 @@ export function RootLayout() {
   // the common one — say nothing at all.
   useBusyWhile(useNavigation().state !== "idle");
   useAgentTransitions(data.agents, paneId ?? null);
+  // FORK: the app icon's badge follows what needs you (hooks/use-app-badge.ts).
+  useAppBadge(data.agents);
   usePushSetup();
   // FORK: desktop shortcuts, live only with a fine pointer (hooks/use-hotkeys.ts).
   const hotkeys = useHotkeys(data);

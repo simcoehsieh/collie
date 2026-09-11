@@ -255,6 +255,7 @@ async function handlePush(event: PushEvent): Promise<void> {
     // replacement there instead — showNotification on the same tag closes the stale one for us.
     const stale = await self.registration.getNotifications({ tag: decision.tag });
     for (const n of stale) n.close();
+    await applyBadge(decision.badge);
     return;
   }
   // `renotify` and `actions` aren't in this TS lib's NotificationOptions yet, though both are
@@ -277,6 +278,22 @@ async function handlePush(event: PushEvent): Promise<void> {
   };
   if (decision.actions) options.actions = decision.actions;
   await self.registration.showNotification(decision.title, options);
+  await applyBadge(decision.badge);
+}
+
+// FORK: the app icon's badge. iOS never badges a web app on its own — a push shows a banner and
+// nothing else — so the worker asks for the dot here, with the count the bridge sent. The page
+// clears it when the herd has nothing unseen (hooks/use-app-badge.ts), which is also what handles
+// Apple's endpoints never receiving a retraction. `undefined` leaves the badge alone: a push with no
+// view of the herd (a test push, an update alert) must not erase a dot that is still true.
+async function applyBadge(count: number | undefined): Promise<void> {
+  if (count === undefined || !("setAppBadge" in self.navigator)) return;
+  try {
+    if (count > 0) await self.navigator.setAppBadge(count);
+    else await self.navigator.clearAppBadge();
+  } catch {
+    /* a platform without the API, or one that refused — the notification already showed */
+  }
 }
 
 // ── FORK: answering from the notification ───────────────────────────────────────────────────────

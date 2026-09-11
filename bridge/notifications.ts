@@ -50,6 +50,8 @@ export interface HerdSummary {
   status?: NotifiableStatus;
   /** Re-alert (buzz) the device — true when a new alert arrived, false on a silent retraction update. */
   renotify: boolean;
+  /** FORK: how many alerts the summary stands for — the app icon's badge. */
+  count?: number;
 }
 
 export interface NotifySink {
@@ -139,6 +141,7 @@ export function makeNotifySink(
         paneId: s.paneId,
         renotify: s.renotify,
       };
+      if (s.count !== undefined) msg.badge = s.count;
       if (sessionName !== undefined) msg.session = sessionName;
       if (host !== undefined) msg.host = host;
       if (s.agent !== undefined) msg.agent = s.agent;
@@ -203,7 +206,8 @@ export function makeNotifySink(
     },
     clear: () => {
       if (mute.isMuted()) return;
-      void push.send({ type: "clear", tag: herdTag });
+      // FORK: `badge: 0` — nothing is outstanding, so the icon's dot goes with the notification.
+      void push.send({ type: "clear", tag: herdTag, badge: 0 });
     },
   };
 }
@@ -331,6 +335,7 @@ export class NotificationCoordinator<H = unknown> {
         agent: a.agent,
         status: a.status,
         renotify,
+        count: 1,
       };
     }
     const alerts = entries.map(([, a]) => a);
@@ -342,7 +347,7 @@ export class NotificationCoordinator<H = unknown> {
       : allDone
         ? `${n} agents done`
         : `${n} agents need attention`;
-    return { title, body: alerts.map((a) => a.agent).join(", "), renotify };
+    return { title, body: alerts.map((a) => a.agent).join(", "), renotify, count: n };
   }
 
   private cancelPending(id: string): void {

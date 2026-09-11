@@ -361,3 +361,15 @@ describe("decidePush — Yes/No buttons", () => {
     expect("actions" in quiet).toBe(false);
   });
 });
+
+// FORK: the app icon's badge rides through every decision that can carry one, and is absent —
+// never zero — when the payload had none, so the worker leaves the dot alone.
+describe("decidePush — badge", () => {
+  test("passes the count through on a show, a quiet replacement and a clear; omits it when absent", () => {
+    expect(decidePush({ title: "x", badge: 3 }, false)).toMatchObject({ kind: "show", badge: 3 });
+    expect("badge" in decidePush({ title: "x" }, false)).toBe(false);
+    expect(decidePush({ type: "clear", badge: 0 }, false)).toEqual({ kind: "clear", tag: "collie", badge: 0 });
+    expect(decidePush({ type: "clear" }, false)).toEqual({ kind: "clear", tag: "collie" });
+    expect(decidePush({ type: "clear", badge: 0 }, false, true)).toMatchObject({ kind: "show", badge: 0 });
+  });
+});
