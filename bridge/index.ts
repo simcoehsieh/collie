@@ -44,6 +44,7 @@ import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
 import { TranscriptStore } from "./journal/store.ts";
 import { NotificationCoordinator, makeNotifySink, type NotifyClock } from "./notifications.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
+import { createOperatorNotifyRules } from "./operator-notify.ts";
 import { ArtifactStore } from "./artifacts.ts";
 import { peekBinaryPrompt } from "./prompt-peek.ts";
 import { replyLine, type ReplyLine } from "./reply-peek.ts";
@@ -550,8 +551,14 @@ await push.init();
 const snooze = new Snooze(cfg);
 await snooze.load();
 
-const notifyPrefs = new NotifyPrefsStore(cfg);
+// FORK: the operator's own per-pane rules ride along from `notify.toml` (bridge/operator-notify.ts),
+// re-read behind an mtime check so an edit is live without a restart — the timer is the only thing
+// that would otherwise miss a change made while no phone was asking.
+const OPERATOR_NOTIFY_REFRESH_MS = 5_000;
+const notifyPrefs = new NotifyPrefsStore(cfg, Date.now, createOperatorNotifyRules(cfg.notifyFile));
 await notifyPrefs.load();
+await notifyPrefs.refreshOperatorRules();
+setInterval(() => void notifyPrefs.refreshOperatorRules(), OPERATOR_NOTIFY_REFRESH_MS).unref();
 // FORK: the artifacts library. No load step — listing is the directory (bridge/artifacts.ts).
 const artifacts = new ArtifactStore(cfg.stateDir);
 

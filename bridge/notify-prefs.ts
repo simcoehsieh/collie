@@ -57,6 +57,13 @@ export interface NotifyPrefs {
   updates: boolean;
   /** Per-pane overrides, first match wins within each of the two match kinds (id before label). */
   panes: PaneNotifyRule[];
+  /**
+   * FORK: the operator's rules from `notify.toml` (bridge/operator-notify.ts), matched AFTER
+   * `panes` so a phone-set rule wins for the same pane. Read-only on the wire and never persisted
+   * here — the file is their home. Present only when the file has rules, so an install without one
+   * answers byte-identically to before.
+   */
+  operatorPanes?: PaneNotifyRule[];
 }
 
 export const DEFAULT_NOTIFY_PREFS: NotifyPrefs = { blocked: true, done: false, updates: true, panes: [] };
@@ -165,12 +172,30 @@ export function ruleFor(rules: readonly PaneNotifyRule[], pane: PaneIdentity): P
 export class NotifyPrefsStore {
   private prefs: NotifyPrefs = { ...DEFAULT_NOTIFY_PREFS, panes: [] };
   private readonly file: string;
+  /** FORK: the last rules `operatorRules` answered with — what the sync `isNotifiable` reads. */
+  private operator: PaneNotifyRule[] = [];
 
   constructor(
     private readonly cfg: Config,
     private readonly now: () => number = Date.now,
+    /** FORK: the operator's `notify.toml` reader; absent means no file (the tests' default). */
+    private readonly operatorRules?: () => Promise<PaneNotifyRule[]>,
   ) {
     this.file = join(cfg.stateDir, "notify-prefs.json");
+  }
+
+  /**
+   * FORK: re-read `notify.toml` (behind the reader's own mtime check, so this is a stat when nothing
+   * changed). Called at boot, on a timer, and before the prefs are answered to a phone — the matcher
+   * itself stays synchronous on the cached list. A reader that throws keeps the last list.
+   */
+  async refreshOperatorRules(): Promise<void> {
+    if (this.operatorRules === undefined) return;
+    try {
+      this.operator = structuredClone(await this.operatorRules());
+    } catch {
+      /* the last good list stands — the reader already warned */
+    }
   }
 
   async load(): Promise<void> {
@@ -183,7 +208,9 @@ export class NotifyPrefsStore {
 
   /** A copy of the current prefs (never the internal object, so callers can't mutate our state). */
   current(): NotifyPrefs {
-    return { ...this.prefs, panes: this.prefs.panes.map((r) => ({ ...r })) };
+    const view: NotifyPrefs = { ...this.prefs, panes: this.prefs.panes.map((r) => ({ ...r })) };
+    if (this.operator.length > 0) view.operatorPanes = this.operator.map((r) => ({ ...r }));
+    return view;
   }
 
   /**
@@ -197,7 +224,8 @@ export class NotifyPrefsStore {
    */
   isNotifiable(status: AgentStatus, pane?: PaneIdentity): boolean {
     if (status !== "blocked" && status !== "done") return false;
-    const rule = pane === undefined ? null : ruleFor(this.prefs.panes, pane);
+    // FORK: the phone's rules first, then the file's — `ruleFor` keeps that order within each kind.
+    const rule = pane === undefined ? null : ruleFor([...this.prefs.panes, ...this.operator], pane);
     if (rule !== null) {
       if (rule.snoozedUntil !== undefined && rule.snoozedUntil > this.now()) return false;
       if (rule.mode === "mute") return false;

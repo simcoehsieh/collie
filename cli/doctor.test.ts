@@ -284,6 +284,7 @@ describe("collie doctor — the contract", () => {
       "acl",
       "front-door",
       "launchers",
+      "notify",
       "mux",
       "beacon-hooks-claude",
       "beacons",
@@ -1186,6 +1187,7 @@ describe("the finding set is scoped by the chosen multiplexer", () => {
       "acl",
       "front-door",
       "launchers",
+      "notify",
       "mux",
       "beacon-hooks-claude",
       "beacons",
@@ -1592,5 +1594,38 @@ describe("collie doctor — launchers", () => {
     expect(f?.detail).toContain("last good rows");
     expect(f?.remedy).toContain(LAUNCHERS);
     expect(code).toBe(EXIT.OK);
+  });
+});
+
+// ── FORK: notify.toml ────────────────────────────────────────────────────────
+describe("collie doctor — notify", () => {
+  const NOTIFY = `${CONFIG}/notify.toml`;
+
+  test("notify: no file is ok, and says where rules come from without one", async () => {
+    const { code, byCheck } = await findings(harness(null));
+    const f = byCheck.get("notify");
+    expect(f?.status).toBe("ok");
+    expect(f?.detail).toContain(`none at ${NOTIFY}`);
+    expect(f?.detail).toContain("notify.toml.example");
+    expect(code).toBe(EXIT.OK);
+  });
+
+  test("notify: declared rules are counted and named with their modes", async () => {
+    const files = { ...healthyFiles(), [NOTIFY]: '[[panes]]\nlabel = "listener"\nmode = "blocked"\n' };
+    const { byCheck } = await findings(harness(null, [], { files }));
+    const f = byCheck.get("notify");
+    expect(f?.status).toBe("ok");
+    expect(f?.detail).toContain("1 rule");
+    expect(f?.detail).toContain("listener → blocked");
+  });
+
+  test("notify: a rule the bridge would drop warns with the bridge's own reason", async () => {
+    const files = { ...healthyFiles(), [NOTIFY]: '[[panes]]\nlabel = "listener"\nmode = "loud"\n' };
+    const { byCheck } = await findings(harness(null, [], { files }));
+    const f = byCheck.get("notify");
+    expect(f?.status).toBe("warn");
+    expect(f?.detail).toContain("0 rules kept");
+    expect(f?.detail).toContain("mode is not one of");
+    expect(f?.remedy).toContain(NOTIFY);
   });
 });

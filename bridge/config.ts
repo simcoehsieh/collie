@@ -317,6 +317,11 @@ export interface Config {
    */
   launchersFile: string;
   /**
+   * FORK: where the operator's per-pane notification rules live — `notify.toml`, the sixth sibling
+   * in the same dir, read the same way (bridge/operator-notify.ts) and likewise never read here.
+   */
+  notifyFile: string;
+  /**
    * Tailscale identity gate. If set under `tailscale serve`, the request must carry a matching
    * `Tailscale-User-Login` header. A mismatch is rejected. A missing header is also rejected —
    * serve injects none for tagged nodes, so tolerating it let any tagged node write. Under
@@ -623,6 +628,7 @@ export function loadConfig(): Config {
     themeFile: join(configDir, "theme.toml"),
     fontsDir: join(configDir, "fonts"),
     launchersFile: join(configDir, "launchers.toml"),
+    notifyFile: join(configDir, "notify.toml"),
     trustedUser: process.env.COLLIE_TRUSTED_USER ?? "",
     trustedUserOptional: envBool("COLLIE_TRUSTED_USER_OPTIONAL", false),
     auditContent: envEnum("COLLIE_AUDIT_CONTENT", ["preview", "none"] as const, "preview"),

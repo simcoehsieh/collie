@@ -79,6 +79,7 @@ export const ja: Dictionary = {
   "settings.notify.panes.gone": "未オープン",
   "settings.notify.panes.remove": "ルールを削除",
   "settings.notify.panes.empty": "現在ペインはありません。",
+  "settings.notify.panes.fromFile": "notify.toml: “{label}”",
   "agentCard.approve.yes": "はい",
   "agentCard.approve.no": "いいえ",
   "agentCard.approve.sent": "送信済み",

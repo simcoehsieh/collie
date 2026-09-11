@@ -18,6 +18,7 @@ interface Prefs {
   done: boolean;
   updates: boolean;
   panes?: PaneNotifyRule[];
+  operatorPanes?: PaneNotifyRule[];
 }
 
 // The control sends ONE key per toggle, so a patch is a partial of the same contract — which is
@@ -95,12 +96,12 @@ describe("NotifyPrefsControl — per pane", () => {
     expect(screen.getByRole("radiogroup", { name: "codex" })).toBeInTheDocument();
     expect(within(claude).getByRole("radio", { name: /default/i })).toHaveAttribute("aria-checked", "true");
 
-    await user.click(within(claude).getByRole("radio", { name: /mute/i }));
+    await user.click(within(claude).getByRole("radio", { name: "Mute" }));
 
     // The rule names the pane by id AND by its space, so it outlives a multiplexer restart.
     await waitFor(() => expect(lastPatch).toEqual({ panes: [{ paneId: "w1:p1", label: "webapp", mode: "mute" }] }));
     await waitFor(() =>
-      expect(within(claude).getByRole("radio", { name: /mute/i })).toHaveAttribute("aria-checked", "true"),
+      expect(within(claude).getByRole("radio", { name: "Mute" })).toHaveAttribute("aria-checked", "true"),
     );
     // The other pane is untouched.
     expect(
@@ -141,7 +142,7 @@ describe("NotifyPrefsControl — per pane", () => {
     currentPrefs = { ...currentPrefs, panes: [{ label: "webapp", mode: "mute" }] };
     render(<NotifyPrefsControl panes={[fixtureAgents[0]!]} />);
     const claude = await screen.findByRole("radiogroup", { name: "claude" });
-    await waitFor(() => expect(within(claude).getByRole("radio", { name: /mute/i })).toHaveAttribute("aria-checked", "true"));
+    await waitFor(() => expect(within(claude).getByRole("radio", { name: "Mute" })).toHaveAttribute("aria-checked", "true"));
     expect(screen.getByText("“webapp”")).toBeInTheDocument();
     expect(screen.queryByText(/not open/i)).not.toBeInTheDocument();
   });
@@ -149,5 +150,24 @@ describe("NotifyPrefsControl — per pane", () => {
   test("with no panes and no rules the section says so", async () => {
     render(<NotifyPrefsControl />);
     expect(await screen.findByText(/no panes right now/i)).toBeInTheDocument();
+  });
+});
+
+// ── FORK: rules from the operator's notify.toml ──────────────────────────────
+// The bridge answers them read-only beside the phone's own; the row shows the mode the bridge will
+// apply and says the file's name, and a tap adds a phone rule that wins over it.
+describe("NotifyPrefsControl — rules from notify.toml", () => {
+  test("a file rule shows as the applied mode, named after the file; a tap overrides it with a phone rule", async () => {
+    currentPrefs = { blocked: true, done: true, updates: true, panes: [], operatorPanes: [{ label: "webapp", mode: "blocked" }] };
+    const user = userEvent.setup();
+    const pane = fixtureAgents[0]!;
+    render(<NotifyPrefsControl panes={[pane]} />);
+    const row = (await screen.findAllByRole("listitem")).find((li) => li.getAttribute("data-pane") === pane.paneId)!;
+    expect(within(row).getByRole("radio", { name: "Needs input" })).toHaveAttribute("aria-checked", "true");
+    expect(within(row).getByText("notify.toml: “webapp”")).toBeInTheDocument();
+    await user.click(within(row).getByRole("radio", { name: "Mute" }));
+    await waitFor(() => expect(lastPatch?.panes?.[0]).toMatchObject({ paneId: pane.paneId, mode: "mute" }));
+    // The phone's rule now applies, and the file's name is gone from the row.
+    await waitFor(() => expect(within(row).queryByText("notify.toml: “webapp”")).not.toBeInTheDocument());
   });
 });

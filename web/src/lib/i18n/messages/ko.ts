@@ -80,6 +80,7 @@ export const ko: Dictionary = {
   "settings.notify.panes.gone": "열려 있지 않음",
   "settings.notify.panes.remove": "규칙 삭제",
   "settings.notify.panes.empty": "지금은 창이 없습니다.",
+  "settings.notify.panes.fromFile": "notify.toml: “{label}”",
   "agentCard.approve.yes": "예",
   "agentCard.approve.no": "아니오",
   "agentCard.approve.sent": "전송됨",

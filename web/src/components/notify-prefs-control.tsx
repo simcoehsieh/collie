@@ -56,6 +56,10 @@ export function NotifyPrefsControl({ panes = NO_PANES }: { panes?: readonly Agen
   useLocale();
   const { prefs, busy, toggle, setPanes } = useNotifyPrefs();
   const rules = prefs?.panes ?? [];
+  // FORK: the operator's `notify.toml` rules — matched after the phone's, exactly as the bridge
+  // does, so the mode a row shows is the mode the bridge will apply. Never edited from here.
+  const operator = prefs?.operatorPanes ?? [];
+  const applied = [...rules, ...operator];
   const agentPanes = panes.filter((p) => p.kind !== "shell");
   const orphans = prefs ? orphanRules(rules, agentPanes) : [];
 
@@ -104,17 +108,21 @@ export function NotifyPrefsControl({ panes = NO_PANES }: { panes?: readonly Agen
           <p className="mt-2 text-xs text-muted-foreground">{t("settings.notify.panes.empty")}</p>
         )}
         <ul className="mt-2 flex flex-col divide-y divide-border">
-          {agentPanes.map((pane) => (
-            <PaneRuleRow
-              key={pane.paneId}
-              pane={pane}
-              rule={ruleFor(rules, pane)}
-              own={ownRule(rules, pane) !== null}
-              disabled={busy || !prefs}
-              onMode={(mode) => void setPanes(withMode(rules, pane, mode))}
-              onSnooze={(until) => void setPanes(withSnooze(rules, pane, until))}
-            />
-          ))}
+          {agentPanes.map((pane) => {
+            const hit = ruleFor(applied, pane);
+            return (
+              <PaneRuleRow
+                key={pane.paneId}
+                pane={pane}
+                rule={hit}
+                own={ownRule(rules, pane) !== null}
+                fromFile={hit !== null && operator.includes(hit)}
+                disabled={busy || !prefs}
+                onMode={(mode) => void setPanes(withMode(rules, pane, mode))}
+                onSnooze={(until) => void setPanes(withSnooze(rules, pane, until))}
+              />
+            );
+          })}
           {orphans.map((rule, i) => (
             <OrphanRuleRow
               key={`${rule.paneId ?? ""}|${rule.label ?? ""}|${i}`}
@@ -133,6 +141,7 @@ function PaneRuleRow({
   pane,
   rule,
   own,
+  fromFile,
   disabled,
   onMode,
   onSnooze,
@@ -142,6 +151,8 @@ function PaneRuleRow({
   rule: PaneNotifyRule | null;
   /** Whether that rule names this pane by id (an edit changes it) vs. a label hit (an edit adds one). */
   own: boolean;
+  /** FORK: the rule came from the operator's `notify.toml`; an edit here adds a phone rule that wins. */
+  fromFile: boolean;
   disabled: boolean;
   onMode: (mode: PaneNotifyMode) => void;
   onSnooze: (until: number | null) => void;
@@ -156,8 +167,11 @@ function PaneRuleRow({
         <span className="min-w-0 truncate font-medium">{name}</span>
         {where !== null && <span className="min-w-0 shrink truncate text-xs text-muted-foreground">· {where}</span>}
         {rule !== null && !own && (
-          /* A label hit: the row inherits another rule's mode; the rule's own text says which. */
-          <span className="ml-auto shrink-0 truncate text-xs text-muted-foreground">“{rule.label}”</span>
+          /* A label hit: the row inherits another rule's mode; the rule's own text says which — and
+             FORK: whose it is, when the operator's file wrote it. */
+          <span className="ml-auto shrink-0 truncate text-xs text-muted-foreground">
+            {fromFile ? t("settings.notify.panes.fromFile", { label: rule.label ?? rule.paneId ?? "" }) : `“${rule.label}”`}
+          </span>
         )}
       </div>
       <div className="flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label={name}>

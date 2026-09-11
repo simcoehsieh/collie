@@ -2030,6 +2030,8 @@ export function startServer(opts: {
         if (req.method === "GET") {
           const denied = guard(req, cfg, "read", pairing);
           if (denied) return denied;
+          // FORK: a phone asking is the moment `notify.toml` should be fresh (a stat when unchanged).
+          await notifyPrefs.refreshOperatorRules();
           return json(notifyPrefs.current(), req.headers.get("accept-encoding"));
         }
         if (req.method === "POST") {

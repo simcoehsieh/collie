@@ -77,6 +77,7 @@ export const zh: Dictionary = {
   "settings.notify.panes.gone": "未打开",
   "settings.notify.panes.remove": "删除规则",
   "settings.notify.panes.empty": "当前没有窗格。",
+  "settings.notify.panes.fromFile": "notify.toml：“{label}”",
   "agentCard.approve.yes": "是",
   "agentCard.approve.no": "否",
   "agentCard.approve.sent": "已发送",

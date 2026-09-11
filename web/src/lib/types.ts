@@ -1097,6 +1097,11 @@ export interface NotifyPrefs {
   updates: boolean;
   /** FORK: per-pane overrides. Absent from an older bridge's answer; the phone treats that as none. */
   panes?: PaneNotifyRule[];
+  /**
+   * FORK: the operator's rules from `notify.toml`, matched after `panes` (a phone-set rule wins for
+   * the same pane). Read-only here — the file is their home. Absent when the file has none.
+   */
+  operatorPanes?: PaneNotifyRule[];
 }
 
 /** Lower sorts first — "needs you" at the top. Mirrors STATUS_RANK on the server. */

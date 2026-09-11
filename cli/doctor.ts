@@ -34,6 +34,7 @@ import { resolveZellijBinary, zellijBinaryCandidates } from "../bridge/mux/zelli
 import { chooseSession, parseSessionList, ZELLIJ_LIST_SESSIONS_ARGS } from "../bridge/mux/zellij/protocol.ts";
 import { bindIsWildcard } from "../bridge/crew/config.ts";
 import { validateOperatorLaunchers } from "../bridge/operator-launchers.ts";
+import { validateOperatorNotifyRules } from "../bridge/operator-notify.ts";
 import { deriveMode } from "../bridge/crew/mode.ts";
 import type { HelloResult, CrewFetch, PeerOutcome } from "../bridge/crew/peer-client.ts";
 import { crewRuntimePath, parseMarker, rosterDrift, type CrewRuntimeMarker } from "../bridge/crew/staleness.ts";
@@ -193,6 +194,7 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
     acl(deps),
     frontDoor(deps, mode),
     launchers(deps),
+    notifyRules(deps),
     mux(deps),
     beaconHooks(deps, hookEntries, declaration?.supports.agentDetection ?? true),
     await beacons(deps, hookEntries.length > 0),
@@ -931,6 +933,49 @@ function launchers(deps: DoctorDeps): Finding {
     );
   }
   return ok("launchers", `${kept} at ${path}: ${rows.map((row) => row.label).join(", ")}`);
+}
+
+// ── FORK: notify.toml — the operator's own per-pane notification rules ───────
+// The same shape as `launchers` above, for the same reason: with no file the phone's Settings page
+// shows every pane on "default" and nothing says a file could have said otherwise. Absent is `ok`;
+// a file is judged by the bridge's own validator (bridge/operator-notify.ts).
+function notifyRules(deps: DoctorDeps): Finding {
+  const path = join(deps.ctx.configDir, "notify.toml");
+  const text = deps.files.read(path);
+  if (text === null) {
+    return ok(
+      "notify",
+      `none at ${path} — per-pane notification rules come only from the phone's Settings; ` +
+        "copy notify.toml.example there to declare rules in a file (read live, no restart)",
+    );
+  }
+  const dropped: string[] = [];
+  let rules: ReturnType<typeof validateOperatorNotifyRules>;
+  try {
+    // SAFETY: as `launchers` — `validateOperatorNotifyRules` reads every field as `unknown` and
+    // checks it before believing it, so this asserts only "a document came back".
+    const doc = Bun.TOML.parse(text) as { panes?: unknown };
+    rules = validateOperatorNotifyRules(doc, (message) => dropped.push(message));
+  } catch (err) {
+    return warn(
+      "notify",
+      `${path} does not parse (${String(err)}) — the bridge keeps the last good rules it read, which on a fresh host is none`,
+      `fix the TOML in ${path}; it is re-read live, no restart`,
+    );
+  }
+  const kept = `${rules.length} rule${rules.length === 1 ? "" : "s"}`;
+  if (dropped.length > 0) {
+    return warn(
+      "notify",
+      `${kept} kept, ${dropped.length} dropped: ${dropped.join("; ")}`,
+      `fix the dropped rule(s) in ${path}; it is re-read live, no restart`,
+    );
+  }
+  if (rules.length === 0) return ok("notify", `${kept} at ${path} (every rule commented out)`);
+  return ok(
+    "notify",
+    `${kept} at ${path}: ${rules.map((r) => `${r.label ?? r.paneId ?? "?"} → ${r.mode}`).join(", ")}`,
+  );
 }
 
 async function ownSnapshot(deps: DoctorDeps): Promise<string | null> {

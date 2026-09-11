@@ -82,6 +82,7 @@ export const de: Dictionary = {
   "settings.notify.panes.gone": "nicht geöffnet",
   "settings.notify.panes.remove": "Regel entfernen",
   "settings.notify.panes.empty": "Gerade keine Panes.",
+  "settings.notify.panes.fromFile": "notify.toml: „{label}“",
   "agentCard.approve.yes": "Ja",
   "agentCard.approve.no": "Nein",
   "agentCard.approve.sent": "Gesendet",

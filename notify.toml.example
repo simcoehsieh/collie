@@ -1,0 +1,30 @@
+# Your own per-pane notification rules for Collie. Copy next to your `.env`:
+#   cp notify.toml.example ~/.config/collie/notify.toml
+#
+# The phone's Settings → Notifications already sets rules per pane, and those live in the state
+# dir. This file is for the rules that are part of the INSTALL — the ones you want in a repo, on
+# the next machine, and in a diff: "the four listener panes never buzz when a scheduled job
+# finishes". Read live behind an mtime check; no restart.
+#
+# PRECEDENCE: a rule the phone set for a pane wins over a rule here for the same pane. The phone
+# shows which rule applies and where it came from.
+#
+# Each [[panes]] table names a pane ONE of two ways and gives it a mode:
+#   label  — case-insensitive substring matched against the pane's own label, its tab, its space
+#            and its terminal title, in that order. Survives a multiplexer restart.
+#   paneId — the exact pane id ("w2:p1"). Precise, but pane ids are renumbered on restart.
+#   mode   — default | all | blocked | mute
+#            default  follow the bridge-wide switches (the phone's three toggles)
+#            all      push on every notifiable status, whatever the switches say
+#            blocked  push only when the pane needs input; never for "done"
+#            mute     never push for this pane
+#
+# First match wins: an id match before any label match, then file order.
+
+# [[panes]]
+# label = "listener"
+# mode = "blocked"
+
+# [[panes]]
+# label = "scratch"
+# mode = "mute"

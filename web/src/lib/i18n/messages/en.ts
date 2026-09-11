@@ -90,6 +90,7 @@ export const en = {
   "settings.notify.panes.gone": "not open",
   "settings.notify.panes.remove": "Remove rule",
   "settings.notify.panes.empty": "No panes right now.",
+  "settings.notify.panes.fromFile": "notify.toml: “{label}”",
   "agentCard.approve.yes": "Yes",
   "agentCard.approve.no": "No",
   "agentCard.approve.sent": "Sent",

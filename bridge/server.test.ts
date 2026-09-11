@@ -153,6 +153,7 @@ function cfg(overrides: Partial<Config> = {}): Config {
     themeFile: "/nope/theme.toml",
     fontsDir: "/nope/fonts",
     launchersFile: "/nope/launchers.toml",
+    notifyFile: "/nope/notify.toml",
     trustedUser: "",
     trustedUserOptional: false,
     auditContent: "preview",

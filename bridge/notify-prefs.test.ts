@@ -11,6 +11,7 @@ import {
   parseNotifyPrefsPatch,
   ruleFor,
   type PaneIdentity,
+  type PaneNotifyRule,
 } from "./notify-prefs.ts";
 import { loadConfig } from "./config.ts";
 
@@ -154,6 +155,31 @@ describe("NotifyPrefsStore", () => {
     expect(store.isNotifiable("done")).toBe(true);
     // A rule never makes a non-notifiable status push.
     expect(store.isNotifiable("working", p("w1:p2"))).toBe(false);
+  });
+
+  test("FORK: operator rules from notify.toml apply where the phone said nothing, and never win over it", async () => {
+    let fileRules: PaneNotifyRule[] = [{ label: "listener", mode: "blocked" }];
+    const store = new NotifyPrefsStore(await tempCfg(), Date.now, () => Promise.resolve(fileRules));
+    await store.set({ done: true });
+    // Before the first refresh the file is unknown: the switches speak.
+    const p = (paneId: string, over: Partial<PaneIdentity> = {}): PaneIdentity => ({ paneId, ...over });
+    expect(store.isNotifiable("done", p("w2:p1", { workspaceLabel: "listener-scheduler" }))).toBe(true);
+    await store.refreshOperatorRules();
+    // The file's rule: done is off for the listener panes, blocked still pushes.
+    expect(store.isNotifiable("done", p("w2:p1", { workspaceLabel: "listener-scheduler" }))).toBe(false);
+    expect(store.isNotifiable("blocked", p("w2:p1", { workspaceLabel: "listener-scheduler" }))).toBe(true);
+    expect(store.isNotifiable("done", p("w4:p2", { workspaceLabel: "ai-live" }))).toBe(true);
+    // The phone's rule for the same pane wins over the file's.
+    await store.set({ panes: [{ paneId: "w2:p1", mode: "all" }] });
+    expect(store.isNotifiable("done", p("w2:p1", { workspaceLabel: "listener-scheduler" }))).toBe(true);
+    // The view carries the file's rules read-only, and the phone's own list untouched.
+    expect(store.current().operatorPanes).toEqual([{ label: "listener", mode: "blocked" }]);
+    expect(store.current().panes).toEqual([{ paneId: "w2:p1", mode: "all" }]);
+    // A change to the file is picked up on the next refresh; an empty file leaves no key behind.
+    fileRules = [];
+    await store.refreshOperatorRules();
+    expect(store.current().operatorPanes).toBeUndefined();
+    expect(store.isNotifiable("done", p("w2:p9", { workspaceLabel: "listener-ai-stock" }))).toBe(true);
   });
 
   test("set merges a partial patch, persists, and returns the updated prefs", async () => {
