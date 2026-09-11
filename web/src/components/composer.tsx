@@ -1373,7 +1373,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           )}
           onClick={toggleControls}
           className={cn(
-            "relative -mx-3 flex items-center justify-start gap-1.5 border-y border-border px-2.5 text-[10px]/3",
+            // `w-full`, and it is the word that makes every claim above true. A <button> sizes to
+            // fit-content whatever its `display` is, so `flex` bought a flex container and not a
+            // block's width: measured live in both themes, this band rendered 97 x 14px against a
+            // 390px phone — 1 358px², under the 44 x 44 (1 936px²) floor, on the ONLY way back once
+            // the dock is folded. `justify-start` was aiming a run of content inside a box that had
+            // already shrunk to it. With the width stated the rules run edge to edge as the
+            // full-bleed note below describes, the two runs stay exactly where they were, and the
+            // target triples without a pixel moving.
+            "relative -mx-3 flex w-full items-center justify-start gap-1.5 border-y border-border px-2.5 text-[10px]/3",
             prefs.controlsOpen
               ? "h-[14px] after:absolute after:inset-x-0 after:top-full after:h-2 after:content-['']"
               : // FORK: 24px, not 32 — it is the default state now, and the operator read the 32px
