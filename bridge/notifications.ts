@@ -169,16 +169,17 @@ export function makeNotifySink(
           } catch {
             line = null;
           }
-          // FORK: when the agent's own line is there, the notification IS that line — ONE line,
-          // "AI Live · <what it said>", and no headline at all. `showNotification` demands a title
-          // argument and accepts an empty one; iOS then draws only the body under its own "from
-          // Meow" attribution (which is the platform's, not ours to remove). "claude is done" above
-          // that line was a verb saying nothing the line did not, and the operator asked for it to go
-          // (2026-09-11). The SPACE stays in the body: it is what tells two panes of the same agent
-          // apart. Without a line the old shape stands — the verb is then the only information.
+          // FORK: when the agent's own line is there, the notification IS that line. The headline
+          // becomes the pane's address ("AI Live · claude") and the verb goes — "claude is done"
+          // above "AI Live · <what it said>" said nothing the line did not (2026-09-11). An EMPTY
+          // title was tried and is worse: iOS fills it with the app's name, so the phone read
+          // "Meow / from Meow / <line>". The title line is the platform's to draw, and so is the
+          // "from Meow" beneath it; what is ours is the words, and the pane's address is the most
+          // useful short thing to put there — it is what tells two panes of the same agent apart.
+          // Without a line the old shape stands: the verb is then the only information there is.
           if (line !== null && s.bodyLead !== undefined) {
-            msg.title = "";
-            msg.body = withHost(`${s.bodyLead} · ${line}`);
+            msg.title = s.agent === undefined ? s.bodyLead : `${s.bodyLead} · ${s.agent}`;
+            msg.body = withHost(line);
           } else if (line !== null) msg.body = withHost(line);
           void push.send(msg);
         })();
