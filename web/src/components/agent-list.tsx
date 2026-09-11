@@ -5,6 +5,7 @@ import { clockTime } from "@/lib/format";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { SectionHeader } from "@/components/section-header";
 import { ListGroup } from "@/components/ui/list-group";
+import { PaneRowsSkeleton } from "@/components/route-skeleton";
 import { flipDir, sectionHeaderProps, triage, type RecentDir, type TriageKey } from "@/lib/triage";
 import type { AgentView, BridgeStatus } from "@/lib/types";
 import { paneRowKey } from "@/lib/hosts";
@@ -95,12 +96,16 @@ export const AgentList = memo(function AgentList({
         </div>
       );
     }
+    // FORK: "waiting for the multiplexer" is not an empty herd, it is an UNKNOWN one — and the
+    // shape of what is about to arrive is a list of pane rows. So it gets the list, drawn empty,
+    // rather than a sentence that reads like a verdict and a disc that reads like a stall. Three
+    // rows because three is the count at which a run reads as a list; the skeleton holds its paint
+    // for 120ms (ui/skeleton.tsx), so a bridge that answers immediately never flashes it.
+    if (bridge !== "connected") return <PaneRowsSkeleton />;
     return (
       <div className="flex flex-col items-center justify-center gap-3 px-4 py-24 text-muted-foreground">
         <Inbox className="size-7" />
-        <span className="text-sm">
-          {bridge === "connected" ? t("home.empty.noAgents") : t("home.empty.waiting")}
-        </span>
+        <span className="text-sm">{t("home.empty.noAgents")}</span>
         {/* PRESENTATION, not a gate (M10/06). Without `agentDetection` every pane arrives as a
             shell with an unknown status, so this list is empty on a machine that may be running
             plenty — and "No agents running." is then a claim the bridge cannot actually make. The

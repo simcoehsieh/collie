@@ -6,6 +6,7 @@ import { HomeRoute } from "@/routes/home";
 import { SpaceRoute } from "@/routes/space";
 import { DetailRoute } from "@/routes/detail";
 import { OverviewRoute } from "@/routes/overview";
+import { CrewSkeleton, HistorySkeleton, SettingsSkeleton } from "@/components/route-skeleton";
 import { lastPanePath } from "@/lib/last-pane";
 import {
   devicesLoader,
@@ -36,26 +37,46 @@ try {
 // screens a session opens once a week, paid for on every launch. Root, home and the pane stay
 // eager: they are what a launch is FOR, and a tap on a pane row must never wait on a chunk.
 //
-// The fallback is a route-sized nothing, not a spinner. A chunk arrives in well under a second on
-// the second launch (the service worker precaches it), and a spinner that flashes for 80 ms reads
-// as a glitch where a blank that becomes the page reads as a page opening.
-function lazyRoute(load: () => Promise<{ default: ComponentType }>): ReactNode {
+// The fallback was a route-sized nothing, and the reason it was not a spinner still holds: a chunk
+// arrives in well under a second on the second launch (the service worker precaches it), and a
+// spinner that flashes for 80ms reads as a glitch.
+//
+// FORK: a blank is not the best answer to that, only the cheapest — it costs the operator the
+// header they just tapped into and gives back a white field. The page's SHAPE is known here (these
+// are four fixed screens, not arbitrary content), so the fallback draws it: the app shell's header
+// stays mounted above the outlet either way, and the body arrives as the screen's own boxes, drawn
+// grey. The 80ms argument is honoured by CSS rather than by dropping the idea — `SkeletonScreen`
+// holds the whole thing at opacity 0 for 120ms through one `animation-delay`, so a precached chunk
+// still paints nothing at all on its way in and only a genuinely slow one is ever seen. A timer in
+// state would have re-rendered the tree to achieve the same thing.
+function lazyRoute(
+  load: () => Promise<{ default: ComponentType }>,
+  fallback: ReactNode,
+): ReactNode {
   const Route = lazy(load);
   return (
-    <Suspense fallback={<div className="min-h-0 flex-1" aria-busy="true" />}>
+    <Suspense fallback={<div className="min-h-0 flex-1 overflow-hidden">{fallback}</div>}>
       <Route />
     </Suspense>
   );
 }
-const settingsRoute = lazyRoute(() =>
-  import("@/routes/settings").then((m) => ({ default: m.SettingsRoute })),
+const settingsRoute = lazyRoute(
+  () => import("@/routes/settings").then((m) => ({ default: m.SettingsRoute })),
+  <SettingsSkeleton />,
 );
-const updatesRoute = lazyRoute(() =>
-  import("@/routes/updates").then((m) => ({ default: m.UpdatesRoute })),
+// Updates is Settings' own shape one level down — a column of cards — so it borrows that skeleton
+// rather than growing a sixth one for a screen nobody waits on twice.
+const updatesRoute = lazyRoute(
+  () => import("@/routes/updates").then((m) => ({ default: m.UpdatesRoute })),
+  <SettingsSkeleton />,
 );
-const crewRoute = lazyRoute(() => import("@/routes/crew").then((m) => ({ default: m.CrewRoute })));
-const historyRoute = lazyRoute(() =>
-  import("@/routes/history").then((m) => ({ default: m.HistoryRoute })),
+const crewRoute = lazyRoute(
+  () => import("@/routes/crew").then((m) => ({ default: m.CrewRoute })),
+  <CrewSkeleton />,
+);
+const historyRoute = lazyRoute(
+  () => import("@/routes/history").then((m) => ({ default: m.HistoryRoute })),
+  <HistorySkeleton />,
 );
 
 // Created once at module scope so the idle-lock in App can unmount/remount RouterProvider without
