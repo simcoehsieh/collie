@@ -208,10 +208,25 @@
      ~0.94, active 0.92 — and 0.94 would have collided the last two. */
   --accent: light-dark(oklch(0.915 0.01 255), oklch(0.3 0.018 262));
   --accent-foreground: light-dark(oklch(0.2 0.012 262), oklch(0.965 0.006 255));
-  --destructive: light-dark(
-    oklch(0.577 0.245 27.325),
-    oklch(0.704 0.191 22.216)
-  );
+  /* TWO REDS MEANS NEITHER ONE IS THE RED. This was stock shadcn — oklch(0.577 0.245 27.3), chroma
+     0.245, the most saturated value left in a palette whose stated rule is cool neutrals and one
+     desaturated accent — while `--status-blocked` light is oklch(0.46 0.2 25), a deep oxblood. They
+     appear on the same screen: "Close pane" in bright red over blocked rows in oxblood. Retuned
+     onto blocked's own hue and chroma, so destructive and blocked are the same red at two weights,
+     which is what they mean: blocked is the state, destructive is the act.
+       light  #e7000b -> #c21725   4.57:1 -> 5.84:1 under --destructive-foreground (#fafafa)
+       dark   #ff6467 -> #ff6a68   2.77:1 -> 2.68:1 under the same
+     Rasterised at DPR 1, both halves, both before and after.
+
+     THE DARK HALF DOES NOT CLEAR 4.5 AND DID NOT BEFORE, and that is recorded rather than papered
+     over. A near-black palette puts its red at L ~0.70 so it glows on the ground it sits on, and
+     white on it cannot reach 4.5 at any chroma that still reads as red; stock shipped 2.77 and this
+     ships 2.68, i.e. the move neither caused the problem nor fixed it. THE FIX IS ALREADY IN THIS
+     FILE, one token up: --primary's dark half carries DARK ink (8.40:1) rather than white, exactly
+     because dark palettes put their accents where white text cannot follow. The same ink on this
+     red measures 6.95:1. It is left as a proposal and not taken here, because this commit moves one
+     variable — the hue — and flipping every destructive button's text in dark is a second one. */
+  --destructive: light-dark(oklch(0.52 0.2 25), oklch(0.72 0.19 24));
   --destructive-foreground: light-dark(oklch(0.985 0 0), oklch(0.985 0 0));
   --border: light-dark(oklch(0.905 0.008 255), oklch(1 0 0 / 10%));
   --input: light-dark(oklch(0.89 0.01 255), oklch(1 0 0 / 14%));
