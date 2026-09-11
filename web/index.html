@@ -25,15 +25,24 @@
          so `script-src 'self'` already allows it. -->
     <script src="/theme-init.js"></script>
     <!-- Browser chrome follows the OS for System users. useTheme rewrites these at runtime for
-         someone who has pinned the opposite of their OS. -->
+         someone who has pinned the opposite of their OS.
+         THESE ARE --background RASTERISED, and they have to be: in standalone the OS paints the
+         status-bar band in `theme-color` and the app paints the header underneath it, so any
+         other value is a permanent one-shade stripe across the top of every screen. They shipped
+         as #f5f5f5 / #0a0a0a, which are the MIRROR's two grounds (components/mirror-space.ts) —
+         right for the terminal, one step off the page. `oklch(0.965 0.005 255)` rasterises to
+         #f1f4f7 and `oklch(0.17 0.012 262)` to #0d0f15, measured in the browser at DPR 1.
+         KEEP THESE THREE IN STEP: index.css `--background`, hooks/use-theme.ts META_COLOR (the
+         same two values, for the pinned case), and vite.config.ts's manifest colours. Each of
+         those points back here. -->
     <meta
       name="theme-color"
-      content="#f5f5f5"
+      content="#f1f4f7"
       media="(prefers-color-scheme: light)"
     />
     <meta
       name="theme-color"
-      content="#0a0a0a"
+      content="#0d0f15"
       media="(prefers-color-scheme: dark)"
     />
     <meta name="apple-mobile-web-app-capable" content="yes" />
