@@ -1,11 +1,12 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { server } from "@/test/setup";
 import { __resetDiffCache } from "@/lib/api";
-import { DiffSheet } from "./diff-sheet";
+import { __resetNotes, notesForPane } from "@/lib/notes";
+import { DiffSheet, newSideRange, splitHunks } from "./diff-sheet";
 
 // The Changes sheet: the file list, one file's patch, and the three refusals the bridge answers
 // with — each read through MSW the way the real bridge answers.
@@ -52,7 +53,10 @@ function renderSheet(open = true, onClose = vi.fn()) {
   );
 }
 
-beforeEach(() => __resetDiffCache());
+beforeEach(() => {
+  __resetDiffCache();
+  __resetNotes();
+});
 
 describe("DiffSheet", () => {
   it("lists the changed files with counts, and shortens the repo root", async () => {
@@ -75,7 +79,10 @@ describe("DiffSheet", () => {
     const added = await screen.findByText("+two!");
     expect(added.className).toContain("text-status-done");
     expect(screen.getByText("-two").className).toContain("text-status-blocked");
-    expect(screen.getByText("@@ -1,2 +1,3 @@").className).toContain("text-primary");
+    // The hunk header's tint moved out to the row that carries the note gesture, so the class is
+    // read off that row rather than off the text node inside it.
+    const header = screen.getByText("@@ -1,2 +1,3 @@").closest('[data-slot="diff-hunk"]');
+    expect(header?.className).toContain("text-primary");
     // The title names the file while the patch is showing.
     expect(screen.getByRole("dialog", { name: "a.ts" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /back to the file list/i }));
@@ -198,5 +205,68 @@ describe("DiffSheet", () => {
     serveDiff();
     renderSheet(false);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  // FORK: anchored notes.
+  it("a hold on a hunk opens the note sheet, and the saved note pins a number on that hunk", async () => {
+    serveDiff();
+    const user = userEvent.setup();
+    renderSheet();
+    await user.click(await screen.findByRole("button", { name: /a\.ts/ }));
+    const row = (await screen.findByText("@@ -1,2 +1,3 @@")).closest('[data-slot="diff-hunk"]');
+    if (row === null) throw new Error("the hunk header carries no note row");
+    // `contextmenu` is `useLongPress`'s other trigger — what Android raises at the end of a hold and
+    // what a desk raises on a right-click — and it needs no fake timers to reach.
+    fireEvent.contextMenu(row);
+
+    await user.type(await screen.findByRole("textbox"), "this drops the guard");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByLabelText("Note 1")).toBeInTheDocument();
+    expect(notesForPane(undefined, "w1:p1")[0]?.anchor).toEqual({
+      kind: "diff",
+      file: "a.ts",
+      hunkHeader: "@@ -1,2 +1,3 @@",
+      lineRange: "1-3",
+      excerpt: "@@ -1,2 +1,3 @@\n one\n-two\n+two!\n+three",
+    });
+  });
+});
+
+// FORK: the two pure functions a note anchored to a hunk is built out of. They decide what an agent
+// is told to open, so they are tested away from the rendering.
+describe("splitHunks", () => {
+  it("keeps git's preamble out of the hunks and gives each hunk its own body", () => {
+    const split = splitHunks([
+      "diff --git a/a.ts b/a.ts",
+      "--- a/a.ts",
+      "+++ b/a.ts",
+      "@@ -1,2 +1,3 @@",
+      " one",
+      "+two",
+      "@@ -9,1 +10,1 @@",
+      "-nine",
+    ]);
+    expect(split.preamble).toHaveLength(3);
+    expect(split.hunks.map((h) => h.header)).toEqual(["@@ -1,2 +1,3 @@", "@@ -9,1 +10,1 @@"]);
+    expect(split.hunks[0]?.body).toEqual([" one", "+two"]);
+    expect(split.hunks[1]?.body).toEqual(["-nine"]);
+  });
+
+  it("reports no hunks for a patch that is all preamble (a binary file)", () => {
+    expect(splitHunks(["diff --git a/x.png b/x.png", "Binary files differ"]).hunks).toEqual([]);
+  });
+});
+
+describe("newSideRange", () => {
+  it("names the NEW side's lines, which is what the agent will open", () => {
+    expect(newSideRange("@@ -4,7 +12,9 @@")).toBe("12-20");
+    expect(newSideRange("@@ -4,7 +12 @@")).toBe("12");
+    expect(newSideRange("@@ -4,7 +12,1 @@")).toBe("12");
+  });
+
+  it("has nothing to say about a pure deletion or a header it cannot read", () => {
+    expect(newSideRange("@@ -4,7 +12,0 @@")).toBeUndefined();
+    expect(newSideRange("not a hunk header")).toBeUndefined();
   });
 });

@@ -49,6 +49,10 @@ import { RecordingStrip } from "@/components/recording-strip";
 import { useSttRecorder } from "@/hooks/use-stt-recorder";
 import { useHandsFree, useSttCapability } from "@/lib/stt";
 import { NoEchoNotice } from "@/components/no-echo-notice";
+import { NoteBadge } from "@/components/note-badge";
+import { noteChipLabel } from "@/components/notes-sheet";
+import { usePendingNotes } from "@/hooks/use-notes";
+import { buildNotesPrompt, deleteNote, markNotesSent } from "@/lib/notes";
 
 export interface ComposerHandle {
   /** Focus the input and put the caret at the end — used by the mirror-tap-to-focus in AgentChat. */
@@ -129,6 +133,9 @@ interface ComposerProps {
   setControlsOpen: (open: boolean) => void;
   /** Snap the mirror to the live tail (follow + revalidate + scroll) after a successful send. */
   onSent: () => void;
+  /** FORK: the pane's rendered name, for the `## Feedback:` heading of a send carrying notes. The
+   *  pane id stands in when the header has no name to give. */
+  paneName?: string;
 }
 
 // The composer cluster at the bottom of the pane view — everything a phone keyboard can't do on its
@@ -242,7 +249,7 @@ function ComposerDock({
 const ATTACH_PRESS_MS = 220;
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { paneId, scope, agent, isShell, status, stale, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, setControlsOpen, onSent },
+  { paneId, scope, agent, isShell, status, stale, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, setControlsOpen, onSent, paneName },
   ref,
 ) {
   const revalidator = useRevalidator();
@@ -357,6 +364,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }, [scope, scopeId, paneId]);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // FORK: the notes waiting on this pane, and whether the operator has been asked about them yet on
+  // this send. `askNotes` lives for one tap: answering it either way sends, and a pane switch
+  // remounts this component, so it can never be armed against a pane it was not raised on.
+  const pendingNotes = usePendingNotes(scope, paneId);
+  const [askNotes, setAskNotes] = useState(false);
   // Pending-send preview: set on a successful send, cleared when the mirror catches up (next text
   // update) or after a 6s safety timeout. Shows "You sent: …" so the user knows the message landed.
   const [lastSent, setLastSent] = useState<string | null>(null);
@@ -1015,7 +1027,36 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       return;
     }
     sendConfirm.reset();
+    // FORK: notes are waiting on this pane, so ask ONCE whether they ride along. A notice with two
+    // buttons in the composer's own chrome rather than a modal (DESIGN.md §11 — a contextual notice
+    // is anchored to the control it is about, and it pushes the input, which is correct: the
+    // operator is acting there). Answering either way clears it, so a second tap always sends.
+    if (pendingNotes.length > 0 && !askNotes) {
+      setAskNotes(true);
+      return;
+    }
+    setAskNotes(false);
     send(input, true);
+  }
+
+  /**
+   * FORK: the draft and everything pending, as ONE prompt.
+   *
+   * `isDraft: false` on purpose — the field is cleared HERE, on success, rather than by `send()`.
+   * `send()`'s restore path puts the value it was given back into the box, and the value here is a
+   * whole Markdown document; a failed send would leave the operator staring at the prompt where
+   * their sentence used to be. Clearing on success and leaving the words alone otherwise is the
+   * behaviour they expect from every other failure in this file.
+   */
+  async function sendWithNotes() {
+    if (pendingNotes.length === 0) return;
+    setAskNotes(false);
+    const ids = pendingNotes.map((n) => n.id);
+    const prompt = buildNotesPrompt(pendingNotes, { title: paneName ?? paneId, message: input });
+    const ok = await send(prompt, false);
+    if (!ok) return;
+    markNotesSent(ids);
+    updateInput("");
   }
   const confirmingSend = sendConfirm.pending === "send";
   const forcingSend = forceConfirm.pending === "force";
@@ -1167,6 +1208,63 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <span className="truncate">
               <span className="font-medium">{translate("composer.sentPreview.label")}</span> {lastSent}
             </span>
+          </div>
+        </Collapse>
+
+        {/* FORK: WHAT WILL RIDE ALONG, as chips.
+            Windsurf's `@`-mention framing, on a phone: the anchor is a compact referenceable object
+            you can delete with one tap, not a wall of Markdown you scroll past to reach your own
+            draft. Through `Collapse`, because a row arriving above the input is a state moving
+            content and that is the one sanctioned way to do it (DESIGN.md §11). */}
+        <Collapse open={pendingNotes.length > 0}>
+          <div
+            data-slot="note-chips"
+            role="group"
+            aria-label={translate("notes.composer.label")}
+            className="-mx-1 mb-2 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none]"
+          >
+            {pendingNotes.map((note) => (
+              <span
+                key={note.id}
+                className="flex shrink-0 items-center gap-1 rounded-full border border-transparent bg-primary/12 py-1 pl-1.5 pr-1 text-xs text-foreground"
+              >
+                <NoteBadge index={note.index} />
+                <span className="max-w-32 truncate">{noteChipLabel(note)}</span>
+                <button
+                  type="button"
+                  onClick={() => deleteNote(note.id)}
+                  aria-label={translate("notes.composer.remove", { index: note.index })}
+                  className="grid size-4 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors active:bg-muted"
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        </Collapse>
+
+        {/* The one question a send with notes pending has to ask, answered in the composer's own
+            chrome and never in a modal: a modal would take the operator off the words they just
+            wrote to decide about the notes they can see two rows above. */}
+        <Collapse open={askNotes && pendingNotes.length > 0}>
+          <div className="mb-2 flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-xs">
+            <span className="min-w-0 flex-1">
+              {translatePlural("notes.composer.ask", pendingNotes.length)}
+            </span>
+            <Button size="sm" className="h-7 px-2 text-xs" onClick={() => void sendWithNotes()}>
+              {translate("notes.composer.include")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs text-muted-foreground"
+              onClick={() => {
+                setAskNotes(false);
+                send(input, true);
+              }}
+            >
+              {translate("notes.composer.skip")}
+            </Button>
           </div>
         </Collapse>
 

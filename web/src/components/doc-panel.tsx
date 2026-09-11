@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, Loader2, Search, X } from "lucide-react";
+import { ChevronLeft, Loader2, Search, StickyNote, X } from "lucide-react";
 
+import { NoteBadge } from "@/components/note-badge";
+import { NoteSheet } from "@/components/notes-sheet";
 import { Button } from "@/components/ui/button";
 import { RightSheet } from "@/components/ui/right-sheet";
 import { useLocale } from "@/hooks/use-locale";
+import { useNoteAt } from "@/hooks/use-notes";
 import * as api from "@/lib/api";
 import { DOC_PROXY_PATH } from "@/lib/doc-links";
 import { timeAgo } from "@/lib/format";
 import { t } from "@/lib/i18n";
+import type { NoteAnchor } from "@/lib/notes";
+import type { Scope } from "@/lib/scope";
 import type { DocSummaryView, DocTagView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +31,10 @@ export interface DocRef {
   slug: string;
   path: string;
   href: string;
+  /** FORK: the listing's own title, when the panel was reached from the browser rather than a link.
+   *  A document opened from a mirror link has none — the frame is sandboxed, so its `<title>` is
+   *  unreadable from here — and the slug stands in. */
+  title?: string;
 }
 
 interface DocPanelProps {
@@ -36,6 +45,9 @@ interface DocPanelProps {
    * flips true and not again, so navigating inside the panel never fights the prop.
    */
   initial: DocRef | null;
+  /** FORK: the pane a note taken here belongs to — the panel is opened from one and sends into it. */
+  paneId: string;
+  scope?: Scope;
 }
 
 /** How long a keystroke waits before it becomes a search, so a typed word costs one round trip. */
@@ -43,21 +55,41 @@ export const SEARCH_DEBOUNCE_MS = 300;
 /** How many tag chips the row shows — the most-used ones; kb has dozens. */
 export const TAG_CHIPS = 14;
 
-export function DocPanel({ open, onClose, initial }: DocPanelProps) {
+export function DocPanel({ open, onClose, initial, paneId, scope }: DocPanelProps) {
   useLocale();
   // The stack of documents opened in this session of the panel; empty means the browser is showing.
   const [stack, setStack] = useState<DocRef[]>([]);
+  // FORK: a note about the document on screen.
+  //
+  // It anchors to the slug and the title and NOTHING ELSE, which is a platform fact rather than a
+  // shortcut: the frame below is `sandbox=""`, so the document sits in an OPAQUE ORIGIN and the
+  // parent cannot read a selection, a heading or a scroll position out of it. Nothing short of
+  // dropping `allow-same-origin` — i.e. handing an agent-written document Collie's own origin —
+  // would change that, and that is not a trade this app makes. So the note says so, in the prompt
+  // as well as in the sheet (`lib/notes.ts` → the doc anchor's `**Note:**` row), rather than letting
+  // an agent assume the operator pointed at a passage.
+  const [noting, setNoting] = useState(false);
   const wasOpen = useRef(false);
   useEffect(() => {
     if (open && !wasOpen.current) setStack(initial ? [initial] : []);
-    if (!open) setStack([]);
+    if (!open) {
+      setStack([]);
+      // The note sheet is a sibling of this panel now, so closing the panel takes it down too.
+      setNoting(false);
+    }
     wasOpen.current = open;
   }, [open, initial]);
 
   const current = stack.length > 0 ? stack[stack.length - 1]! : null;
 
-  const openDoc = useCallback((slug: string) => {
-    setStack((prev) => [...prev, { slug, path: `${DOC_PROXY_PATH}${slug}`, href: slug }]);
+  const anchor: NoteAnchor | null =
+    current === null ? null : { kind: "doc", slug: current.slug, title: current.title ?? current.slug };
+  const note = useNoteAt(scope, paneId, anchor);
+
+  const openDoc = useCallback((slug: string, title?: string) => {
+    const ref: DocRef = { slug, path: `${DOC_PROXY_PATH}${slug}`, href: slug };
+    if (title !== undefined && title !== "") ref.title = title;
+    setStack((prev) => [...prev, ref]);
   }, []);
 
   function back() {
@@ -65,6 +97,7 @@ export function DocPanel({ open, onClose, initial }: DocPanelProps) {
   }
 
   return (
+    <>
     <RightSheet
       open={open}
       onClose={onClose}
@@ -80,6 +113,16 @@ export function DocPanel({ open, onClose, initial }: DocPanelProps) {
               <ChevronLeft className="size-4" />
               {stack.length > 1 ? t("docs.back") : t("docs.title")}
             </Button>
+            <span className="flex-1" />
+            {/* FORK: the note lives in the panel's own header row because that is the only chrome
+                this panel has that the frame below cannot swallow — a long press inside a
+                cross-origin iframe dispatches in ITS document and never reaches us, which is the
+                same fact `ui/right-sheet.tsx` puts its drag gesture on the header for. */}
+            <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2" onClick={() => setNoting(true)}>
+              <StickyNote className="size-4" />
+              {t("notes.doc.button")}
+              {note !== null && <NoteBadge index={note.index} sent={note.sentAt !== undefined} />}
+            </Button>
           </div>
           {/* `sandbox=""` withholds every capability — the same posture the response's own CSP takes,
               spelled again on the embedder so neither side is the only thing standing between an
@@ -91,6 +134,17 @@ export function DocPanel({ open, onClose, initial }: DocPanelProps) {
         <DocBrowser onOpen={openDoc} />
       )}
     </RightSheet>
+    {/* Beside the panel, not inside it: the panel plays a `translateX` entrance, and a transform
+        makes its subtree the containing block for anything `position: fixed` — a sheet mounted
+        within it would rise from the panel's bottom edge rather than the viewport's. */}
+    <NoteSheet
+      open={noting && anchor !== null}
+      onClose={() => setNoting(false)}
+      paneId={paneId}
+      scope={scope}
+      anchor={anchor}
+    />
+    </>
   );
 }
 
@@ -99,7 +153,7 @@ type Listing =
   | { phase: "ready"; documents: DocSummaryView[]; nextCursor?: string; more: boolean }
   | { phase: "failed" };
 
-export function DocBrowser({ onOpen }: { onOpen: (slug: string) => void }) {
+export function DocBrowser({ onOpen }: { onOpen: (slug: string, title?: string) => void }) {
   useLocale();
   const [query, setQuery] = useState("");
   const [tag, setTag] = useState("");
@@ -227,7 +281,7 @@ export function DocBrowser({ onOpen }: { onOpen: (slug: string) => void }) {
               <li key={doc.slug}>
                 <button
                   type="button"
-                  onClick={() => onOpen(doc.slug)}
+                  onClick={() => onOpen(doc.slug, doc.title)}
                   className="flex min-h-11 w-full flex-col gap-0.5 px-4 py-2 text-left hover:bg-accent active:bg-muted"
                 >
                   <span className="flex items-baseline gap-2">
