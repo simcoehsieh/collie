@@ -3247,9 +3247,9 @@ describe("Composer — a link failure queues the send", () => {
 });
 
 // ── FORK: STOP, AND EDIT WHAT WAS JUST SENT ──────────────────────────────────
-// While the agent works on the last message, one tap sends it Esc and puts the words back in the
-// box. Pinned: the offer exists only while WORKING and only after a send; the tap presses exactly
-// Escape; the words come back (above anything typed meanwhile) and the offer goes.
+// While the agent works on the last message and the box is empty, the Send slot holds Stop: one tap
+// sends Esc and puts the words back in the box. Pinned: offered only while WORKING, only after a
+// send, only on an empty box; the tap presses exactly Escape; the words come back and Send returns.
 describe("Composer — stop and edit what you sent", () => {
   it("interrupts with Escape and puts the message back in the box", async () => {
     const user = userEvent.setup();
@@ -3267,12 +3267,18 @@ describe("Composer — stop and edit what you sent", () => {
     await user.type(box, "refactor the parser");
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(/sent/i));
-    const recall = await screen.findByRole("button", { name: "Stop and edit what you sent" });
-
+    await screen.findByRole("button", { name: "Stop and edit what you sent" });
+    // It stands in the Send slot: while it is offered there is no Send button, and typing anything
+    // brings Send back (a new message while the agent works still queues).
+    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
     await user.type(box, "also");
-    await user.click(recall);
+    expect(screen.queryByRole("button", { name: "Stop and edit what you sent" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+    await user.clear(box);
+
+    await user.click(screen.getByRole("button", { name: "Stop and edit what you sent" }));
     await waitFor(() => expect(keys.at(-1)).toEqual(["Escape"]));
-    expect(box).toHaveValue("refactor the parser\n\nalso");
+    expect(box).toHaveValue("refactor the parser");
     expect(screen.getByTestId("status")).toHaveTextContent(/back in the box/i);
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Stop and edit what you sent" })).not.toBeInTheDocument(),

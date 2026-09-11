@@ -15,7 +15,6 @@ import {
   Slash,
   Square,
   Terminal,
-  Undo2,
   X,
   Zap,
 } from "lucide-react";
@@ -1208,6 +1207,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
    * Offered only while the agent is WORKING and only for the message that put it to work: once
    * the agent has stopped there is nothing to interrupt, and the next send replaces the offer.
    */
+  const stopOffered =
+    recall !== null && status === "working" && !locked && !sending && !direct.active && input.trim() === "";
+
   async function recallLastSend() {
     const words = recall;
     if (words === null || locked) return;
@@ -1281,20 +1283,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </div>
         </Collapse>
 
-        {/* FORK: the way back from a send — while the agent works on the last message, one tap
-            interrupts it and puts the words back in the box (see `recallLastSend`). A row in the
-            same place the "You sent" chip stands, because it is about the same message. */}
-        <Collapse open={recall !== null && status === "working" && !locked}>
-          <button
-            type="button"
-            data-slot="recall-send"
-            onClick={() => void recallLastSend()}
-            className="mb-2 flex w-full items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-left text-xs font-medium text-foreground transition-colors active:bg-muted/60"
-          >
-            <Undo2 className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="min-w-0 flex-1 truncate">{translate("composer.recall.button")}</span>
-          </button>
-        </Collapse>
 
         {/* FORK: WHAT WILL RIDE ALONG, as chips.
             Windsurf's `@`-mention framing, on a phone: the anchor is a compact referenceable object
@@ -2088,6 +2076,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               aria-label={translate("composer.send.reallySend")}
             >
               {translate("composer.send.reallySend")}
+            </Button>
+          ) : stopOffered ? (
+            // FORK: STOP, in the Send button's own slot. After a send the box is empty and the agent
+            // is working, so the primary control has nothing to send and one thing to offer: Esc to
+            // the pane and the message back in the box (`recallLastSend`). The moment the operator
+            // types, the slot is Send again — a new message while the agent works still queues.
+            <Button
+              size="icon"
+              variant="secondary"
+              className="size-11 shrink-0 rounded-full"
+              onClick={() => void recallLastSend()}
+              aria-label={translate("composer.recall.button")}
+            >
+              <Square className="size-4" />
             </Button>
           ) : (
             <Button
