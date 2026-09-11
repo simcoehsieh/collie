@@ -19,9 +19,26 @@ export const SLOP = 6;
  */
 export const DOWN_PX = 40;
 
+/**
+ * FORK: UPWARD travel past which a gesture is a "bring it back" pull — the mirror of {@link DOWN_PX}
+ * and the same number, because the two are one ladder and an asymmetric pair would mean the way back
+ * is harder than the way out.
+ *
+ * It is NOT the sheet's own `OPEN_PX`, and it deliberately shadows it: a caller that wires
+ * `onPullUp` is saying "up means something else right now" (agent-chat.tsx wires it only while
+ * cinema mode is on), so the pane switcher must not also open behind it. A caller that leaves it
+ * unset is untouched — the sheet keeps the whole upward half of the gesture, peek and all.
+ */
+export const UP_PX = DOWN_PX;
+
 /** Pure: is `dy` (positive = up) a downward pull past {@link DOWN_PX}? Exported for the test. */
 export function isPullDown(dy: number): boolean {
   return -dy >= DOWN_PX;
+}
+
+/** Pure: is `dy` (positive = up) an upward pull past {@link UP_PX}? Exported for the test. */
+export function isPullUp(dy: number): boolean {
+  return dy >= UP_PX;
 }
 
 /**
@@ -75,6 +92,14 @@ interface UseSheetPullOptions {
   max?: number;
   /** FORK: fired once when the finger travels {@link DOWN_PX} DOWN from where it landed. */
   onPullDown?: () => void;
+  /**
+   * FORK: fired once when the finger travels {@link UP_PX} UP from where it landed — the mirror of
+   * `onPullDown`. Wiring it CLAIMS the upward half of the gesture: `onPull`/`onOpen` never see it,
+   * so a caller that still wants the sheet on an upward pull must leave this unset. Pass it
+   * conditionally (`cond ? fn : undefined`) rather than branching inside it, so "is up spoken for
+   * right now" is one readable expression at the call site.
+   */
+  onPullUp?: () => void;
 }
 
 interface UseSheetPullResult {
@@ -88,9 +113,12 @@ export function useSheetPull({
   onCancel,
   max,
   onPullDown,
+  onPullUp,
 }: UseSheetPullOptions): UseSheetPullResult {
   const onPullDownRef = useRef(onPullDown);
   onPullDownRef.current = onPullDown;
+  const onPullUpRef = useRef(onPullUp);
+  onPullUpRef.current = onPullUp;
   // Callbacks travel through refs so the attach effect below runs once per DOM node rather than
   // re-binding listeners on every render, the same "read via ref, stay stable across renders"
   // shape hooks/use-spaces.ts uses for its own callbacks.
@@ -118,8 +146,9 @@ export function useSheetPull({
 
     let startY = 0;
     let engaged = false;
-    // FORK: set once a downward pull has fired; the rest of that gesture belongs to nobody.
-    let pulledDown = false;
+    // FORK: set once a DIRECTIONAL pull (down or up) has fired; the rest of that gesture belongs to
+    // nobody — no peek, no open, no second fire in the other direction on the way back.
+    let claimed = false;
     // Trailing samples for the velocity read, trimmed to the last VELOCITY_WINDOW_MS on each move.
     let samples: { t: number; y: number }[] = [];
 
@@ -133,7 +162,7 @@ export function useSheetPull({
       if (!t) return;
       startY = t.clientY;
       engaged = false;
-      pulledDown = false;
+      claimed = false;
       samples = [{ t: e.timeStamp, y: t.clientY }];
       // Measured once per gesture: the handle's own distance from the viewport bottom, so the
       // peek's top edge can start there instead of at the screen's bottom edge (BottomSheet's
@@ -153,10 +182,15 @@ export function useSheetPull({
       // Non-passive listener: suppress the browser's own scroll/pull-to-refresh while the drag is
       // ours, same reasoning as ui/sheet.tsx's drag-to-dismiss.
       e.preventDefault();
-      if (pulledDown) return;
+      if (claimed) return;
       if (onPullDownRef.current && isPullDown(dy)) {
-        pulledDown = true;
+        claimed = true;
         onPullDownRef.current();
+        return;
+      }
+      if (onPullUpRef.current && isPullUp(dy)) {
+        claimed = true;
+        onPullUpRef.current();
         return;
       }
 
@@ -170,7 +204,7 @@ export function useSheetPull({
     const onEnd = () => {
       if (!engaged) return;
       engaged = false;
-      if (pulledDown) {
+      if (claimed) {
         onCancelRef.current();
         return;
       }

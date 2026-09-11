@@ -268,6 +268,8 @@ export const zhTW: Dictionary = {
   "chat.zen.label": "專注模式",
   // The floating pill is the ONE way out of zen, and it carries no words — only the glyph.
   "chat.zen.exitAria": "退出專注模式",
+  // FORK: cinema mode — the capsule that stands in for the folded chrome.
+  "chat.cinema.exitAria": "重新顯示標題列與標籤條",
   "chat.strips.hide.both": "隱藏分頁與窗格",
   "chat.strips.hide.tabs": "隱藏分頁",
   "chat.strips.hide.panes": "隱藏窗格",

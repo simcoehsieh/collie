@@ -282,6 +282,8 @@ export const ja: Dictionary = {
   "chat.zen.label": "Zen モード",
   // The floating pill is the ONE way out of zen, and it carries no words — only the glyph.
   "chat.zen.exitAria": "Zen モードを終了",
+  // FORK: cinema mode — the capsule that stands in for the folded chrome.
+  "chat.cinema.exitAria": "ヘッダーとストリップを再表示",
   "chat.strips.hide.both": "タブとペインを非表示",
   "chat.strips.hide.tabs": "タブを非表示",
   "chat.strips.hide.panes": "ペインを非表示",

@@ -298,6 +298,8 @@ export const en = {
   "chat.zen.label": "Zen mode",
   // The floating pill is the ONE way out of zen, and it carries no words — only the glyph.
   "chat.zen.exitAria": "Exit zen mode",
+  // FORK: cinema mode — the capsule that stands in for the folded chrome.
+  "chat.cinema.exitAria": "Show the header and strips again",
   // --- chat.strips (the tab row + pane row, folded into one bar of beads) ---
   // The chevron's own name, and the summary bar's. Both are chosen for the rows actually on screen:
   // a pane row appears only above one pane, so naming it unconditionally would promise a row that is

@@ -280,6 +280,8 @@ export const ko: Dictionary = {
   "chat.zen.label": "집중 모드",
   // The floating pill is the ONE way out of zen, and it carries no words — only the glyph.
   "chat.zen.exitAria": "집중 모드 종료",
+  // FORK: cinema mode — the capsule that stands in for the folded chrome.
+  "chat.cinema.exitAria": "헤더와 스트립 다시 표시",
   "chat.strips.hide.both": "탭 및 창 숨기기",
   "chat.strips.hide.tabs": "탭 숨기기",
   "chat.strips.hide.panes": "창 숨기기",
