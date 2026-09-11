@@ -111,6 +111,31 @@
      stock white; it is an alias, and there is no third paper behind it. */
   --popover: var(--card);
   --popover-foreground: var(--card-foreground);
+  /* ── THE ONE RULE FOR THE ACCENT (FORK, 2026-09-11) ────────────────────────────────────────
+     TONAL --control-on MARKS STATE; SOLID --primary MARKS THE ONE ACTION A SCREEN WANTS.
+
+     It is written here, above both tokens, because the app owns two ways of saying "this one" and
+     was using the loud one for both jobs. Counted across web/src/**\/*.tsx before the rule:
+     `bg-primary` 39, `text-primary` 26, `border-primary` 23, `bg-control-on` 2 — the tonal state
+     tint, whose light half is tuned by CHROMA precisely so a row of it does not shout, was drawn
+     in exactly one place. The cost was three different "selected" treatments within 250px of each
+     other on the pane screen (a solid pill in the spaces strip, a lighter tab in the tab strip, a
+     solid pill in the pane strip), status dots landing ON a solid accent — which the status block
+     below forbids outright for a chip — and a dashboard with no accent pixels at all, so the one
+     colour that should mean "do this" meant nothing on the screen the app opens on.
+
+     Reading the rule:
+       STATE is a thing that is currently true and that the operator toggled or arrived at — an open
+       dock, an armed mode, the selected pane, the current space, the active tab, the row you are
+       looking at. It is tonal: --control-on / --control-on-foreground, or a 2px inset rail in
+       --primary where a fill would put a chip on a coloured ground (the session switcher does this
+       already, and the status block below records that it moved there FOR CONTRAST and looked
+       better). A screen may carry many of these at once, which is exactly why they must be quiet.
+       ACTION is the one thing this screen is for: Send, "Tap to resume", the update CTA, the
+       primary button in a sheet. Solid --primary with --primary-foreground on it. At most one per
+       screen; a second one is the signal that the screen has not decided what it is for.
+
+     This block retunes the tokens only. The pill classes that spend them are screen files. */
   /* THE accent — one, desaturated indigo-blue. Dark carries dark text on it (9:1), light white. */
   --primary: light-dark(oklch(0.5 0.17 258), oklch(0.74 0.13 258));
   --primary-foreground: light-dark(oklch(0.99 0 0), oklch(0.16 0.02 262));
@@ -129,6 +154,23 @@
     oklch(0.4 0.14 258),
     oklch(0.88 0.07 255)
   );
+  /* The ON state's own hover and press, which it did not have. composer.tsx pins
+     `hover:bg-control-on` to the resting tint on purpose — without it, hovering an already-on
+     control repaints it with the ghost variant's grey and reads as switching OFF under the cursor
+     — so the tint had exactly one value and an ON control gave no feedback at all on a desktop.
+     A state that cannot be pressed is the one thing it must not look like.
+
+     The step is taken in CHROMA and lightness together, downward, so hover and press move toward
+     the accent rather than toward grey — the opposite direction from the ghost variant's hover,
+     which is what made the old behaviour read as a toggle-off. Rasterised:
+       light  rest #cfe7ff · hover #c1dfff (1.08 off rest) · pressed #b5d7ff (1.17)
+       dark   rest #1d3559 · hover #25426d (1.22)          · pressed #2f5081 (1.52)
+     --control-on-foreground still clears its bar on every one of them: 7.36 / 6.80 / 6.29 light,
+     8.52 / 6.99 / 5.62 dark. The light steps are small by WCAG and that is the same fact the
+     resting tint records — at this lightness nothing that still reads as light sky measures more,
+     and a pointer that is ON the control supplies the other half of the signal. */
+  --control-on-hover: light-dark(oklch(0.895 0.062 255), oklch(0.38 0.082 258));
+  --control-on-pressed: light-dark(oklch(0.87 0.072 255), oklch(0.43 0.09 258));
   --secondary: light-dark(oklch(0.93 0.008 255), oklch(0.27 0.016 262));
   --secondary-foreground: light-dark(oklch(0.2 0.012 262), oklch(0.965 0.006 255));
   /* The INERT fill — a well, a disabled track, a quiet chip on a card. Value unchanged (rgb 235
@@ -435,6 +477,8 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-control-on: var(--control-on);
   --color-control-on-foreground: var(--control-on-foreground);
+  --color-control-on-hover: var(--control-on-hover);
+  --color-control-on-pressed: var(--control-on-pressed);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
