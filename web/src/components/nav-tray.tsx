@@ -61,6 +61,29 @@ interface NavTrayProps {
 /** Stable default so an omitted prop never re-renders the pad. */
 const NO_REFUSED_KEYS: readonly string[] = [];
 
+// FORK — A KEYCAP LOOKS PRESSABLE, AND THAT IS ONE LINE OF SHADOW.
+//
+// The caps were flat `--muted` rectangles with no border and no bottom edge, which is the same
+// drawing this app uses for a DISABLED control — so a pad of live keys read as a pad of dead ones.
+// iOS's own keyboard carries a 1px bottom shadow for exactly this reason: it is the whole of what
+// says "this has a top surface you can push down".
+//
+// `--rule` and not `--border`: the edge under a cap separates the key from the panel it sits on,
+// which is the region-boundary job `--rule` is the stronger line for (see ui/list-group.tsx). The
+// shadow is UNCONDITIONAL — it rides in the shared class, in every state, so a cap that lights up
+// on a press keeps its bottom edge and only the fill changes (DESIGN.md §2; a box-shadow takes no
+// layout room either way, so this is paint and never reflow). `rounded-md` overrides size="sm"'s
+// `rounded-sm`: a keycap is a key, not a chip. The border is RECOLOURED, never added —
+// `ui/button.tsx` reserves `border border-transparent` in its base string, so a cap that gains an
+// edge here occupies exactly the box it always did.
+//
+// SHAPE and FILL are separate strings, and that split is load-bearing: a className wins over the
+// variant it is merged with, so a single "rounded + edge + bg-card" constant would have silently
+// painted over the `default` variant's fill and killed the press echo — the one thing on this pad
+// that says a key reached the terminal. Shape is unconditional; the fill is only the resting one.
+const KEYCAP = "rounded-md border-rule shadow-[0_1px_0_var(--rule)]";
+const KEYCAP_REST = "bg-card";
+
 const DIGITS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
 // F1–F12 — Herdr's send_keys grammar accepts them bare (HERDR_API.md), and harnesses bind them to
@@ -170,7 +193,11 @@ export function NavTray({
         aria-label={aria}
         // touch-action/select-none: without them a held button on iOS starts a text selection and
         // Android may treat the hold as a scroll gesture, both of which cancel the pointer stream.
-        className="h-10 touch-manipulation select-none px-0 text-sm font-medium"
+        className={cn(
+          KEYCAP,
+          held || phase !== "idle" ? undefined : KEYCAP_REST,
+          "h-10 touch-manipulation select-none px-0 text-sm font-medium",
+        )}
       >
         {held ? (
           <span className="mx-auto flex items-center gap-1">
@@ -189,17 +216,26 @@ export function NavTray({
   // A modifier button reads its own three-state mode from `mods`: outline when off, filled (default)
   // when armed — once OR locked — with a small Lock glyph beside the label to distinguish locked from
   // one-shot. Tapping cycles off → once → locked → off.
-  const modBtn = (m: Modifier, label: ReactNode) => {
+  const modBtn = (m: Modifier, label: ReactNode, className?: string) => {
     const mode = mods[m];
     return (
       <Button
         type="button"
-        variant={mode === "off" ? "outline" : "default"}
+        variant="outline"
         size="sm"
         disabled={disabled}
         onClick={() => arm(m)}
         aria-pressed={mode !== "off"}
-        className="h-10 px-0 text-sm font-medium"
+        // FORK: armed is TONAL, not solid. A modifier is a STATE — it stays on across presses and
+        // Sends — and the app's answer to state is `--control-on` (see pane-strip.tsx). Solid
+        // primary here also made three of the loudest objects on the screen sit in a row under a
+        // terminal. The Lock glyph still separates locked from one-shot.
+        className={cn(
+          KEYCAP,
+          "h-10 px-0 text-sm font-medium",
+          mode === "off" ? KEYCAP_REST : "bg-control-on text-control-on-foreground",
+          className,
+        )}
       >
         {mode === "locked" && <Lock className="size-3" />}
         {label}
@@ -208,7 +244,11 @@ export function NavTray({
   };
 
   return (
-    <div className="space-y-2 border-t border-rule bg-muted/30 px-3 py-2.5">
+    // FORK: the pad has no ground of its own any more — `ComposerDock` paints it (bg-card,
+    // rounded-t-2xl), so the panel sits OVER the dock instead of sharing `--background` with it.
+    // A `bg-muted/30` wash inside a card is a second, fainter surface inside the first, and the
+    // caps below are `--card`: the wash was the thing making them look sunken.
+    <div className="space-y-2 px-3 py-2.5">
       {/* Staging strip — visible only while composing (a modifier armed or keys queued). Same on
           both tabs; the review-and-Send surface replaces the old "⇧ armed" hint line. */}
       <KeyQueueStrip
@@ -221,26 +261,37 @@ export function NavTray({
         disabled={disabled}
       />
 
-      {/* Segmented toggle: the keys pad vs. the phone-dialer digit grid. Same pressed language as the
-          composer's view toggles (secondary = active, ghost = inactive). */}
-      <div className="grid grid-cols-2 gap-1 rounded-lg bg-background/60 p-1">
+      {/* Segmented toggle: the keyboard vs. the phone-dialer digit grid.
+          FORK, two changes. The active segment is TONAL (`--control-on`) rather than a fill, which
+          is what this app's state language now is everywhere — this is one of two mutually exclusive
+          views, not an action. And the first segment reads "Keyboard", not "Keys": with the dock
+          button, the panel's own title and this segment all saying "Keys", the word appeared three
+          times inside 300px and named three different things. "Keyboard" is also simply what the
+          pad is — the component's own doc calls it the fixed keyboard. */}
+      <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted/60 p-1">
         <Button
           type="button"
-          variant={tab === "keys" ? "secondary" : "ghost"}
+          variant="ghost"
           size="sm"
           onClick={() => setTab("keys")}
           aria-pressed={tab === "keys"}
-          className="h-8 text-sm font-medium"
+          className={cn(
+            "h-8 text-sm font-medium",
+            tab === "keys" && "bg-control-on text-control-on-foreground",
+          )}
         >
-          {t("keys.tab.keys")}
+          {t("keys.tab.keyboard")}
         </Button>
         <Button
           type="button"
-          variant={tab === "digits" ? "secondary" : "ghost"}
+          variant="ghost"
           size="sm"
           onClick={() => setTab("digits")}
           aria-pressed={tab === "digits"}
-          className="h-8 font-mono text-sm"
+          className={cn(
+            "h-8 font-mono text-sm",
+            tab === "digits" && "bg-control-on text-control-on-foreground",
+          )}
         >
           123
         </Button>
@@ -255,6 +306,21 @@ export function NavTray({
               It carries the preset's own spelling, "Ctrl C" — the same chord must not read two ways
               in one drawer, and tmux notation ("C-c") is the spelling this codebase keeps out of
               sight precisely because it is not what Herdr accepts either. */}
+          {/* FORK — ONE GRID, NOT FOUR ROWS THAT HAPPEN TO BE NEAR EACH OTHER.
+              This was a 4-column grid, then a full-width button, then a 3-column grid, each in its
+              own box: no column edge lined up with any other row's, so a keypad read as five
+              hand-built strips. They are one `grid grid-cols-4` now, and every gutter aligns by
+              construction rather than by arithmetic.
+
+              Space spans all four, the way a spacebar does. Shift spans TWO and Ctrl/Alt one each —
+              4 does not divide by 3, and the wide key is the one a real keyboard makes wide, so the
+              split lands on the grid's own column lines instead of inventing a second set of them.
+
+              The geometry inside the first two rows is untouched and must stay: Esc top-left, Tab
+              directly below it, arrows as an inverted-T on the right, matching the composer's inline
+              quick keys for muscle memory. The Esc/Up gap holds a quick Ctrl+C — the one interrupt
+              chord worth a single tap, carrying the preset's own spelling, because the same chord
+              must not read two ways in one drawer. */}
           <div className="grid grid-cols-4 gap-1.5">
             {navBtn("Esc", ["Escape"])}
             {navBtn("Ctrl C", ["ctrl+c"], "Ctrl+C")}
@@ -264,26 +330,30 @@ export function NavTray({
             {navBtn(<ArrowLeft className="size-4" />, ["Left"], "Left", true)}
             {navBtn(<ArrowDown className="size-4" />, ["Down"], "Down", true)}
             {navBtn(<ArrowRight className="size-4" />, ["Right"], "Right", true)}
-          </div>
 
-          {/* Space — full-width, spacebar-style, on its own row */}
-          <Button
-            type="button"
-            variant={echo.phaseOf("Space") === "idle" ? "outline" : "default"}
-            size="sm"
-            disabled={disabled || !keysSendable(["Space"], unsupportedKeys)}
-            onClick={() => fire(["Space"], "Space")}
-            className="h-10 w-full text-sm font-medium"
-          >
-            {echo.phaseOf("Space") === "done" ? <Check className="size-4" /> : "Space"}
-          </Button>
+            {/* Space — the spacebar, spanning the whole width of the pad. */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={disabled || !keysSendable(["Space"], unsupportedKeys)}
+              onClick={() => fire(["Space"], "Space")}
+              className={cn(
+                KEYCAP,
+                "col-span-4 h-10 w-full text-sm font-medium",
+                echo.phaseOf("Space") === "idle"
+                  ? KEYCAP_REST
+                  : "bg-primary text-primary-foreground",
+              )}
+            >
+              {echo.phaseOf("Space") === "done" ? <Check className="size-4" /> : "Space"}
+            </Button>
 
-          {/* Modifiers (checkboxes that cycle off → once → locked → off): arm any subset and the
-              next key composes as their combined chord. Locked (Lock glyph) stays armed across
-              presses and Sends. Same pressed styling as everything else (default = armed, outline =
-              idle). Display order Shift · Ctrl · Alt; compose order is canonical regardless of taps. */}
-          <div className="grid grid-cols-3 gap-1.5">
-            {modBtn("shift", "⇧ Shift")}
+            {/* Modifiers (checkboxes that cycle off → once → locked → off): arm any subset and the
+                next key composes as their combined chord. Locked (Lock glyph) stays armed across
+                presses and Sends. Display order Shift · Ctrl · Alt; compose order is canonical
+                regardless of taps. */}
+            {modBtn("shift", "⇧ Shift", "col-span-2")}
             {modBtn("ctrl", "Ctrl")}
             {modBtn("alt", "Alt")}
           </div>
@@ -302,8 +372,11 @@ export function NavTray({
               {t("keys.presets.label")}
               <ChevronDown className={cn("size-3 transition-transform", ctrlOpen && "rotate-180")} />
             </button>
+            {/* TWO columns, not three: this section sits under the 4-column pad, and 2 is the only
+                other count whose gutter lands on one of the pad's own column lines. It also gives an
+                operator's `keys.toml` label room to be a word rather than a chord. */}
             {ctrlOpen && (
-              <div className="mt-1 grid grid-cols-3 gap-1.5">
+              <div className="mt-1 grid grid-cols-2 gap-1.5">
                 {presets.map((item) => {
                   const isPending = pending === item.label;
                   const phase = echo.phaseOf(item.label);
@@ -318,6 +391,8 @@ export function NavTray({
                       disabled={disabled || !keysSendable(item.keys, unsupportedKeys)}
                       onClick={() => pressCtrl(item)}
                       className={cn(
+                        KEYCAP,
+                        variant === "outline" && KEYCAP_REST,
                         "h-10 text-sm font-medium",
                         item.danger && !isPending && phase === "idle" && "text-destructive",
                       )}
@@ -368,7 +443,7 @@ export function NavTray({
                 size="sm"
                 disabled={disabled}
                 onClick={() => fire([d], d)}
-                className="h-12 font-mono text-lg"
+                className={cn(KEYCAP, phase === "idle" && KEYCAP_REST, "h-12 font-mono text-lg")}
               >
                 {phase === "done" ? <Check className="size-5" /> : d}
               </Button>

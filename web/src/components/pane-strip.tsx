@@ -165,8 +165,16 @@ function PanePill({
         // they are one control at three levels, and the mis-tap that matters most lands here.
         STRIP_TAP_TARGET,
         "flex min-w-11 shrink-0 select-none [-webkit-touch-callout:none] items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent px-2.5 py-1.5 text-sm font-medium transition-colors active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        // FORK: SELECTED IS TONAL, NOT SOLID. `--control-on` is the app's own "this one is on"
+        // surface (index.css) and this is what it is for; solid `--primary` is reserved for the ONE
+        // action a screen wants taken (Send, "Tap to resume", the update CTA). Three strips stack
+        // here, and three solid accent pills within 250px of the terminal made the chrome the
+        // loudest thing on a screen whose subject is the mirror. It also gives the status dot its
+        // contrast back: a blocked dot (#ac0010) on a saturated #145ec1 pill was two strong colours
+        // fighting, and the token file's own rule says a status mark belongs on --background or
+        // --card. The tint is a shade off --background, so the dot reads as it does everywhere else.
         active
-          ? "bg-primary text-primary-foreground"
+          ? "bg-control-on text-control-on-foreground"
           : "bg-muted text-muted-foreground hover:bg-muted/70",
       )}
     >
@@ -179,7 +187,7 @@ function PanePill({
       <span
         className={cn(
           "font-mono text-[10px]",
-          active ? "text-primary-foreground/70" : "text-muted-foreground/60",
+          active ? "text-control-on-foreground/70" : "text-muted-foreground/60",
         )}
       >
         {tag}

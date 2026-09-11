@@ -269,6 +269,8 @@ export const zh: Dictionary = {
   "chat.zen.label": "专注模式",
   // The floating pill is the ONE way out of zen, and it carries no words — only the glyph.
   "chat.zen.exitAria": "退出专注模式",
+  // FORK: cinema mode — the capsule that stands in for the folded chrome.
+  "chat.cinema.exitAria": "重新显示标题栏与标签条",
   "chat.strips.hide.both": "隐藏标签页与窗格",
   "chat.strips.hide.tabs": "隐藏标签页",
   "chat.strips.hide.panes": "隐藏窗格",
@@ -353,6 +355,8 @@ export const zh: Dictionary = {
 
   // --- keys (the inline Keys tray + its staging strip) ---
   "keys.tab.keys": "按键",
+  // FORK: the pad's own name, so "Keys" stops naming three different things on one screen.
+  "keys.tab.keyboard": "键盘",
   "keys.presets.label": "预设配置",
   "keys.fkeys.label": "功能键",
   "keys.confirm.label": "确认操作？",
@@ -376,6 +380,9 @@ export const zh: Dictionary = {
   "home.empty.noAgents": "无运行中的 Agent。",
   "home.empty.waiting": "等待 Herdr 响应...",
   "home.empty.panesHint": "窗格位于“空间”列表中。",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "home.empty.body": "你在多路复用器里打开的窗格会出现在这里。",
+  "home.empty.disconnectedBody": "最后一次读取没有返回，这里显示的是此前的画面。",
   "home.allClear": "无待处理项",
   "home.sort.newest": "最新优先",
   "home.sort.oldest": "最早优先",
@@ -590,6 +597,11 @@ export const zh: Dictionary = {
   "error.root.title": "发生错误",
   "error.root.unknown": "未知错误",
   "error.root.reload": "重新加载",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "error.root.body": "重新载入会从头运行这个页面，多数情况下这样就能恢复。",
+  "error.notFound.title": "没有这个页面",
+  "error.notFound.body": "这个地址在本应用中没有对应的画面。",
+  "empty.goToDashboard": "回到主面板",
 
   // --- idle (the idle-pause cover) ---
   "idle.dialogAria": "Collie 连接已挂起",
@@ -990,6 +1002,9 @@ export const zh: Dictionary = {
   "home.pin.moveUp": "上移",
   "home.pin.moveDown": "下移",
   "overview.title": "总览",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "overview.empty.title": "当前没有任何运行中的窗格",
+  "overview.empty.body": "你打开的窗格会出现在这里，并各自附上终端的最后几行。",
   "overview.tailAria": "终端最后几行",
   "overview.replyAria": "代理的最新回复",
   "overview.loading": "…",

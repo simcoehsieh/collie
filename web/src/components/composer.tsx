@@ -232,7 +232,11 @@ function ComposerDock({
   children: ReactNode;
 }) {
   return (
-    <div className="-mx-3 mb-2 flex flex-col border-t border-border bg-background">
+    // FORK: the dock is a panel that sits OVER the chrome block, not a band cut out of it. It shared
+    // `--background` with the composer below, so a modal-weight surface had no ground of its own and
+    // its contents (the keypad especially) read as sunken into the page. `--card` with the house
+    // 2xl top corners is the same move the chrome block itself makes against the mirror.
+    <div className="-mx-3 mb-2 flex flex-col rounded-t-2xl border-t border-rule bg-card">
       <div className="flex items-center justify-between px-3 pt-2">
         <div className="flex min-w-0 items-center gap-2">
           <SectionLabel>{title}</SectionLabel>

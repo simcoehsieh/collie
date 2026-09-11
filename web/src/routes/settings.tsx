@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Bell, Loader2 } from "lucide-react";
+import { ArrowLeft, Bell } from "lucide-react";
 import { useLoaderData, useNavigate } from "react-router";
 
 import { RouteHeader } from "@/components/app-header";
@@ -22,6 +22,7 @@ import { FontSettingsControl } from "@/components/font-settings";
 import { TypefaceControl } from "@/components/typeface-control";
 import { UpdatesSettingsCard } from "@/components/updates-settings-card";
 import { Switch } from "@/components/ui/switch";
+import { Skeleton } from "@/components/ui/skeleton";
 import { fetchConfig } from "@/lib/api";
 import { usePushControl } from "@/hooks/use-push";
 import { useLocale } from "@/hooks/use-locale";
@@ -173,8 +174,12 @@ export function SettingsRoute() {
                 <p className="text-sm text-muted-foreground">{t("settings.push.description")}</p>
               </div>
             </div>
-            {/* Fixed slot the size of the Switch (h-6 w-11): the spinner is smaller, so without it
-                the row — and the whole page under it — resized when state landed. */}
+            {/* Fixed slot the size of the Switch (h-6 w-11): the stand-in used to be smaller, so
+                without it the row — and the whole page under it — resized when state landed.
+                FORK: and the stand-in is now the switch's own stadium in grey rather than a spinning
+                disc. The wait has a shape — it is a switch, it is 24×44, it is right there — so a
+                bar the exact size of it says "this control is arriving" where a smaller spinner in
+                a bigger box said "something is happening somewhere in here". */}
             <div className="flex h-6 w-11 shrink-0 items-center justify-center">
               {state ? (
                 <Switch
@@ -184,7 +189,7 @@ export function SettingsRoute() {
                   aria-label={t("settings.push.title")}
                 />
               ) : (
-                <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                <Skeleton className="h-6 w-11 rounded-full" />
               )}
             </div>
           </div>

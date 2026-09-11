@@ -282,6 +282,8 @@ export const ja: Dictionary = {
   "chat.zen.label": "Zen モード",
   // The floating pill is the ONE way out of zen, and it carries no words — only the glyph.
   "chat.zen.exitAria": "Zen モードを終了",
+  // FORK: cinema mode — the capsule that stands in for the folded chrome.
+  "chat.cinema.exitAria": "ヘッダーとストリップを再表示",
   "chat.strips.hide.both": "タブとペインを非表示",
   "chat.strips.hide.tabs": "タブを非表示",
   "chat.strips.hide.panes": "ペインを非表示",
@@ -366,6 +368,8 @@ export const ja: Dictionary = {
 
   // --- keys (the inline Keys tray + its staging strip) ---
   "keys.tab.keys": "キー",
+  // FORK: the pad's own name, so "Keys" stops naming three different things on one screen.
+  "keys.tab.keyboard": "キーボード",
   "keys.presets.label": "プリセット",
   "keys.fkeys.label": "ファンクションキー",
   "keys.confirm.label": "確認",
@@ -389,6 +393,9 @@ export const ja: Dictionary = {
   "home.empty.noAgents": "実行中のエージェントはありません。",
   "home.empty.waiting": "Herdrの応答を待機中...",
   "home.empty.panesHint": "ペインはSpaces内にあります。",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "home.empty.body": "マルチプレクサで開いたペインがここに表示されます。",
+  "home.empty.disconnectedBody": "最後の読み取りが返ってこなかったため、直前の画面を表示しています。",
   "home.allClear": "対応が必要な項目はありません",
   "home.sort.newest": "新しい順",
   "home.sort.oldest": "古い順",
@@ -603,6 +610,11 @@ export const ja: Dictionary = {
   "error.root.title": "エラーが発生しました",
   "error.root.unknown": "不明なエラー",
   "error.root.reload": "再読み込み",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "error.root.body": "再読み込みするとページを最初から実行し直します。多くの場合はこれで解消します。",
+  "error.notFound.title": "ページが見つかりません",
+  "error.notFound.body": "そのアドレスに該当するものはこのアプリにありません。",
+  "empty.goToDashboard": "ダッシュボードへ",
 
   // --- idle (the idle-pause cover) ---
   "idle.dialogAria": "Collie 一時停止中",
@@ -1012,6 +1024,9 @@ export const ja: Dictionary = {
   "home.pin.moveUp": "上へ移動",
   "home.pin.moveDown": "下へ移動",
   "overview.title": "一覧",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "overview.empty.title": "実行中のものはありません",
+  "overview.empty.body": "開いたペインがここに並び、それぞれのターミナルの末尾が表示されます。",
   "overview.tailAria": "ターミナルの最終行",
   "overview.replyAria": "エージェントの最新の返答",
   "overview.loading": "…",

@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
-import { BootSplash, RootLayout, shownLastSeenAt } from "./root";
+import { BootSplash, RootLayout, routeEnter, shownLastSeenAt } from "./root";
 import { CONNECTION_LOST_MS } from "@/hooks/use-connection-lost";
 import { __resetConnectionHealth } from "@/lib/connection-health";
 import { collieMark, markIsLive, markPaper } from "@/test/collie-mark";
@@ -20,13 +20,13 @@ describe("BootSplash — escalates a stuck cold start", () => {
 
   it("blooms the mark on the connecting splash before the threshold", () => {
     const { container } = render(<BootSplash />);
-    expect(screen.getByText("Connecting to the herd…")).toBeInTheDocument();
+    expect(screen.getByText("Connecting…")).toBeInTheDocument();
     // The bloom is a colour as well as turning — a reduced-motion reader gets the accents only.
     expect(markIsLive(container)).toBe(true);
     expect(markPaper(container)).toBe("var(--background)");
     // still the plain splash a beat before the threshold
     act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS - 1));
-    expect(screen.getByText("Connecting to the herd…")).toBeInTheDocument();
+    expect(screen.getByText("Connecting…")).toBeInTheDocument();
     expect(markIsLive(container)).toBe(true);
     expect(screen.queryByText("Not connected")).not.toBeInTheDocument();
   });
@@ -34,15 +34,14 @@ describe("BootSplash — escalates a stuck cold start", () => {
   it("escalates to 'Not connected' with a Retry once stuck past the threshold", () => {
     const { container } = render(<BootSplash />);
     act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS));
-    expect(screen.queryByText("Connecting to the herd…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Connecting…")).not.toBeInTheDocument();
     expect(screen.getByText("Not connected")).toBeInTheDocument();
     expect(screen.getByText(/Can.t reach Collie/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     // Same mark throughout — it is never swapped for a second drawing, it only stops blooming: the
     // rest state is that mark still, muted. No bloom, because we have stopped trying, and a
-    // blooming mark would say otherwise. No gallop sprite on this screen either (the app mounts one
-    // animal).
-    expect(container.querySelector(".dog-gallop")).toBeNull();
+    // blooming mark would say otherwise. (The "no gallop sprite here" assertion went with the
+    // sprite itself — `dog-gallop` no longer exists to match, so the check had become vacuous.)
     const mark = collieMark(container);
     expect(markIsLive(container)).toBe(false);
     expect(mark?.getAttribute("class")).toMatch(/grayscale/);
@@ -138,5 +137,32 @@ describe("RootLayout — the document itself never scrolls", () => {
       return el!;
     });
     expect(column.className).toMatch(/(?:^|\s)overflow-hidden(?=\s|$)/);
+  });
+});
+
+// FORK: one entrance for every kind of navigation was the loudest "this is a website" tell the app
+// had. What is pinned here is the DECISION, not the CSS: the animation lives in skin.css, and the
+// only thing that can be wrong in TypeScript is which of the three words this returns.
+describe("routeEnter — which way a route arrives", () => {
+  it("raises Settings and the Overview regardless of where they were opened from", () => {
+    expect(routeEnter("settings", "PUSH", 1, 0)).toBe("modal");
+    expect(routeEnter("overview", "PUSH", 1, 0)).toBe("modal");
+    // Even a Back INTO one of them rises: it has no sibling at its own level, so a sideways slide
+    // would claim a hierarchy that does not exist.
+    expect(routeEnter("settings", "POP", 1, 2)).toBe("modal");
+  });
+
+  it("pops on the browser's own Back, and on any move to a shallower path", () => {
+    expect(routeEnter("", "POP", 0, 2)).toBe("pop");
+    expect(routeEnter("", "PUSH", 0, 2)).toBe("pop");
+    expect(routeEnter("space", "PUSH", 2, 3)).toBe("pop");
+  });
+
+  it("pushes deeper — and answers a same-depth hop the SAME way, so nothing replays", () => {
+    expect(routeEnter("pane", "PUSH", 2, 0)).toBe("push");
+    // pane → pane keeps the wrapper mounted (it is keyed by route KIND), so a different answer here
+    // would change the attribute under a live element and replay an entrance for a hop that moved
+    // nothing.
+    expect(routeEnter("pane", "PUSH", 2, 2)).toBe("push");
   });
 });

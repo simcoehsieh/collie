@@ -1,6 +1,7 @@
 import { hasDocument } from "../env";
 import { DEFAULT_LOCALE, isLocale, type Locale } from "./locale";
 import { en, type Dictionary, type MessageKey } from "./messages/en";
+import { withForkOverrides } from "./fork-overrides";
 
 // The translation runtime: one module-scoped store, one lookup function, one plural function.
 //
@@ -111,7 +112,9 @@ function notify(locale: Locale): void {
 async function fetchDictionary(locale: Exclude<Locale, typeof DEFAULT_LOCALE>): Promise<void> {
   try {
     const dictionary = await LOADERS[locale]();
-    loaded.set(locale, dictionary);
+    // FORK: the override layer is applied HERE, where a bundle enters the runtime — once per
+    // locale, not once per `t()` call. See fork-overrides.ts for why it is a layer at all.
+    loaded.set(locale, withForkOverrides(locale, dictionary));
     // Only notify if this is still the locale on screen — a fast en→de→en toggle must not repaint
     // the app in German because the German chunk finally arrived.
     if (state.locale === locale) notify(locale);
@@ -132,9 +135,14 @@ function ensureDictionary(locale: Locale): Promise<void> {
   return load;
 }
 
+// FORK: English is in the main chunk and never passes through `fetchDictionary`, so its overrides
+// are applied once at module scope. The type widens from `typeof en`'s literals to `Dictionary`,
+// which changes nothing that matters: `MessageKey` is derived from `en` itself, not from this.
+const EN: Dictionary = withForkOverrides(DEFAULT_LOCALE, en);
+
 /** The dictionary `t()` is actually reading: the active locale's if it has landed, else English. */
-function activeDictionary(): Dictionary | typeof en {
-  return loaded.get(state.locale) ?? en;
+function activeDictionary(): Dictionary {
+  return loaded.get(state.locale) ?? EN;
 }
 
 /** The locale whose grammar matches the strings being served — see `activeDictionary`. Plural

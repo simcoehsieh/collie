@@ -1,16 +1,19 @@
 import {
+  isRouteErrorResponse,
   Outlet,
   useLoaderData,
   useLocation,
   useMatches,
   useNavigation,
+  useNavigationType,
   useParams,
   useRouteError,
   useRevalidator,
   useRouteLoaderData,
 } from "react-router";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { TriangleAlert } from "lucide-react";
 
 import { usePolling } from "@/hooks/use-polling";
 import { usePollBusy } from "@/hooks/use-poll-busy";
@@ -25,6 +28,8 @@ import { ConnectionBanner } from "@/components/connection-banner";
 import { AppHeaderHost } from "@/components/app-header";
 import { CrewProvider } from "@/components/crew-provider";
 import { MeowMark } from "@/components/meow-mark";
+import { EmptyState } from "@/components/empty-state";
+import { Button } from "@/components/ui/button";
 import { describeThrownError } from "@/lib/api-error-message";
 import { homePath } from "@/lib/nav";
 import { scopeFromUrl } from "@/lib/session";
@@ -54,6 +59,43 @@ export function shownLastSeenAt(home: HomeData, pane: PaneData | undefined): num
   return home.lastSeenAt;
 }
 
+/** Which direction a route arrives from — the value of `data-route-enter`, drawn by skin.css. */
+export type RouteEnter = "push" | "pop" | "modal";
+
+/**
+ * FORK: THE KIND OF NAVIGATION, NOT JUST THE FACT OF ONE.
+ *
+ * Every route entrance used to be the same 6px rise, so pushing into a pane, popping back to the
+ * dashboard and opening Settings looked identical. On a phone, direction is how you know where you
+ * are; its absence is the loudest "this is a website" tell an app has.
+ *
+ * Three answers and no fourth:
+ *   • `modal` — Settings and the Overview. Both are places you look at and come back from rather
+ *     than places you go, and neither has a sibling at its own level, so a sideways slide would be
+ *     claiming a hierarchy that isn't there. They rise.
+ *   • `pop` — the browser's own Back (navigation type POP: the swipe gesture, the hardware key, the
+ *     header's home button through `navigate(-1)`), or any move to a SHALLOWER path. Comes from the
+ *     left, which is where the thing you are returning to went.
+ *   • `push` — everything else, including equal depth. Equal depth matters more than it looks: a
+ *     pane→pane hop must resolve to the SAME value as the navigation that opened the first pane, or
+ *     the attribute changes under a wrapper React deliberately does not remount and the entrance
+ *     replays on a hop that moved nothing (routes/root.tsx keys by route KIND for exactly that
+ *     reason).
+ *
+ * Pure, and exported, because the whole of this decision is four comparisons and the wrong answer
+ * is invisible in a screenshot — it only shows up as the screen sliding the wrong way.
+ */
+export function routeEnter(
+  routeKind: string,
+  navigationType: string,
+  depth: number,
+  previousDepth: number,
+): RouteEnter {
+  if (routeKind === "settings" || routeKind === "overview") return "modal";
+  if (navigationType === "POP") return "pop";
+  return depth < previousDepth ? "pop" : "push";
+}
+
 // The data root: owns the snapshot loader, drives polling, and fans the herd out to the child
 // routes (home + pane detail) via the router's loader data. Mounted only while unlocked (the
 // idle-lock in App swaps the whole RouterProvider out), so polling pauses when the app is locked.
@@ -79,7 +121,17 @@ export function RootLayout() {
   // `/pane/:paneId` child is active. useAgentTransitions uses it to suppress a notification for the
   // pane you're already looking at.
   const { paneId } = useParams();
-  const routeKind = useLocation().pathname.split("/")[1] ?? "";
+  const pathname = useLocation().pathname;
+  const routeKind = pathname.split("/")[1] ?? "";
+  // FORK: which way the next entrance slides. The depth of the path the operator is LEAVING is the
+  // only thing this needs that the router does not already hand over, so it is one ref updated in an
+  // effect — read during render (the value from the last committed route), written after paint.
+  const depth = pathname.split("/").filter(Boolean).length;
+  const previousDepth = useRef(depth);
+  const enter = routeEnter(routeKind, useNavigationType(), depth, previousDepth.current);
+  useEffect(() => {
+    previousDepth.current = depth;
+  }, [depth]);
   // The active pane's loader data, or undefined when a pane isn't the active route — the router
   // already carries both stamps, so dating the bar by what's on screen needs no store of its own.
   // SAFETY: PANE_ROUTE_ID names the route whose `loader` is paneLoader (router.tsx pairs the two),
@@ -176,10 +228,12 @@ export function RootLayout() {
             disagree with the ConnectionBanner two lines up. */}
         <AppHeaderHost bridge={data.bridge} error={data.error} herd={herd}>
           {/* FORK: the route's entrance. Keyed by the KIND of route (dashboard / space / pane /
-              settings / crew), so a dashboard→pane tap replays the 220ms rise in skin.css while a
+              settings / crew), so a dashboard→pane tap replays the entrance in skin.css while a
               pane→pane hop — which must keep DetailRoute mounted (routes/detail.tsx) — does not
-              remount anything. The wrapper mirrors the column each route already draws. */}
-          <div key={routeKind} data-route-enter className="flex min-h-0 flex-1 flex-col">
+              remount anything. The wrapper mirrors the column each route already draws.
+              The attribute's VALUE says which way (see `routeEnter` above): push slides in from the
+              right, pop from the left, modal rises. */}
+          <div key={routeKind} data-route-enter={enter} className="flex min-h-0 flex-1 flex-col">
             <Outlet />
           </div>
         </AppHeaderHost>
@@ -193,7 +247,7 @@ export function RootLayout() {
 // router's HydrateFallback, so it stays mounted until the FIRST loader run settles — and over a dead
 // tailnet that initial fetch can hang well past its timeout (or forever on a WebView without
 // AbortSignal.timeout). Left as-is, a PWA reopened while the host is unreachable would bloom the mark
-// on "Connecting to the herd…" indefinitely, with no way to retry. So once we've been stuck here for
+// on "Connecting…" indefinitely, with no way to retry. So once we've been stuck here for
 // CONNECTION_LOST_MS (the same wall-clock threshold as the in-app prompt — `connecting` is trivially
 // true the whole time we're mounted), the splash escalates to an honest, actionable "Not connected"
 // state: the mark stills, the copy says we can't reach Collie, and a Retry
@@ -209,7 +263,7 @@ export function BootSplash() {
             a COLOUR as well as motion, which is the half a reduced-motion reader still gets —
             `prefers-reduced-motion` stops the orbit and cannot stop the accents. `paper` is this
             screen's ground, `bg-background`, the knockout that puts a near-side bead in front of
-            the head. The "Connecting to the herd…" copy below carries the accessible meaning, so
+            the head. The "Connecting…" copy below carries the accessible meaning, so
             the mark is decorative.
             FORK: `text-foreground`, and it is a fix rather than a flourish. This screen's own colour
             is --muted-foreground (the caption's), the mark drew in `currentColor`, and so the first
@@ -247,27 +301,59 @@ export function BootSplash() {
 
 // Last-resort recovery screen for a render-phase error or a loader throw — a full reload re-runs the
 // loaders from scratch, which clears most transient failures.
+//
+// FORK — AND IT IS THE NOT-FOUND SCREEN TOO. There is no splat route in router.tsx and there should
+// not be one: an address that matches nothing already arrives here as a 404 ErrorResponse, so a
+// `path: "*"` would only be a second door onto the same room. What it needs is to stop calling that
+// "Something went wrong / Unknown error" — a mistyped URL is not a crash, and "Unknown error" is the
+// app admitting it did not look. `isRouteErrorResponse` is that look.
+//
+// The screen itself was a red line, a muted line and "Reload" as a BARE UNDERLINED LINK — the only
+// underlined link in an app where every other action is a button. It is now the house empty state
+// with a solid-primary action: a screen with nothing else on it is the one place in the app where
+// the accent is unambiguous.
+// Reload home, but stay on the machine and in the session you were in (read from the LIVE URL, since
+// the router context may be the throwing one). Lead + primary → "/". Module scope because it closes
+// over nothing — the throwing render is the last place to allocate a fresh closure per paint.
+function goHome(): void {
+  window.location.assign(homePath(scopeFromUrl(window.location.href)));
+}
+
 export function RootError() {
   useLocale();
   const error = useRouteError();
+  const notFound = isRouteErrorResponse(error) && error.status === 404;
   // An ApiError knows the bridge's code and can therefore say the refusal in the operator's
   // language; anything else (a render-phase throw, a router error) keeps its own message.
   const message = error instanceof Error ? describeThrownError(error) : t("error.root.unknown");
   return (
-    <div className="app-viewport flex flex-col items-center justify-center gap-3 p-6 text-center">
-      <p className="font-medium text-destructive">{t("error.root.title")}</p>
-      <p className="max-w-xs text-sm text-muted-foreground">{message}</p>
-      <button
-        type="button"
-        onClick={() => {
-          // Reload home, but stay on the machine and in the session you were in (read from the
-          // live URL, since the router context may be the throwing one). Lead + primary → "/".
-          window.location.assign(homePath(scopeFromUrl(window.location.href)));
-        }}
-        className="text-sm underline underline-offset-4"
-      >
-        {t("error.root.reload")}
-      </button>
+    <div className="app-viewport flex flex-col items-center justify-center">
+      {notFound ? (
+        <EmptyState
+          heading={t("error.notFound.title")}
+          body={t("error.notFound.body")}
+          action={
+            <Button size="lg" onClick={goHome}>
+              {t("empty.goToDashboard")}
+            </Button>
+          }
+        />
+      ) : (
+        <EmptyState
+          mark={<TriangleAlert className="size-7 text-destructive" />}
+          heading={t("error.root.title")}
+          body={t("error.root.body")}
+          // The machine's own words, as a QUOTE rather than as prose the app wrote — the previous
+          // screen set them in the same muted body type as its own sentence, so "Unknown error"
+          // read as something Collie had decided rather than something it had been handed.
+          detail={message}
+          action={
+            <Button size="lg" onClick={goHome}>
+              {t("error.root.reload")}
+            </Button>
+          }
+        />
+      )}
     </div>
   );
 }

@@ -285,6 +285,8 @@ export const es: Dictionary = {
   "chat.zen.label": "Modo zen",
   // The floating pill is the ONE way out of zen, and it carries no words — only the glyph.
   "chat.zen.exitAria": "Salir del modo zen",
+  // FORK: cinema mode — the capsule that stands in for the folded chrome.
+  "chat.cinema.exitAria": "Volver a mostrar la cabecera y las tiras",
   "chat.strips.hide.both": "Ocultar pestañas y paneles",
   "chat.strips.hide.tabs": "Ocultar pestañas",
   "chat.strips.hide.panes": "Ocultar paneles",
@@ -370,6 +372,8 @@ export const es: Dictionary = {
 
   // --- keys (the inline Keys tray + its staging strip) ---
   "keys.tab.keys": "Teclas",
+  // FORK: the pad's own name, so "Keys" stops naming three different things on one screen.
+  "keys.tab.keyboard": "Teclado",
   "keys.presets.label": "Preajustes",
   "keys.fkeys.label": "Teclas de función",
   "keys.confirm.label": "Confirmar",
@@ -393,6 +397,9 @@ export const es: Dictionary = {
   "home.empty.noAgents": "No hay agentes en ejecución.",
   "home.empty.waiting": "Esperando a Herdr...",
   "home.empty.panesHint": "Los paneles están en Espacios.",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "home.empty.body": "Los paneles que abras en el multiplexor aparecen aquí.",
+  "home.empty.disconnectedBody": "La última lectura no volvió, así que esto es lo que había en pantalla.",
   "home.allClear": "Sin tareas pendientes",
   "home.sort.newest": "Más reciente",
   "home.sort.oldest": "Más antiguo",
@@ -609,6 +616,11 @@ export const es: Dictionary = {
   "error.root.title": "Error en la aplicación",
   "error.root.unknown": "Error desconocido",
   "error.root.reload": "Recargar",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "error.root.body": "Recargar vuelve a ejecutar la página desde cero, lo que resuelve la mayoría de estos casos.",
+  "error.notFound.title": "Esta página no existe",
+  "error.notFound.body": "Esa dirección no corresponde a nada en esta aplicación.",
+  "empty.goToDashboard": "Ir al panel principal",
 
   // --- idle (the idle-pause cover) ---
   "idle.dialogAria": "Collie en pausa",
@@ -1021,6 +1033,9 @@ export const es: Dictionary = {
   "home.pin.moveUp": "Subir",
   "home.pin.moveDown": "Bajar",
   "overview.title": "Vista general",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "overview.empty.title": "No hay nada en marcha",
+  "overview.empty.body": "Los paneles que abras aparecen aquí, cada uno con las últimas líneas de su terminal.",
   "overview.tailAria": "Últimas líneas del terminal",
   "overview.replyAria": "La última respuesta del agente",
   "overview.loading": "…",

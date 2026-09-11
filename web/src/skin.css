@@ -288,3 +288,150 @@ header:has(> [data-slot="collapse"] [data-slot="header-row"]) {
     scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════════
+   FORK · SCREENS — appended block, and it stays appended.
+
+   Everything below this line belongs to the component/screen pass and is written to be merged by
+   concatenation: the sheet above is edited by other hands, so nothing here reaches back into it.
+   Add to the END of this block, never into the middle of the file.
+   ════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Skeletons ──────────────────────────────────────────────────────────────────────────────
+   The look of "something of a known shape is arriving" (components/ui/skeleton.tsx). The bar's
+   GROUND is a Tailwind utility on the element (`bg-muted`), so a skeleton without this sheet is a
+   still grey bar rather than an invisible one — the sweep is the only thing defined here.
+
+   A travelling highlight, not an opacity pulse. A pulse dims the whole bar, which on a screen full
+   of them reads as the page itself flickering; a sweep moves left to right at 1.6s, slow enough to
+   read as "working" rather than as a strobe, and each bar carries its own phase because the
+   animation starts when the element does. `background-size: 200%` with a transparent-to-tint-to-
+   transparent gradient keeps the bar's own colour underneath at all times. */
+.skeleton-bar {
+  position: relative;
+  overflow: hidden;
+}
+.skeleton-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in oklab, var(--foreground) 7%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: skeleton-sweep 1.6s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+  from {
+    background-position: -120% 0;
+  }
+  to {
+    background-position: 220% 0;
+  }
+}
+
+/* THE 120ms THE SKELETON IS NOT ALLOWED TO PAINT. A lazy route's chunk lands in well under a
+   second on any launch after the first, and a loading state that flashes for 80ms reads as a
+   glitch — router.tsx has said so since the fallback was a blank. This keeps that argument and
+   drops the blank: `both` fill holds the whole screen at opacity 0 through the delay, so a fast
+   arrival paints nothing at all and only a genuinely slow one is ever seen. It is the same
+   technique `.busy-bar` uses in index.css, one screen larger, and it costs no React state — a
+   timer that flipped a boolean would re-render the tree to achieve exactly this. */
+.skeleton-delayed {
+  animation: skeleton-appear 160ms ease-out 120ms both;
+}
+
+@keyframes skeleton-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Reduced motion keeps the SHAPE and drops the TRAVEL — the bars are the signal, the sweep is only
+   its liveliness, and a highlight crossing a dozen bars is exactly the kind of repeating movement
+   the preference is about. `.skeleton-delayed` is left alone on purpose: it is a 120ms hold and a
+   cross-fade in place, which moves nothing, and removing it would trade a quiet reveal for the
+   flash the delay exists to prevent. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-bar::after {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+
+/* ── Motion: WHICH WAY a route arrives ──────────────────────────────────────────────────────
+   The base rule higher up in this file gives every entrance the same 220ms rise. That is one
+   answer to three different questions — pushing into a pane, popping back to the dashboard and
+   opening Settings all looked identical — and on a phone, direction is how you know where you are.
+   `routes/root.tsx` now puts the KIND on the attribute (`routeEnter`), so these three override the
+   base by being one step more specific. The base stays: a bare `data-route-enter` still animates,
+   so nothing depends on the attribute always carrying a value.
+
+   260ms on cubic-bezier(0.32, 0.72, 0, 1) — iOS's own navigation curve, which is nearly all of its
+   travel in the first third and then a long settle. 16px sideways rather than a full-width slide:
+   the outgoing screen is NOT animated (React swaps it), so a long travel would be a screen sliding
+   in over nothing, and the short one reads as the page arriving rather than as a carousel. The
+   modal rises 24px, further, because up-from-the-bottom is a shorter perceptual distance than
+   sideways and 16px vertically barely registers.
+
+   NO horizontal overflow is created by this: the wrapper is inside `<AppHeaderHost>`'s own column
+   and the translate is inward (16px → 0), never outward past the right edge. */
+[data-route-enter="push"] {
+  animation: route-enter-push 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+[data-route-enter="pop"] {
+  animation: route-enter-pop 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+[data-route-enter="modal"] {
+  animation: route-enter-modal 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes route-enter-push {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes route-enter-pop {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes route-enter-modal {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Reduced motion: no entrance at all, the same answer the base rule gives. Restated here because
+   these three selectors are MORE SPECIFIC than the `[data-route-enter]` the earlier media query
+   turns off — without this, switching on the preference would have quietly done nothing. */
+@media (prefers-reduced-motion: reduce) {
+  [data-route-enter="push"],
+  [data-route-enter="pop"],
+  [data-route-enter="modal"] {
+    animation: none;
+  }
+}

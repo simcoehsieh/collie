@@ -298,6 +298,8 @@ export const en = {
   "chat.zen.label": "Zen mode",
   // The floating pill is the ONE way out of zen, and it carries no words — only the glyph.
   "chat.zen.exitAria": "Exit zen mode",
+  // FORK: cinema mode — the capsule that stands in for the folded chrome.
+  "chat.cinema.exitAria": "Show the header and strips again",
   // --- chat.strips (the tab row + pane row, folded into one bar of beads) ---
   // The chevron's own name, and the summary bar's. Both are chosen for the rows actually on screen:
   // a pane row appears only above one pane, so naming it unconditionally would promise a row that is
@@ -385,6 +387,8 @@ export const en = {
 
   // --- keys (the inline Keys tray + its staging strip) ---
   "keys.tab.keys": "Keys",
+  // FORK: the pad's own name, so "Keys" stops naming three different things on one screen.
+  "keys.tab.keyboard": "Keyboard",
   "keys.presets.label": "Presets",
   "keys.fkeys.label": "F keys",
   "keys.confirm.label": "Confirm?",
@@ -408,6 +412,9 @@ export const en = {
   "home.empty.noAgents": "No agents running.",
   "home.empty.waiting": "Waiting for Herdr…",
   "home.empty.panesHint": "Your panes are under Spaces.",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "home.empty.body": "Panes you open in the multiplexer show up here.",
+  "home.empty.disconnectedBody": "The last read did not come back, so this is what was on screen before.",
   "home.allClear": "Nothing needs you",
   "home.sort.newest": "Newest",
   "home.sort.oldest": "Oldest",
@@ -631,6 +638,11 @@ export const en = {
   "error.root.title": "Something went wrong",
   "error.root.unknown": "Unknown error",
   "error.root.reload": "Reload",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "error.root.body": "Reloading re-runs the page from scratch, which clears most of these.",
+  "error.notFound.title": "No such page",
+  "error.notFound.body": "That address does not match anything in this app.",
+  "empty.goToDashboard": "Go to the dashboard",
 
   // --- idle (the idle-pause cover) ---
   "idle.dialogAria": "Collie paused",
@@ -1073,6 +1085,9 @@ export const en = {
   "home.pin.moveUp": "Move up",
   "home.pin.moveDown": "Move down",
   "overview.title": "Overview",
+  // FORK: empty / error states (components/empty-state.tsx).
+  "overview.empty.title": "Nothing is running",
+  "overview.empty.body": "Panes you open show up here, each with the last few lines of its terminal.",
   "overview.tailAria": "Last lines of the terminal",
   "overview.replyAria": "The agent's last reply",
   "overview.loading": "…",

@@ -69,6 +69,7 @@ import { ThreadSidebar } from "@/components/agent-sidebar";
 import { AgentIcon } from "@/components/agent-icon";
 import { TabStrip } from "@/components/tab-strip";
 import { PaneStrip } from "@/components/pane-strip";
+import { CinemaCapsule } from "@/components/cinema-capsule";
 import { StripsSummary } from "@/components/strips-summary";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { NewTabSheet } from "@/components/new-tab-sheet";
@@ -94,7 +95,7 @@ import { cwdBeyondName } from "@/lib/pane-name";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { hasJournalAdapter } from "@/lib/journal-agents";
 import { historyPath, spacePath } from "@/lib/nav";
-import { isReadOnly, statusLabel } from "@/lib/types";
+import { isReadOnly, paneDisplayName, statusLabel } from "@/lib/types";
 import { usePairing } from "@/lib/pairing";
 import type { AgentView, BridgeStatus, DeviceAuth, TabView } from "@/lib/types";
 import type {
@@ -577,6 +578,22 @@ export function AgentChat({
   // display pref: a folded composer is a "right now" choice, and reopening the app should never
   // greet the operator with no way to type in sight.
   const [dockOpen, setDockOpen] = useState(true);
+  // FORK — CINEMA MODE, THE SECOND RUNG OF THE SAME LADDER (components/cinema-capsule.tsx).
+  //
+  // Folding the dock buys back ~110px at the bottom; the header and the two strips are ~180px at the
+  // top, and much of that is redundant (the header already reads `collie › docs`, and the SPACES
+  // strip says it again). So a SECOND downward pull, on the already-folded handle, takes the chrome
+  // too and leaves the mirror the whole glass.
+  //
+  // WHY DOWN TWICE AND UP TO COME BACK. The handle's four gestures were all spoken for: with the
+  // dock open, up is the pane switcher and down is the fold; with it folded, up brings the dock back
+  // and a tap does the same. Down-on-a-folded-handle was the only free one — and it reads as the
+  // same sentence continued, because the direction already means "take something away". The way out
+  // is `onPullUp` (the new mirror of `onPullDown` in use-sheet-pull.ts), wired ONLY while cinema is
+  // on so it never shadows the switcher, or a tap on the capsule. The ladder pops in reverse order:
+  // cinema → dock → switcher. Session state alongside `dockOpen`, and reset by DetailRoute's
+  // key={paneId} remount, so a pane always opens with its chrome.
+  const [cinema, setCinema] = useState(false);
   const sheetPull = useSheetPull({
     // The switcher peeks only under an open dock: a pull-up on the folded handle is "bring the dock
     // back", and a sheet rising under it would answer a question nobody asked.
@@ -596,10 +613,16 @@ export function AgentChat({
       setPullFrom(0);
     },
     onPullDown: () => {
-      if (!dockOpen) return;
       buzz();
-      setDockOpen(false);
+      if (dockOpen) setDockOpen(false);
+      else setCinema(true);
     },
+    onPullUp: cinema
+      ? () => {
+          buzz();
+          setCinema(false);
+        }
+      : undefined,
   });
   // ── COMPOSING MODE — read ONCE, here, for the whole pane ──────────────────────
   // The soft keyboard takes roughly 45% of a phone. What is left has to hold the header, the tab
@@ -709,7 +732,9 @@ export function AgentChat({
   // — no strips at all, and zen, where the band is closed and the 4px is the hidden header's air
   // rather than a tab's floor. Zen's resting geometry is byte-identical either way, which is the
   // point of naming it here rather than folding it into `stripsExist`.
-  const mirrorGap = stripsExist && !zen ? "mt-0" : "mt-1";
+  // FORK: `&& !cinema` for exactly zen's reason — with the band closed there is no folder tab
+  // standing on the 4px, so the mirror takes the gap back and reads as the top of the glass.
+  const mirrorGap = stripsExist && !zen && !cinema ? "mt-0" : "mt-1";
   // Fold state for the "Switch pane" sheet's two long tails, shared with the dashboard so one
   // "hide the long tail" preference means the same thing in both places.
   const dash = useDashPrefs();
@@ -1429,7 +1454,9 @@ export function AgentChat({
           // Zen takes the whole row off the screen — the one shell owns the <header> element, so
           // only the shell can stop drawing it, and this is how a route asks. See HeaderClaim.hidden
           // for what survives (the element, its safe-area inset, its reserved rule) and why.
-          hidden={zen}
+          // FORK: cinema asks for the same thing, for the same reason — the difference between the
+          // two is what stays BELOW (zen takes the composer, cinema keeps it).
+          hidden={zen || cinema}
           override={
             findOpen ? (
               <FindBar
@@ -1751,6 +1778,18 @@ export function AgentChat({
               (mirror-space.ts), so a control painted in it would have no ground at all (DESIGN.md
               §4). Full-round is allowed here because the box is square, which is what §3 reserves it
               for. */}
+          {/* FORK: cinema's one remaining piece of chrome — the mark, the pane's status dot and its
+              name, 28px over the mirror's top-left corner. Its own file says why it is top-LEFT
+              where zen's exit is top-right. Never both: zen unmounts the composer whose handle is
+              the only way into cinema, so the two cannot be on at once. */}
+          {cinema && agent && (
+            <CinemaCapsule
+              name={paneDisplayName(agent)}
+              {...(agent.kind === "shell" ? {} : { status: agent.status })}
+              onExit={() => setCinema(false)}
+            />
+          )}
+
           {zen && (
             <button
               type="button"
@@ -1793,7 +1832,14 @@ export function AgentChat({
               for, and a banner that appears while zen is on simply appears inside a closed box.
               `Collapse` unmounts at the end of the exit, so every pill in both strips leaves the tab
               order with the pixels. */}
-          <Collapse open={!zen}>
+          {/* FORK: `|| !cinema` — cinema folds the same four surfaces zen does, through the same
+              Collapse, because they are the same set for the same reason (Collie talking ABOUT the
+              pane rather than the pane's own output) and DESIGN.md §1 has one sanctioned way for an
+              in-flow surface to leave. The banners go with them, as they already do in zen; the
+              composer below stays, which is the whole difference between the two modes, and a
+              read-only or host-stale refusal still reaches the operator through the composer's own
+              disabled state and its status band. */}
+          <Collapse open={!zen && !cinema}>
             {/* Read-only notice when this device isn't allowlisted (the composer below is disabled too). */}
             <ReadOnlyBanner device={device} />
 
