@@ -283,6 +283,13 @@ export function BootSplash() {
 // underlined link in an app where every other action is a button. It is now the house empty state
 // with a solid-primary action: a screen with nothing else on it is the one place in the app where
 // the accent is unambiguous.
+// Reload home, but stay on the machine and in the session you were in (read from the LIVE URL, since
+// the router context may be the throwing one). Lead + primary → "/". Module scope because it closes
+// over nothing — the throwing render is the last place to allocate a fresh closure per paint.
+function goHome(): void {
+  window.location.assign(homePath(scopeFromUrl(window.location.href)));
+}
+
 export function RootError() {
   useLocale();
   const error = useRouteError();
@@ -290,9 +297,6 @@ export function RootError() {
   // An ApiError knows the bridge's code and can therefore say the refusal in the operator's
   // language; anything else (a render-phase throw, a router error) keeps its own message.
   const message = error instanceof Error ? describeThrownError(error) : t("error.root.unknown");
-  // Reload home, but stay on the machine and in the session you were in (read from the live URL,
-  // since the router context may be the throwing one). Lead + primary → "/".
-  const goHome = () => window.location.assign(homePath(scopeFromUrl(window.location.href)));
   return (
     <div className="app-viewport flex flex-col items-center justify-center">
       {notFound ? (

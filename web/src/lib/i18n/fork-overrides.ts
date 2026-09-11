@@ -25,7 +25,11 @@ import type { Dictionary, MessageKey } from "./messages/en";
 // The word "herd" as the app's own term for "every pane on every machine" is likewise left alone
 // where it is doing work the reader needs (`crew`, the triage sections) — what goes is the handful
 // of places the metaphor is addressed AT the reader as if the app were a dog.
-const OVERRIDES: Readonly<Partial<Record<Locale, Readonly<Partial<Record<MessageKey, string>>>>>> = {
+//
+// `satisfies`, not an annotation: the constraint still catches a typo'd locale or a key that does
+// not exist, while inference keeps the literal shape — an annotation here would widen the table into
+// "any locale, any key", which is exactly the evidence a reader of this file wants kept (ADR 0019).
+const OVERRIDES = {
   en: {
     // The first sentence the app ever shows, and it named a livestock animal. Nothing is lost by
     // saying what is happening: this screen is a spinner with words.
@@ -45,7 +49,7 @@ const OVERRIDES: Readonly<Partial<Record<Locale, Readonly<Partial<Record<Message
     "error.boot.connecting": "接続中...",
     "idle.catchingUp.body": "すべてのペインの最新状態を取得しています。",
   },
-};
+} satisfies Partial<Record<Locale, Partial<Record<MessageKey, string>>>>;
 
 /**
  * Apply this fork's overrides to a dictionary as it becomes available.
@@ -55,6 +59,12 @@ const OVERRIDES: Readonly<Partial<Record<Locale, Readonly<Partial<Record<Message
  * spread there would allocate a dictionary per call.
  */
 export function withForkOverrides(locale: Locale, dictionary: Dictionary): Dictionary {
-  const patch = OVERRIDES[locale];
-  return patch === undefined ? dictionary : { ...dictionary, ...patch };
+  // Narrowed by `in`, not by an assertion: most locales carry no entry at all (that is the point of
+  // the layer being small), and the guard is what tells the compiler which ones do. `satisfies`
+  // above has already proved every key here IS a Locale, so this cannot select something that is not.
+  if (!(locale in OVERRIDES)) return dictionary;
+  // SAFETY: the `in` guard on the line above is the check — `locale` is a key of OVERRIDES at this
+  // point, and `satisfies` has already proved every key of OVERRIDES is itself a Locale.
+  const patch: Partial<Record<MessageKey, string>> = OVERRIDES[locale as keyof typeof OVERRIDES];
+  return { ...dictionary, ...patch };
 }
