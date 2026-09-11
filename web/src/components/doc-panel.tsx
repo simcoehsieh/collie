@@ -194,11 +194,13 @@ export function DocBrowser({ onOpen }: { onOpen: (slug: string) => void }) {
                   onClick={() => setTag(active ? "" : row.path)}
                   className={cn(
                     "shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
-                    active ? "bg-primary text-primary-foreground" : "bg-muted text-foreground hover:bg-accent",
+                    // FORK: tonal ON, not solid — a filter chip marks state, and this panel's one
+                    // action is the document you tap. See pane-strip.tsx for the rule.
+                    active ? "bg-control-on text-control-on-foreground" : "bg-muted text-foreground hover:bg-accent",
                   )}
                 >
                   {row.path}
-                  <span className={cn("ml-1 tabular-nums", active ? "text-primary-foreground/80" : "text-muted-foreground")}>
+                  <span className={cn("ml-1 tabular-nums", active ? "text-control-on-foreground/80" : "text-muted-foreground")}>
                     {row.count}
                   </span>
                 </button>
