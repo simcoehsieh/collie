@@ -23,11 +23,20 @@ export type ResolvedTheme = "light" | "dark";
 const STORAGE_KEY = "collie:theme:v1";
 const DEFAULT: Theme = "system";
 
-/** Browser chrome — Android's URL bar and task-switcher card. These are --background's two halves
- *  rasterized: oklch(0.97) is rgb(245,245,245) and oklch(0.145) is rgb(10,10,10). Not #ffffff for
- *  light — the page is a step off white on purpose (index.css), and a pure-white URL bar above it
- *  shows the seam. Re-measure these if --background moves. */
-const META_COLOR = { light: "#f5f5f5", dark: "#0a0a0a" } satisfies Record<ResolvedTheme, string>;
+/** Browser chrome — Android's URL bar and task-switcher card, and the iOS status-bar band in
+ *  standalone. These are --background's two halves RASTERISED: `oklch(0.965 0.005 255)` is
+ *  rgb(241,244,247) and `oklch(0.17 0.012 262)` is rgb(13,15,21), both read back out of the
+ *  browser at DPR 1. Not #ffffff for light — the page is a step off white on purpose (index.css),
+ *  and a pure-white URL bar above it shows the seam.
+ *
+ *  They were #f5f5f5 / #0a0a0a, which is the MIRROR's pair (components/mirror-space.ts) and not the
+ *  page's — the fork's cool-tinted neutrals moved --background and these did not follow, so a
+ *  standalone install carried a permanent one-shade band across the top of every screen.
+ *
+ *  Re-measure these if --background moves, and move them TOGETHER with the two `theme-color` metas
+ *  in index.html (which is where the unpinned case is decided) and the manifest colours in
+ *  vite.config.ts. All three name each other. */
+const META_COLOR = { light: "#f1f4f7", dark: "#0d0f15" } satisfies Record<ResolvedTheme, string>;
 
 /** Read the pin. BARE string, not JSON — public/theme-init.js does the same strict compare before
  *  first paint, and JSON.stringify would write `"dark"` with the quotes and silently break it. */

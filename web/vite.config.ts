@@ -205,8 +205,15 @@ export default defineConfig({
           { name: "Overview", short_name: "Overview", url: "/overview" },
           { name: "Home", short_name: "Home", url: "/" },
         ],
-        background_color: "#0a0a0a",
-        theme_color: "#0a0a0a",
+        // The install splash's paper and the installed chrome's colour. --background's DARK half,
+        // rasterised: `oklch(0.17 0.012 262)` is rgb(13,15,21). It was #0a0a0a, which is the
+        // MIRROR's ground and not the page's — the same one-shade seam index.html's `theme-color`
+        // metas carried, here spent on the Android install splash instead of the status bar.
+        // Both values move TOGETHER and stay dark: see the icon note below for why a manifest
+        // colour cannot follow the OS, and index.html / hooks/use-theme.ts for the other two
+        // places this pair is written down.
+        background_color: "#0d0f15",
+        theme_color: "#0d0f15",
         icons: [
           // The 192/512 are safe-zone-padded, so they serve as both the regular ("any") install
           // icon and the Android adaptive ("maskable") icon, and they paint their own paper —
@@ -219,13 +226,15 @@ export default defineConfig({
           // install splash as this icon centred on `background_color`, and a manifest colour is a
           // single value — it cannot follow the OS the way index.html's paired `theme-color` metas
           // and index.css's `light-dark()` do. `background_color` and `theme_color` were already
-          // both #0a0a0a, so the light tile that shipped first put a near-white square on black:
-          // the one combination that is wrong under EVERY theme. Making the tile dark makes all
-          // three manifest values agree, and it is the choice that costs least — flipping
+          // both the page's dark paper, so the light tile that shipped first put a near-white
+          // square on black: the one combination that is wrong under EVERY theme. Making the
+          // tile dark makes all three manifest values agree, and it is the choice that costs
+          // least — flipping
           // `background_color` to the light paper instead would leave `theme_color` dark, i.e. a
           // light splash under dark system bars, and it would still be one fixed polarity.
-          // The tile's own paper is #0f1113 against a #0a0a0a splash: a hair lighter, invisible in
-          // practice, and `background_color` is left alone so the installed chrome keeps one value.
+          // The tile's own paper is #0f1113 against a #0d0f15 splash: a hair lighter, invisible in
+          // practice, and the two manifest colours stay EQUAL so the installed chrome and its
+          // splash are one surface.
           // If these are ever re-copied, take the `collie-tile-dark-*` files, not the light ones.
           { src: "/web-app-manifest-192x192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
           { src: "/web-app-manifest-512x512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },

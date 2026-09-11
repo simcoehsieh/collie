@@ -22,7 +22,7 @@ import { CollieHome } from "@/components/collie-home";
 import { NewSpaceSheet } from "@/components/new-space-sheet";
 import { CrewProvider } from "@/components/crew-provider";
 import { SpaceOverview } from "@/components/space-overview";
-import { MeowMark } from "@/components/meow-mark";
+import { MeowMark, type MarkState } from "@/components/meow-mark";
 import { ConnectionBanner } from "@/components/connection-banner";
 import { HostStaleBanner } from "@/components/host-stale-banner";
 import { IdleLock } from "@/components/idle-lock";
@@ -255,6 +255,10 @@ function BrandSection() {
             <MarkSample size={40} weight="header" loading />
             <MarkSample size={64} weight="header" loading={false} />
             <MarkSample size={64} weight="header" loading />
+            <MarkSample size={40} weight="header" loading={false} state="blocked" />
+            <MarkSample size={64} weight="header" loading={false} state="blocked" />
+            <MarkSample size={40} weight="header" loading={false} state="done" />
+            <MarkSample size={64} weight="header" loading={false} state="done" />
           </div>
         </Stage>
       </Card>
@@ -1284,11 +1288,16 @@ function MarkSample({
   size,
   weight,
   loading,
+  state,
   muted = false,
 }: {
   size: number;
   weight: "full" | "header";
   loading: boolean;
+  /** FORK: the herd states the header drives (C-3). `blocked` and `done` cannot be auditioned any
+   *  other way — `done` in particular runs once and never loops, so a page that cannot re-mount it
+   *  is a page that cannot show it. */
+  state?: MarkState;
   muted?: boolean;
 }) {
   return (
@@ -1297,12 +1306,14 @@ function MarkSample({
         size={size}
         weight={weight}
         loading={loading}
+        state={state}
         paper="var(--background)"
         className={muted ? "opacity-40 grayscale" : undefined}
       />
       <span className="font-mono text-[10px] text-muted-foreground">
         {size} {weight}
         {loading ? " loading" : ""}
+        {state !== undefined && state !== "idle" ? ` ${state}` : ""}
         {muted ? " muted" : ""}
       </span>
     </div>

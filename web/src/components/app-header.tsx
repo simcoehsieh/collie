@@ -25,6 +25,7 @@ import { useLoadingStalled } from "@/hooks/use-loading-stalled";
 import { useLowPower } from "@/hooks/use-dash-prefs";
 import { settingsPath } from "@/lib/nav";
 import { CollieHome } from "@/components/collie-home";
+import type { MarkState } from "@/components/meow-mark";
 import { AlphaBar } from "@/components/alpha-bar";
 import { Collapse } from "@/components/ui/collapse";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -110,6 +111,14 @@ interface AppHeaderHostProps {
   // no way for them to be right differently.
   bridge: BridgeStatus | undefined;
   error: boolean;
+  /** FORK: what the HERD is doing, as one word — the mark in the top-left of EVERY screen says it,
+   *  so the operator reads the herd off a 40px drawing in their peripheral vision instead of off a
+   *  count on the one screen that shows counts. It is a prop and not a hook for the same reason
+   *  `bridge` and `error` are: RootLayout already holds the snapshot and already runs the triage
+   *  this is derived from, so deriving it a second time here would be a second answer to a question
+   *  that has one. Absent is `idle`, which is the mark's own rest drawing — so a host mounted
+   *  without it (the playground, the header tests) renders exactly what it always did. */
+  herd?: MarkState;
   /** The routes below it. Not a sibling: the host RENDERS the outlet, so there is no arrangement of
    *  this app in which a route is mounted without a header above it. */
   children: ReactNode;
@@ -135,7 +144,7 @@ interface AppHeaderHostProps {
  * Routes feed it through `<RouteHeader/>`; see the note there for why that is a portal and not a
  * store of nodes.
  */
-export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
+export function AppHeaderHost({ bridge, error, herd = "idle", children }: AppHeaderHostProps) {
   // The same two shared-clock signals the ConnectionBanner reads, so the dog and the bar agree by
   // construction: bloom while troubled (≥4s not-live), rest muted once lost (≥15s, latched).
   useLocale();
@@ -264,6 +273,7 @@ export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
                   onHome={() => home.current?.fn?.()}
                   trouble={trouble}
                   lost={lost}
+                  state={herd}
                 />
                 {/* THE IDENTITY, STACKED: the brand over the multiplexer this collie drives, both
                     beside the mark. It was ONE 18px line — "Collie on <mux>" — and on a phone that

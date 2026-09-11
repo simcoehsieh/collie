@@ -23,7 +23,8 @@ export interface TriageSection {
   /** Render the heading in the alert colour (the "needs you" group). */
   accent?: boolean;
   /** Section bullet class — the same status palette the badges use, so a section's colour can't
-   *  drift from the status it collects. */
+   *  drift from the status it collects. FORK: its MARK half (`bg-status-X-mark`), because a bullet
+   *  is a fill and the text half rasterises to a brown at 8px. See index.css. */
   dot: string;
   /** Whether the user may fold this section away. Attention sections may not: collapsing an alert
    *  defeats the alert. */
@@ -92,10 +93,10 @@ function byDesc(key: (a: AgentView) => number | undefined) {
 function sectionMeta() {
   return {
     pinned: { key: "pinned", label: t("status.section.pinned"), dot: "bg-muted-foreground/40" },
-    needs: { key: "needs", label: t("status.section.needsYou"), accent: true, dot: "bg-status-blocked" },
-    ready: { key: "ready", label: t("status.section.readyUnseen"), dot: "bg-status-done" },
-    working: { key: "working", label: t("status.section.working"), dot: "bg-status-working" },
-    recent: { key: "recent", label: t("status.section.recent"), dot: "bg-status-idle", collapsible: true },
+    needs: { key: "needs", label: t("status.section.needsYou"), accent: true, dot: "bg-status-blocked-mark" },
+    ready: { key: "ready", label: t("status.section.readyUnseen"), dot: "bg-status-done-mark" },
+    working: { key: "working", label: t("status.section.working"), dot: "bg-status-working-mark" },
+    recent: { key: "recent", label: t("status.section.recent"), dot: "bg-status-idle-mark", collapsible: true },
   } satisfies Record<TriageKey, Omit<TriageSection, "agents">>;
 }
 

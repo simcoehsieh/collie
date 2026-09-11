@@ -79,6 +79,31 @@
      mirror. One name, because it answers one question: what does chrome stand on when it cannot
      stand on the page. */
   --chrome: light-dark(oklch(0.935 0.007 255), oklch(0.21 0.014 262));
+  /* THE GROUND UNDER THE CHROME — a trough cut INTO --chrome, and the only one: the composer's
+     segmented row (Keys · Type · Quick · Agent). It is a token rather than a value in skin.css
+     because the two offered answers were both measured and both fail, and the measurement is the
+     reason this value exists at all:
+       · move --chrome one step up off --muted (they are byte-identical in light, #e6eaee, so the
+         `color-mix(--muted 70%)` the skin painted composited to exactly the ground and the
+         container did not exist). At oklch(0.955) chrome vs muted is 1.058 — but chrome vs the
+         INVERTED MIRROR it sits on goes 1.109 -> 1.048, i.e. it buys the trough by spending the
+         one step --chrome was created to hold (see its comment above). Declined.
+       · paint the container --secondary + a 1px --border ring. --secondary on --chrome measures
+         1.018 in light. That is not a step, it is the same bug spelled differently. Declined.
+     Every existing token near this lightness was measured the same way: --accent 1.067, --border
+     1.097, --muted 1.000. None clears 1.08, which is the floor this fork treats as "a real step"
+     (the mirror's own well is built to it, skin.css). So the trough is its own value, one notch
+     below every one of them in light and one notch DARKER than the page in dark — a trough is a
+     hole, and a hole is darker than the surface in both themes.
+
+     Rasterised: #dadee4 light, #0b0e14 dark.
+       vs --chrome        1.12 light · 1.09 dark   (the cut itself)
+       vs --control-on    1.06 light · 1.57 dark   (the ON tile inside it)
+       vs --card          1.35 light               (a white tile, if one is ever drawn here)
+       1px --border ring  1.10 light · 1.32 dark against --chrome
+     The light ON tile is separated by CHROMA and not by luminance, exactly as --control-on's own
+     comment argues: #cfe7ff is the one saturated thing in a neutral trough. */
+  --trough: light-dark(oklch(0.9 0.009 255), oklch(0.165 0.014 262));
   /* Pinned to --card, not a value of its own. `bg-popover` / `text-popover-foreground` appear ZERO
      times in src/ — Collie's floating layer is the BottomSheet (ui/sheet.tsx), which is
      `bg-background` over a `bg-black/50` scrim. The pair is kept rather than deleted only so a
@@ -86,8 +111,45 @@
      stock white; it is an alias, and there is no third paper behind it. */
   --popover: var(--card);
   --popover-foreground: var(--card-foreground);
-  /* THE accent — one, desaturated indigo-blue. Dark carries dark text on it (9:1), light white. */
-  --primary: light-dark(oklch(0.5 0.17 258), oklch(0.74 0.13 258));
+  /* ── THE ONE RULE FOR THE ACCENT (FORK, 2026-09-11) ────────────────────────────────────────
+     TONAL --control-on MARKS STATE; SOLID --primary MARKS THE ONE ACTION A SCREEN WANTS.
+
+     It is written here, above both tokens, because the app owns two ways of saying "this one" and
+     was using the loud one for both jobs. Counted across web/src/**\/*.tsx before the rule:
+     `bg-primary` 39, `text-primary` 26, `border-primary` 23, `bg-control-on` 2 — the tonal state
+     tint, whose light half is tuned by CHROMA precisely so a row of it does not shout, was drawn
+     in exactly one place. The cost was three different "selected" treatments within 250px of each
+     other on the pane screen (a solid pill in the spaces strip, a lighter tab in the tab strip, a
+     solid pill in the pane strip), status dots landing ON a solid accent — which the status block
+     below forbids outright for a chip — and a dashboard with no accent pixels at all, so the one
+     colour that should mean "do this" meant nothing on the screen the app opens on.
+
+     Reading the rule:
+       STATE is a thing that is currently true and that the operator toggled or arrived at — an open
+       dock, an armed mode, the selected pane, the current space, the active tab, the row you are
+       looking at. It is tonal: --control-on / --control-on-foreground, or a 2px inset rail in
+       --primary where a fill would put a chip on a coloured ground (the session switcher does this
+       already, and the status block below records that it moved there FOR CONTRAST and looked
+       better). A screen may carry many of these at once, which is exactly why they must be quiet.
+       ACTION is the one thing this screen is for: Send, "Tap to resume", the update CTA, the
+       primary button in a sheet. Solid --primary with --primary-foreground on it. At most one per
+       screen; a second one is the signal that the screen has not decided what it is for.
+
+     This block retunes the tokens only. The pill classes that spend them are screen files. */
+  /* THE accent — one, desaturated indigo-blue. Dark carries dark text on it (9:1), light white.
+     The two halves have to read as ONE colour wearing two clothes, and they did not: light was
+     oklch(0.5 0.17) = #145ec1, a saturated corporate blue, against dark's oklch(0.74 0.13) =
+     #76acfc, a pastel periwinkle. On a light screen a filled pill in it was the loudest object on
+     the page; on a dark screen the same element whispered. The chroma is what separates them — 0.17
+     against 0.13 — so light drops to 0.135 and takes 0.045 of lightness to pay for it:
+       before  #145ec1  6.02:1 under --primary-foreground (#fcfcfc)
+       after   #3a6fbd  4.89:1 under the same
+     Rasterised at DPR 1, both. 4.89 clears 4.5 with ~0.39 of headroom and no more, so this is the
+     floor of the move and not a waypoint: any further desaturation has to come out of lightness
+     going DOWN, not up. Dark is untouched and still carries dark ink at 8.40:1.
+     It pairs with the rule above — the accent stops being the app's largest fill, so the value no
+     longer has to survive being drawn across a whole pill row. */
+  --primary: light-dark(oklch(0.545 0.135 258), oklch(0.74 0.13 258));
   --primary-foreground: light-dark(oklch(0.99 0 0), oklch(0.16 0.02 262));
   /* The "this control is ON" tint — a very light sky. Its own token pair rather than reusing
      --secondary because the two say different things: secondary is a quieter surface, this is a
@@ -104,6 +166,23 @@
     oklch(0.4 0.14 258),
     oklch(0.88 0.07 255)
   );
+  /* The ON state's own hover and press, which it did not have. composer.tsx pins
+     `hover:bg-control-on` to the resting tint on purpose — without it, hovering an already-on
+     control repaints it with the ghost variant's grey and reads as switching OFF under the cursor
+     — so the tint had exactly one value and an ON control gave no feedback at all on a desktop.
+     A state that cannot be pressed is the one thing it must not look like.
+
+     The step is taken in CHROMA and lightness together, downward, so hover and press move toward
+     the accent rather than toward grey — the opposite direction from the ghost variant's hover,
+     which is what made the old behaviour read as a toggle-off. Rasterised:
+       light  rest #cfe7ff · hover #c1dfff (1.08 off rest) · pressed #b5d7ff (1.17)
+       dark   rest #1d3559 · hover #25426d (1.22)          · pressed #2f5081 (1.52)
+     --control-on-foreground still clears its bar on every one of them: 7.36 / 6.80 / 6.29 light,
+     8.52 / 6.99 / 5.62 dark. The light steps are small by WCAG and that is the same fact the
+     resting tint records — at this lightness nothing that still reads as light sky measures more,
+     and a pointer that is ON the control supplies the other half of the signal. */
+  --control-on-hover: light-dark(oklch(0.895 0.062 255), oklch(0.38 0.082 258));
+  --control-on-pressed: light-dark(oklch(0.87 0.072 255), oklch(0.43 0.09 258));
   --secondary: light-dark(oklch(0.93 0.008 255), oklch(0.27 0.016 262));
   --secondary-foreground: light-dark(oklch(0.2 0.012 262), oklch(0.965 0.006 255));
   /* The INERT fill — a well, a disabled track, a quiet chip on a card. Value unchanged (rgb 235
@@ -129,10 +208,25 @@
      ~0.94, active 0.92 — and 0.94 would have collided the last two. */
   --accent: light-dark(oklch(0.915 0.01 255), oklch(0.3 0.018 262));
   --accent-foreground: light-dark(oklch(0.2 0.012 262), oklch(0.965 0.006 255));
-  --destructive: light-dark(
-    oklch(0.577 0.245 27.325),
-    oklch(0.704 0.191 22.216)
-  );
+  /* TWO REDS MEANS NEITHER ONE IS THE RED. This was stock shadcn — oklch(0.577 0.245 27.3), chroma
+     0.245, the most saturated value left in a palette whose stated rule is cool neutrals and one
+     desaturated accent — while `--status-blocked` light is oklch(0.46 0.2 25), a deep oxblood. They
+     appear on the same screen: "Close pane" in bright red over blocked rows in oxblood. Retuned
+     onto blocked's own hue and chroma, so destructive and blocked are the same red at two weights,
+     which is what they mean: blocked is the state, destructive is the act.
+       light  #e7000b -> #c21725   4.57:1 -> 5.84:1 under --destructive-foreground (#fafafa)
+       dark   #ff6467 -> #ff6a68   2.77:1 -> 2.68:1 under the same
+     Rasterised at DPR 1, both halves, both before and after.
+
+     THE DARK HALF DOES NOT CLEAR 4.5 AND DID NOT BEFORE, and that is recorded rather than papered
+     over. A near-black palette puts its red at L ~0.70 so it glows on the ground it sits on, and
+     white on it cannot reach 4.5 at any chroma that still reads as red; stock shipped 2.77 and this
+     ships 2.68, i.e. the move neither caused the problem nor fixed it. THE FIX IS ALREADY IN THIS
+     FILE, one token up: --primary's dark half carries DARK ink (8.40:1) rather than white, exactly
+     because dark palettes put their accents where white text cannot follow. The same ink on this
+     red measures 6.95:1. It is left as a proposal and not taken here, because this commit moves one
+     variable — the hue — and flipping every destructive button's text in dark is a second one. */
+  --destructive: light-dark(oklch(0.52 0.2 25), oklch(0.72 0.19 24));
   --destructive-foreground: light-dark(oklch(0.985 0 0), oklch(0.985 0 0));
   --border: light-dark(oklch(0.905 0.008 255), oklch(1 0 0 / 10%));
   --input: light-dark(oklch(0.89 0.01 255), oklch(1 0 0 / 14%));
@@ -233,6 +327,59 @@
      idle 154,170,186 and unknown 139,154,171. */
   --status-idle: light-dark(oklch(0.45 0.02 250), oklch(0.73 0.03 250));
   --status-unknown: light-dark(oklch(0.43 0.02 250), oklch(0.68 0.03 250));
+
+  /* ── THE MARK HALF OF THE STATUS PALETTE ────────────────────────────────────────────────────
+     FORK (2026-09-11). The block above ends "if that costs the dashboard its glance-ability
+     outdoors, the fallback is splitting fill and text into separate tokens." It cost it, and this
+     is that fallback taken: `--status-X` stays the TEXT value, tuned for 4.5:1 on a chip;
+     `--status-X-mark` is the same state drawn as an 8px disc, a hollow ring or a 6px progress
+     fill, where the only question is whether the operator can find it across a room.
+
+     WHY THE TEXT VALUES CANNOT DO BOTH JOBS. Rasterised, light `working` is #804a00 — a brown —
+     `done` is #006a29, a forest green, and `blocked` is #ac0010, an oxblood. Those are correct
+     for a word and wrong for a dot: at 8px hue is all that survives (status-badge.tsx's StatusWord
+     comment measures how little), and a hue at L 0.45 has no chroma left to carry it. Light and
+     dark therefore read as two different products — the dark halves already glow, because they
+     were tuned against near-black where "clears 4.5:1" and "glows" are the same instruction.
+
+     SO ONLY THE LIGHT HALVES MOVED. Each keeps its hue exactly (25 / 72 / 152 / 250) and gains
+     lightness and chroma; the dark halves are the values above restated verbatim, which is why
+     nothing in dark changes by a pixel. They are restated rather than aliased through `var()`
+     because a nested `light-dark()` is not something to bet a palette on.
+
+     RASTERISED, not arithmetic — same method as the table above, each cell painted by the browser
+     at DPR 1 and the pixel read back. A mark is a SOLID, so these are the plain ratios and not the
+     chip's /15 wash:
+
+       mark        light hex   on --background  on --card    (dark hex   on --bg  on --card)
+       blocked     #d93539       4.21             4.65        #ff5e5e     6.40     5.77
+       working     #e48f00       2.31             2.55        #f4b93c    10.81     9.75
+       done        #1a9951       3.33             3.67        #4ac777     8.87     8.00
+       idle        #6f7c89       3.87             4.27        #9aaaba     8.06     7.27
+       unknown     #677380       4.38             4.84        #8b9aab     6.67     6.01
+
+     `working` IS THE ONE CELL UNDER 3:1, and it is under it deliberately. Hue 72 is amber, and
+     amber's identity is high luminance: measured on this hue, reaching 3:1 against the page needs
+     L <= 0.635, which rasterises to #c37700 — a brown-orange, i.e. the exact failure this token
+     exists to fix. The floor it misses is WCAG 1.4.11, which binds a graphic REQUIRED to
+     understand the content, and this dot is not one: every place it is drawn either carries the
+     word beside it (StatusWordSlot) or is one of several encodings of the same fact, which is
+     status-badge.tsx's own argument for why the word exists at all. index.css already makes the
+     matching case one block up, for --control-on: a value can be found by CHROMA rather than by
+     luminance when it is the only saturated thing in a neutral row.
+
+     THE RESTING PAIR GOT QUIETER, NOT LOUDER, AND THAT IS THE POINT. idle/unknown are drawn as
+     HOLLOW RINGS (status-badge.tsx RESTING), so lifting them lightens the ring while the three
+     active states brighten — the gap between "something is happening" and "nothing is" widens in
+     both directions at once.
+
+     NO `--status-info-mark`: nothing in the app draws an info dot or an info fill. The one
+     surface that uses `--status-info` is the prerelease strip, which is text on a wash. */
+  --status-blocked-mark: light-dark(oklch(0.585 0.2 25), oklch(0.7 0.2 24));
+  --status-working-mark: light-dark(oklch(0.72 0.17 72), oklch(0.82 0.15 82));
+  --status-done-mark: light-dark(oklch(0.6 0.15 152), oklch(0.74 0.16 152));
+  --status-idle-mark: light-dark(oklch(0.58 0.025 250), oklch(0.73 0.03 250));
+  --status-unknown-mark: light-dark(oklch(0.55 0.025 250), oklch(0.68 0.03 250));
 
   /* Calm-info sky blue — same shape as the lifecycle palette above (dark brighter to glow on
      near-black). It is the palette's tightest light value: on the old rgb(235) header band its chip
@@ -350,12 +497,15 @@
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-chrome: var(--chrome);
+  --color-trough: var(--trough);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-control-on: var(--control-on);
   --color-control-on-foreground: var(--control-on-foreground);
+  --color-control-on-hover: var(--control-on-hover);
+  --color-control-on-pressed: var(--control-on-pressed);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -375,6 +525,13 @@
   --color-status-idle: var(--status-idle);
   --color-status-unknown: var(--status-unknown);
   --color-status-info: var(--status-info);
+
+  /* FORK: the fill half of the same five states — `bg-status-X-mark`, `border-status-X-mark`. */
+  --color-status-blocked-mark: var(--status-blocked-mark);
+  --color-status-working-mark: var(--status-working-mark);
+  --color-status-done-mark: var(--status-done-mark);
+  --color-status-idle-mark: var(--status-idle-mark);
+  --color-status-unknown-mark: var(--status-unknown-mark);
 
   --color-host-0: var(--host-0);
   --color-host-1: var(--host-1);

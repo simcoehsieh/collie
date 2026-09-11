@@ -23,9 +23,73 @@ header:has(> [data-slot="collapse"] [data-slot="header-row"]) {
    mirror has no seam. This fork lifts the page off pure black, so the mirror's wrapper paints the
    terminal ground itself and fills the whole region between the strips and the composer — the
    terminal reads as a well set into the page, light or dark. The light value is what the mirror's
-   invert filter turns #0a0a0a into (components/mirror-space.ts), so the two agree to the pixel. */
+   invert filter turns #0a0a0a into (components/mirror-space.ts), so the two agree to the pixel.
+
+   AND THE FILL ALONE IS NOT A WELL. Measured: mirror #f5f5f5 on page #f1f4f7 is 1.013:1, and
+   #0a0a0a on #0d0f15 is 1.034:1 — there is no luminance step at either end, only a hue shift,
+   because the page is cool-tinted (hue 255/262) and the terminal ground is neutral by definition
+   (it is an inverted #0a0a0a, and #0a0a0a has no hue). A hue-only seam across a field this large
+   does not read as an inset; it reads as a rendering artifact, and on a phone the edge simply
+   cannot be found.
+
+   A well is a CUT plus a lip, which is the mark's own vocabulary and --rule's stated job. Both
+   edges get the rule (the component already carries `border-t border-rule`; `border-block` is what
+   adds the bottom one), and the top of the ground carries a short inset shadow so the first rows
+   of the terminal sit UNDER the page rather than beside it. Rasterised at DPR 1:
+
+                                 light              dark
+     ground vs page (before)     1.013              1.034
+     rule vs the page            1.338              1.566
+     rule vs the ground          1.354              1.522
+     inset shadow's darkest row  1.157 (#e4e5e6)    1.023 (#060606)
+
+   Light is carried by both; dark is carried by the rule, because --shadow-ink-1's dark half is
+   black at 35% and black over #0a0a0a has almost nowhere to go. That asymmetry is the elevation
+   system's own (index.css: "dark surfaces lean on their border and the second layer collapses to
+   nothing"), so it is inherited here rather than special-cased with a lighter ink. Every cell
+   clears the 1.08:1 step this fork treats as the floor for "a real step" (see --trough). */
 [data-slot="mirror"] {
   background-color: light-dark(#f5f5f5, #0a0a0a);
+  border-block: 1px solid var(--rule);
+  box-shadow: inset 0 2px 4px -2px var(--shadow-ink-1);
+}
+
+/* The terminal's own typography — the half of the mirror that is not colour.
+   A phone is ~62 columns at the default size and an agent emits 80-100, so nearly every line wraps
+   (`whitespace-pre-wrap break-words`, ansi-output.tsx). A wrapped continuation restarts at column
+   0, which makes it indistinguishable from a NEW line: a two-line comment reads as two sibling
+   comments and a numbered listing's indentation collapses. The terminal's structure is exactly
+   what a mirror is for, and the wrap was eating it.
+   A hanging indent says which lines are continuations: `text-indent: -2ch` pulls the line's first
+   fragment back and `padding-left: 2ch` puts it where it started, so every wrapped row sits two
+   columns in under its own line. `2ch` and not `2em` — this is a monospace grid and a column is the
+   unit it is measured in.
+
+   `each-line` IS THE WHOLE RULE, and it took a measurement to find that out. The mirror is ONE
+   `<pre>` holding the entire buffer, with "\n" TEXT NODES between the lines (ansi-output.tsx says
+   so, and the find offsets, the link offsets and a clipboard copy are all defined against those
+   nodes) — so `text-indent` on its own indents the first line OF THE BLOCK and nothing else. Range
+   rects over the live mirror, counted at the pre's own left edge: 11 without the keyword, 74 with
+   it. Without it this rule was a 13px nudge on one line in the scrollback.
+
+   AND IT IS BEHIND `@supports` RATHER THAN STACKED AFTER A PLAIN FALLBACK. Chrome implements
+   `each-line`; Safari does not, and this app's own phone is on iOS 18. A plain `text-indent: -2ch`
+   left underneath would not degrade to "no indent" there — it would degrade to that one wrong line,
+   which is worse than nothing. So a browser without the keyword gets the line-height and none of
+   the indent, and the day Safari ships it the phone gets the rest for free with no edit here.
+
+   1.4 rather than ansi-output's 1.25 applies EVERYWHERE, because the indent only reads once the
+   rows are separable and the extra leading is worth having on its own. The `pre` is the only thing
+   any of this touches, so the statusline strip and the interactive blocks beside the mirror are
+   unaffected. */
+[data-slot="mirror"] pre {
+  line-height: 1.4;
+}
+@supports (text-indent: -2ch each-line) {
+  [data-slot="mirror"] pre {
+    text-indent: -2ch each-line;
+    padding-left: 2ch;
+  }
 }
 
 /* ── Terminal chrome block (the composer's ground under the mirror) ──────────────────────── */
@@ -39,15 +103,77 @@ header:has(> [data-slot="collapse"] [data-slot="header-row"]) {
   border-color: transparent;
   color: var(--muted-foreground);
 }
-/* The Keys · Type · Quick · Agent row reads as one segmented control. */
+/* The Keys · Type · Quick · Agent row reads as one segmented control.
+
+   IT DID NOT. The fill was `color-mix(in oklab, var(--muted) 70%, transparent)` over --chrome, and
+   --muted and --chrome are the SAME VALUE in light (#e6eaee both, index.css:81 / :117) — so the
+   mix composited to exactly the ground and the container was not drawn at all. In dark it was
+   #21252d at 70% over #15181f, 1.15:1, a rumour. Four labelled icons floating on the chrome with
+   nothing grouping them.
+
+   --trough is the value that fixes it and index.css carries the measurements, including the two
+   cheaper answers that were tried and declined. The ring is kept as well as the fill: in light it
+   adds little (1.10:1 against --chrome, against the fill's 1.12) but in dark it is the stronger of
+   the two (1.32 against the fill's 1.09), and one rule that works in both themes beats a pair that
+   each work in one. `inset` so it costs no box — this row's width is spoken for down to the pixel
+   (composer.tsx sizes four buttons into 366px on a 390px phone).
+
+   THE ACTIVE SEGMENT IS ALREADY THE ONE FILLED TILE: composer.tsx's CONTROL_ON paints it
+   `bg-control-on text-control-on-foreground`, which is the fork's tonal ON state and is exactly
+   what this trough was missing a ground for. Nothing here needs to paint it a second time. */
 [data-slot="composer-controls"] {
-  background-color: color-mix(in oklab, var(--muted) 70%, transparent);
+  background-color: var(--trough);
+  box-shadow: inset 0 0 0 1px var(--border);
   border-radius: var(--radius-lg);
   padding: 0.25rem;
   margin-inline: 0;
 }
 [data-slot="composer-controls"] > [data-slot="button"] {
   border-radius: var(--radius-md);
+}
+
+/* ── The tab strip scrolls off a hard edge ──────────────────────────────────────────────── */
+/* An overflowing strip cut its last tab mid-word at the viewport edge, with the collapse chevron
+   sitting on top of the remains — which reads as broken layout, not as "there is more". A mask
+   dissolves the edge instead, so the last tab trails off the way a sentence does.
+
+   ONLY WHEN IT ACTUALLY OVERFLOWS, which is the whole difficulty: CSS has no selector for it, and a
+   mask applied unconditionally fades the last tab of a row that fits — worse than the cut. The
+   `data-overflow` attribute is the answer, written by hooks/use-overflow-fade.ts, and its comment
+   holds the note about scroll-driven animations (the native answer, Safari 26, and this app's phone
+   is on iOS 18).
+
+   The value says which END has more, so the fade is only ever on a side you can actually scroll to:
+   a strip scrolled to its start fades only on the right. 28px is two thirds of a tap target — wide
+   enough to read as a dissolve rather than as a blur on the glyph.
+
+   `-webkit-mask-image` beside the standard property for the same reason the header's blur carries
+   its prefix. Physical `to right` / `to left` and not logical: the row scrolls in the writing mode's
+   direction and this app ships no RTL locale, so a logical gradient would be a claim nothing
+   verifies. */
+[data-slot="tab-scroller"][data-overflow="end"] {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+[data-slot="tab-scroller"][data-overflow="start"] {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+}
+[data-slot="tab-scroller"][data-overflow="both"] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 28px,
+    #000 calc(100% - 28px),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 28px,
+    #000 calc(100% - 28px),
+    transparent
+  );
 }
 
 /* ── Dashboard rows ─────────────────────────────────────────────────────────────────────── */
@@ -58,6 +184,78 @@ header:has(> [data-slot="collapse"] [data-slot="header-row"]) {
 /* ── Sheet chrome ───────────────────────────────────────────────────────────────────────── */
 [data-slot="sheet-title-row"] {
   padding-bottom: 0.625rem;
+}
+
+/* ── Motion: the boot splash handing off to the header ──────────────────────────────────── */
+/* The splash puts a 64px mark at the centre of the screen and the header puts a 40px one in its
+   top-left corner, and between them was a hard cut: two pictures of the same drawing in two places,
+   with nothing saying they are the same drawing. 260ms of travel says it.
+
+   IT IS PLAYED BY THE ARRIVING MARK, NOT THE LEAVING ONE, and that is forced rather than chosen.
+   The first-paint splash lives inside #root and `createRoot().render()` replaces those children in
+   one commit; React's own BootSplash is a HydrateFallback and unmounts the same way. Neither can
+   animate its own exit — there is no frame in which the old element still exists. So the header's
+   mark starts where the splash's mark was, at the splash's size, and travels home: the same 260ms
+   read backwards, and the app appears to BECOME its own header rather than replace it.
+
+   THE GEOMETRY IS STATED, NOT MEASURED, so it costs no JavaScript and no layout read:
+     · the header mark's own centre is 38px from the left (the row's `pl-4`, minus CollieHome's
+       `-mx-1`, plus its `px-1`, plus half of the 44px box) and 30px from the top of the header row
+       (a 60px `min-h-15` row centring a 44px box), under the safe-area inset the header carries;
+     · the splash's mark is centred in the viewport;
+     · 1.6 = 64/40, so the scaled 44px box draws the svg at exactly the splash's 64px.
+   Translate first, then scale: the translate moves the box's centre onto the viewport's, and the
+   scale is about that centre. If the header row's padding or the mark's box ever change, these two
+   numbers change with them — they are the only things here that know about app-header.tsx.
+
+   It runs on MOUNT and there is nothing to guard: AppHeaderHost is mounted once for the life of the
+   app (its own comment says why), so this plays exactly when the splash goes away. The one other
+   time it plays is coming back from the idle lock, which swaps the whole RouterProvider out — and
+   that screen is also a centred mark, so the same motion is the right one there too.
+
+   `both` holds the first frame before paint, so the mark never flashes at its home position first.
+   Reduced motion drops the travel and keeps the colour, which is this app's rule for every mark
+   animation (meow-mark.tsx).
+
+   IT IS DELIBERATELY NOT `cm-`-PREFIXED. collie-home.tsx collects `getAnimations({subtree: true})`
+   from THIS element and rates every animation whose name starts with `cm-` — that is the round's
+   ramp, and it runs the curve down to a playback rate of 0 at each end. A hand-off caught by it
+   would stop dead, 64px wide, in the middle of the screen, for up to the round's 1.8s. The prefix
+   is the mark's OWN contract (FORK.md), for animations inside the drawing; this one is the skin
+   moving the box the drawing sits in, and it must stay outside that net. */
+[data-slot="header-mark"] {
+  animation: mark-handoff 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes mark-handoff {
+  from {
+    transform: translate(
+        calc(50vw - 38px),
+        calc(50dvh - 30px - env(safe-area-inset-top))
+      )
+      scale(1.6);
+  }
+  to {
+    transform: none;
+  }
+}
+/* The caption's half, on the React splash. index.html's first-paint splash carries the same rule in
+   its own inline <style>, because index.css and this file have not loaded at that point. */
+[data-slot="boot-caption"] {
+  animation: boot-caption 260ms ease-out 140ms both;
+}
+@keyframes boot-caption {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="header-mark"],
+  [data-slot="boot-caption"] {
+    animation: none;
+  }
 }
 
 /* ── Motion: a route arriving ───────────────────────────────────────────────────────────── */

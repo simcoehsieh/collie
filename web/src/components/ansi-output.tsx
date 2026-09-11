@@ -302,7 +302,7 @@ const renderImageCluster = (
   url === null ? (
     <span
       key={key}
-      className="my-1 inline-flex items-center gap-1.5 rounded border border-border/40 bg-muted/30 px-2 py-1 text-xs"
+      className="my-1 inline-flex items-center gap-1.5 rounded-sm border border-border/40 bg-muted/30 px-2 py-1 text-xs"
     >
       {t("mirror.imageBadge")}
     </span>
@@ -323,7 +323,7 @@ const renderImageCluster = (
         <img
           src={url}
           alt={t("mirror.imageAlt")}
-          className="mx-auto max-h-80 w-auto max-w-full rounded object-contain"
+          className="mx-auto max-h-80 w-auto max-w-full rounded-sm object-contain"
           loading="lazy"
           // A load that fails falls back to the badge (see FAILED IMAGES in the component). The
           // handler reports the URL, not the cluster: the same blob can sit under two clusters.

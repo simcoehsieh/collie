@@ -8,7 +8,9 @@ interface SectionHeaderProps {
   label: string;
   /** Item count shown beside the label. Omit to show no count. */
   count?: number;
-  /** Bullet colour class from the status palette (e.g. "bg-status-blocked"). */
+  /** Bullet colour class from the status palette's MARK half (e.g. "bg-status-blocked-mark").
+   *  A bullet is a FILL: the `--status-X` values are tuned as TEXT and rasterise to a brown and a
+   *  forest green in light, which is unreadable at 8px. See index.css. */
   dot?: string;
   /** Render the label in the alert colour — the "Needs you" section. */
   accent?: boolean;
@@ -96,7 +98,7 @@ export function SectionHeader({
             {...(controls && open ? { "aria-controls": controls } : {})}
             // min-h-9 keeps the row on the 36px touch floor even though the text is tiny.
             className={cn(
-              "flex min-h-9 min-w-0 flex-1 items-center gap-1.5 rounded text-left transition-colors",
+              "flex min-h-9 min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left transition-colors",
               type,
               tone,
             )}

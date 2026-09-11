@@ -87,7 +87,7 @@ function JournalImage({
       <img
         src={src}
         alt={alt}
-        className="max-h-96 w-auto max-w-full rounded border object-contain shadow-xs"
+        className="max-h-96 w-auto max-w-full rounded-sm border object-contain shadow-xs"
         loading="lazy"
       />
     </a>

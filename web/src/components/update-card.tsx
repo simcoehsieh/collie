@@ -494,7 +494,7 @@ export function UpdateCard() {
                   try. "Retry crew update" survives, because levelling the peers is a different
                   act that works fine from a lead that cannot move itself. */}
               {packageCommand !== null && (
-                <code className="select-all rounded bg-muted px-2 py-1 font-mono text-xs">{packageCommand}</code>
+                <code className="select-all rounded-sm bg-muted px-2 py-1 font-mono text-xs">{packageCommand}</code>
               )}
               {action !== "none" && !(packageManaged && action !== "retry-crew") && (
                 <Button

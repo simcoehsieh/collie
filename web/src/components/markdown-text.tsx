@@ -54,7 +54,7 @@ function Span({ span }: { span: MdSpan }) {
       );
     case "code":
       return (
-        <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em] break-all">
+        <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[0.9em] break-all">
           <Hit text={span.text} />
         </code>
       );

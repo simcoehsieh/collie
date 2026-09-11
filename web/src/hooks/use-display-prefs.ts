@@ -12,7 +12,14 @@ export interface DisplayPrefs {
    *  INSIDE the wrap (lib/table-run.ts), so no-wrap is now only for output whose columns matter
    *  everywhere, such as a full-screen TUI. */
   wrap: boolean;
-  /** Font size in px for the mirror pre (default: 10, range: 9–16). */
+  /** Font size in px for the mirror pre (default: 11, range: 9–24).
+   *
+   *  FORK: 11, not upstream's 10, and the extra pixel is paid for out of a loss that was already
+   *  happening. At 10px a 390px phone is ~62 columns against the 80-100 an agent emits, so nearly
+   *  every line wrapped anyway — the columns were not being preserved, they were being broken
+   *  silently. 11px costs ~6 of those columns and buys a size that can be read at arm's length,
+   *  and skin.css's hanging indent makes the wraps that remain legible AS wraps. A device that has
+   *  ever touched the stepper keeps its own number; this is only what a fresh install gets. */
   fontSize: number;
   /**
    * Font size in px for the COMPOSER's draft field (default: 14, range: 13–16).
@@ -212,7 +219,7 @@ export const DRAFT_FONT_MIN = 13;
 export const DRAFT_FONT_MAX = 16;
 const DEFAULTS: DisplayPrefs = {
   wrap: true,
-  fontSize: 10,
+  fontSize: 11,
   draftFontSize: 14,
   fontFamily: "system",
   rawTerminal: false,

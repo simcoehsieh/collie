@@ -2,6 +2,7 @@ import { type RefObject, useEffect, useRef, useState } from "react";
 import { KeyRound, Loader2, Smartphone } from "lucide-react";
 import { useLocation, useRevalidator, useSearchParams } from "react-router";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useLocale } from "@/hooks/use-locale";
@@ -182,10 +183,19 @@ function DeviceRow({
               that captures it uses below. Only the pairing CODE is monospaced, because that one is
               eight characters you compare against a terminal. */}
           <span className="truncate text-[13px] font-medium">{label}</span>
+          {/* The app's own pill primitive, not a hand-rolled span. It was `rounded bg-status-done/15
+              … text-status-done`, which is <Badge variant="outline"> with a status tone written out
+              by hand at Tailwind's fixed 4px — a radius that is not on this fork's ramp at all
+              (8/12/16/20/24) and therefore reads as unfinished beside every pill around it.
+              `border-transparent` keeps the badge's own 1px border reserved and invisible, so this
+              wears the status tone at the same box as every other badge in the app. */}
           {current && (
-            <span className="shrink-0 rounded bg-status-done/15 px-1.5 py-0.5 text-[11px] font-medium text-status-done">
+            <Badge
+              variant="outline"
+              className="border-transparent bg-status-done/15 px-1.5 py-0.5 text-[11px] text-status-done"
+            >
               {t("settings.devices.thisDevice")}
-            </span>
+            </Badge>
           )}
         </div>
         <p className="mt-0.5 text-xs text-muted-foreground">
