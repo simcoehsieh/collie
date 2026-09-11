@@ -145,16 +145,33 @@ const OverviewCard = memo(function OverviewCard({
       {parts.project !== title && (
         <div className="truncate text-xs text-muted-foreground">{parts.project}</div>
       )}
-      {/* The tail: mono, small, never wrapping past the card. Plain text — ANSI stripped by
+      {/* FORK: WHAT A RESTING PANE SHOWS IS WHAT IT SAID, not its last six rows.
+          An agent's TUI runs on the alternate screen, so the bottom of a finished pane is its input
+          box and its status line — six rows that are identical across four done agents and tell the
+          operator nothing. When lib/overview.ts has read the newest journal turn for a resting pane
+          it is shown instead, in the UI face because it is prose, wrapped because a sentence is not
+          a terminal row. A working pane keeps the raw tail: there, the rows ARE what is happening.
+
+          The tail: mono, small, never wrapping past the card. Plain text — ANSI stripped by
           lib/overview.ts — because six rows at this size are read for their words, not their
           colours, and a card is not a mirror (ADR 0002's MIRROR_SPACE rules apply to the mirror). */}
-      <pre
-        data-slot="overview-tail"
-        className="mt-auto max-h-28 min-h-20 overflow-hidden whitespace-pre font-mono text-[11px] leading-[1.35] text-muted-foreground"
-        aria-label={t("overview.tailAria")}
-      >
-        {tail === undefined ? t("overview.loading") : tail.lines.join("\n")}
-      </pre>
+      {tail?.reply === undefined ? (
+        <pre
+          data-slot="overview-tail"
+          className="mt-auto max-h-28 min-h-20 overflow-hidden whitespace-pre font-mono text-[11px] leading-[1.35] text-muted-foreground"
+          aria-label={t("overview.tailAria")}
+        >
+          {tail === undefined ? t("overview.loading") : tail.lines.join("\n")}
+        </pre>
+      ) : (
+        <p
+          data-slot="overview-reply"
+          className="mt-auto max-h-28 min-h-20 overflow-hidden whitespace-pre-wrap text-xs leading-[1.45] text-muted-foreground"
+          aria-label={t("overview.replyAria")}
+        >
+          {tail.reply.join("\n")}
+        </p>
+      )}
     </button>
   );
 });

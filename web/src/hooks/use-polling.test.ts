@@ -1,4 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
+
+import { server } from "@/test/setup";
 
 import {
   BURST_MS,
@@ -16,6 +19,7 @@ import {
   usePolling,
 } from "./use-polling";
 import { __resetLiveFeed } from "@/lib/live-feed";
+import { fetchPane } from "@/lib/api";
 import { isCatchingUp, resetIdleLock, setLocked } from "@/lib/idle";
 import {
   BURST_MIN_POLLS,
@@ -654,5 +658,33 @@ describe("usePolling — the live feed", () => {
   it("does not open a stream for a member host", () => {
     renderHook(() => usePolling(openPane(), "w1:p1", { host: "badger" }));
     expect(FakeEventSource.last).toBeNull();
+  });
+
+  // FORK: a poke that names a version the page already holds is a fetch we can prove would 304.
+  it("skips the read when the poke names a version already held, and takes it otherwise", async () => {
+    // Put a known tag in the pane ETag map through the ordinary read path — never by reaching in,
+    // because "what do I hold" must have exactly one answer.
+    server.use(
+      http.get(/\/api\/pane\/[^/]+$/, () =>
+        HttpResponse.json(
+          { paneId: "w1:p1", text: "hello", truncated: false, revision: 1 },
+          { headers: { etag: '"held"' } },
+        ),
+      ),
+    );
+    await fetchPane("w1:p1");
+    renderHook(() => usePolling(openPane(), "w1:p1"));
+    const source = FakeEventSource.last!;
+    act(() => source.emit("open"));
+    rr.revalidate.mockClear();
+    vi.advanceTimersByTime(POKE_GAP_MS);
+    act(() => source.emit("poke", '{"kind":"pane","paneId":"w1:p1","etag":"\\"held\\""}'));
+    expect(rr.revalidate).not.toHaveBeenCalled();
+    // A stamp for bytes we do NOT hold, and an unstamped poke, both read.
+    act(() => source.emit("poke", '{"kind":"pane","paneId":"w1:p1","etag":"\\"moved\\""}'));
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(POKE_GAP_MS);
+    act(() => source.emit("poke", '{"kind":"pane","paneId":"w1:p1"}'));
+    expect(rr.revalidate).toHaveBeenCalledTimes(2);
   });
 });

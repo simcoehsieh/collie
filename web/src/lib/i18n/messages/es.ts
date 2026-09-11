@@ -991,6 +991,7 @@ export const es: Dictionary = {
   "home.pin.moveDown": "Bajar",
   "overview.title": "Vista general",
   "overview.tailAria": "Últimas líneas del terminal",
+  "overview.replyAria": "La última respuesta del agente",
   "overview.loading": "…",
   "hotkeys.title": "Atajos de teclado",
   "hotkeys.rows": "Moverse entre paneles",

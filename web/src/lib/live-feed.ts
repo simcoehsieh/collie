@@ -16,8 +16,16 @@ import { useSyncExternalStore } from "react";
 import { asJsonString, parseJsonObject } from "./json";
 import { normalizeScope, type Scope } from "./scope";
 
-/** One line off the stream. Mirrors `bridge/events.ts` → `PokeEvent`. */
-export type Poke = { kind: "snapshot" } | { kind: "pane"; paneId: string };
+/**
+ * One line off the stream. Mirrors `bridge/events.ts` → `PokeEvent`.
+ *
+ * `etag` names the VERSION the poke is about. It stays inside poll-as-truth — a version is still
+ * *when*, not what — and it is what lets the page skip a fetch it can prove would answer 304.
+ * Optional on both kinds: an older bridge sends none, and the snapshot's stamp only matches where
+ * nothing rewrites the body on its way out (see the bridge's own note). A poke with no stamp, or one
+ * the page cannot match, is the poke that always shipped.
+ */
+export type Poke = { kind: "snapshot"; etag?: string } | { kind: "pane"; paneId: string; etag?: string };
 
 export interface LiveFeedHandlers {
   onPoke: (poke: Poke) => void;
@@ -78,15 +86,26 @@ export function liveFeedAvailable(scope?: Scope): boolean {
   return normalizeScope(scope).host === undefined;
 }
 
-/** The stream's URL for a scope and, optionally, the pane the page is following at a window. */
-export function liveFeedUrl(scope?: Scope, paneId?: string | null, lines?: number): string {
+/**
+ * The stream's URL for a scope and, optionally, the panes the page is following at a window.
+ *
+ * ONE pane is the pane screen; SEVERAL is the Overview grid, which names every visible card so its
+ * tails ride this stream instead of a timer of their own (lib/overview.ts). The bridge takes a
+ * repeated `?pane=` (`watchedPanes` in bridge/server.ts) and caps the set; `lines` is the window all
+ * of them are read at, which is the window the page will fetch them at.
+ */
+export function liveFeedUrl(
+  scope?: Scope,
+  panes?: string | readonly string[] | null,
+  lines?: number,
+): string {
   const params = new URLSearchParams();
   const { session } = normalizeScope(scope);
   if (session) params.set("session", session);
-  if (paneId) {
-    params.set("pane", paneId);
-    if (lines) params.set("lines", String(lines));
-  }
+  // One pane may be named as the bare id (the pane screen's call site, unchanged) or as a set.
+  const list = (Array.isArray(panes) ? panes : panes ? [panes] : []).filter((id) => id !== "");
+  for (const id of list) params.append("pane", id);
+  if (list.length > 0 && lines) params.set("lines", String(lines));
   const q = params.toString();
   return q ? `/api/events?${q}` : "/api/events";
 }
@@ -96,10 +115,21 @@ export function parsePoke(data: string): Poke | null {
   const parsed = parseJsonObject(data);
   if (!parsed) return null;
   const kind = asJsonString(parsed.kind);
-  if (kind === "snapshot") return { kind: "snapshot" };
+  // Assigned, never conditionally spread: a frame without a stamp must produce a poke with NO `etag`
+  // key, so "the bridge said nothing" and "the bridge said empty" cannot be confused downstream.
+  const etag = asJsonString(parsed.etag);
+  if (kind === "snapshot") {
+    const poke: Poke = { kind: "snapshot" };
+    if (etag) poke.etag = etag;
+    return poke;
+  }
   if (kind === "pane") {
     const paneId = asJsonString(parsed.paneId);
-    if (paneId !== undefined && paneId !== "") return { kind: "pane", paneId };
+    if (paneId !== undefined && paneId !== "") {
+      const poke: Poke = { kind: "pane", paneId };
+      if (etag) poke.etag = etag;
+      return poke;
+    }
   }
   return null;
 }

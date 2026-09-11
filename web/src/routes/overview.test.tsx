@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CrewProvider } from "@/components/crew-provider";
 import { __resetDashPrefs, setPinned } from "@/hooks/use-dash-prefs";
 import { ROOT_ROUTE_ID, type HomeData } from "@/lib/loaders";
-import { __resetTails } from "@/lib/overview";
+import { __resetTails, readTail } from "@/lib/overview";
 import { fixtureAgents, fixtureTabs, fixtureWorkspaces } from "@/test/handlers";
 import { server } from "@/test/setup";
 import { withHeaderHost } from "@/test/header-host";
@@ -100,5 +100,44 @@ describe("OverviewRoute", () => {
     renderOverview(homeData([]));
     expect(await screen.findByText("No agents running.")).toBeInTheDocument();
     expect(document.querySelector('[data-slot="overview-grid"]')).toBeNull();
+  });
+
+  // FORK: a finished pane's last six rows are its input box and its status line — the same rows on
+  // every done agent. What it SAID is in the journal, and that is what the card shows.
+  it("a resting pane's card shows the agent's last reply once its mirror has settled", async () => {
+    const pane = { ...fixtureAgents[0]!, status: "done" as const };
+    server.use(
+      http.get("/api/pane/:paneId/history", () =>
+        HttpResponse.json({
+          paneId: pane.paneId,
+          available: true,
+          entries: [
+            {
+              uuid: "u1",
+              ts: "2026-09-11T00:00:00.000Z",
+              role: "assistant",
+              parts: [{ kind: "text", text: "Rebased and all green." }],
+            },
+          ],
+          hasMore: false,
+          total: 1,
+          fileTruncated: false,
+        }),
+      ),
+      // A mirror that holds still: the second read is a 304, which is the settle signal.
+      http.get("/api/pane/:paneId", ({ params, request }) =>
+        request.headers.get("if-none-match") === '"still"'
+          ? new HttpResponse(null, { status: 304 })
+          : HttpResponse.json(
+              { paneId: params.paneId, text: "❯\n───", truncated: false, revision: 1 },
+              { headers: { etag: '"still"' } },
+            ),
+      ),
+    );
+    await readTail(pane.paneId, undefined); // the first read, before the screen mounts
+    renderOverview(homeData([pane]));
+    expect(
+      await screen.findByLabelText("The agent's last reply", {}, { timeout: 5000 }),
+    ).toHaveTextContent("Rebased and all green.");
   });
 });

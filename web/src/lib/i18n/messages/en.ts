@@ -1043,6 +1043,7 @@ export const en = {
   "home.pin.moveDown": "Move down",
   "overview.title": "Overview",
   "overview.tailAria": "Last lines of the terminal",
+  "overview.replyAria": "The agent's last reply",
   "overview.loading": "…",
   "hotkeys.title": "Keyboard shortcuts",
   "hotkeys.rows": "Move between panes",

@@ -982,6 +982,7 @@ export const ja: Dictionary = {
   "home.pin.moveDown": "下へ移動",
   "overview.title": "一覧",
   "overview.tailAria": "ターミナルの最終行",
+  "overview.replyAria": "エージェントの最新の返答",
   "overview.loading": "…",
   "hotkeys.title": "キーボードショートカット",
   "hotkeys.rows": "ペイン間を移動",

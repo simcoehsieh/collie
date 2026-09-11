@@ -995,6 +995,7 @@ export const de: Dictionary = {
   "home.pin.moveDown": "Nach unten",
   "overview.title": "Übersicht",
   "overview.tailAria": "Letzte Zeilen des Terminals",
+  "overview.replyAria": "Die letzte Antwort des Agents",
   "overview.loading": "…",
   "hotkeys.title": "Tastaturkürzel",
   "hotkeys.rows": "Zwischen Panes wechseln",

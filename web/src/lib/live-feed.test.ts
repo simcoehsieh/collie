@@ -55,6 +55,18 @@ describe("liveFeedUrl", () => {
     expect(liveFeedUrl({ session: "demo" }, "w1:p1")).toBe("/api/events?session=demo&pane=w1%3Ap1");
     expect(liveFeedUrl(undefined, null, 200)).toBe("/api/events");
   });
+
+  // FORK: the Overview grid names every visible card on the ONE stream the page already has.
+  it("repeats `pane` for a set, at one shared window", () => {
+    expect(liveFeedUrl(undefined, ["w1:p1", "w1:p2", "w2:p1"], 12)).toBe(
+      "/api/events?pane=w1%3Ap1&pane=w1%3Ap2&pane=w2%3Ap1&lines=12",
+    );
+    expect(liveFeedUrl({ session: "demo" }, ["w1:p1"], 12)).toBe(
+      "/api/events?session=demo&pane=w1%3Ap1&lines=12",
+    );
+    // An empty set is the herd-only stream, and carries no window to be read at.
+    expect(liveFeedUrl(undefined, [], 12)).toBe("/api/events");
+  });
 });
 
 describe("liveFeedAvailable", () => {
@@ -79,6 +91,27 @@ describe("parsePoke", () => {
     expect(parsePoke('{"kind":"other"}')).toBeNull();
     expect(parsePoke("not json")).toBeNull();
     expect(parsePoke("[]")).toBeNull();
+  });
+
+  // FORK: the version stamp. A poke that carries one names the bytes it is about, so the page can
+  // skip a fetch it can prove would 304 (hooks/use-polling.ts `alreadyHeld`).
+  it("reads the version stamp when the bridge sent one", () => {
+    expect(parsePoke('{"kind":"snapshot","etag":"\\"7f\\""}')).toEqual({
+      kind: "snapshot",
+      etag: '"7f"',
+    });
+    expect(parsePoke('{"kind":"pane","paneId":"w1:p1","etag":"\\"7f\\""}')).toEqual({
+      kind: "pane",
+      paneId: "w1:p1",
+      etag: '"7f"',
+    });
+  });
+
+  it("leaves the key OFF when the bridge sent none, or sent something that is not a string", () => {
+    expect("etag" in parsePoke('{"kind":"snapshot"}')!).toBe(false);
+    expect("etag" in parsePoke('{"kind":"snapshot","etag":3}')!).toBe(false);
+    expect("etag" in parsePoke('{"kind":"snapshot","etag":""}')!).toBe(false);
+    expect("etag" in parsePoke('{"kind":"pane","paneId":"w1:p1"}')!).toBe(false);
   });
 });
 

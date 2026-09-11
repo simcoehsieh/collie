@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useRevalidator } from "react-router";
 
-import { refreshNow } from "@/lib/api";
+import { holdsPaneEtag, holdsSnapshotEtag, refreshNow } from "@/lib/api";
 import { isLongUpload } from "@/lib/connection-health";
 import { beginCatchUp, endCatchUp, isLocked, useLocked } from "@/lib/idle";
 import {
@@ -10,6 +10,7 @@ import {
   openLiveFeed,
   useLiveFeedHealthy,
   type LiveFeed,
+  type Poke,
 } from "@/lib/live-feed";
 import {
   burstAppliesTo,
@@ -21,6 +22,7 @@ import {
   useTopologyBursting,
 } from "@/lib/poll-intent";
 import { getRequestedLines, type HomeData } from "@/lib/loaders";
+import { deliverTailPoke, TAIL_LINES, useWatchedTailPanes } from "@/lib/overview";
 import { useLowPower } from "@/hooks/use-dash-prefs";
 import { crewMoving, runInFlight } from "@/lib/update-ribbon";
 import type { Scope } from "@/lib/scope";
@@ -86,6 +88,19 @@ export function saveDataRequested(): boolean {
 /** The least time between two poke-driven reads — the watcher behind the stream re-reads a moving
  *  pane every 400 ms and a stream of pokes at that rate is coalesced onto this one. */
 export const POKE_GAP_MS = 400;
+
+/**
+ * FORK: whether a poke names a version this page already holds, and can therefore be skipped.
+ *
+ * Pure + exported so the rule is testable without a stream: the ONLY thing that may suppress a fetch
+ * is an exact tag match against the map that fetch would have validated against.
+ */
+export function alreadyHeld(poke: Poke, scope?: Scope, viewAll = false): boolean {
+  if (!poke.etag) return false;
+  return poke.kind === "snapshot"
+    ? holdsSnapshotEtag(poke.etag, scope, viewAll)
+    : holdsPaneEtag(poke.paneId, poke.etag, scope);
+}
 
 /**
  * Everything the cadence needs that the snapshot cannot tell us, as plain values.
@@ -238,6 +253,10 @@ export function usePolling(
   // every time the viewed host or session changes identity.
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
+  // FORK: the breadth, held the same way — a snapshot poke's stamp names the body for THIS view, and
+  // the ETag map is keyed by (host, session, breadth) exactly as the fetch is.
+  const viewAllRef = useRef(data?.viewAll ?? false);
+  viewAllRef.current = data?.viewAll ?? false;
   // Hold the revalidator in a ref so the effect only re-subscribes when the cadence changes,
   // not on every revalidation (its identity flips each cycle).
   const ref = useRef(revalidator);
@@ -283,7 +302,15 @@ export function usePolling(
   // Only a FOLLOWED pane is named on the stream: scrolled back, the display is frozen and a poke for
   // new text would only make the page fetch bytes it will not show. The herd pokes still arrive.
   const feedPane = paneId && isFollowingNow ? paneId : null;
-  const feedLines = feedPane ? getRequestedLines(feedPane, scope) : 0;
+  // FORK: with no pane open, the Overview grid may have declared the cards it is showing
+  // (lib/overview.ts). They ride THIS stream rather than a second connection — `openLiveFeed` writes
+  // one shared health flag, and two streams would make it flap between two connections' fortunes.
+  const tailPanes = useWatchedTailPanes();
+  const feedPanes = feedPane ? [feedPane] : paneId ? [] : tailPanes;
+  const feedLines = feedPane ? getRequestedLines(feedPane, scope) : feedPanes.length > 0 ? TAIL_LINES : 0;
+  // The set as one string, so the effect below re-opens on a CHANGE of cards and not on a fresh
+  // array carrying the same ones.
+  const feedPaneKey = feedPanes.join(" ");
   const pokeAt = useRef(0);
   const pokePending = useRef(false);
   const locked = useLocked();
@@ -295,7 +322,16 @@ export function usePolling(
     // A poke is a reason to run the loaders NOW, coalesced: never more often than POKE_GAP_MS, and
     // never while a revalidation is in flight — one is queued behind it instead, because the poke
     // may describe a change that read had already passed (the same rule the bridge's engine keeps).
-    const runPoke = () => {
+    const runPoke = (poke?: Poke) => {
+      // FORK: the poke names the version it is about. When that is a version this page already
+      // holds, the fetch it would cause is one we can PROVE answers 304 — so it does not happen.
+      // This stays inside poll-as-truth: skipping a poke costs at most one safety-net interval,
+      // which is the same promise a dropped poke has always carried. A poke with no stamp (an older
+      // bridge, or a snapshot body the bridge rewrites on the way out) falls straight through.
+      if (poke !== undefined && alreadyHeld(poke, scopeRef.current, viewAllRef.current)) return;
+      // FORK: a pane poke for a card the Overview is showing is answered by re-reading THAT card,
+      // not by revalidating every loader on the page for a pane no route is rendering.
+      if (poke?.kind === "pane" && deliverTailPoke(poke.paneId, poke.etag)) return;
       const r = ref.current;
       if (r.state !== "idle") {
         pokePending.current = true;
@@ -317,8 +353,8 @@ export function usePolling(
     };
     const open = () => {
       if (feed || document.hidden) return;
-      feed = openLiveFeed(liveFeedUrl(scopeRef.current, feedPane, feedLines || undefined), {
-        onPoke: () => runPoke(),
+      feed = openLiveFeed(liveFeedUrl(scopeRef.current, feedPanes, feedLines || undefined), {
+        onPoke: (poke) => runPoke(poke),
         // Coming up is worth one read: whatever moved while the stream was down produced no poke.
         onHealth: (healthy) => {
           if (healthy) runPoke();
@@ -337,7 +373,10 @@ export function usePolling(
       if (gapTimer) clearTimeout(gapTimer);
       close();
     };
-  }, [locked, feedPane, feedLines, scopeKeyForFeed]);
+    // `feedPanes` is derived from `feedPaneKey` — the string is the dependency, the array is not,
+    // because a new array with the same ids must not tear a working connection down.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locked, feedPaneKey, feedLines, scopeKeyForFeed]);
   // The read a poke queued behind an in-flight revalidation runs the moment that one settles.
   useEffect(() => {
     if (revalidator.state !== "idle" || !pokePending.current) return;

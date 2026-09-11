@@ -403,6 +403,28 @@ export function __resetSnapshotCache(): void {
   snapshotCache.clear();
 }
 
+/**
+ * FORK: does this page already hold the exact bytes a poke names?
+ *
+ * The live feed's pokes carry a version stamp (lib/live-feed.ts). When it matches what is in the
+ * ETag map, the fetch the poke would have caused is one this page can prove would answer 304 — so it
+ * is skipped, and the round trip through the tunnel never happens. Anything else — no stamp, a stamp
+ * that does not match, nothing cached — falls through to the fetch, which is what always happened.
+ *
+ * Read off the SAME maps the fetches write to, and keyed the same way, because a second opinion
+ * about "what do I hold" is exactly the thing that would strand a mirror on stale text.
+ */
+export function holdsSnapshotEtag(etag: string, scope?: Scope, all = false): boolean {
+  const path = withScope("/api/snapshot", scope);
+  const url = all ? `${path}${path.includes("?") ? "&" : "?"}sessions=all` : path;
+  return snapshotCache.get(url)?.etag === etag;
+}
+
+/** The pane half of {@link holdsSnapshotEtag}. */
+export function holdsPaneEtag(paneId: string, etag: string, scope?: Scope): boolean {
+  return paneCache.get(paneScopeKey(scope, paneId))?.etag === etag;
+}
+
 // ── FORK: the cold boot, as one round trip (bridge/boot.ts) ───────────────────────────────────
 //
 // `rootLoader` used to open the app with `GET /api/snapshot`, alone, behind the boot splash — and

@@ -974,6 +974,7 @@ export const ko: Dictionary = {
   "home.pin.moveDown": "아래로 이동",
   "overview.title": "한눈에 보기",
   "overview.tailAria": "터미널 마지막 줄",
+  "overview.replyAria": "에이전트의 마지막 답변",
   "overview.loading": "…",
   "hotkeys.title": "키보드 단축키",
   "hotkeys.rows": "패널 사이 이동",

@@ -954,6 +954,7 @@ export const zhTW: Dictionary = {
   "home.pin.moveDown": "下移",
   "overview.title": "總覽",
   "overview.tailAria": "終端機最後幾行",
+  "overview.replyAria": "代理的最新回覆",
   "overview.loading": "…",
   "hotkeys.title": "鍵盤快速鍵",
   "hotkeys.rows": "在 pane 之間移動",

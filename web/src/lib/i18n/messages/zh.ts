@@ -960,6 +960,7 @@ export const zh: Dictionary = {
   "home.pin.moveDown": "下移",
   "overview.title": "总览",
   "overview.tailAria": "终端最后几行",
+  "overview.replyAria": "代理的最新回复",
   "overview.loading": "…",
   "hotkeys.title": "键盘快捷键",
   "hotkeys.rows": "在 pane 之间移动",
