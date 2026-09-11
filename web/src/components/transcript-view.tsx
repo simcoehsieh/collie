@@ -3,6 +3,7 @@ import { ChevronRight, Info, TriangleAlert, User, Wrench } from "lucide-react";
 
 import { AgentIcon } from "@/components/agent-icon";
 import { MarkdownText } from "@/components/markdown-text";
+import { TurnNoteHandle, type NotedTurn } from "@/components/note-badge";
 import { cn } from "@/lib/utils";
 import { imageSrc } from "@/lib/api";
 import { splitHighlight } from "@/lib/transcript-search";
@@ -251,6 +252,7 @@ export function TranscriptView({
   query = "",
   focusedUuid,
   scope,
+  onTurnLongPress,
 }: {
   entries: TranscriptEntry[];
   /** The pane's agent name, for the per-turn brand icon. */
@@ -262,6 +264,9 @@ export function TranscriptView({
   /** Which machine + session this pane lives on. An image's bytes sit on the host whose journal
    *  named them, so a blob URL takes the same scope every other per-pane request takes. */
   scope?: Scope;
+  /** FORK: hold a turn to write a note anchored to it (components/note-badge.tsx). Unset leaves
+   *  every turn exactly as it renders upstream — no wrapper, no handlers, no badge. */
+  onTurnLongPress?: (turn: NotedTurn) => void;
 }) {
   useLocale();
   // Consecutive turns from the same speaker are GROUPED — only the first of a run carries the
@@ -301,7 +306,13 @@ export function TranscriptView({
                 <div className="h-px flex-1 bg-border" />
               </div>
             )}
-            <Turn entry={entry} agent={agent} showHeader={showHeader} query={query} scope={scope} />
+            {onTurnLongPress ? (
+              <TurnNoteHandle entry={entry} onLongPress={onTurnLongPress}>
+                <Turn entry={entry} agent={agent} showHeader={showHeader} query={query} scope={scope} />
+              </TurnNoteHandle>
+            ) : (
+              <Turn entry={entry} agent={agent} showHeader={showHeader} query={query} scope={scope} />
+            )}
           </div>
         );
       })}

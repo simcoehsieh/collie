@@ -15,6 +15,11 @@ import { useSheetPull } from "@/hooks/use-sheet-pull";
 import { DiffSheet } from "@/components/diff-sheet";
 import { QueuedSends } from "@/components/queued-sends";
 import { DocPanel } from "@/components/doc-panel";
+import { NoteCountChip } from "@/components/note-badge";
+import { NotesSheet } from "@/components/notes-sheet";
+import { useNotes } from "@/hooks/use-notes";
+import { NOTES_EVENT } from "@/hooks/use-hotkeys";
+import { pruneNotesForScope } from "@/lib/notes";
 import { classifyDocLink } from "@/lib/doc-links";
 import { useDocHosts } from "@/lib/operator-config";
 import { useSpaceActions } from "@/hooks/use-spaces";
@@ -133,7 +138,7 @@ function foldLabelKey(tabCount: number, paneCount: number): MessageKey {
 
 // At most one drawer/sheet is open at a time; null = none. (The composer's own Keys/Quick/Agent
 // sheets are separate and live inside <Composer>.)
-type Drawer = "switcher" | "paneMenu" | "newTab" | "doc" | "diff" | null;
+type Drawer = "switcher" | "paneMenu" | "newTab" | "doc" | "diff" | "notes" | null;
 
 /**
  * Is the caret in the MESSAGE COMPOSER's field, as opposed to any other input on the screen?
@@ -328,6 +333,24 @@ export function AgentChat({
     },
     [docHosts],
   );
+
+  // ── FORK: anchored notes ──────────────────────────────────────────────────
+  // The pane's own notes, wherever they were taken — a diff hunk in the panel over this screen, a
+  // transcript turn on the history route, a document in the browser. The chip in the header is the
+  // count and the one way into the list; `n` is the same door for a desk (hooks/use-hotkeys.ts).
+  const notes = useNotes(scope, paneId);
+  useEffect(() => {
+    const onNotes = () => setDrawer("notes");
+    document.addEventListener(NOTES_EVENT, onNotes);
+    return () => document.removeEventListener(NOTES_EVENT, onNotes);
+  }, []);
+  // A note whose pane is gone points at nothing. Pruned from here because this is the screen that
+  // holds a pane list AND an address to scope it by — and only against a snapshot that is actually
+  // live, so a poll that failed can never delete something the operator wrote (see the store).
+  useEffect(() => {
+    if (bridge !== "connected" || error) return;
+    pruneNotesForScope(scope, [...agents, ...shellPanes].map((p) => p.paneId));
+  }, [bridge, error, scope, agents, shellPanes]);
 
   // ── ZEN MODE — chrome-free, mirror-only viewing ───────────────────────────────
   // On a phone the chrome IS most of the viewport: measured at 390x844 this route spends 199px above
@@ -1323,6 +1346,13 @@ export function AgentChat({
           rightLead={
             agent ? (
               <>
+                {/* FORK: the notes waiting on this pane, and the door to the list. It appears only
+                    when there ARE notes, which the header's own budget allows because it costs no
+                    HEIGHT — the chip is 28px inside the row's stated 60px floor (DESIGN.md §6) — and
+                    the width it takes comes off the Identity, which is the row's one flexible
+                    element and the thing the budget protects. The alternative, a permanent chip
+                    reading "0", spends that width on a fact nobody needs. */}
+                {notes.length > 0 && <NoteCountChip count={notes.length} onClick={() => setDrawer("notes")} />}
                 <button
                   type="button"
                   onClick={() => setDrawer("paneMenu")}
@@ -2093,6 +2123,8 @@ export function AgentChat({
                   setExpandClippedReply={setExpandClippedReply}
                   setControlsOpen={setControlsOpen}
                   onSent={onSent}
+                  // FORK: the `## Feedback:` heading of a send that carries anchored notes.
+                  paneName={paneName}
                 />
                 </Collapse>
               </div>
@@ -2192,7 +2224,7 @@ export function AgentChat({
             element is positioned by its nearest transformed ancestor, and the mirror lives inside a
             scroll container — the same reason every other sheet is here. Shares the one `drawer`
             value, so it cannot be open alongside the switcher. */}
-        <DocPanel open={drawer === "doc"} onClose={closeDrawer} initial={doc} />
+        <DocPanel open={drawer === "doc"} onClose={closeDrawer} initial={doc} paneId={paneId} scope={scope} />
         {/* FORK: what the agent changed in this pane's work tree, read-only (bridge/diff.ts). */}
         <DiffSheet
           open={drawer === "diff"}
@@ -2202,6 +2234,18 @@ export function AgentChat({
           fontSize={prefs.fontSize}
           mirrorFace={mirrorFace}
           home={launchersHome}
+        />
+        {/* FORK: the pane's anchored notes — edit, delete, mark sent, and the one button that turns
+            what is waiting into a single prompt. A `drawer` arm like every other sheet here, so it
+            cannot be open at the same time as the switcher, the pane menu or either panel. */}
+        <NotesSheet
+          open={drawer === "notes"}
+          onClose={closeDrawer}
+          paneId={paneId}
+          scope={scope}
+          title={paneName || paneId}
+          agent={agent?.agent}
+          status={agent?.status}
         />
         <PaneActionsSheet
           open={drawer === "paneMenu"}

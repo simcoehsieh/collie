@@ -3,10 +3,15 @@ import { useLoaderData, useNavigate, useParams } from "react-router";
 import { ArrowUpToLine, ChevronDown, ChevronUp, Loader2, ScrollText, Search, X } from "lucide-react";
 
 import { RouteHeader } from "@/components/app-header";
+import { NoteCountChip, type NotedTurn } from "@/components/note-badge";
+import { NoteSheet, NotesSheet } from "@/components/notes-sheet";
 import { ChatMessageList, type ChatMessageListHandle } from "@/components/ui/chat/chat-message-list";
 import { FindBar } from "@/components/find-bar";
 import { TranscriptView } from "@/components/transcript-view";
+import { useNotes } from "@/hooks/use-notes";
+import { NOTES_EVENT } from "@/hooks/use-hotkeys";
 import { fetchHistory } from "@/lib/api";
+import type { NoteAnchor } from "@/lib/notes";
 import { HISTORY_FIRST_PAGE, HISTORY_PAGE_SIZE, historyKey, rememberHistory, type HistoryData } from "@/lib/loaders";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { panePath } from "@/lib/nav";
@@ -258,6 +263,22 @@ export function HistoryRoute() {
   const title = agent?.paneLabel ?? agent?.sessionName ?? agent?.workspaceLabel ?? paneId;
   const matchCursor = matches.indexOf(cursor);
 
+  // ── FORK: anchored notes on a turn ────────────────────────────────────────
+  // A transcript is where the agent's own words are, so it is where most of what an operator wants
+  // to say back gets thought of — and before this the only way to act on a turn was to read it,
+  // navigate back to the pane, and retype it from memory on a phone keyboard.
+  const notes = useNotes(scope, paneId);
+  const [noting, setNoting] = useState<NoteAnchor | null>(null);
+  const [notesOpen, setNotesOpen] = useState(false);
+  useEffect(() => {
+    const onNotes = () => setNotesOpen(true);
+    document.addEventListener(NOTES_EVENT, onNotes);
+    return () => document.removeEventListener(NOTES_EVENT, onNotes);
+  }, []);
+  const noteTurn = useCallback((turn: NotedTurn) => {
+    setNoting({ kind: "transcript", turnId: turn.turnId, role: turn.role, excerpt: turn.excerpt });
+  }, []);
+
   return (
     // The same column as the pane this transcript belongs to, because it is the other half of that
     // screen and one navigation away from it: it keeps the pane's width and its left edge, or the
@@ -286,6 +307,11 @@ export function HistoryRoute() {
         }
         rightLead={
           <>
+            {/* FORK: the pane's notes, and the count itself. Conditional on there BEING notes, which
+                costs the row no height (the chip is 28px inside a 60px floor — DESIGN.md §6) and
+                takes width only from the flexible title, the same trade the turn counter beside it
+                already makes. */}
+            {notes.length > 0 && <NoteCountChip count={notes.length} onClick={() => setNotesOpen(true)} />}
             {/* A PWA has no browser find, so the view has to provide its own. */}
             <button
               type="button"
@@ -368,6 +394,7 @@ export function HistoryRoute() {
                 query={query}
                 focusedUuid={focusedUuid}
                 scope={scope}
+                onTurnLongPress={noteTurn}
               />
             </>
           )}
@@ -397,6 +424,19 @@ export function HistoryRoute() {
           </div>
         )}
       </div>
+
+      {/* FORK: the note being written, and the pane's whole list. Both are `BottomSheet`s, which is
+          the app's only floating layer (DESIGN.md §1). */}
+      <NoteSheet open={noting !== null} onClose={() => setNoting(null)} paneId={paneId} scope={scope} anchor={noting} />
+      <NotesSheet
+        open={notesOpen}
+        onClose={() => setNotesOpen(false)}
+        paneId={paneId}
+        scope={scope}
+        title={title}
+        agent={agent?.agent}
+        status={agent?.status}
+      />
     </div>
   );
 }

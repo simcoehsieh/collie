@@ -44,7 +44,7 @@ function serveDocs() {
 describe("DocPanel", () => {
   it("opens on the browser when given no document: recent rows and the tag chips", async () => {
     serveDocs();
-    render(<DocPanel open onClose={vi.fn()} initial={null} />);
+    render(<DocPanel open onClose={vi.fn()} initial={null} paneId="w1:p1" />);
     expect(await screen.findByText("Medium Digest｜2026/09/10")).toBeInTheDocument();
     expect(screen.getByText("Ten pieces.")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /ai_agent/ })).toBeInTheDocument();
@@ -54,7 +54,7 @@ describe("DocPanel", () => {
   it("a row frames the document from Collie's own origin, and Back returns to the browser", async () => {
     serveDocs();
     const user = userEvent.setup();
-    render(<DocPanel open onClose={vi.fn()} initial={null} />);
+    render(<DocPanel open onClose={vi.fn()} initial={null} paneId="w1:p1" />);
     await user.click(await screen.findByRole("button", { name: /Herdr 介面解剖/ }));
     const frame = await screen.findByTitle("herdr-interface-anatomy");
     expect(frame).toHaveAttribute("src", "/api/doc/herdr-interface-anatomy");
@@ -71,6 +71,7 @@ describe("DocPanel", () => {
         open
         onClose={vi.fn()}
         initial={{ slug: "notes", path: "/api/doc/notes", href: "https://knowledge.agnex.dev/d/notes" }}
+        paneId="w1:p1"
       />,
     );
     expect(screen.getByTitle("notes")).toHaveAttribute("src", "/api/doc/notes");
@@ -83,7 +84,7 @@ describe("DocPanel", () => {
   it("typing searches after a pause, a tag chip filters at once, and More pages the list", async () => {
     const seen = serveDocs();
     const user = userEvent.setup();
-    render(<DocPanel open onClose={vi.fn()} initial={null} />);
+    render(<DocPanel open onClose={vi.fn()} initial={null} paneId="w1:p1" />);
     await screen.findByText("Medium Digest｜2026/09/10");
 
     await user.type(screen.getByPlaceholderText(/search the knowledge base/i), "collie");
@@ -106,7 +107,7 @@ describe("DocPanel", () => {
       http.get("/api/docs/tags", () => new HttpResponse(null, { status: 503 })),
       http.get("/api/docs", () => new HttpResponse("the document store is not answering", { status: 503 })),
     );
-    render(<DocPanel open onClose={vi.fn()} initial={null} />);
+    render(<DocPanel open onClose={vi.fn()} initial={null} paneId="w1:p1" />);
     expect(await screen.findByText(/Couldn't reach the document store/)).toBeInTheDocument();
   });
 });

@@ -1,14 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronLeft, Copy, Loader2, RefreshCw } from "lucide-react";
 
+import { AddNoteButton, NotePinSlot } from "@/components/note-badge";
+import { NoteSheet } from "@/components/notes-sheet";
 import { Button } from "@/components/ui/button";
 import { RightSheet } from "@/components/ui/right-sheet";
 import type { MirrorFont } from "@/hooks/use-display-prefs";
 import { useLocale } from "@/hooks/use-locale";
+import { useLongPress } from "@/hooks/use-long-press";
+import { useNotes } from "@/hooks/use-notes";
 import * as api from "@/lib/api";
 import { isApiErrorStatus } from "@/lib/api";
 import { buzz } from "@/lib/haptics";
 import { t } from "@/lib/i18n";
+import { anchorKey, type Note, type NoteAnchor } from "@/lib/notes";
 import type { Scope } from "@/lib/scope";
 import { shortenHome } from "@/lib/shorten-home";
 import type { DiffFileView, PaneDiffPatchResponse, PaneDiffStatResponse } from "@/lib/types";
@@ -64,6 +69,11 @@ export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, 
   const [file, setFile] = useState<string | null>(null);
   const [patch, setPatch] = useState<Loaded<PaneDiffPatchResponse>>({ phase: "loading" });
   const [copied, setCopied] = useState(false);
+  // FORK: the hunk a note is being written about, or null. The sheet that takes the sentence is
+  // mounted below, INSIDE this panel: the panel is the top of the app while it is open, so a note
+  // taken here must not have to close the thing it is about first.
+  const [noting, setNoting] = useState<NoteAnchor | null>(null);
+  const notes = useNotes(scope, paneId);
   // One in-flight request per view; a newer one aborts the older so a slow answer cannot land on
   // top of a fresher one (the same shape every loader in this app uses).
   const inFlight = useRef<AbortController | null>(null);
@@ -171,9 +181,13 @@ export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, 
         {file === null ? (
           <FileList stat={stat} onOpen={openFile} />
         ) : (
-          <Patch patch={patch} fontSize={fontSize} mirrorFace={mirrorFace} />
+          <Patch patch={patch} fontSize={fontSize} mirrorFace={mirrorFace} notes={notes} onNote={setNoting} />
         )}
       </div>
+      {/* FORK: anchored notes. Mounted inside the panel for the reason above, and it is a
+          `BottomSheet` rather than a third panel because `ui/sheet.tsx` is the app's only floating
+          layer (DESIGN.md §1) — this is one more thing standing in it, not a new kind of thing. */}
+      <NoteSheet open={noting !== null} onClose={() => setNoting(null)} paneId={paneId} scope={scope} anchor={noting} />
     </RightSheet>
   );
 }
@@ -252,15 +266,73 @@ function lineClass(line: string): string {
   return "";
 }
 
+/** One `@@` run of a unified diff: its header row and every line up to the next `@@`. */
+interface Hunk {
+  header: string;
+  body: string[];
+}
+
+/** A patch as it is rendered: the preamble git prints, then the hunks a note can be anchored to. */
+export interface SplitPatch {
+  preamble: string[];
+  hunks: Hunk[];
+}
+
+/** FORK: a patch split into the preamble git prints and the hunks a note can be anchored to. */
+export function splitHunks(lines: readonly string[]): SplitPatch {
+  const preamble: string[] = [];
+  const hunks: Hunk[] = [];
+  for (const line of lines) {
+    if (line.startsWith("@@")) {
+      hunks.push({ header: line, body: [] });
+      continue;
+    }
+    const current = hunks[hunks.length - 1];
+    if (current === undefined) preamble.push(line);
+    else current.body.push(line);
+  }
+  return { preamble, hunks };
+}
+
+/**
+ * FORK: the NEW side's line range out of a hunk header (`@@ -4,7 +12,9 @@` → `12-20`), or undefined
+ * when the header does not carry one.
+ *
+ * The new side rather than the old one: a note asks for something to CHANGE, and the line the agent
+ * will open is the line as it stands now. A count of 0 is a pure deletion and has no new range at
+ * all, which is why the caller gets `undefined` rather than a range of length zero.
+ */
+export function newSideRange(header: string): string | undefined {
+  const m = /\+(\d+)(?:,(\d+))?/.exec(header);
+  if (!m) return undefined;
+  const start = Number(m[1]);
+  const count = m[2] === undefined ? 1 : Number(m[2]);
+  if (count === 0) return undefined;
+  return count === 1 ? `${start}` : `${start}-${start + count - 1}`;
+}
+
 function Patch({
   patch,
   fontSize,
   mirrorFace,
+  notes,
+  onNote,
 }: {
   patch: Loaded<PaneDiffPatchResponse>;
   fontSize: number;
   mirrorFace: MirrorFont;
+  /** This pane's notes, so a hunk that already carries one wears its number. */
+  notes: readonly Note[];
+  onNote: (anchor: NoteAnchor) => void;
 }) {
+  const ready = patch.phase === "ready" ? patch.data : null;
+  const split = useMemo(() => {
+    if (ready === null) return { preamble: [], hunks: [] };
+    const lines = ready.patch.split("\n");
+    if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+    return splitHunks(lines);
+  }, [ready]);
+
   if (patch.phase === "loading") {
     return (
       <p className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
@@ -272,8 +344,7 @@ function Patch({
   if (patch.phase === "failed") {
     return <p className="px-4 py-6 text-sm text-muted-foreground">{patch.message}</p>;
   }
-  const lines = patch.data.patch.split("\n");
-  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  const file = ready?.path ?? "";
   return (
     <div className="min-h-0 flex-1 overflow-auto overscroll-contain">
       <pre
@@ -281,13 +352,75 @@ function Patch({
         className={cn("min-w-max px-2 py-2 font-mono leading-snug", mirrorFace.className)}
         style={{ fontSize, ...mirrorFace.style }}
       >
-        {lines.map((line, i) => (
-          <div key={`${i}:${line}`} className={cn("whitespace-pre px-1", lineClass(line))}>
+        {split.preamble.map((line, i) => (
+          <div key={`p${i}:${line}`} className={cn("whitespace-pre px-1", lineClass(line))}>
             {line === "" ? " " : line}
           </div>
+        ))}
+        {split.hunks.map((hunk, i) => (
+          <HunkRows key={`h${i}:${hunk.header}`} file={file} hunk={hunk} notes={notes} onNote={onNote} />
         ))}
       </pre>
       {patch.data.truncated && <p className="px-4 py-3 text-xs text-muted-foreground">{t("diff.truncated")}</p>}
     </div>
+  );
+}
+
+/**
+ * FORK: one hunk, and the gesture that notes it.
+ *
+ * The header row is the anchor because it is the one row in a hunk that is not code — noting a `+`
+ * line would mean deciding which of two files it belongs to, and the hunk is the unit an agent acts
+ * on anyway. Hold it on glass; a fine pointer gets `AddNoteButton` instead (it renders nothing on a
+ * touch device, so the row is not a pixel wider on a phone).
+ *
+ * `NotePinSlot` is always there and always 16px, painted only when this hunk carries a note. That is
+ * DESIGN.md §2 in the place it matters most: a badge that ARRIVED would push the `@@ … @@` text
+ * sideways on the row the reader is using to locate themselves in the file.
+ */
+function HunkRows({
+  file,
+  hunk,
+  notes,
+  onNote,
+}: {
+  file: string;
+  hunk: Hunk;
+  notes: readonly Note[];
+  onNote: (anchor: NoteAnchor) => void;
+}) {
+  const lineRange = newSideRange(hunk.header);
+  const excerpt = [hunk.header, ...hunk.body].join("\n");
+  const anchor: NoteAnchor =
+    lineRange === undefined
+      ? { kind: "diff", file, hunkHeader: hunk.header, excerpt }
+      : { kind: "diff", file, hunkHeader: hunk.header, lineRange, excerpt };
+  const wanted = anchorKey(anchor);
+  const note = notes.find((n) => anchorKey(n.anchor) === wanted);
+  const open = () => onNote(anchor);
+  const longPress = useLongPress(open);
+
+  return (
+    <>
+      <div
+        data-slot="diff-hunk"
+        {...longPress}
+        className={cn(
+          // select-none + -webkit-touch-callout:none stop iOS Safari's selection loupe, whose native
+          // long-press fires pointercancel and kills the hold timer (hooks/use-long-press.ts).
+          "flex select-none items-center gap-1.5 whitespace-pre px-1 [-webkit-touch-callout:none]",
+          lineClass(hunk.header),
+        )}
+      >
+        <NotePinSlot index={note?.index} sent={note?.sentAt !== undefined} />
+        <span className="whitespace-pre">{hunk.header}</span>
+        <AddNoteButton onClick={open} noted={note !== undefined} />
+      </div>
+      {hunk.body.map((line, i) => (
+        <div key={`${i}:${line}`} className={cn("whitespace-pre px-1", lineClass(line))}>
+          {line === "" ? " " : line}
+        </div>
+      ))}
+    </>
   );
 }

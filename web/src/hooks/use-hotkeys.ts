@@ -76,6 +76,15 @@ export function stepRow(delta: -1 | 1): boolean {
 /** The event the command palette listens for (components/command-palette.tsx). */
 export const PALETTE_EVENT = "collie:palette";
 
+/**
+ * The event the pane's notes list listens for (`n`).
+ *
+ * A document event rather than a navigation, for the same reason the palette is one: the list is
+ * per-pane state owned by whichever screen is showing that pane — the pane view or its history
+ * route — and this hook is installed once, at the root layout, where it knows neither.
+ */
+export const NOTES_EVENT = "collie:notes";
+
 export interface UseHotkeysReturn {
   /** The "?" cheat sheet is open. */
   helpOpen: boolean;
@@ -148,6 +157,12 @@ export function useHotkeys(data: HomeData | undefined, enabled: boolean = finePo
           return;
         case "k":
           if (stepRow(-1)) e.preventDefault();
+          return;
+        case "n":
+          // FORK: the pane's anchored notes. Nothing is mounted to hear this outside a pane, so on
+          // the dashboard the key is a no-op rather than an error — same as `/` with no composer.
+          e.preventDefault();
+          document.dispatchEvent(new CustomEvent(NOTES_EVENT));
           return;
         case "/": {
           const input = document.querySelector<HTMLElement>('[data-slot="chat-input"]');

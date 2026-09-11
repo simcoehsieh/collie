@@ -12,6 +12,7 @@ const ROWS: readonly [keys: string, meaning: Parameters<typeof t>[0]][] = [
   ["g h", "hotkeys.home"],
   ["g s", "hotkeys.settings"],
   ["⌘K / Ctrl+K", "hotkeys.palette"],
+  ["n", "hotkeys.notes"],
   ["/", "hotkeys.composer"],
   ["Esc", "hotkeys.escape"],
   ["?", "hotkeys.help"],
