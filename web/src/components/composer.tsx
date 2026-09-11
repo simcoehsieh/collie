@@ -1,7 +1,24 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, CSSProperties, ReactNode } from "react";
 import { useRevalidator } from "react-router";
-import { Check, ChevronDown, FileText, Image, Keyboard, Loader2, Mic, Paperclip, Send, Settings2, Slash, Square, Terminal, X, Zap } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  FileText,
+  Image,
+  Keyboard,
+  Loader2,
+  Mic,
+  Paperclip,
+  Send,
+  Settings2,
+  Slash,
+  Square,
+  Terminal,
+  Undo2,
+  X,
+  Zap,
+} from "lucide-react";
 
 import { applyDraftFontSize, fontStack, inputFocusZoomsPage } from "@/hooks/use-display-prefs";
 import type { DisplayPrefs } from "@/hooks/use-display-prefs";
@@ -389,6 +406,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // Pending-send preview: set on a successful send, cleared when the mirror catches up (next text
   // update) or after a 6s safety timeout. Shows "You sent: …" so the user knows the message landed.
   const [lastSent, setLastSent] = useState<string | null>(null);
+  // FORK: the FULL text of the last message sent, offered back for as long as the agent is working
+  // on it — "stop, and let me say that differently". Set on the tap, dropped by every outcome that
+  // already puts the words back, by the recall itself, and by a pane change (see `recallLastSend`).
+  const [recall, setRecall] = useState<string | null>(null);
+  useEffect(() => setRecall(null), [paneId]);
   const [justSent, setJustSent] = useState(false); // brief ✓ on the send button after a send
   // Terminal-draft preview bookkeeping. The composer input is EXCLUSIVELY phone-owned — a host draft
   // is never written into it implicitly; it only surfaces in a read-only preview the user can
@@ -838,6 +860,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     sentTimer.current = null; // holds until the outcome; the 1.5 s hold starts when it is verified
     const preview = t.length > 60 ? `${t.slice(0, 57)}…` : t;
     setLastSent(preview);
+    setRecall(t);
     if (lastSentTimerRef.current) clearTimeout(lastSentTimerRef.current);
     lastSentTimerRef.current = setTimeout(() => setLastSent(null), 6000);
     /** Every non-`sent` outcome: the words go back where they were, and the chip comes down. A
@@ -845,6 +868,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const restoreDraft = () => {
       setJustSent(false);
       setLastSent(null);
+      setRecall(null);
       if (lastSentTimerRef.current) {
         clearTimeout(lastSentTimerRef.current);
         lastSentTimerRef.current = null;
@@ -1175,6 +1199,30 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   }
 
+  /**
+   * FORK: STOP, AND EDIT WHAT WAS JUST SENT. One Esc to the pane — the interrupt every harness
+   * answers — and the message goes back into the box, above anything typed since, for the operator
+   * to change and send again. The pane's own input is left alone: after an interrupt it is empty
+   * on every harness this fork drives, and the phone is where the words are being edited.
+   *
+   * Offered only while the agent is WORKING and only for the message that put it to work: once
+   * the agent has stopped there is nothing to interrupt, and the next send replaces the offer.
+   */
+  async function recallLastSend() {
+    const words = recall;
+    if (words === null || locked) return;
+    const ok = await pressKeys(["Escape"]);
+    if (!ok) {
+      setStatus(translate("composer.status.recallFailed"), "error");
+      return;
+    }
+    setRecall(null);
+    setLastSent(null);
+    updateInputFrom((prev) => (prev.trim() ? `${words}\n\n${prev}` : words));
+    focusInputEnd();
+    setStatus(translate("composer.status.recalled"), "success");
+  }
+
   async function onPickFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-picking the same file
@@ -1231,6 +1279,21 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               <span className="font-medium">{translate("composer.sentPreview.label")}</span> {lastSent}
             </span>
           </div>
+        </Collapse>
+
+        {/* FORK: the way back from a send — while the agent works on the last message, one tap
+            interrupts it and puts the words back in the box (see `recallLastSend`). A row in the
+            same place the "You sent" chip stands, because it is about the same message. */}
+        <Collapse open={recall !== null && status === "working" && !locked}>
+          <button
+            type="button"
+            data-slot="recall-send"
+            onClick={() => void recallLastSend()}
+            className="mb-2 flex w-full items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-left text-xs font-medium text-foreground transition-colors active:bg-muted/60"
+          >
+            <Undo2 className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="min-w-0 flex-1 truncate">{translate("composer.recall.button")}</span>
+          </button>
         </Collapse>
 
         {/* FORK: WHAT WILL RIDE ALONG, as chips.

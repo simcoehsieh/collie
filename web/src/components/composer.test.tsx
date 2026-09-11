@@ -3245,3 +3245,48 @@ describe("Composer — a link failure queues the send", () => {
     expect(queuedForPane(undefined, "w1:p1")).toEqual([]);
   }, 15000);
 });
+
+// ── FORK: STOP, AND EDIT WHAT WAS JUST SENT ──────────────────────────────────
+// While the agent works on the last message, one tap sends it Esc and puts the words back in the
+// box. Pinned: the offer exists only while WORKING and only after a send; the tap presses exactly
+// Escape; the words come back (above anything typed meanwhile) and the offer goes.
+describe("Composer — stop and edit what you sent", () => {
+  it("interrupts with Escape and puts the message back in the box", async () => {
+    const user = userEvent.setup();
+    const keys: string[][] = [];
+    server.use(
+      http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
+        keys.push((await request.json()).keys);
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderComposerWithStatus({ status: "working" });
+    // Collapse unmounts a closed row, so "not offered" is "not in the document".
+    expect(screen.queryByRole("button", { name: "Stop and edit what you sent" })).not.toBeInTheDocument();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.type(box, "refactor the parser");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(/sent/i));
+    const recall = await screen.findByRole("button", { name: "Stop and edit what you sent" });
+
+    await user.type(box, "also");
+    await user.click(recall);
+    await waitFor(() => expect(keys.at(-1)).toEqual(["Escape"]));
+    expect(box).toHaveValue("refactor the parser\n\nalso");
+    expect(screen.getByTestId("status")).toHaveTextContent(/back in the box/i);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Stop and edit what you sent" })).not.toBeInTheDocument(),
+    );
+  }, 15000);
+
+  it("is not offered while the agent is not working — there is nothing to interrupt", async () => {
+    const user = userEvent.setup();
+    renderComposerWithStatus({ status: "idle" });
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.type(box, "go");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(/sent/i));
+    expect(screen.queryByRole("button", { name: "Stop and edit what you sent" })).not.toBeInTheDocument();
+  }, 15000);
+});
+
