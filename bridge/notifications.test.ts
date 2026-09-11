@@ -98,6 +98,10 @@ describe("NotificationCoordinator — debounce", () => {
     expect(sink.last).toEqual({
       title: "claude needs you",
       body: "demo · /home/you/demo",
+      // FORK: the half the sink keeps when a `done` push carries the agent's own line instead of
+      // the path (see HerdSummary.bodyLead). Present on every single-pane summary, spent on none
+      // but that one.
+      bodyLead: "demo",
       paneId: "p1",
       agent: "claude",
       status: "blocked",
@@ -154,6 +158,10 @@ describe("NotificationCoordinator — coalescing", () => {
     expect(sink.last).toEqual({
       title: "claude needs you",
       body: "demo · /home/you/demo",
+      // FORK: the half the sink keeps when a `done` push carries the agent's own line instead of
+      // the path (see HerdSummary.bodyLead). Present on every single-pane summary, spent on none
+      // but that one.
+      bodyLead: "demo",
       paneId: "p1",
       agent: "claude",
       status: "blocked",
@@ -399,5 +407,103 @@ describe("makeNotifySink — Yes/No buttons", () => {
     makeNotifySink(push, { isMuted: () => false }, "collie:herd").render(blocked);
     expect(push.sent).toHaveLength(1);
     expect("actions" in push.sent[0]!).toBe(false);
+  });
+});
+
+// ── FORK: THE DONE PUSH SAYS WHAT THE AGENT SAID ────────────────────────────────────────────────
+// "claude is done · ai-live · /home/s/git/ai-live" is a buzz you have to open to learn anything
+// from. One line of the agent's own last message is the difference between acting on it and
+// clearing it. What is pinned here is the part that must not regress: THE PUSH ALWAYS GOES OUT.
+describe("makeNotifySink — the reply's first line", () => {
+  class RecordingPush {
+    readonly sent: PushMessage[] = [];
+    send(msg: PushMessage): void {
+      this.sent.push(msg);
+    }
+  }
+  const done: HerdSummary = {
+    title: "claude is done",
+    body: "demo · /home/you/demo",
+    bodyLead: "demo",
+    paneId: "p1",
+    agent: "claude",
+    status: "done",
+    renotify: true,
+  };
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  test("a single done alert carries the line, keeping the space that tells two panes apart", async () => {
+    const push = new RecordingPush();
+    const peeked: string[] = [];
+    const sink = makeNotifySink(push, { isMuted: () => false }, "collie:herd", {}, undefined, async (paneId) => {
+      peeked.push(paneId);
+      return "All 114 tests pass.";
+    });
+    sink.render(done);
+    await flush();
+    expect(peeked).toEqual(["p1"]);
+    expect(push.sent).toHaveLength(1);
+    expect(push.sent[0]!.body).toBe("demo · All 114 tests pass.");
+    // Everything else about the message is untouched — same tag, same deep link, same buzz.
+    expect(push.sent[0]).toMatchObject({ title: "claude is done", tag: "collie:herd", paneId: "p1", renotify: true });
+  });
+
+  test("a peer's line still names the machine it happened on", async () => {
+    const push = new RecordingPush();
+    const sink = makeNotifySink(
+      push,
+      { isMuted: () => false },
+      "collie:herd:attic",
+      { host: "attic", session: "work" },
+      undefined,
+      async () => "Migration applied.",
+    );
+    sink.render(done);
+    await flush();
+    expect(push.sent[0]!.body).toBe("attic · demo · Migration applied.");
+  });
+
+  test("no line, a peek that throws, a blocked alert and a digest all send the body they always had", async () => {
+    const push = new RecordingPush();
+    let peeks = 0;
+    const sink = makeNotifySink(push, { isMuted: () => false }, "collie:herd", {}, undefined, async () => {
+      peeks++;
+      if (peeks === 2) throw new Error("journal gone");
+      return null;
+    });
+    sink.render(done); // peek 1 → null
+    sink.render(done); // peek 2 → throws
+    sink.render({ ...done, status: "blocked", title: "claude needs you" }); // never peeked
+    sink.render({ title: "2 agents done", body: "claude, codex", renotify: true }); // digest
+    await flush();
+    expect(peeks).toBe(2);
+    // FOUR pushes for four renders. A body is never a reason to withhold a notification.
+    expect(push.sent).toHaveLength(4);
+    expect(push.sent.map((m) => m.body)).toEqual([
+      "demo · /home/you/demo", // blocked, synchronous
+      "claude, codex", // digest, synchronous
+      "demo · /home/you/demo", // peeked, no line
+      "demo · /home/you/demo", // peeked, threw
+    ]);
+  });
+
+  test("without a reply peek the done alert sends synchronously, as it always did", () => {
+    const push = new RecordingPush();
+    makeNotifySink(push, { isMuted: () => false }, "collie:herd").render(done);
+    expect(push.sent).toHaveLength(1);
+    expect(push.sent[0]!.body).toBe("demo · /home/you/demo");
+  });
+
+  test("a snoozed done alert is not peeked at all — a muted push costs no journal read", async () => {
+    const push = new RecordingPush();
+    let peeks = 0;
+    const sink = makeNotifySink(push, { isMuted: () => true }, "collie:herd", {}, undefined, async () => {
+      peeks++;
+      return "something";
+    });
+    sink.render(done);
+    await flush();
+    expect(peeks).toBe(0);
+    expect(push.sent).toEqual([]);
   });
 });
