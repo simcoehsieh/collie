@@ -239,6 +239,30 @@ export default defineConfig({
         // `unicode-range` already makes them lazy (index.css), so precaching them would charge
         // every install for glyphs most herds never paint. src/sw.ts caches them on first use.
         globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest}"],
+        // FORK: two things the sweep above caught that nothing ever asks for.
+        //
+        // THE SIX LOCALE CHUNKS (324 KB raw, ~92 KB gz) are lazy BY DESIGN — `src/lib/i18n/index.ts`
+        // imports each one dynamically precisely so a herd that reads English never downloads
+        // Japanese. Precaching them undoes that on every install and again on every rebuild's SW
+        // update, for six dictionaries of which at most one is ever read. They stay in `dist/`, so
+        // switching locale fetches one over the network exactly as the lazy import intends.
+        //
+        // `dog-gallop.png` (54 KB) is the mascot sprite strip. `<DogGallop/>` is mounted nowhere in
+        // the app since the splash became an inline CSS mask — the component and its test remain, and
+        // the file is still served, but nothing requests it.
+        //
+        // Together ~26 % of the precache. VERIFY AFTER A BUILD: `bun run build` prints
+        // `precache N entries (… KiB)` — it was 34 / 1440 KiB before this line existed. If a chunk
+        // ever stops matching (vite renames an output), that number is where it shows.
+        globIgnores: [
+          "assets/de-*.js",
+          "assets/es-*.js",
+          "assets/ja-*.js",
+          "assets/ko-*.js",
+          "assets/zh-*.js",
+          "assets/zh-TW-*.js",
+          "dog-gallop.png",
+        ],
       },
       // Over plain HTTP (insecure context) the SW can't register; in dev we don't want it anyway.
       devOptions: { enabled: false },
