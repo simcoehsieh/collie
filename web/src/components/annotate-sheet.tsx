@@ -21,24 +21,7 @@ import * as api from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { buzz } from "@/lib/haptics";
 import { t, type MessageKey } from "@/lib/i18n";
-import {
-  EMPTY_MARKUP,
-  addMark,
-  addMarks,
-  canRedo,
-  canUndo,
-  clearMarkup,
-  composeMarkup,
-  dataUrlToFile,
-  extensionForMime,
-  paintMark,
-  redoMarkup,
-  undoMarkup,
-  type Markup,
-  type Point,
-  type Mark,
-  type MarkKind,
-} from "@/lib/markup";
+import { EMPTY_MARKUP, addMark, addMarks, canRedo, canUndo, clearMarkup, composeMarkup, dataUrlToFile, extensionForMime, paintMark, redoMarkup, undoMarkup, type Markup, type Point, type Mark, type MarkKind, canvasScaleFor } from "@/lib/markup";
 import type { Scope } from "@/lib/scope";
 import type { ProbeResponse, ShotResponse } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -173,9 +156,14 @@ function MarkupCanvas({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas === null) return;
-    const dpr = window.devicePixelRatio || 1;
     // Backed at DPR, displayed at CSS size. Without this a 1px stroke on a DPR-3 phone is drawn
     // into a third of a device pixel and reads as furry rather than sharp.
+    //
+    // FORK: CAPPED. A camera photo is 4032×3024; at DPR 3 that is a 109-megapixel backing store,
+    // and iOS Safari refuses (or jettisons the page for) anything past ~16.7 million pixels — the
+    // tap on the picture chip simply killed the app. `canvasScaleFor` spends the DPR only as far as
+    // the budget allows and drops below 1 for a picture that is over it on its own.
+    const dpr = canvasScaleFor(width, height, window.devicePixelRatio || 1);
     canvas.width = Math.max(1, Math.round(width * dpr));
     canvas.height = Math.max(1, Math.round(height * dpr));
     const ctx = canvas.getContext("2d");

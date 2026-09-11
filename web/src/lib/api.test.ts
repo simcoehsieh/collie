@@ -2,7 +2,8 @@ import { http, HttpResponse } from "msw";
 
 import { server } from "@/test/setup";
 import { fixtureCrewSnapshot, fixtureSnapshot } from "@/test/handlers";
-import { __resetConnectionHealth, isLostLatched, lastHealthyAt } from "./connection-health";
+import { waitFor } from "@testing-library/react";
+import { __resetConnectionHealth, isLongUpload, isLostLatched, lastHealthyAt } from "./connection-health";
 import { isConnecting } from "./connection";
 import { __resetSnapshotCache } from "./api";
 import {
@@ -106,6 +107,30 @@ describe("api client", () => {
     );
     const file = new File(["x"], "x.png", { type: "image/png" });
     await expect(uploadFile("w1:p1", file)).resolves.toEqual({ ok: true, path: "/tmp/x.png" });
+  });
+
+  // FORK: a picture is a long upload — the poll and the escalation stand down while it is in flight,
+  // and stand back up on every exit path (lib/connection-health.ts).
+  it("uploadFile is a long upload for as long as it is in flight, and not a moment longer", async () => {
+    let release: (() => void) | null = null;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, async () => {
+        await new Promise<void>((r) => {
+          release = r;
+        });
+        return HttpResponse.json({ ok: true, path: "/tmp/x.png" });
+      }),
+    );
+    expect(isLongUpload()).toBe(false);
+    const pending = uploadFile("w1:p1", new File(["x"], "x.png", { type: "image/png" }));
+    await waitFor(() => expect(release).not.toBeNull());
+    expect(isLongUpload()).toBe(true);
+    release!();
+    await pending;
+    expect(isLongUpload()).toBe(false);
+    server.use(http.post(/\/api\/pane\/[^/]+\/upload$/, () => new HttpResponse("nope", { status: 413 })));
+    await expect(uploadFile("w1:p1", new File(["x"], "x.png", { type: "image/png" }))).rejects.toThrow(/413/);
+    expect(isLongUpload()).toBe(false);
   });
 
   it("uploadFile throws on a non-2xx via its own (non-JSON) error path", async () => {

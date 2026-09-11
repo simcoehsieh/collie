@@ -20,6 +20,8 @@ import {
   scaleMark,
   undoMarkup,
   type Mark,
+  canvasScaleFor,
+  MAX_CANVAS_PIXELS,
 } from "./markup";
 
 const pen = (n = 1): Mark => ({ kind: "pen", color: "#ef4444", width: 4, points: [{ x: n, y: n }] });
@@ -165,5 +167,20 @@ describe("handing the result to the upload chain", () => {
     expect(extensionForMime("image/webp")).toBe("webp");
     expect(extensionForMime("image/jpeg")).toBe("jpg");
     expect(extensionForMime("image/png")).toBe("png");
+  });
+});
+
+// FORK: the canvas budget (components/annotate-sheet.tsx).
+describe("canvasScaleFor", () => {
+  it("spends the DPR while the budget allows, and no further", () => {
+    expect(canvasScaleFor(390, 844, 3)).toBe(3);
+    // A 12-megapixel photo on a DPR-3 phone: 109 Mpx asked, 12 Mpx allowed.
+    const scale = canvasScaleFor(4032, 3024, 3);
+    expect(scale).toBeLessThan(1);
+    expect(4032 * scale * (3024 * scale)).toBeLessThanOrEqual(MAX_CANVAS_PIXELS + 1);
+    // Over the budget at its own size: below 1, never zero.
+    expect(canvasScaleFor(8064, 6048, 1)).toBeGreaterThan(0.05);
+    expect(canvasScaleFor(8064, 6048, 1)).toBeLessThan(1);
+    expect(canvasScaleFor(0, 0, 2)).toBe(2);
   });
 });

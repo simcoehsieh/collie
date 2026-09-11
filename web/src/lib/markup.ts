@@ -345,3 +345,22 @@ export function extensionForMime(mime: string): string {
   if (mime === "image/jpeg") return "jpg";
   return "png";
 }
+
+/**
+ * FORK: the largest backing store a canvas may take, in device pixels. iOS Safari's ceiling is
+ * 16,777,216 (4096²) and a canvas past it is created empty or takes the page down with it; the
+ * budget sits under that with room for the marks layer.
+ */
+export const MAX_CANVAS_PIXELS = 12_000_000;
+
+/**
+ * The scale a canvas of `width`×`height` CSS pixels may be backed at: the device pixel ratio, or
+ * less when that would pass {@link MAX_CANVAS_PIXELS} — and below 1 for a picture that is over the
+ * budget at its own size. Never zero, never above `dpr`.
+ */
+export function canvasScaleFor(width: number, height: number, dpr: number, budget: number = MAX_CANVAS_PIXELS): number {
+  const area = Math.max(1, width) * Math.max(1, height);
+  const cap = Math.sqrt(budget / area);
+  return Math.max(0.05, Math.min(Math.max(dpr, 0.05), cap));
+}
+

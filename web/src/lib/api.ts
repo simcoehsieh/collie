@@ -1179,6 +1179,13 @@ export function revokeDevice(label: string): Promise<DevicesResponse> {
  * lib/attachments.ts is where the phone reads it.
  */
 export function uploadFile(paneId: string, file: File, scope?: Scope): Promise<UploadResponse> {
+  // FORK: a picture is a LONG UPLOAD for the same reason a voice clip is (lib/connection-health.ts
+  // § beginLongUpload): megabytes going up the narrow half of a mobile link, behind which the
+  // snapshot poll queues and looks stalled. Without this the amber "Reconnecting…" bar faded in
+  // four seconds after picking a photo, went red at fifteen and offered Reload — which killed the
+  // upload it was blaming (observed 2026-09-11: no picture attached from the phone ever reached the
+  // bridge, because the operator did what the banner said).
+  beginLongUpload();
   // Multipart, so it bypasses `req` (the browser sets the boundary) — track it explicitly instead.
   return trackBusy(
     (async () => {
@@ -1201,7 +1208,7 @@ export function uploadFile(paneId: string, file: File, scope?: Scope): Promise<U
       // SAFETY: a 200 on `/api/pane/:id/upload` is the bridge's own `UploadResponse` by contract;
       // every non-ok answer threw above.
       return (await res.json()) as UploadResponse;
-    })(),
+    })().finally(endLongUpload),
   );
 }
 
