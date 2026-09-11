@@ -159,3 +159,58 @@ export type BeaconReading =
       readonly session: AgentSessionRef;
       readonly markers: readonly BeaconMarker[];
     };
+
+// ── FORK: THE AGENT-AUTHORED STATUS LINE ─────────────────────────────────────────────────────────
+//
+// One sentence, written by the agent through `collie beacon status "<line>"`, shown under the pane
+// name in the herd list and nowhere else. `./status-line.ts` carries the whole argument — including
+// why .adr/0024 permits it (a status line is DISPLAY-ONLY: it sets no identity, no status, no session
+// ref and no capability, arms nothing and relaxes no guard, so it is the ADR's first road rather than
+// its second) and why it is keyed by the agent's SESSION rather than by pane environment markers.
+//
+// The contract lives here, beside the beacon's own, because `./parse.ts` is the one file under this
+// directory allowed to read an unvalidated field and it may not depend on the module that consumes
+// what it produces.
+
+/** The format version this build writes and reads. A different value is not read (see `parse.ts`). */
+export const STATUS_LINE_SCHEMA_VERSION = 1;
+
+/**
+ * The longest sentence a status line may be.
+ *
+ * It renders on one truncated row under a pane name on a phone, so anything past a short sentence is
+ * a sentence nobody reads — and a cap at the PARSE is what keeps a pathological writer from putting a
+ * megabyte into a snapshot the phone polls. Clamped rather than rejected: a long line still says
+ * something useful, and refusing it would make a chatty agent silently invisible.
+ */
+export const STATUS_LINE_MAX_CHARS = 120;
+
+/**
+ * How long a line is worth showing at full strength.
+ *
+ * Past this the card DIMS it — it never hides it: a stale sentence is still the last true thing the
+ * agent said, and a row that empties itself is a row you stop trusting. Fifteen minutes is about one
+ * long agent turn, so inside it the line is almost certainly current and outside it you want to know
+ * it is old.
+ */
+export const STATUS_LINE_FRESH_MS = 15 * 60 * 1000;
+
+/** How long a line is kept AT ALL. Past a day it is not the last true thing, it is archaeology. */
+export const STATUS_LINE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** One status-line file, as it is on disk. Every field is text or a timestamp; none is an instruction. */
+export interface StatusLineRecord {
+  readonly schemaVersion: number;
+  /** Which session this describes — the journal's own ref, matched against `AgentView.agentSession`. */
+  readonly session: AgentSessionRef;
+  /** The sentence, already sanitised and clamped by the parse. */
+  readonly line: string;
+  /** Epoch ms it was written. The card's age and the TTL are both measured from here. */
+  readonly writtenMs: number;
+}
+
+/** What the snapshot carries for one pane: the sentence, and when it was said. */
+export interface StatusLineReading {
+  readonly line: string;
+  readonly writtenMs: number;
+}

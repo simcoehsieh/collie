@@ -110,6 +110,27 @@ export interface AgentView {
    * `done` agent IS the "finished while you weren't looking" state — there is no stored seen flag.
    */
   lastSeenAt?: number;
+  /**
+   * FORK — WHAT THE AGENT ITSELF SAYS IT IS WORKING ON. One sentence, written by the agent through
+   * `collie beacon status "<line>"`, rendered under the pane name and NOWHERE else.
+   *
+   * PRESENTATION AND ONLY PRESENTATION, on exactly the terms {@link hint} already holds and for the
+   * reason .adr/0024 gives: a beacon sets what Collie SHOWS, never what it does. It implies nothing
+   * about `agent` or `status`, enters no sort, arms no mode, relaxes no gate, and is text the client
+   * does not interpret. `bridge/beacon/status-line.ts` carries the whole argument, including why
+   * this is the ADR's permitted road rather than its forbidden one.
+   *
+   * Already sanitised and clamped at the parse — control characters gone, one line, 120 chars — so
+   * the client renders it as-is. Absent on every pane whose agent has never written one.
+   */
+  statusLine?: string;
+  /**
+   * Epoch ms the line was written. The card DIMS a line older than fifteen minutes and never hides
+   * one, so this is the number that decides the dimming — sent as a stamp rather than an age because
+   * a cached snapshot's age would be wrong the moment it was cached, exactly as for the two
+   * timestamps above.
+   */
+  statusLineAt?: number;
 }
 
 /**

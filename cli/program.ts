@@ -1,6 +1,6 @@
 import { Command as Program, CommanderError } from "commander";
 
-import { type BeaconEmitDeps, runBeaconEmit } from "./beacon.ts";
+import { cmdBeaconStatus, type BeaconEmitDeps, type BeaconStatusDeps, runBeaconEmit } from "./beacon.ts";
 import { cmdBuild } from "./build.ts";
 import { collieVersion, loadContext } from "./context.ts";
 import {
@@ -247,6 +247,17 @@ function beaconDeps(): BeaconEmitDeps {
     readStdin: () => Bun.stdin.text(),
     agentPid: process.ppid,
   };
+}
+
+/**
+ * FORK — `beacon status`: the state dir, the filesystem, and an Io.
+ *
+ * It DOES take an Io, unlike {@link beaconDeps}, and the difference is the caller: `beacon emit` is
+ * spelled by a hook whose stdout is injected into the conversation, while `beacon status` is typed by
+ * an agent that wants to know whether its line landed. See cli/beacon.ts for the rest of that split.
+ */
+function beaconStatusDeps(io: Io): BeaconStatusDeps {
+  return { ctx: loadContext(io.err), files: realFiles, io };
 }
 
 /** A verb whose body is a lifecycle function over {@link lifecycleDeps}. */
@@ -515,6 +526,13 @@ export const COMMANDS: readonly Command[] = [
         name: "emit",
         summary: "internal: write this pane's beacon from the hook payload on stdin",
         run: () => runBeaconEmit(beaconDeps),
+      },
+      {
+        // FORK: the one sub-verb here that a human (or an agent) types. Not internal — it is meant
+        // to be discoverable, because an agent has to be TOLD to use it before it ever will.
+        name: "status",
+        summary: 'say what this agent is working on: `beacon status "rewriting the journal adapter"`',
+        run: (args, s) => cmdBeaconStatus(beaconStatusDeps(s.io), args),
       },
     ],
     // A bare `collie beacon`, or a misspelt sub-verb, is still an invocation from a hook — so it gets

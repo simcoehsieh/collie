@@ -106,6 +106,11 @@ const AGENT_VIEW_KEYS = {
   // present exactly when the snapshot was widened (`?sessions=all`, the "All sessions" view), absent
   // on every other read — which is every read the app made before that view existed.
   session: true,
+  // FORK, and not a crew dimension either: the agent's own sentence about what it is working on
+  // (`collie beacon status`), plus when it said it. Optional-and-absent unless an agent has
+  // published one, so a snapshot from a herd that has not is byte-identical to the baseline.
+  statusLine: true,
+  statusLineAt: true,
 } satisfies Record<keyof AgentView, true>;
 
 const DEVICE_AUTH_KEYS = {

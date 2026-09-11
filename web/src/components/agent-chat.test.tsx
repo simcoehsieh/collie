@@ -2601,3 +2601,104 @@ describe("AgentChat — a knowledge-base link opens in the panel", () => {
     );
   });
 });
+
+// ── FORK: CHAT MODE — WHICH OF THE PANE'S TWO REPRESENTATIONS IS ON SCREEN ───
+//
+// An agent pane is a conversation that happens to be rendered in a terminal, so it opens on the
+// conversation. What is pinned here is everything that keeps that from being a view you can get
+// stuck in: the mirror is one tap away, and two states take it back WITHOUT asking — a dialog that
+// owns the keyboard, and an open find bar. Neither writes the preference.
+describe("AgentChat — chat mode", () => {
+  const sessionAgent = () => ({ ...fixtureAgents[0]!, hasSession: true, readableLines: 51 });
+  const toggle = () => screen.queryByRole("radiogroup", { name: /pane view/i });
+  /** The switch rides in the composer's Controls row, which this fork folds away by default — so a
+   *  test that is about the switch opens the row the way the operator does, through the status band.
+   *  (The mirror is still ONE tap from the transcript itself: its scroller ends in a "Show the
+   *  terminal" row, which the cases below also exercise.) */
+  const openControls = async (user: User) => {
+    const band = screen.queryByRole("button", { name: /show the controls row/i });
+    if (band) await user.click(band);
+  };
+  const transcriptTab = () => screen.getByRole("radio", { name: "Transcript" });
+  const terminalTab = () => screen.getByRole("radio", { name: "Terminal" });
+  /** The mirror's own <pre>: present exactly when the terminal view is the one on screen. */
+  const mirror = () => document.querySelector("pre");
+
+  it("an agent pane with a transcript opens on the conversation", async () => {
+    const user = userEvent.setup();
+    renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    expect(mirror()).toBeNull();
+    await openControls(user);
+    await waitFor(() => expect(toggle()).toBeInTheDocument());
+    expect(transcriptTab()).toHaveAttribute("aria-checked", "true");
+  });
+
+  // ONE TAP, from the transcript itself: its scroller ends in this row, so the mirror never depends
+  // on the Controls row being open.
+  it("the thread's own footer hands the screen back to the terminal in one tap", async () => {
+    const user = userEvent.setup();
+    renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    await user.click(await screen.findByRole("button", { name: /show the terminal/i }));
+    await waitFor(() => expect(mirror()).not.toBeNull());
+    expect(mirror()).toHaveTextContent("recent pane output");
+  });
+
+  it("the switch remembers the choice per pane and per device", async () => {
+    const user = userEvent.setup();
+    const { props } = renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    await openControls(user);
+    await waitFor(() => expect(toggle()).toBeInTheDocument());
+
+    await user.click(terminalTab());
+    await waitFor(() => expect(mirror()).not.toBeNull());
+
+    // The choice is in the stored display prefs, under THIS pane's address — not a global switch.
+    const stored = JSON.parse(localStorage.getItem("collie:display-prefs:v4") ?? "{}");
+    expect(stored.paneView[paneScopeKey(undefined, props.paneId)]).toBe("terminal");
+  });
+
+  // THE RULE THAT MAKES CHAT MODE SAFE TO DEFAULT ON. Answering a prompt means seeing the prompt,
+  // and the up-levelled option buttons live in the mirror.
+  it("a dialog that owns the keyboard takes the mirror back without being asked", async () => {
+    const text = readFileSync(
+      join(import.meta.dirname, "..", "fixtures", "panes", "claude--permission-bash.txt"),
+      "utf8",
+    );
+    const user = userEvent.setup();
+    renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text });
+    await waitFor(() => expect(mirror()).not.toBeNull());
+    await openControls(user);
+    // The control says what is ON SCREEN rather than what is stored, and cannot be moved right now.
+    expect(terminalTab()).toHaveAttribute("aria-checked", "true");
+    expect(terminalTab()).toBeDisabled();
+  });
+
+  // Find searches the mirror's buffer and highlights inside it, so the surface it searches has to be
+  // the one on screen.
+  it("opening find hands the mirror back too", async () => {
+    const user = userEvent.setup();
+    renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    expect(mirror()).toBeNull();
+
+    await openFind(user);
+    await waitFor(() => expect(mirror()).not.toBeNull());
+  });
+
+  it("a shell pane is never offered a transcript it has no journal for", async () => {
+    const user = userEvent.setup();
+    const shell = { ...fixtureAgents[0]!, kind: "shell" as const, hasSession: false };
+    renderChat({ agent: shell, agents: [shell], text: "recent pane output" });
+    expect(mirror()).not.toBeNull();
+    await openControls(user);
+    expect(toggle()).not.toBeInTheDocument();
+  });
+
+  it("an agent pane that never reported a session keeps the mirror and the toggle stays away", async () => {
+    const user = userEvent.setup();
+    const noSession = { ...fixtureAgents[0]!, hasSession: false };
+    renderChat({ agent: noSession, agents: [noSession], text: "recent pane output" });
+    expect(mirror()).not.toBeNull();
+    await openControls(user);
+    expect(toggle()).not.toBeInTheDocument();
+  });
+});

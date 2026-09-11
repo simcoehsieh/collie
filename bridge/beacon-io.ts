@@ -16,6 +16,7 @@ import { join } from "node:path";
 
 import { parseProcStartTime, procStatPath } from "./beacon/liveness.ts";
 import { beaconsDir, BEACON_FILE_SUFFIX } from "./beacon/paths.ts";
+import { statusLinesDir, type StatusLineDirectory } from "./beacon/status-line.ts";
 import type { BeaconDirectory, BeaconLiveness, BeaconSweepDeps } from "./beacon/reader.ts";
 import type { JsonValue } from "./json.ts";
 import type { Environment } from "../cli/context.ts";
@@ -51,6 +52,32 @@ export function fileBeaconDirectory(stateDir: string): BeaconDirectory {
         const stats = await lstat(path);
         if (!stats.isFile()) return null;
         return await readFile(path, "utf8");
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+/**
+ * FORK: the status-line directory on disk — `${stateDir}/beacons/status`.
+ *
+ * Same rule as the beacon directory above and for the same reason: every failure answers `null`, and
+ * `lstat` rather than `stat` so a symlink planted in there is somebody redirecting a read rather than
+ * a file we will follow. It reads and it never writes; the only writer is `collie beacon status`.
+ */
+export function fileStatusLineDirectory(stateDir: string): StatusLineDirectory {
+  const dir = statusLinesDir(stateDir);
+  return {
+    async read(fileName: string): Promise<string | null> {
+      // The name is built by `statusLineFileName(statusLineKey(ref))` — a 16-char hex digest plus a
+      // fixed suffix — so it can carry no separator and no traversal. Checked anyway, because the
+      // cost is one regex and the alternative is trusting a call site that could change.
+      if (!/^[0-9a-f]{1,64}\.json$/u.test(fileName)) return null;
+      try {
+        const stats = await lstat(join(dir, fileName));
+        if (!stats.isFile()) return null;
+        return await readFile(join(dir, fileName), "utf8");
       } catch {
         return null;
       }

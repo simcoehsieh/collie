@@ -324,22 +324,31 @@ export function PaneTranscript({
       {/* The plan, above the thread and out of its flow — it is the state of the job, not a turn. */}
       {todo !== null && <TodoCard items={todo} pinned className="mb-3" />}
       <TranscriptView entries={shown} agent={agent} scope={scope} working={working} />
-      {/* THE LIMIT, SAID OUT LOUD. A turn that is still streaming has not been written to the
-          harness's JSONL yet, so it cannot be here — and a thread that simply stops while the agent
-          is plainly busy reads as a bug. One line, and it is also the way across. */}
-      {working && (
-        <button
-          type="button"
-          onClick={onShowTerminal}
-          className={cn(
-            "mt-2 flex w-full items-center justify-center gap-1.5 rounded-md py-2",
-            "text-xs font-medium text-muted-foreground transition-colors active:bg-muted/50",
-          )}
-        >
+      {/* ── THE WAY ACROSS, AND THE LIMIT IT ADMITS ────────────────────────────
+          A turn that is still streaming has not been written to the harness's JSONL yet, so it
+          cannot be here — and a thread that simply stops while the agent is plainly busy reads as a
+          bug. That is the `working` copy.
+
+          It is drawn AT REST TOO, and that is not decoration: the segmented control lives in the
+          composer's Controls row, which this fork folds away by default, so without this the mirror
+          would be two taps rather than one. Here it costs no chrome — it is the last thing in a
+          bottom-pinned scroller, so it sits just above the composer without being a persistent row
+          of its own (upstream #186). */}
+      <button
+        type="button"
+        onClick={onShowTerminal}
+        className={cn(
+          "mt-2 flex w-full items-center justify-center gap-1.5 rounded-md py-2",
+          "text-xs font-medium text-muted-foreground transition-colors active:bg-muted/50",
+        )}
+      >
+        {working ? (
           <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          {t("chat.transcript.liveInTerminal")}
-        </button>
-      )}
+        ) : (
+          <Terminal className="size-3.5" aria-hidden />
+        )}
+        {working ? t("chat.transcript.liveInTerminal") : t("chat.transcript.showTerminal")}
+      </button>
     </div>
   );
 }

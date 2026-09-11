@@ -106,7 +106,7 @@ const PATTERNS: readonly (readonly [RegExp, ToolKind])[] = [
   [/exec|shell|bash|command|run_|terminal|process/u, "execute"],
   [/edit|write|patch|create|update|apply|insert|replace/u, "edit"],
   [/fetch|http|curl|download|browse|url/u, "fetch"],
-  [/read|cat|open|view|get_|show|inspect/u, "read"],
+  [/read|cat|open|view|get_|show|inspect|retrieve|load/u, "read"],
   [/think|plan|todo|reason|reflect/u, "think"],
 ];
 

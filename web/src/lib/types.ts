@@ -92,6 +92,18 @@ export interface AgentView {
    */
   lastSeenAt?: number;
   /**
+   * FORK — the agent's OWN sentence about what it is working on, written through
+   * `collie beacon status "<line>"`. Mirrors `AgentView.statusLine` in bridge/types.ts.
+   *
+   * TEXT AND NOTHING ELSE, the same standing {@link hint} has: nothing branches on it, it implies
+   * nothing about `agent` or `status`, and it changes no sort and no affordance. Already sanitised
+   * and clamped bridge-side, so it is rendered as-is. Absent on almost every pane.
+   */
+  statusLine?: string;
+  /** Epoch ms the line was written. A line older than fifteen minutes renders dimmed — never hidden.
+   *  Mirrors `AgentView.statusLineAt` in bridge/types.ts. */
+  statusLineAt?: number;
+  /**
    * Which member of the crew this pane lives on — the `?h=` value (CREW_PROTOCOL.md §4). Mirrors
    * `PaneWire.host` in bridge/types.ts.
    *

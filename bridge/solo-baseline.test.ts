@@ -301,6 +301,11 @@ const PANE_WIRE_KEYS = {
   // and then on every pane in the body. Nothing in this baseline asks, so it is absent on every
   // pane here and no golden byte moved — which is the claim, not an aside.
   session: true,
+  // FORK, and not a crew dimension either: the agent's own sentence about what it is working on
+  // (`collie beacon status`), plus when it said it. Both are optional-and-absent unless an agent has
+  // published one, and no pane in this baseline has, so no golden byte moved.
+  statusLine: true,
+  statusLineAt: true,
 } satisfies Record<keyof PaneWire, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -421,6 +426,12 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
       "session",
       "sessionName",
       "status",
+      // FORK: the agent's own sentence and its stamp. Neither is written by a REQUEST — an agent
+      // publishes one with `collie beacon status` or no pane has one — so the claim this test makes
+      // about the two address dimensions is untouched, and the golden bodies below still carry
+      // neither field.
+      "statusLine",
+      "statusLineAt",
       "tabId",
       "tabLabel",
       "terminalTitle",

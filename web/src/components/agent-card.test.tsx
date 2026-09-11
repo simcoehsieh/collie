@@ -94,3 +94,61 @@ describe("AgentCard — pinned", () => {
     expect(container.querySelector('[aria-label="Pinned"]')).not.toBeNull();
   });
 });
+
+// ── FORK: THE AGENT'S OWN STATUS LINE ────────────────────────────────────────
+// `claude` / `working` is what every row already says; what it is working ON is the thing only the
+// agent knows, and `collie beacon status "<line>"` is how it says so. Rendered as TEXT under the
+// name and nothing more: the row still sorts, badges and opens exactly as it did.
+describe("AgentCard — the agent's status line", () => {
+  const statusLine = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>('[data-slot="agent-status-line"]');
+
+  it("renders the sentence the agent published, under the pane's name", () => {
+    const { container } = render(
+      <AgentCard
+        agent={agent({ statusLine: "rewriting the journal adapter", statusLineAt: Date.now() - 60_000 })}
+        onClick={() => {}}
+      />,
+    );
+    expect(statusLine(container)).toHaveTextContent("rewriting the journal adapter");
+  });
+
+  it("renders nothing at all when no agent has published one", () => {
+    const { container } = render(<AgentCard agent={agent()} onClick={() => {}} />);
+    expect(statusLine(container)).toBeNull();
+  });
+
+  // STALE IS DIMMED AND NEVER HIDDEN. An agent that said "running the migration" forty minutes ago
+  // is still telling you the most useful thing anyone knows about that pane; a row that emptied
+  // itself would only make you wonder whether the feature broke.
+  it("keeps an old line and marks its age instead of dropping it", () => {
+    const { container } = render(
+      <AgentCard
+        agent={agent({ statusLine: "running the migration", statusLineAt: Date.now() - 40 * 60_000 })}
+        onClick={() => {}}
+      />,
+    );
+    const row = statusLine(container)!;
+    expect(row).toHaveTextContent("running the migration");
+    expect(row).toHaveTextContent("40m");
+    expect(row.className).toContain("text-muted-foreground/60");
+  });
+
+  it("a fresh line carries no age at all — the sentence is the whole of it", () => {
+    const { container } = render(
+      <AgentCard
+        agent={agent({ statusLine: "reading the adapter", statusLineAt: Date.now() - 60_000 })}
+        onClick={() => {}}
+      />,
+    );
+    expect(statusLine(container)).toHaveTextContent(/^reading the adapter$/);
+  });
+
+  // It is CONTENT, not chrome (DESIGN.md § "Chrome wears the app face") — the words are the agent's.
+  it("wears the content face, not the app's own", () => {
+    const { container } = render(
+      <AgentCard agent={agent({ statusLine: "planning", statusLineAt: Date.now() })} onClick={() => {}} />,
+    );
+    expect(statusLine(container)!.querySelector(".font-content")).not.toBeNull();
+  });
+});
