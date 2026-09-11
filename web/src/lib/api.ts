@@ -501,10 +501,34 @@ export async function fetchPane(
  * pane runs on the alternate screen, which has no scrollback ring). Newest-anchored: no cursor gives
  * the most recent turns; `before` walks backwards from a turn already on screen.
  *
- * Deliberately NOT ETag-cached like fetchPane: history is fetched on navigation and on an explicit
- * "load older" tap, never on the poll loop, so there's no repeat-fetch to save.
+ * FORK — IT IS ETag-CACHED NOW, and the comment that said otherwise was true only until
+ * `use-latest-reply` shipped. That hook re-reads the newest turns every time the mirror SETTLES, so
+ * a pane the operator is watching asks this route once per finished message — and the answer is
+ * usually the same page it already holds, because the newest spoken turn does not change while the
+ * agent runs tools. The bridge validates on the body's hash (`paneHistory`); this sends the tag and,
+ * on a 304, hands back THE SAME OBJECT, so `newestReply` compares identical references and the
+ * reply card re-renders nothing.
+ *
+ * Keyed by the full URL — (host, session, paneId, limit, cursor) — for `fetchPane`'s reason: the
+ * same pane id on another host is another pane, and a different page of the same log is a different
+ * body. And on `fetchPane`'s two invariants: a tag is recorded only together with the body it names,
+ * and only after that body parsed.
  */
-export function fetchHistory(
+interface HistoryCacheEntry {
+  etag: string;
+  response: PaneHistoryResponse;
+}
+const historyCache = new Map<string, HistoryCacheEntry>();
+// A page is the largest body this module caches (up to 5000 turns on "show entire history"), so the
+// cap is tight: the pane being watched, the one before it, and the "load older" pages in hand.
+const HISTORY_CACHE_MAX = 8;
+
+/** Tests only: forget every cached history page. */
+export function __resetHistoryCache(): void {
+  historyCache.clear();
+}
+
+export async function fetchHistory(
   paneId: string,
   opts: { limit?: number; before?: string } = {},
   scope?: Scope,
@@ -515,12 +539,39 @@ export function fetchHistory(
   if (opts.before) q.set("before", opts.before);
   const qs = q.toString();
   const path = `/api/pane/${encodeURIComponent(paneId)}/history${qs ? `?${qs}` : ""}`;
+  const url = withScope(path, scope);
+
+  const cached = historyCache.get(url);
   // Reading the transcript is looking at the pane — and history is a READ, so like fetchPane it
   // carries the header that lets the bridge count it (bridge/server.ts → marksPaneSeen).
-  return req<PaneHistoryResponse>(withScope(path, scope), {
-    signal,
-    headers: { "x-collie-seen": "1" },
+  const headers = new Headers({
+    "content-type": "application/json",
+    "x-collie-seen": "1",
+    [XHR_HEADER]: XHR_HEADER_VALUE,
+    ...authHeader(),
   });
+  if (cached) headers.set("if-none-match", cached.etag);
+
+  const res = await apiFetch(url, { signal: withTimeout(signal, GET_TIMEOUT_MS), headers });
+  captureBuild(res);
+  if (res.status === 304 && cached) return cached.response;
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    notePairing("GET", res.status, detail);
+    throw new ApiError(`${url} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  notePairing("GET", res.status);
+  // SAFETY: a 200 on `/api/pane/:id/history` is the bridge's own `PaneHistoryResponse` by contract.
+  const data = (await res.json()) as PaneHistoryResponse;
+  const etag = res.headers.get("etag");
+  if (etag) {
+    historyCache.set(url, { etag, response: data });
+    if (historyCache.size > HISTORY_CACHE_MAX) {
+      const oldest = historyCache.keys().next().value;
+      if (oldest !== undefined) historyCache.delete(oldest);
+    }
+  }
+  return data;
 }
 
 export function sendReply(
@@ -753,7 +804,38 @@ export function openWorktree(
  * nothing on the wire and gets the byte-identical body it always did.
  */
 export function fetchConfig(scope?: Scope): Promise<BridgeConfig> {
-  return req<BridgeConfig>(withScope("/api/config", scope));
+  const path = withScope("/api/config", scope);
+  const held = configMemo.get(path);
+  if (held && Date.now() - held.at < CONFIG_MEMO_MS) return held.promise;
+  // A rejection is dropped from the memo the moment it settles, so a bridge that was briefly down
+  // is retried by the next caller rather than remembered as broken for the rest of the window.
+  const promise = req<BridgeConfig>(path).catch((err: unknown) => {
+    configMemo.delete(path);
+    throw err;
+  });
+  configMemo.set(path, { at: Date.now(), promise });
+  return promise;
+}
+
+// FORK — ONE `/api/config` PER BOOT, NOT THREE.
+//
+// Three independent callers read it on every cold boot of home: push setup (lib/push.ts), the
+// operator's rows (lib/operator-config.ts) and the footer's build stamp (components/build-stamp.tsx).
+// Only the middle one had an in-flight guard, and it guarded only itself — so the phone paid two
+// extra ~175 ms round trips behind the boot splash, plus one more on every BuildStamp remount.
+//
+// The guard belongs here rather than in any one of them: this is the single place all three pass
+// through, and a memo per caller is three memos that can disagree about what the bridge said.
+// Keyed by the PATH, because `?host=` names a different machine's block and must not be served
+// another's. Ten seconds covers a boot, a remount, and a home↔pane↔home hop; past it the operator's
+// live-edited `commands.toml` reaches the next screen, which is what "read live on the bridge" is
+// supposed to buy them.
+const CONFIG_MEMO_MS = 10_000;
+const configMemo = new Map<string, { at: number; promise: Promise<BridgeConfig> }>();
+
+/** Tests only: forget the memoised config. */
+export function __resetConfigMemo(): void {
+  configMemo.clear();
 }
 
 /** Register push through the same timeout, authentication and error handling as the other APIs. */

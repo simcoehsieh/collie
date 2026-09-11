@@ -6,6 +6,7 @@ import { setupServer } from "msw/node";
 import { handlers, resetTypedDraft } from "./handlers";
 import { __resetConnectionHealth } from "@/lib/connection-health";
 import { __resetPairing } from "@/lib/pairing";
+import { __resetConfigMemo } from "@/lib/api";
 import { __resetDraftPrune } from "@/lib/drafts";
 
 // One MSW server for all tests; tests add per-case overrides with `server.use(...)`.
@@ -93,6 +94,10 @@ beforeEach(() => __resetConnectionHealth());
 // The pairing refusal latch is module-scoped too: one test's 403 "device not paired" would otherwise
 // leave every later test's composer read-only. (The token itself rides localStorage, cleared below.)
 beforeEach(() => __resetPairing());
+// FORK: `/api/config` is memoised for a few seconds so a cold boot fetches it once instead of three
+// times (lib/api.ts). The memo is module-scoped, and a suite runs far inside its window — one test's
+// handler would otherwise answer the next test, which mocked a different bridge.
+beforeEach(() => __resetConfigMemo());
 // Persisted state (composer drafts, prefs) must not leak between cases — a draft saved by one test
 // would be restored into the next test's freshly-mounted composer.
 // `localStorage.clear()` alone stopped being enough when the draft store grew a second, in-memory

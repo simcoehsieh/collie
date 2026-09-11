@@ -2486,6 +2486,13 @@ async function paneDiff(engine: StateEngine, paneId: string, url: URL, req: Requ
  * one. That is the whole safety story for a route that reads files: the only client-controlled inputs
  * are a pane id (a Map lookup) and an opaque cursor (an array lookup). Which harness knows how to
  * read the log is the registry's decision, so this route stays agent-agnostic.
+ *
+ * FORK: it validates on the body's hash, exactly as {@link paneDiff} beside it does. History stopped
+ * being a navigation-only read the day `use-latest-reply` started fetching it on every settle of the
+ * mirror — a pane the operator is watching re-reads the same newest turns each time the screen stops
+ * moving, and on a phone that is a full round trip to re-download what it already holds. The
+ * transcript store caches its own parse on the log's size+mtime, so the 304 costs a re-serialise and
+ * a hash of a page that was already in memory.
  */
 async function paneHistory(
   cfg: Config,
@@ -2518,7 +2525,15 @@ async function paneHistory(
   try {
     const page = await transcripts.page(adapter, pane.agentSession, historyParams(url));
     if (page === null) return unavailable("no-log");
-    return json({ paneId, available: true, ...page } satisfies PaneHistoryResponse, accept);
+    // The three `unavailable` answers above are deliberately NOT validated: each is a two-field
+    // constant, smaller than the headers a 304 would carry, and a client that holds one is not
+    // holding a page that can go stale under it.
+    const body = JSON.stringify({ paneId, available: true, ...page } satisfies PaneHistoryResponse);
+    const etag = computeEtag(body);
+    if (notModified(req.headers.get("if-none-match"), etag)) {
+      return secure(new Response(null, { status: 304, headers: { etag, "cache-control": "no-store" } }));
+    }
+    return secure(jsonBodyResponse(body, accept, { etag }));
   } catch (err) {
     return text(`transcript read failed: ${errorText(err)}`, 502);
   }
