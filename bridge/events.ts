@@ -137,18 +137,31 @@ export class PaneReads {
     for (const key of this.cache.keys()) if (key.startsWith(`${paneId}\u0000`)) this.cache.delete(key);
   }
 
-  /** Somebody is looking at this pane at this window. Returns the release. */
-  watch(paneId: string, lines: number): () => void {
-    const key = keyOf(paneId, lines);
-    this.interest.set(key, (this.interest.get(key) ?? 0) + 1);
-    this.ensureLoop();
+  /**
+   * Somebody is looking at these panes at this window. Returns the ONE release for all of them.
+   *
+   * A SET rather than a pane, because the Overview screen watches every card at once: one stream
+   * naming six panes is one subscription and one release, where six streams would be six
+   * Access-validated connections through the tunnel for a screen that is, by design, a glance.
+   * Single-pane callers pass `[paneId]` and get exactly the behaviour they had — the interest
+   * counter is per `(pane, lines)` key either way, so two watchers of the same pane still share one
+   * sweep and the second release is the one that stops it.
+   */
+  // NOT `Iterable<string>`: a bare string satisfies that and iterates as CHARACTERS, so a caller
+  // that forgot the brackets would silently watch `w`, `1`, `:` … and be told nothing.
+  watch(paneIds: readonly string[] | ReadonlySet<string>, lines: number): () => void {
+    const keys = [...new Set(paneIds)].map((paneId) => keyOf(paneId, lines));
+    for (const key of keys) this.interest.set(key, (this.interest.get(key) ?? 0) + 1);
+    if (keys.length > 0) this.ensureLoop();
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      const n = (this.interest.get(key) ?? 1) - 1;
-      if (n <= 0) this.interest.delete(key);
-      else this.interest.set(key, n);
+      for (const key of keys) {
+        const n = (this.interest.get(key) ?? 1) - 1;
+        if (n <= 0) this.interest.delete(key);
+        else this.interest.set(key, n);
+      }
       if (this.interest.size === 0) this.stopLoop();
     };
   }
@@ -172,7 +185,7 @@ export class PaneReads {
   waitForChange(paneId: string, lines: number, etag: string, ms: number): Promise<PaneReadEntry | null> {
     const held = this.peek(paneId, lines);
     if (held && held.etag !== etag) return Promise.resolve(held);
-    const release = this.watch(paneId, lines);
+    const release = this.watch([paneId], lines);
     let off: (() => void) | undefined;
     const changed = new Promise<PaneReadEntry>((resolve) => {
       off = this.onChange((id, entry) => {
@@ -268,12 +281,31 @@ export class PaneReads {
 
 // ── The stream ────────────────────────────────────────────────────────────────
 
-/** One line on the wire. `snapshot` means re-run the snapshot loader; `pane` means re-read that pane. */
-export type PokeEvent = { kind: "snapshot" } | { kind: "pane"; paneId: string };
+/**
+ * One line on the wire. `snapshot` means re-run the snapshot loader; `pane` means re-read that pane.
+ *
+ * ── THE VERSION STAMP (`etag`) ────────────────────────────────────────────────────────────────
+ * A poke says WHEN, never what — that is ADR 0008's poll-as-truth and it is not being relaxed here.
+ * `etag` is still *when*: it names the version the poke is about, so a client that already holds
+ * exactly those bytes can skip a fetch it knows would answer 304. It carries no content, a client
+ * that ignores it is correct, and a client that trusts a stale one is one safety-net interval
+ * behind at worst — the same cost a dropped poke has always had.
+ *
+ * OPTIONAL ON BOTH KINDS, and a reader must treat it that way: an older bridge sends none, and the
+ * snapshot's stamp is the LOCAL body's fingerprint (`hubFor` in server.ts) — which is the tag the
+ * route serves only where nothing rewrites the body on its way out. With `COLLIE_DEVICE_HEADER`
+ * set, `?sessions=all`, or a crew merge, the served body differs and the stamps simply never match,
+ * so the client fetches exactly as it did before. The PANE stamp has no such caveat: the watcher's
+ * entry IS what the route answers from, byte for byte.
+ */
+export type PokeEvent =
+  | { kind: "snapshot"; etag?: string }
+  | { kind: "pane"; paneId: string; etag?: string };
 
 export interface EventSubscriber {
-  /** The pane this stream follows, if any — only its own pane pokes are delivered. */
-  readonly paneId: string | undefined;
+  /** The panes this stream follows — only pokes for these are delivered. Empty is the herd-only
+   *  stream (the dashboard), which still receives every snapshot poke. */
+  readonly paneIds: ReadonlySet<string>;
   readonly send: (event: PokeEvent) => void;
 }
 
@@ -299,15 +331,22 @@ export class EventHub {
     return this.subscribers.size;
   }
 
-  /** The herd moved (a status flip, a create, a close): every stream should re-run the snapshot. */
-  pokeSnapshot(): void {
-    this.broadcast({ kind: "snapshot" });
+  /** The herd moved (a status flip, a create, a close): every stream should re-run the snapshot.
+   *  `etag` is the version that moved — see {@link PokeEvent}; absent when the caller has none. */
+  pokeSnapshot(etag?: string): void {
+    // Assigned, never conditionally spread: a poke with no stamp must put NO `etag` key on the
+    // wire, so an older client's parser sees byte-for-byte the frame it always saw.
+    const event: PokeEvent = { kind: "snapshot" };
+    if (etag !== undefined) event.etag = etag;
+    this.broadcast(event);
   }
 
-  /** A pane's bytes moved: the streams following it should re-read it. */
-  pokePane(paneId: string): void {
+  /** A pane's bytes moved: the streams following it should re-read it. A stream may follow SEVERAL
+   *  panes (the Overview grid), so this is a set membership test rather than an equality. */
+  pokePane(paneId: string, etag?: string): void {
     const event: PokeEvent = { kind: "pane", paneId };
-    for (const sub of this.subscribers) if (sub.paneId === paneId) this.deliver(sub, event);
+    if (etag !== undefined) event.etag = etag;
+    for (const sub of this.subscribers) if (sub.paneIds.has(paneId)) this.deliver(sub, event);
   }
 
   private broadcast(event: PokeEvent): void {
@@ -331,6 +370,44 @@ export function sseFrame(event: PokeEvent): string {
 
 /** The comment frame that keeps a proxy's idle timer from closing a quiet stream. */
 export const SSE_PING = ": ping\n\n";
-/** How often the ping goes out. Cloudflare closes an idle proxied connection at 100 s; 15 s is
- *  comfortably inside that and inside every browser's own idle reconnect. */
-export const SSE_PING_MS = 15_000;
+/**
+ * How often the ping goes out.
+ *
+ * THREE TIMERS WATCH THIS CONNECTION, NOT TWO, and the ping has to beat the shortest of them.
+ * Cloudflare closes an idle proxied connection at 100 s and a browser reconnects an idle
+ * EventSource on its own — both were reasoned about when this shipped at 15 s. **Bun was not.**
+ * `Bun.serve`'s `idleTimeout` defaults to 10 seconds, so a 15 s ping always arrived after the
+ * runtime had already dropped the socket: measured on loopback on 2026-09-11, a stream over a QUIET
+ * herd died at 9.1 s and 9.8 s and came back on the client's `retry: 3000` — a 12-second cycle,
+ * 386 `unexpected EOF` lines in the tunnel log, and the feed down ~25 % of wall-clock time. It
+ * failed PRECISELY in the quiet case `LIVE_FEED_MS`'s 30 s relaxation exists to exploit.
+ *
+ * Five seconds is the fix on this side, and {@link IDLE_TIMEOUT_S} is the fix on the other: the ping
+ * is made to survive a runtime default that changes, and the runtime default is made explicit rather
+ * than inherited. Either alone would work today; both together mean neither a Bun upgrade nor an
+ * edit to this line can re-create the defect silently. Four bytes every five seconds per open
+ * stream is the whole cost.
+ */
+export const SSE_PING_MS = 5_000;
+/**
+ * The explicit `idleTimeout` for `Bun.serve` (SECONDS — that is the unit Bun takes, capped at 255).
+ *
+ * It lives here, beside the ping, because the two are one rule that must never drift: the ping has
+ * to fire well inside this, and a constant written down in another file is one that gets edited
+ * alone. `bridge/server.ts` imports it for the one `Bun.serve` call.
+ *
+ * 150 s clears everything the bridge legitimately holds a connection open for WITHOUT writing a
+ * byte, in descending order:
+ *   - a codex STT transcription, `CODEX_TIMEOUT_MS` 120 s (bridge/stt/codex.ts) — the longest, and
+ *     the only one anywhere near the old 10 s default;
+ *   - Cloudflare's own 100 s idle cut, so the runtime is never the layer that closes first;
+ *   - an openai STT transcription, 60 s;
+ *   - the long-poll pane read, `PANE_WAIT_MAX_MS` 2 s;
+ *   - this file's ping, 5 s.
+ * An upload is not on that list: bytes are moving for its whole life, which is what resets the timer.
+ *
+ * One operational consequence, and it is the reason the number is not larger: a session-scoped route
+ * that WEDGES (a bridge test run holding the herdr socket — FORK.md) now hangs for 150 s instead of
+ * 10 before the runtime gives up on it.
+ */
+export const IDLE_TIMEOUT_S = 150;

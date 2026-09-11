@@ -1,15 +1,20 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   EventHub,
+  IDLE_TIMEOUT_S,
   PANE_READ_TTL_MS,
   PaneReads,
   type PaneReader,
   type PokeEvent,
   SSE_PING,
+  SSE_PING_MS,
   sseFrame,
 } from "./events.ts";
 import { computeEtag } from "./http-cache.ts";
+import { CODEX_TIMEOUT_MS } from "./stt/codex.ts";
 
 // A fake multiplexer: the text each pane currently shows, and a count of how often it was asked.
 function fakeReader(screens: Map<string, string>) {
@@ -107,7 +112,7 @@ describe("PaneReads — the watcher", () => {
     const reads = new PaneReads(reader, { watchMs: 20 });
     const seen: string[] = [];
     reads.onChange((paneId, entry) => seen.push(`${paneId}:${entry.data.text}`));
-    const release = reads.watch("w1:p1", 600);
+    const release = reads.watch(["w1:p1"], 600);
     await tick(35);
     expect(calls.length).toBeGreaterThanOrEqual(2);
     expect(seen).toEqual([]); // nothing moved yet
@@ -121,7 +126,7 @@ describe("PaneReads — the watcher", () => {
   test("a read on a watched pane is answered from the watcher's own read — no extra socket call", async () => {
     const { reader, calls } = fakeReader(new Map([["w1:p1", "one"]]));
     const reads = new PaneReads(reader, { watchMs: 20 });
-    const release = reads.watch("w1:p1", 600);
+    const release = reads.watch(["w1:p1"], 600);
     await tick(5); // the first sweep runs at once
     const before = calls.length;
     const r = await reads.read("w1:p1", 600);
@@ -134,8 +139,8 @@ describe("PaneReads — the watcher", () => {
   test("releasing the last interest stops the loop", async () => {
     const { reader, calls } = fakeReader(new Map([["w1:p1", "one"]]));
     const reads = new PaneReads(reader, { watchMs: 10 });
-    const a = reads.watch("w1:p1", 600);
-    const b = reads.watch("w1:p1", 600);
+    const a = reads.watch(["w1:p1"], 600);
+    const b = reads.watch(["w1:p1"], 600);
     expect(reads.watching()).toBe(1);
     a();
     await tick(25);
@@ -189,9 +194,9 @@ describe("EventHub — the fan-out", () => {
     const a: PokeEvent[] = [];
     const b: PokeEvent[] = [];
     const home: PokeEvent[] = [];
-    hub.subscribe({ paneId: "w1:p1", send: (e) => a.push(e) });
-    hub.subscribe({ paneId: "w1:p2", send: (e) => b.push(e) });
-    hub.subscribe({ paneId: undefined, send: (e) => home.push(e) });
+    hub.subscribe({ paneIds: new Set(["w1:p1"]), send: (e) => a.push(e) });
+    hub.subscribe({ paneIds: new Set(["w1:p2"]), send: (e) => b.push(e) });
+    hub.subscribe({ paneIds: new Set(), send: (e) => home.push(e) });
     hub.pokeSnapshot();
     hub.pokePane("w1:p1");
     expect(a).toEqual([{ kind: "snapshot" }, { kind: "pane", paneId: "w1:p1" }]);
@@ -199,16 +204,50 @@ describe("EventHub — the fan-out", () => {
     expect(home).toEqual([{ kind: "snapshot" }]);
   });
 
+  test("one stream may follow SEVERAL panes — the Overview grid", () => {
+    const hub = new EventHub();
+    const grid: PokeEvent[] = [];
+    const one: PokeEvent[] = [];
+    hub.subscribe({ paneIds: new Set(["w1:p1", "w1:p2", "w2:p1"]), send: (e) => grid.push(e) });
+    hub.subscribe({ paneIds: new Set(["w1:p2"]), send: (e) => one.push(e) });
+    hub.pokePane("w1:p2");
+    hub.pokePane("w2:p1");
+    hub.pokePane("w9:p9"); // nobody follows it
+    expect(grid).toEqual([
+      { kind: "pane", paneId: "w1:p2" },
+      { kind: "pane", paneId: "w2:p1" },
+    ]);
+    expect(one).toEqual([{ kind: "pane", paneId: "w1:p2" }]);
+  });
+
+  test("a version stamp rides the poke when the caller has one, and NO key when it does not", () => {
+    const hub = new EventHub();
+    const got: PokeEvent[] = [];
+    hub.subscribe({ paneIds: new Set(["w1:p1"]), send: (e) => got.push(e) });
+    hub.pokeSnapshot('"abc"');
+    hub.pokePane("w1:p1", '"def"');
+    hub.pokeSnapshot();
+    hub.pokePane("w1:p1");
+    expect(got).toEqual([
+      { kind: "snapshot", etag: '"abc"' },
+      { kind: "pane", paneId: "w1:p1", etag: '"def"' },
+      { kind: "snapshot" },
+      { kind: "pane", paneId: "w1:p1" },
+    ]);
+    // An unstamped poke is byte-for-byte the frame that shipped before the stamp existed.
+    expect(sseFrame(got[2]!)).toBe('event: poke\ndata: {"kind":"snapshot"}\n\n');
+  });
+
   test("unsubscribing stops delivery, and a throwing stream does not break the others", () => {
     const hub = new EventHub();
     const got: PokeEvent[] = [];
     hub.subscribe({
-      paneId: undefined,
+      paneIds: new Set<string>(),
       send: () => {
         throw new Error("socket gone");
       },
     });
-    const off = hub.subscribe({ paneId: undefined, send: (e) => got.push(e) });
+    const off = hub.subscribe({ paneIds: new Set<string>(), send: (e) => got.push(e) });
     hub.pokeSnapshot();
     expect(got).toHaveLength(1);
     off();
@@ -226,8 +265,49 @@ describe("the wire format", () => {
     );
   });
 
+  test("a stamped poke puts the version last, so the old fields keep their place", () => {
+    expect(sseFrame({ kind: "snapshot", etag: '"7f"' })).toBe(
+      'event: poke\ndata: {"kind":"snapshot","etag":"\\"7f\\""}\n\n',
+    );
+    expect(sseFrame({ kind: "pane", paneId: "w1:p1", etag: '"7f"' })).toBe(
+      'event: poke\ndata: {"kind":"pane","paneId":"w1:p1","etag":"\\"7f\\""}\n\n',
+    );
+  });
+
   test("the keepalive is a comment, which EventSource ignores", () => {
     expect(SSE_PING.startsWith(":")).toBe(true);
     expect(SSE_PING.endsWith("\n\n")).toBe(true);
+  });
+});
+
+// ── The defect this pins (2026-09-11) ─────────────────────────────────────────
+// The feed shipped with a 15 s ping under a runtime whose idle timeout defaults to 10 s, so every
+// stream over a quiet herd died at ~9 s and reconnected on `retry: 3000` — forever. Nothing in the
+// suite could have caught it, because the two numbers lived in different files and only one of them
+// was written down at all. Both are here now, and so is the assertion that they are ordered.
+describe("the ping beats the idle timeout", () => {
+  test("the keepalive fires several times inside the runtime's idle window", () => {
+    const idleMs = IDLE_TIMEOUT_S * 1000;
+    expect(SSE_PING_MS).toBeLessThan(idleMs);
+    // Not merely "less than": a single ping landing just inside the window is one scheduling hiccup
+    // away from the bug. Ten of them fit.
+    expect(SSE_PING_MS * 10).toBeLessThanOrEqual(idleMs);
+  });
+
+  test("the ping also clears Cloudflare's 100 s idle cut and the browser's own reconnect", () => {
+    expect(SSE_PING_MS).toBeLessThan(100_000);
+  });
+
+  test("the idle timeout covers the longest request the bridge holds open without writing", () => {
+    // The codex STT transcription deadline (bridge/stt/codex.ts CODEX_TIMEOUT_MS). While it runs,
+    // the bridge has read the whole body and is waiting on a provider: no byte moves either way.
+    expect(IDLE_TIMEOUT_S * 1000).toBeGreaterThan(CODEX_TIMEOUT_MS);
+    // Bun's own ceiling for the option.
+    expect(IDLE_TIMEOUT_S).toBeLessThanOrEqual(255);
+  });
+
+  test("server.ts hands it to Bun.serve rather than inheriting the runtime default", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    expect(src).toContain("idleTimeout: IDLE_TIMEOUT_S,");
   });
 });

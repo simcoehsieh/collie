@@ -17,7 +17,7 @@ import {
   pickEncoding,
   type Encoding,
 } from "./http-cache.ts";
-import { EventHub, PaneReads, SSE_PING, SSE_PING_MS, sseFrame } from "./events.ts";
+import { EventHub, IDLE_TIMEOUT_S, PaneReads, SSE_PING, SSE_PING_MS, sseFrame } from "./events.ts";
 import { pluginRoot } from "./root.ts";
 import { parseNotifyPrefsPatch as parsePrefsPatch, type NotifyPrefs, type NotifyPrefsStore } from "./notify-prefs.ts";
 import { createOperatorCommands } from "./operator-commands.ts";
@@ -882,9 +882,15 @@ export function startServer(opts: {
       const next = computeEtag(JSON.stringify({ ...body, ts: 0 }));
       if (next === fingerprint) return;
       fingerprint = next;
-      hub!.pokeSnapshot();
+      // FORK: the fingerprint rides the poke as its version stamp. It is computed the same way the
+      // `/api/snapshot` route computes its ETag, so on a bridge that serves the body unrewritten the
+      // two are the same string and a client holding it skips a fetch it knows would 304. Where the
+      // body IS rewritten on the way out (a device block, `?sessions=all`, a crew merge) they differ
+      // and the client fetches exactly as before — see `PokeEvent` in events.ts.
+      hub!.pokeSnapshot(next);
     });
-    readsFor(rt).onChange((paneId) => hub!.pokePane(paneId));
+    // FORK: the pane stamp is exact — this entry is the one the route answers from.
+    readsFor(rt).onChange((paneId, entry) => hub!.pokePane(paneId, entry.etag));
     return hub;
   };
 
@@ -1303,6 +1309,10 @@ export function startServer(opts: {
     // Runtime cap on any request body — a chunked/lying client is cut off here even if its
     // Content-Length is absent or false. The upload handler still does its own precise check.
     maxRequestBodySize: requestBodyCap(cfg),
+    // FORK: how long the RUNTIME will hold a connection on which nothing moves. Written down rather
+    // than inherited — Bun's default is 10 s, which silently killed the SSE feed for a day (the
+    // whole argument, and why 150, is on `IDLE_TIMEOUT_S` in bridge/events.ts).
+    idleTimeout: IDLE_TIMEOUT_S,
     // When TLS is present the handshake itself is the first factor: an unpinned or absent client
     // certificate never reaches `fetch` at all, so nothing below has to defend against it.
     tls: listenerTls,
@@ -2135,7 +2145,7 @@ export function startServer(opts: {
       if (isReservedAuthPath(pathname)) return reservedAuthPlaceholder();
 
       // ── Static PWA (with SPA fallback) ───────────────────────────────────
-      return serveStatic(pathname, req.headers.get("accept-encoding"));
+      return serveStatic(pathname, req.headers.get("accept-encoding"), req.headers.get("if-none-match"));
     },
   });
 
@@ -2207,6 +2217,39 @@ export function startupWarnings(cfg: Config): string[] {
 /** The longest a pane read may be held open waiting for a change (`?wait=`). Under Cloudflare's
  *  100 s and the client's own 10 s GET timeout with room for the answer to travel. */
 export const PANE_WAIT_MAX_MS = 2000;
+
+/**
+ * FORK: how many panes one stream may follow at once.
+ *
+ * Each watched `(pane, lines)` costs one local `pane.read` every {@link PANE_WATCH_MS} — ~1 ms on
+ * the socket — so a stream naming a hundred panes would be 250 reads a second for one screen. The
+ * Overview grid is the only caller that names more than one and it draws the herd, which on this
+ * machine is single digits; 24 is generous for that and still bounded. Over the cap the EXTRAS are
+ * dropped rather than the request refused: a screen that shows more cards than the bridge will
+ * watch should fall back to its timer for the rest, not fail to open a stream at all.
+ */
+export const MAX_WATCHED_PANES = 24;
+
+/**
+ * The panes a stream asked to follow: every `?pane=` on the URL, each of which may itself be a comma
+ * list, de-duplicated and capped. Empty is the herd-only stream.
+ *
+ * Both spellings are accepted because both are natural to write and neither is ambiguous — a pane id
+ * is `wN:pN` (bridge/mux) and has never contained a comma. Pure + exported so the parsing is
+ * unit-tested without standing up Bun.serve.
+ */
+export function watchedPanes(url: URL): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const raw of url.searchParams.getAll("pane")) {
+    for (const part of raw.split(",")) {
+      const id = part.trim();
+      if (id === "") continue;
+      out.add(id);
+      if (out.size >= MAX_WATCHED_PANES) return out;
+    }
+  }
+  return out;
+}
 
 /** The `?wait=` a pane read asked for, clamped: absent, non-numeric or ≤ 0 reads as "answer now". */
 export function paneWaitMs(url: URL): number {
@@ -2280,13 +2323,20 @@ async function readPane(
  * herd pokes. A comment ping goes out every {@link SSE_PING_MS} so an idle proxy keeps the
  * connection, and `retry:` tells the browser how soon to come back after a drop.
  *
+ * FORK: `?pane=` MAY BE REPEATED, and may name several panes as one comma list. That is the
+ * Overview screen — a grid of cards, each a pane's last few lines — which until now ran its own 3 s
+ * timer entirely outside the poll loop: 20 requests a minute PER CARD through an identity proxy,
+ * from a screen that is a glance. One stream naming every visible card turns that into one
+ * connection and a poke per card that actually moved. The set is capped ({@link MAX_WATCHED_PANES})
+ * because each member costs a local re-read every {@link PANE_WATCH_MS}.
+ *
  * The three headers are the ones a stream needs to survive an intermediary: `no-transform` so a
  * proxy does not buffer-and-compress it into a body that arrives all at once at the end,
  * `x-accel-buffering: no` for the nginx family, and `text/event-stream` which Cloudflare passes
  * through unbuffered.
  */
 function eventStream(reads: PaneReads, hub: EventHub, cfg: Config, url: URL, req: Request): Response {
-  const paneId = url.searchParams.get("pane") || undefined;
+  const paneIds = watchedPanes(url);
   const linesParam = Number.parseInt(url.searchParams.get("lines") ?? "", 10);
   const lines =
     Number.isFinite(linesParam) && linesParam > 0 ? Math.min(linesParam, MAX_READ_LINES) : cfg.readLines;
@@ -2305,8 +2355,8 @@ function eventStream(reads: PaneReads, hub: EventHub, cfg: Config, url: URL, req
           close();
         }
       };
-      const unsubscribe = hub.subscribe({ paneId, send: (event) => send(sseFrame(event)) });
-      const release = paneId ? reads.watch(paneId, lines) : () => {};
+      const unsubscribe = hub.subscribe({ paneIds, send: (event) => send(sseFrame(event)) });
+      const release = paneIds.size > 0 ? reads.watch(paneIds, lines) : () => {};
       const ping = setInterval(() => send(SSE_PING), SSE_PING_MS);
       const close = () => {
         if (!open) return;
@@ -4167,7 +4217,11 @@ behind your own reverse proxy</em> in the README.</p>
   );
 }
 
-async function serveStatic(pathname: string, acceptEncoding: string | null = null): Promise<Response> {
+async function serveStatic(
+  pathname: string,
+  acceptEncoding: string | null = null,
+  ifNoneMatch: string | null = null,
+): Promise<Response> {
   const resolved = resolveStaticPath(pathname);
   if (!resolved) return text("forbidden", 403);
   let { rel, full } = resolved;
@@ -4188,20 +4242,49 @@ async function serveStatic(pathname: string, acceptEncoding: string | null = nul
   }
 
   const ext = extname(full);
+  const cacheControl = cacheControlFor(rel);
   const headers: StaticHeaders = {
     "content-type": CONTENT_TYPES.get(ext) ?? "application/octet-stream",
     [BUILD_HEADER]: await buildId(), // which bundle the server is serving (vs the client's stamp)
-    "cache-control": cacheControlFor(rel),
+    "cache-control": cacheControl,
   };
   if (ext === ".html") headers["content-security-policy"] = CSP;
   if (rel === "sw.js") headers["service-worker-allowed"] = "/";
+
+  // ── FORK: `no-cache` WITHOUT A VALIDATOR CAN ONLY EVER RE-SEND THE WHOLE FILE ────────────────
+  // Every non-hashed dist file ships `no-cache`, which is correct (a rebuild must never be pinned)
+  // and, until now, was also pointless: with no ETag a revalidation has nothing to compare, so the
+  // browser re-downloads the body it already holds. `sw.js` is the expensive one — `reg.update()`
+  // fetches it every 60 s on every open screen (web/src/lib/pwa.ts), 25 KB a time, forever.
+  //
+  // The tag is a strong hash of the BYTES (`computeEtag`, the same one `muxLogoResponse` and
+  // `operatorFontResponse` already use), cached on the file's size + mtime so a request does not
+  // re-hash it and a rebuild invalidates it. Hashed assets get none: `immutable` already means the
+  // browser never asks, so a tag there would be a hash computed for nobody.
+  //
+  // `no-cache` STAYS on sw.js. The comment on `cacheControlFor` explains why and is correct — a
+  // proxy that pins it wedges the whole SW update pipeline. An ETag does not weaken it: `no-cache`
+  // means "revalidate before use", and this is what finally lets that revalidation succeed cheaply.
+  const validated = cacheControl === "no-cache" ? await staticEtag(full) : null;
+  if (validated !== null) {
+    headers["etag"] = validated;
+    if (notModified(ifNoneMatch, validated)) {
+      return secure(new Response(null, { status: 304, headers }));
+    }
+  }
+
   // A hashed asset is immutable, so its compressed form is too: compressed ONCE, at the top of
   // brotli's dial, and held for the process's life. The bundle is 880 KB on disk and ~210 KB as
-  // `br`; a cold install downloads the latter. Only `assets/` — index.html and the service worker
-  // are re-read on every request precisely because they change, and are small.
+  // `br`; a cold install downloads the latter.
+  //
+  // FORK: the four mutable text files compress too, but NOT through that cache — they change under
+  // their own path, which is the one thing `assetCache` cannot notice. They are keyed on size+mtime
+  // like the tag above, and at 25 KB the compression itself is well under a millisecond.
   const encoding = isCompressibleAsset(rel, ext) ? pickEncoding(acceptEncoding) : null;
   if (encoding !== null) {
-    const compressed = await compressedAsset(full, encoding);
+    const compressed = validated === null
+      ? await compressedAsset(full, encoding)
+      : await compressedMutable(full, encoding);
     if (compressed) {
       headers["content-encoding"] = encoding;
       headers["vary"] = "accept-encoding";
@@ -4211,11 +4294,67 @@ async function serveStatic(pathname: string, acceptEncoding: string | null = nul
   return secure(new Response(file, { headers }));
 }
 
-/** The file types under `assets/` worth compressing: text. Images and fonts are already packed. */
-const COMPRESSIBLE_EXTS = new Set([".js", ".css", ".svg", ".json", ".map", ".txt", ".html"]);
+/** The file types worth compressing: text. Images and fonts are already packed. */
+const COMPRESSIBLE_EXTS = new Set([".js", ".css", ".svg", ".json", ".map", ".txt", ".html", ".webmanifest"]);
+
+/**
+ * The non-hashed dist files that are text, and therefore worth compressing on the way out.
+ *
+ * Named one by one rather than derived from the extension, because "not under `assets/`" is also
+ * every favicon, every PWA tile and `build-info.json` — and the point of the list is that it is
+ * short, known, and changes only when the build's output does. At the sizes measured on 2026-09-11:
+ * sw.js 25,307 → 7,758 B as `br`, index.html 12,581 → 3,739 B.
+ */
+const COMPRESSIBLE_MUTABLE = new Set(["index.html", "sw.js", "theme-init.js", "manifest.webmanifest"]);
 
 export function isCompressibleAsset(rel: string, ext: string): boolean {
-  return rel.startsWith("assets/") && COMPRESSIBLE_EXTS.has(ext);
+  if (!COMPRESSIBLE_EXTS.has(ext)) return false;
+  return rel.startsWith("assets/") || COMPRESSIBLE_MUTABLE.has(rel);
+}
+
+/**
+ * A strong ETag for a MUTABLE dist file, cached on the bytes' identity rather than recomputed.
+ *
+ * `size:mtimeMs` is the cache key, never the tag itself: an mtime is a guess about content and two
+ * writes inside one filesystem tick would collide, which on a service worker is a client pinned to a
+ * build that no longer exists. So the key decides whether to re-hash, and the HASH is what goes on
+ * the wire. Null when the file cannot be stat'd — the caller then serves it unvalidated, exactly as
+ * it always did.
+ */
+const staticEtagCache = new Map<string, { key: string; etag: string }>();
+
+async function staticEtag(full: string): Promise<string | null> {
+  try {
+    const stat = await Bun.file(full).stat();
+    const key = `${stat.size}:${stat.mtimeMs}`;
+    const held = staticEtagCache.get(full);
+    if (held?.key === key) return held.etag;
+    const etag = computeEtag(await Bun.file(full).bytes());
+    staticEtagCache.set(full, { key, etag });
+    return etag;
+  } catch {
+    return null;
+  }
+}
+
+/** The compressed form of a mutable file, cached on the same size+mtime identity as its tag. */
+const mutableAssetCache = new Map<string, { key: string; bytes: Uint8Array<ArrayBuffer> }>();
+
+async function compressedMutable(
+  full: string,
+  encoding: Encoding,
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  try {
+    const stat = await Bun.file(full).stat();
+    const key = `${stat.size}:${stat.mtimeMs}:${encoding}`;
+    const held = mutableAssetCache.get(`${full}\0${encoding}`);
+    if (held?.key === key) return held.bytes;
+    const bytes = compressStatic(await Bun.file(full).bytes(), encoding);
+    mutableAssetCache.set(`${full}\0${encoding}`, { key, bytes });
+    return bytes;
+  } catch {
+    return null;
+  }
 }
 
 // `path\0encoding` → the bytes. Bounded by the size of one build's asset set (a few MB), and a

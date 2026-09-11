@@ -28,6 +28,8 @@ import {
   paneReadResponse,
   paneWaitMs,
   PANE_WAIT_MAX_MS,
+  watchedPanes,
+  MAX_WATCHED_PANES,
   isCompressibleAsset,
   parsePairRequest,
   parseSnoozeRequest,
@@ -875,15 +877,56 @@ describe("paneWaitMs — the long-poll's hold", () => {
   });
 });
 
+describe("watchedPanes — which panes one stream follows", () => {
+  const panes = (qs: string) => [...watchedPanes(new URL(`http://x/api/events${qs}`))];
+
+  test("no pane is the herd-only stream", () => {
+    expect(panes("")).toEqual([]);
+    expect(panes("?pane=")).toEqual([]);
+    expect(panes("?session=work")).toEqual([]);
+  });
+
+  test("one pane is the pane view, exactly as before", () => {
+    expect(panes("?pane=w1:p1&lines=200")).toEqual(["w1:p1"]);
+  });
+
+  test("repeated and comma-listed panes are both the Overview grid, de-duplicated", () => {
+    expect(panes("?pane=w1:p1&pane=w1:p2")).toEqual(["w1:p1", "w1:p2"]);
+    expect(panes("?pane=w1:p1,w1:p2")).toEqual(["w1:p1", "w1:p2"]);
+    expect(panes("?pane=w1:p1,w1:p2&pane=w1:p1")).toEqual(["w1:p1", "w1:p2"]);
+    expect(panes("?pane=%20w1:p1%20,,w1:p2")).toEqual(["w1:p1", "w1:p2"]);
+  });
+
+  test("over the cap the EXTRAS are dropped, never the stream", () => {
+    const many = Array.from({ length: MAX_WATCHED_PANES + 8 }, (_, i) => `w1:p${i}`);
+    expect(panes(`?pane=${many.join(",")}`)).toHaveLength(MAX_WATCHED_PANES);
+  });
+});
+
 describe("isCompressibleAsset — what is precompressed", () => {
-  test("text under assets/ is; images, fonts and everything outside assets/ are not", () => {
+  test("text under assets/ is; images and fonts are not", () => {
     expect(isCompressibleAsset("assets/index-abc.js", ".js")).toBe(true);
     expect(isCompressibleAsset("assets/index-abc.css", ".css")).toBe(true);
     expect(isCompressibleAsset("assets/logo.png", ".png")).toBe(false);
     expect(isCompressibleAsset("assets/face.woff2", ".woff2")).toBe(false);
-    // The mutable files are re-read every request on purpose (cacheControlFor) — never cached here.
-    expect(isCompressibleAsset("index.html", ".html")).toBe(false);
-    expect(isCompressibleAsset("sw.js", ".js")).toBe(false);
+  });
+
+  // FORK (2026-09-11): the four MUTABLE dist files now compress too. They are re-read per request —
+  // `compressedAsset`'s cache is keyed on the path, and these change under it — so they are excluded
+  // from that cache and compressed on the way out, which is why `isCompressibleAsset` answering true
+  // is only half the story (see `serveStatic`). `sw.js` alone is 25 KB fetched once a minute per open
+  // screen; as `br` it is 7.8 KB, and behind an ETag it is nothing at all.
+  test("the four non-hashed dist files compress", () => {
+    expect(isCompressibleAsset("index.html", ".html")).toBe(true);
+    expect(isCompressibleAsset("sw.js", ".js")).toBe(true);
+    expect(isCompressibleAsset("theme-init.js", ".js")).toBe(true);
+    expect(isCompressibleAsset("manifest.webmanifest", ".webmanifest")).toBe(true);
+  });
+
+  test("a binary outside assets/ still does not — a favicon is already packed", () => {
+    expect(isCompressibleAsset("favicon.ico", ".ico")).toBe(false);
+    expect(isCompressibleAsset("apple-touch-icon.png", ".png")).toBe(false);
+    expect(isCompressibleAsset("web-app-manifest-512x512.png", ".png")).toBe(false);
   });
 });
 
