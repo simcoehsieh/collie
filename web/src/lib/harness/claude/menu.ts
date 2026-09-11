@@ -49,6 +49,12 @@ const POINTER = "❯";
 // bounded so a borderless buffer can't be claimed unboundedly — no rule within the window, no match.
 const REGION_SCAN_WINDOW = 30;
 
+// The edges of a rounded box drawn INSIDE a picker (the `/resume` search field). Both are made of
+// rule glyphs end to end, so `isHorizontalRule` would claim either as the region's top; the scan
+// treats the pair as one opaque row instead.
+const INNER_BOX_BOTTOM = /^╰─+╯$/;
+const INNER_BOX_TOP = /^╭─+╮$/;
+
 /**
  * Detect a generic menu at the tail of `lines`. Returns the model + its start line, or null.
  *
@@ -80,6 +86,18 @@ export function detectMenuRegion(lines: StyledLine[]): MenuRegion | null {
   // across the screen where its modal begins, which is the only structural boundary it offers.
   let top = -1;
   for (let i = fi - 1, seen = 0; i >= 0 && seen < REGION_SCAN_WINDOW; i--, seen++) {
+    // FORK: a rounded box CLOSED inside the picker is content, not its edge — the `/resume` picker
+    // draws a `╭ ⌕ Search… ╮` field between its title and its rows, and the box's bottom edge is all
+    // rule glyphs, so it read as the region's top and the title became the project label under it.
+    // Skip to above the box's top edge and keep looking for the rule the modal actually opened with.
+    if (INNER_BOX_BOTTOM.test(texts[i]!.trim())) {
+      let j = i - 1;
+      while (j >= 0 && i - j < REGION_SCAN_WINDOW && !INNER_BOX_TOP.test(texts[j]!.trim())) j--;
+      if (j < 0 || !INNER_BOX_TOP.test(texts[j]!.trim())) return null;
+      seen += i - j;
+      i = j;
+      continue;
+    }
     if (isBoxBorder(texts[i]!) || isHorizontalRule(texts[i]!)) {
       top = i;
       break;
@@ -108,6 +126,22 @@ export function detectMenuRegion(lines: StyledLine[]): MenuRegion | null {
       const arrow = MENU_ARROW_ROW.exec(t);
       if (arrow) nav.leftRight = { verb: arrow[2]!.trim(), label: arrow[1]!.trim() };
     }
+  }
+
+  // FORK — ENTER ON A HIGHLIGHT. Claude's pickers are Ink select lists: the `❯` row is what Enter
+  // commits, and some of them never say so. The `/resume` session picker (2.1.267) names its side
+  // keys and Esc — `Ctrl+B to only show current branch · Space to preview · Ctrl+R to rename · Type
+  // to search · Esc to cancel` — and nothing that selects; at phone widths that footer also WRAPS, so
+  // the last line the grammar reads is `search · Esc to cancel`. Lifting only what was named gave a
+  // menu the operator could move through and never leave except by cancelling (2026-09-11).
+  //
+  // So when the region advertised a highlight and the footer named no Enter, one is supplied, FIRST —
+  // it is the action the arrows exist for. This is not the digit .adr/0009 bans: a digit in `/model`
+  // confirms AND rewrites the default; Enter commits the row the operator has visibly moved the
+  // highlight to, and nothing more. A footer that does name Enter keeps its own verb ("Set as
+  // default") and gets no second one.
+  if (nav.upDown && !actions.some((a) => a.keys.includes("Enter"))) {
+    actions.unshift({ label: "Select", keys: ["Enter"], select: true });
   }
 
   return {

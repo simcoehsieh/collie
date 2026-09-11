@@ -674,6 +674,7 @@ export const zh: Dictionary = {
   "dialog.autocomplete.title": "斜杠命令",
   "dialog.menu.moveUp": "上移",
   "dialog.menu.moveDown": "下移",
+  "dialog.menu.select": "选取",
   "dialog.menu.leftAria": "向左：{verb}（{label}）",
   "dialog.menu.rightAria": "向右：{verb}（{label}）",
   "dialog.preview.currentAnswerAria": "当前回答",

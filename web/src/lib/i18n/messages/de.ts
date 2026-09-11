@@ -695,6 +695,7 @@ export const de: Dictionary = {
   "dialog.autocomplete.title": "Slash-Befehle",
   "dialog.menu.moveUp": "Nach oben",
   "dialog.menu.moveDown": "Nach unten",
+  "dialog.menu.select": "Auswählen",
   "dialog.menu.leftAria": "Links: {verb} ({label})",
   "dialog.menu.rightAria": "Rechts: {verb} ({label})",
   "dialog.preview.currentAnswerAria": "Aktuelle Antwort",

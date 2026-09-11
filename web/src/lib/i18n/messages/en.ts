@@ -716,6 +716,7 @@ export const en = {
   "dialog.autocomplete.title": "Slash commands",
   "dialog.menu.moveUp": "Move up",
   "dialog.menu.moveDown": "Move down",
+  "dialog.menu.select": "Select",
   "dialog.menu.leftAria": "Left — {verb} ({label})",
   "dialog.menu.rightAria": "Right — {verb} ({label})",
   "dialog.preview.currentAnswerAria": "Current answer",

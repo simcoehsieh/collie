@@ -687,6 +687,7 @@ export const ja: Dictionary = {
   "dialog.autocomplete.title": "スラッシュコマンド",
   "dialog.menu.moveUp": "上へ移動",
   "dialog.menu.moveDown": "下へ移動",
+  "dialog.menu.select": "選択",
   "dialog.menu.leftAria": "左: {verb}（{label}）",
   "dialog.menu.rightAria": "右: {verb}（{label}）",
   "dialog.preview.currentAnswerAria": "現在の回答",

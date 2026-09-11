@@ -64,3 +64,17 @@ so the submit key is never fired blind even under the override.
 - Revisit if Herdr ever exposes structured menu state, or if a Claude release makes a digit
   non-persistent *and* says so on the screen. A live probe, not a changelog line, is what would
   settle it — the probe above is the format.
+
+## Addendum (fork, 2026-09-11) — Enter on a highlight the footer never named
+
+Claude Code 2.1.267's `/resume` picker has a `❯` highlight row and a footer that names only its side
+keys — `Ctrl+B to only show current branch · Space to preview · Ctrl+R to rename · Type to search ·
+Esc to cancel` — so the rule above lifted arrows and Cancel and nothing that selects. On a phone the
+footer also wraps, leaving `search · Esc to cancel` as the line the grammar reads. The operator could
+move the highlight and never commit it.
+
+The Claude adapter now supplies `{ label: "Select", keys: ["Enter"], select: true }` — first — when
+the region advertised a highlight and the footer named no Enter. This is deliberately narrower than
+the digit this ADR bans: a digit in `/model` confirms **and** rewrites the user's default; Enter commits
+the row whose highlight the operator has visibly placed, and does nothing else. A footer that names
+Enter keeps its own verb and gets no second button. Fixture: `claude--menu-resume-picker.txt`.

@@ -18,6 +18,14 @@ export interface MenuAction {
   keys: string[];
   /** The Esc segment: renders as the de-emphasised/ghost control rather than a peer action. */
   cancel?: boolean;
+  /**
+   * FORK: an Enter the ADAPTER supplied because the screen advertised a highlight row and its footer
+   * named no key that commits it (Claude's `/resume` picker — see harness/claude/menu.ts). The
+   * renderer labels it itself (`dialog.menu.select`); `label` is the canonical English so the
+   * identity comparators still work on it. Never a digit (.adr/0009) — Enter commits the row the
+   * operator has visibly moved the highlight to, and nothing more.
+   */
+  select?: boolean;
 }
 
 /** What an `←/→ to <verb>` row advertises: the verb, and the value the arrows act on. */

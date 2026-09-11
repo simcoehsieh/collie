@@ -670,6 +670,7 @@ export const zhTW: Dictionary = {
   "dialog.autocomplete.title": "斜線指令",
   "dialog.menu.moveUp": "上移",
   "dialog.menu.moveDown": "下移",
+  "dialog.menu.select": "選取",
   "dialog.menu.leftAria": "向左：{verb}（{label}）",
   "dialog.menu.rightAria": "向右：{verb}（{label}）",
   "dialog.preview.currentAnswerAria": "目前回答",

@@ -685,6 +685,7 @@ export const ko: Dictionary = {
   "dialog.autocomplete.title": "슬래시 명령",
   "dialog.menu.moveUp": "위로 이동",
   "dialog.menu.moveDown": "아래로 이동",
+  "dialog.menu.select": "선택",
   "dialog.menu.leftAria": "왼쪽: {verb} ({label})",
   "dialog.menu.rightAria": "오른쪽: {verb} ({label})",
   "dialog.preview.currentAnswerAria": "현재 답변",

@@ -694,6 +694,7 @@ export const es: Dictionary = {
   "dialog.autocomplete.title": "Comandos de barra",
   "dialog.menu.moveUp": "Subir",
   "dialog.menu.moveDown": "Bajar",
+  "dialog.menu.select": "Seleccionar",
   "dialog.menu.leftAria": "Izquierda: {verb} ({label})",
   "dialog.menu.rightAria": "Derecha: {verb} ({label})",
   "dialog.preview.currentAnswerAria": "Respuesta actual",
