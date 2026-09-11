@@ -432,7 +432,7 @@ describe("makeNotifySink — the reply's first line", () => {
   };
   const flush = () => new Promise((r) => setTimeout(r, 0));
 
-  test("a single done alert carries the line as its body and the pane as its headline", async () => {
+  test("a single done alert is the line alone — the pane in front of it, no headline", async () => {
     const push = new RecordingPush();
     const peeked: string[] = [];
     const sink = makeNotifySink(push, { isMuted: () => false }, "collie:herd", {}, undefined, async (paneId) => {
@@ -443,10 +443,10 @@ describe("makeNotifySink — the reply's first line", () => {
     await flush();
     expect(peeked).toEqual(["p1"]);
     expect(push.sent).toHaveLength(1);
-    // FORK: the line IS the notification — the headline becomes the pane's address and the verb
-    // goes; the space still tells two panes of the same agent apart, now in the title.
-    expect(push.sent[0]!.body).toBe("All 114 tests pass.");
-    expect(push.sent[0]!.title).toBe("demo · claude");
+    // FORK: the line IS the notification — one line, no headline; the space still tells two panes
+    // of the same agent apart.
+    expect(push.sent[0]!.body).toBe("demo · All 114 tests pass.");
+    expect(push.sent[0]!.title).toBe("");
     // Everything else about the message is untouched — same tag, same deep link, same buzz.
     expect(push.sent[0]).toMatchObject({ tag: "collie:herd", paneId: "p1", renotify: true });
   });
@@ -463,8 +463,8 @@ describe("makeNotifySink — the reply's first line", () => {
     );
     sink.render(done);
     await flush();
-    expect(push.sent[0]!.body).toBe("attic · Migration applied.");
-    expect(push.sent[0]!.title).toBe("demo · claude");
+    expect(push.sent[0]!.body).toBe("attic · demo · Migration applied.");
+    expect(push.sent[0]!.title).toBe("");
   });
 
   test("no line, a peek that throws, a blocked alert and a digest all send the body they always had", async () => {
