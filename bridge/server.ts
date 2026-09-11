@@ -33,6 +33,7 @@ import { listDirs, resolveWithinRoots, type DirsBody } from "./dirs.ts";
 import { documentResponseHeaders, documentSlugFromPath, fetchDocument, type DocumentFailure } from "./docs.ts";
 import { listDocuments, listTags, normaliseDocumentQuery } from "./docs-list.ts";
 import { QuotaSource, parseQuotaCommand, type QuotaFailure } from "./quota.ts";
+import { ShotRunner, parseShotCommand, type ShotFailure } from "./shot.ts";
 import {
   DEFAULT_PROMPT_TAIL_LINES,
   verifyExpectedPrompt,
@@ -97,6 +98,7 @@ import type {
   PaneHistoryResponse,
   PaneReadResponse,
   PaneWire,
+  ShotAsk,
   SnapshotResponse,
   SttCapability,
   UpdateStatus,
@@ -198,7 +200,7 @@ export function isLoopbackPeer(address: string | null | undefined): boolean {
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
 }
 
-const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|focus|diff|file))?$/;
+const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|focus|diff|file|shot|probe))?$/;
 
 /**
  * A pairing claim's refusal, as an error code.
@@ -599,6 +601,12 @@ export function bridgeConfigBody(opts: {
    * every bridge older than the field sends.
    */
   quota?: boolean;
+  /**
+   * FORK: whether `POST /api/pane/:id/shot` answers — annotate-and-ask's gate. Published only as
+   * `true`, and only when a command is configured (bridge/shot.ts); absent is the feature off,
+   * which is also what every bridge older than the field sends.
+   */
+  shot?: boolean;
 }): BridgeConfig {
   const mode = modeForWire(opts.mode);
   const mine = opts.operatorCommands ?? [];
@@ -634,6 +642,8 @@ export function bridgeConfigBody(opts: {
   if (opts.docHosts !== undefined && opts.docHosts.length > 0) wire.docHosts = [...opts.docHosts];
   // Omit-when-off, like `docHosts`: a `false` on the wire would be a key an older client never saw.
   if (opts.quota === true) wire.quota = true;
+  // Same rule again: the pane menu's "Screenshot & annotate…" row is hidden entirely without it.
+  if (opts.shot === true) wire.shot = true;
   return wire;
 }
 
@@ -827,6 +837,15 @@ export function startServer(opts: {
    */
   const quotaArgv = parseQuotaCommand(cfg.quotaCommand);
   const quota = quotaArgv === null ? null : new QuotaSource(quotaArgv);
+
+  /**
+   * FORK: annotate-and-ask's two verbs (bridge/shot.ts) — the operator's own headless-Chrome
+   * command. Null is the feature off: no command, no spawn, both routes answer 404 and
+   * `/api/config` advertises nothing, so the phone never draws a button for it. No cache, unlike
+   * quota: a shot is the operator asking what the page looks like NOW.
+   */
+  const shotArgv = parseShotCommand(cfg.shotCommand);
+  const shot = shotArgv === null ? null : new ShotRunner(shotArgv, cfg.shotHosts);
 
   /**
    * Take a fresh look at one session's multiplexer, then make the bridge re-read it.
@@ -1047,6 +1066,7 @@ export function startServer(opts: {
       // named — see the field's own comment. Both halves of the credential must be present.
       docHosts: cfg.kbOrigin !== "" && cfg.kbToken !== "" ? cfg.docHosts : undefined,
       quota: quota !== null ? true : undefined,
+      shot: shot !== null ? true : undefined,
     });
   };
 
@@ -1268,6 +1288,9 @@ export function startServer(opts: {
       // FORK: `file` is the same shape one step further — one file of that same work tree, read off
       // disk and never written (bridge/file-view.ts). A read-only device may look at the file it may
       // already read the diff of.
+      // `shot` and `probe` are WRITES despite reading nothing of the pane: each one spawns a
+      // process (bridge/shot.ts). A read-only device may watch a terminal; it may not make this
+      // machine start a browser.
       const isRead = !action || action === "history" || action === "diff" || action === "file";
       const denied = caller.gate(isRead ? "read" : "write");
       if (denied) return denied;
@@ -1310,6 +1333,12 @@ export function startServer(opts: {
       if (action === "reply" && req.method === "POST") return replyPane(herdr, cfg, paneId, req, audit_, device, session);
       if (action === "keys" && req.method === "POST") return keysPane(herdr, cfg, paneId, req, audit_, device, session);
       if (action === "upload" && req.method === "POST") return uploadPane(cfg, paneId, req, audit_, device, session);
+      // FORK: annotate-and-ask (bridge/shot.ts). Session-scoped and write-gated like the upload
+      // beside it, and 404 when no command is configured — the same declined-by-doing-nothing
+      // shape `/api/quota` has. The image comes back inline as a `data:` URL, so this adds no
+      // file-serving route and no second jail to reason about.
+      if (action === "shot" && req.method === "POST") return shotPane(shot, paneId, req, audit_, device, session);
+      if (action === "probe" && req.method === "POST") return probePane(shot, paneId, req, audit_, device, session);
       if (action === "close" && req.method === "POST") return closePane(herdr, rt.engine, paneId, req, audit_, device, session);
       if (action === "rename" && req.method === "POST") return renamePane(herdr, rt.engine, paneId, req, audit_, device, session);
       if (action === "focus" && req.method === "POST") return focusPane(herdr, rt.engine, paneId, req, audit_, device, session);
@@ -3935,6 +3964,131 @@ async function uploadPane(
       { ok: false, ...apiError("upload.write_failed", { reason: errorText(err) }) } satisfies UploadResponse,
       ae,
     );
+  }
+}
+
+// ── FORK: annotate-and-ask (bridge/shot.ts) ──────────────────────────────────────────────────
+//
+// Two handlers, one command. Both are route lines and nothing else: the policy — which URLs, which
+// caps, which fields — lives in `bridge/shot.ts`, so this file names a seam rather than owning one.
+//
+// THE AUDIT LINE RECORDS THE URL AND NOT THE ANSWER. A shot is a write-level act (it starts a
+// browser on this machine), so it is recorded like every other one; what is recorded is the request
+// — the URL asked for and the viewport — because the answer is an image, and an image in a JSONL
+// log is a log nobody can read. The probe's line names the selector for the same reason it is the
+// field the operator's question will quote.
+
+/** A finite number field, or the caller's default. The client's numbers are its claim, not a fact. */
+function shotNumber(value: JsonValue | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** The viewport and URL a shot request carries, or null when the body is not one. */
+function shotRequest(fields: JsonObject): ShotAsk | null {
+  const url = fields.url;
+  if (typeof url !== "string" || url === "") return null;
+  // 390×844 is the phone this deployment is read on; a body that names neither gets it. Every one
+  // of these is clamped again inside `ShotRunner` before it can reach an argv.
+  return {
+    url,
+    width: shotNumber(fields.width, 390),
+    height: shotNumber(fields.height, 844),
+    dpr: shotNumber(fields.dpr, 3),
+  };
+}
+
+async function shotPane(
+  shot: ShotRunner | null,
+  paneId: string,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+): Promise<Response> {
+  if (shot === null) return text("no shot command", 404);
+  let body: JsonValue;
+  try {
+    // SAFETY: `Request.json()` output IS a JsonValue by construction; every field is checked below.
+    body = (await req.json()) as JsonValue;
+  } catch {
+    return text("bad body", 400);
+  }
+  const asked = shotRequest(asJsonRecord(body) ?? {});
+  if (asked === null) return text("bad url", 400);
+  const got = await shot.shot(asked.url, asked.width, asked.height, asked.dpr);
+  if (!got.ok) return text(shotRefusal(got.reason), shotStatus(got.reason));
+  audit.record({
+    action: "shot",
+    paneId,
+    session,
+    device,
+    detail: { url: got.body.url, width: got.body.width, height: got.body.height, bytes: got.body.image.length },
+  });
+  return json(got.body, req.headers.get("accept-encoding"));
+}
+
+async function probePane(
+  shot: ShotRunner | null,
+  paneId: string,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+): Promise<Response> {
+  if (shot === null) return text("no shot command", 404);
+  let body: JsonValue;
+  try {
+    // SAFETY: as above — a JsonValue by construction, narrowed field by field.
+    body = (await req.json()) as JsonValue;
+  } catch {
+    return text("bad body", 400);
+  }
+  const fields = asJsonRecord(body) ?? {};
+  const asked = shotRequest(fields);
+  if (asked === null) return text("bad url", 400);
+  const x = fields.x;
+  const y = fields.y;
+  if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) {
+    return text("bad point", 400);
+  }
+  const got = await shot.probe(asked.url, asked.width, asked.height, x, y, asked.dpr);
+  if (!got.ok) return text(shotRefusal(got.reason), shotStatus(got.reason));
+  audit.record({
+    action: "probe",
+    paneId,
+    session,
+    device,
+    detail: { url: got.body.url, selector: got.body.selector, tag: got.body.tag },
+  });
+  return json(got.body, req.headers.get("accept-encoding"));
+}
+
+/**
+ * FORK: a shot's refusal as a status. The split the document route makes: the feature being off or
+ * the URL being one this bridge will not open is the CLIENT's side (404 / 400), and everything else
+ * is THIS side's fault (503).
+ */
+function shotStatus(reason: ShotFailure): number {
+  if (reason === "not_configured") return 404;
+  if (reason === "bad_url") return 400;
+  return 503;
+}
+
+/** FORK: the sentence the phone shows under a failed shot. Never a slice of the command's output. */
+function shotRefusal(reason: ShotFailure): string {
+  switch (reason) {
+    case "not_configured":
+      return "no shot command";
+    case "bad_url":
+      return "that URL is not one this bridge will open";
+    case "timeout":
+      return "the shot command did not answer in time";
+    case "too_large":
+      return "the shot came back too big to send";
+    case "unparsable":
+      return "the shot command printed something unexpected";
+    default:
+      return "the shot command failed";
   }
 }
 

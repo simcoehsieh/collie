@@ -126,6 +126,8 @@ function cfg(overrides: Partial<Config> = {}): Config {
     kbToken: "",
     docHosts: [],
     quotaCommand: "",
+    shotCommand: "",
+    shotHosts: [],
     port: 8787,
     host: "127.0.0.1",
     pollMs: 1500,
@@ -2010,8 +2012,9 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     //
     // All TWELVE session-scoped routes (tab create, workspace create, launch, this host's launcher
     // rows, the folder listing, one journal blob, one previewed HTML file, tab action, the pane
-    // family, "look now", the worktree listing and the worktree actions) reach their runtime through
-    // the caller's resolver and nothing else.
+    // family — reply, keys, upload, close, rename, history, focus, diff, file, shot, probe — "look
+    // now", the worktree listing and the worktree actions) reach their runtime through the
+    // caller's resolver and nothing else.
     //
     // The twelfth is the fork's `/api/preview/file` (bridge/preview.ts). It is session-scoped for
     // `/api/blobs/*`'s exact reason and not a weaker one: the file it serves sits on the disk of the
@@ -2023,6 +2026,13 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // must list the LAPTOP's disk, and resolution is what sends it there. A route that answered
     // locally without resolving would quietly show the lead's directories under a peer's name — the
     // same class of fault as serving the desk's `w1:p1`.
+    //
+    // STILL TWELVE after the fork's annotate-and-ask landed, and that is the claim rather than an
+    // accident: `shot` and `probe` are ACTIONS IN THE PANE FAMILY (bridge/shot.ts, `PANE_ROUTE`),
+    // so they reach their runtime through the pane block's single resolve like `upload` does. Had
+    // they been given a route of their own, this number would have had to move — and a route of
+    // their own is exactly the shape that forgets to resolve and serves the lead's answer under a
+    // peer's name.
     expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(12);
     // Exactly seven `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single

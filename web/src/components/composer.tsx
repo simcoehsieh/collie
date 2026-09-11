@@ -53,6 +53,7 @@ import { NoteBadge } from "@/components/note-badge";
 import { noteChipLabel } from "@/components/notes-sheet";
 import { usePendingNotes } from "@/hooks/use-notes";
 import { buildNotesPrompt, deleteNote, markNotesSent } from "@/lib/notes";
+import { ImageMarkupSheet } from "@/components/annotate-sheet";
 
 export interface ComposerHandle {
   /** Focus the input and put the caret at the end — used by the mirror-tap-to-focus in AgentChat. */
@@ -378,6 +379,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // remounts this component, so it can never be armed against a pane it was not raised on.
   const pendingNotes = usePendingNotes(scope, paneId);
   const [askNotes, setAskNotes] = useState(false);
+  // FORK (C4): the image that was just attached, offered back as a CHIP so the operator can draw on
+  // it. The phone beats the desktop at exactly this — a finger on glass is a better annotation
+  // instrument than a mouse — and a circled screenshot of a broken layout is worth a paragraph of
+  // "the button under the chart, on the right, about 4px too low".
+  //
+  // IT IS OFFERED AFTER THE UPLOAD, NOT INSTEAD OF IT, and that is deliberate: attaching a picture
+  // has to keep costing exactly one tap, because that is what it costs today and most attachments
+  // are never drawn on. The price is that DRAWING costs a second upload — the flattened picture is
+  // a different file, and the path in the draft is swapped for the new one. One extra round trip in
+  // the case where the operator asked for the drawing screen is the cheaper half of the trade.
+  const [pendingImage, setPendingImage] = useState<{ file: File; path: string } | null>(null);
+  const [markupOpen, setMarkupOpen] = useState(false);
   // Pending-send preview: set on a successful send, cleared when the mirror catches up (next text
   // update) or after a 6s safety timeout. Shows "You sent: …" so the user knows the message landed.
   const [lastSent, setLastSent] = useState<string | null>(null);
@@ -822,6 +835,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const draftBefore = isDraft ? value : null;
     inFlightRef.current = true;
     if (isDraft) updateInput("");
+    // FORK (C4): the offer to draw goes with the message. A chip pointing at a picture whose path
+    // has already left the box is an offer to edit something that is no longer being composed.
+    setPendingImage(null);
     setJustSent(true);
     if (sentTimer.current) clearTimeout(sentTimer.current);
     sentTimer.current = null; // holds until the outcome; the 1.5 s hold starts when it is verified
@@ -1152,6 +1168,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         updateInputFrom((prev) => (prev.trim() ? `${prev.trimEnd()} ${path}` : path));
         focusInputEnd();
         setStatus(translate("composer.upload.success"), "success");
+        // FORK (C4): an image can be drawn on. The chip below is the offer; see `pendingImage`.
+        setPendingImage(file.type.startsWith("image/") ? { file, path } : null);
       } else {
         setStatus(describeApiError(res), "error");
       }
@@ -1289,6 +1307,64 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             one fires is the sheet's question, and both land in the same `onPickFile`. */}
         <input ref={photoRef} data-testid="attach-photos" type="file" accept={PHOTO_ACCEPT} hidden onChange={onPickFile} />
         <input ref={fileRef} data-testid="attach-files" type="file" accept={accept} hidden onChange={onPickFile} />
+
+        {/* FORK (C4): the attachment just made, offered back to be drawn on. ONE row: the chip is
+            the tap that opens the canvas, the ✕ declines and the row is gone. It appears only after
+            a successful image upload, so attaching a picture still costs exactly the taps it did. */}
+        {pendingImage !== null && (
+          <div className="mb-2 flex items-center gap-1.5">
+            <button
+              type="button"
+              data-testid="attachment-chip"
+              onClick={() => setMarkupOpen(true)}
+              className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-rule bg-muted/40 px-2.5 py-1.5 text-xs"
+            >
+              <Image className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="shrink-0">{translate("composer.attachment.draw")}</span>
+              <span className="min-w-0 truncate text-muted-foreground">{pendingImage.file.name}</span>
+            </button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              aria-label={translate("composer.attachment.keep")}
+              onClick={() => setPendingImage(null)}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        )}
+        <ImageMarkupSheet
+          open={markupOpen}
+          onClose={() => setMarkupOpen(false)}
+          file={pendingImage?.file ?? null}
+          maxUploadBytes={limits.maxBytes}
+          onDone={(flat) => {
+            // The flattened picture is a DIFFERENT file on the host, so the draft has to stop
+            // pointing at the original. Swapped in place where the token is still there (the usual
+            // case) and appended where the operator has since edited it away — never both.
+            const replaced = pendingImage?.path ?? null;
+            setPendingImage(null);
+            void (async () => {
+              const res = await api.uploadFile(paneId, flat, scope);
+              if (!res.ok) {
+                setStatus(describeApiError(res), "error");
+                return;
+              }
+              updateInputFrom((prev) =>
+                // split/join, never `String.replace`: the replacement half of `replace` interprets
+                // `$&`, `$'` and `$1`, and a host path may carry any of them. The same trap, and
+                // the same fix, as `interpolate()` in the i18n runtime.
+                replaced !== null && prev.includes(replaced)
+                  ? prev.split(replaced).join(res.path)
+                  : prev.trim()
+                    ? `${prev.trimEnd()} ${res.path}`
+                    : res.path,
+              );
+              setStatus(translate("composer.upload.success"), "success");
+            })();
+          }}
+        />
 
         {/* Keys / Quick / Display dock — a single in-flow site ABOVE the Controls row (so the toggle
             you tapped stays put and the panel grows over the mirror, not the input). Whichever of the

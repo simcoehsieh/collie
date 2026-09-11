@@ -176,6 +176,16 @@ export const ACK_MANIFEST = {
     channel: "echo",
     why: "The mic strip's `transcribing` phase holds while the clip is in flight and the transcript landing in the composer is the outcome; every refusal comes back as a VALUE and is spoken by the composer's onError on the status channel (hooks/use-stt-recorder.ts).",
   },
+  // FORK: annotate-and-ask's two verbs (lib/api.ts, bridge/shot.ts). Both POST because each one
+  // starts a browser on the Mac, and neither changes anything a phone can see afterwards.
+  requestShot: {
+    channel: "inline",
+    why: "The sheet is the outcome: the picture appearing IS the acknowledgement, and a failure is a sentence in the sheet beside the button that asked for it — a status pill would name a refusal on a surface the operator has covered with a full-height panel (components/annotate-sheet.tsx).",
+  },
+  requestProbe: {
+    channel: "inline",
+    why: "Same surface, same reason, and the wait is the load-bearing part: a probe is one to two seconds of headless Chrome, so the sheet holds a spinner on the line that asked and lands the numbered pin in place — an echo elsewhere would be an answer to a question whose surface is not on screen.",
+  },
 // `satisfies`, not an annotation: the KEYS stay known to the compiler (so a typo'd name is a type
 // error at any reader, rather than a silent `undefined`), while every entry is still checked against
 // the contract above. An open `Record<string, AckEntry>` annotation would throw that evidence away.

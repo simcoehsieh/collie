@@ -33,7 +33,9 @@ import type {
   DocTagsResponse,
   PaneDiffResponse,
   PaneFileResponse,
+  ProbeResponse,
   QuotaResponse,
+  ShotResponse,
   WorktreeListResponse,
   WorktreeOpenResponse,
 } from "./types";
@@ -1400,6 +1402,49 @@ export function fetchDocs(query: DocsQuery = {}, signal?: AbortSignal): Promise<
 /** Every tag the knowledge base knows, most-used first. */
 export function fetchDocTags(signal?: AbortSignal): Promise<DocTagsResponse> {
   return req<DocTagsResponse>("/api/docs/tags", { signal });
+}
+
+// ── FORK: annotate-and-ask ───────────────────────────────────────────────────────────────────
+//
+// Two POSTs and no cache. A shot is the operator asking what the page looks like NOW, and a probe
+// is a fresh question about a fresh tap — a cached answer to either would be an answer to the
+// question they asked a minute ago.
+//
+// The bridge's own deadline is 30 s (a cold Chrome launch plus a page load), so the client's has to
+// be longer or the phone gives up on a run that was going to succeed.
+
+/** Longer than the bridge's own 30 s deadline, so a slow first launch is a picture and not a stall. */
+const SHOT_TIMEOUT_MS = 40_000;
+
+/** What to point the headless browser at, and at what size. */
+export interface ShotRequest {
+  url: string;
+  width: number;
+  height: number;
+  dpr: number;
+}
+
+/** A screenshot of a local page, inline as a `data:` URL (bridge/shot.ts). */
+export function requestShot(paneId: string, body: ShotRequest, scope?: Scope, signal?: AbortSignal): Promise<ShotResponse> {
+  return req<ShotResponse>(withScope(`/api/pane/${encodeURIComponent(paneId)}/shot`, scope), {
+    method: "POST",
+    body: JSON.stringify(body),
+    signal: withTimeout(signal, SHOT_TIMEOUT_MS),
+  });
+}
+
+/** The element under a point of that same shot — same viewport, so the coordinates mean something. */
+export function requestProbe(
+  paneId: string,
+  body: ShotRequest & { x: number; y: number },
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<ProbeResponse> {
+  return req<ProbeResponse>(withScope(`/api/pane/${encodeURIComponent(paneId)}/probe`, scope), {
+    method: "POST",
+    body: JSON.stringify(body),
+    signal: withTimeout(signal, SHOT_TIMEOUT_MS),
+  });
 }
 
 // ── FORK: what the three agents have left ────────────────────────────────────────────────────

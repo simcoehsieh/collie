@@ -193,6 +193,22 @@ export interface Config {
    */
   quotaCommand: string;
   /**
+   * FORK: the command that takes a picture of a local page and probes one element out of it —
+   * this deployment's `tools/collie_shot`, or anything with the same two verbs. Whitespace-split
+   * into an argv, never handed to a shell. Empty — the default — turns annotate-and-ask off:
+   * `/api/pane/:id/shot` and `/api/pane/:id/probe` answer 404, nothing is spawned, and `/api/config`
+   * advertises no capability, so the phone draws no button for it. The fourth seam of the
+   * `quotaCommand` shape and granted the same treatment (bridge/shot.ts): off unless named, run on
+   * a deadline, under a byte cap, and its stdout never echoed into a response body as text.
+   */
+  shotCommand: string;
+  /**
+   * FORK: hostnames {@link shotCommand} may be pointed at, beyond loopback (which is always
+   * allowed). This is the anti-egress list: with it empty — the default — a shot can only ever be
+   * a picture of something already running on this machine. `COLLIE_SHOT_HOSTS`, comma-separated.
+   */
+  shotHosts: string[];
+  /**
    * Which dialer opens that socket. `auto` (the default) is correct everywhere: `node:net` on
    * Windows, where herdr's socket is a named pipe, and Bun's native transport elsewhere. Forcing
    * `net` on Linux/macOS exercises the Windows dial path against the real socket — the only way to
@@ -583,6 +599,8 @@ export function loadConfig(): Config {
     kbToken: (process.env.COLLIE_KB_TOKEN ?? "").trim(),
     docHosts: envList("COLLIE_DOC_HOSTS"),
     quotaCommand: (process.env.COLLIE_QUOTA_COMMAND ?? "").trim(),
+    shotCommand: (process.env.COLLIE_SHOT_COMMAND ?? "").trim(),
+    shotHosts: envList("COLLIE_SHOT_HOSTS"),
     dialMode: envEnum("COLLIE_HERDR_DIAL", ["auto", "net", "bun"] as const, "auto"),
     port: envInt("COLLIE_PORT", DEFAULT_PORT, { min: 1, max: 65535 }),
     host,

@@ -1050,6 +1050,12 @@ export interface BridgeConfig {
    * dashboard draws no usage section at all.
    */
   quota?: boolean;
+  /**
+   * FORK: `true` when the bridge can take a screenshot of a local page and probe an element out of
+   * it (a `COLLIE_SHOT_COMMAND` is configured). Absent is the feature off — also what every bridge
+   * older than the field sends — and the pane menu draws no "Screenshot & annotate…" row.
+   */
+  shot?: boolean;
 }
 
 /**
@@ -1313,4 +1319,54 @@ export interface BootResponse {
   notifyPrefs: NotifyPrefs;
   quota?: QuotaResponse;
   quotaEtag?: string;
+}
+
+// ── FORK: a picture of a local page, and one element out of it (bridge/shot.ts) ────────────────
+// Hand-mirrored from bridge/types.ts, like everything else in this file.
+
+/** The element's computed CSS, by property name. An interface for the reason ADR 0019 gives. */
+export interface ProbeStyles {
+  readonly [property: string]: string;
+}
+
+export interface ProbeBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** POST /api/pane/:id/shot */
+export interface ShotResponse {
+  ok: true;
+  /** `data:image/webp;base64,…` — inline, so there is no second file-serving route to reason about. */
+  image: string;
+  mime: "image/webp" | "image/png";
+  /** The viewport the page was laid out at, after the bridge clamped it. */
+  width: number;
+  height: number;
+  dpr: number;
+  url: string;
+}
+
+/** POST /api/pane/:id/probe */
+export interface ProbeResponse {
+  ok: true;
+  tag: string;
+  id: string | null;
+  classes: string;
+  selector: string;
+  elementPath: string;
+  text: string;
+  box: ProbeBox;
+  role: string;
+  accessibleName: string;
+  computedStyles: ProbeStyles;
+  htmlSnippet: string;
+  nearbyText: string[];
+  nearbyElements: string[];
+  url: string;
+  reactComponents?: string;
+  /** Present only when the page itself resolved it — never guessed. */
+  sourceFile?: string;
 }
