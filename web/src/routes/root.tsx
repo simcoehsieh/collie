@@ -4,13 +4,14 @@ import {
   useLocation,
   useMatches,
   useNavigation,
+  useNavigationType,
   useParams,
   useRouteError,
   useRevalidator,
   useRouteLoaderData,
 } from "react-router";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import { usePolling } from "@/hooks/use-polling";
 import { usePollBusy } from "@/hooks/use-poll-busy";
@@ -52,6 +53,43 @@ export function shownLastSeenAt(home: HomeData, pane: PaneData | undefined): num
   return home.lastSeenAt;
 }
 
+/** Which direction a route arrives from — the value of `data-route-enter`, drawn by skin.css. */
+export type RouteEnter = "push" | "pop" | "modal";
+
+/**
+ * FORK: THE KIND OF NAVIGATION, NOT JUST THE FACT OF ONE.
+ *
+ * Every route entrance used to be the same 6px rise, so pushing into a pane, popping back to the
+ * dashboard and opening Settings looked identical. On a phone, direction is how you know where you
+ * are; its absence is the loudest "this is a website" tell an app has.
+ *
+ * Three answers and no fourth:
+ *   • `modal` — Settings and the Overview. Both are places you look at and come back from rather
+ *     than places you go, and neither has a sibling at its own level, so a sideways slide would be
+ *     claiming a hierarchy that isn't there. They rise.
+ *   • `pop` — the browser's own Back (navigation type POP: the swipe gesture, the hardware key, the
+ *     header's home button through `navigate(-1)`), or any move to a SHALLOWER path. Comes from the
+ *     left, which is where the thing you are returning to went.
+ *   • `push` — everything else, including equal depth. Equal depth matters more than it looks: a
+ *     pane→pane hop must resolve to the SAME value as the navigation that opened the first pane, or
+ *     the attribute changes under a wrapper React deliberately does not remount and the entrance
+ *     replays on a hop that moved nothing (routes/root.tsx keys by route KIND for exactly that
+ *     reason).
+ *
+ * Pure, and exported, because the whole of this decision is four comparisons and the wrong answer
+ * is invisible in a screenshot — it only shows up as the screen sliding the wrong way.
+ */
+export function routeEnter(
+  routeKind: string,
+  navigationType: string,
+  depth: number,
+  previousDepth: number,
+): RouteEnter {
+  if (routeKind === "settings" || routeKind === "overview") return "modal";
+  if (navigationType === "POP") return "pop";
+  return depth < previousDepth ? "pop" : "push";
+}
+
 // The data root: owns the snapshot loader, drives polling, and fans the herd out to the child
 // routes (home + pane detail) via the router's loader data. Mounted only while unlocked (the
 // idle-lock in App swaps the whole RouterProvider out), so polling pauses when the app is locked.
@@ -64,7 +102,17 @@ export function RootLayout() {
   // `/pane/:paneId` child is active. useAgentTransitions uses it to suppress a notification for the
   // pane you're already looking at.
   const { paneId } = useParams();
-  const routeKind = useLocation().pathname.split("/")[1] ?? "";
+  const pathname = useLocation().pathname;
+  const routeKind = pathname.split("/")[1] ?? "";
+  // FORK: which way the next entrance slides. The depth of the path the operator is LEAVING is the
+  // only thing this needs that the router does not already hand over, so it is one ref updated in an
+  // effect — read during render (the value from the last committed route), written after paint.
+  const depth = pathname.split("/").filter(Boolean).length;
+  const previousDepth = useRef(depth);
+  const enter = routeEnter(routeKind, useNavigationType(), depth, previousDepth.current);
+  useEffect(() => {
+    previousDepth.current = depth;
+  }, [depth]);
   // The active pane's loader data, or undefined when a pane isn't the active route — the router
   // already carries both stamps, so dating the bar by what's on screen needs no store of its own.
   // SAFETY: PANE_ROUTE_ID names the route whose `loader` is paneLoader (router.tsx pairs the two),
@@ -154,10 +202,12 @@ export function RootLayout() {
             disagree with the ConnectionBanner two lines up. */}
         <AppHeaderHost bridge={data.bridge} error={data.error}>
           {/* FORK: the route's entrance. Keyed by the KIND of route (dashboard / space / pane /
-              settings / crew), so a dashboard→pane tap replays the 220ms rise in skin.css while a
+              settings / crew), so a dashboard→pane tap replays the entrance in skin.css while a
               pane→pane hop — which must keep DetailRoute mounted (routes/detail.tsx) — does not
-              remount anything. The wrapper mirrors the column each route already draws. */}
-          <div key={routeKind} data-route-enter className="flex min-h-0 flex-1 flex-col">
+              remount anything. The wrapper mirrors the column each route already draws.
+              The attribute's VALUE says which way (see `routeEnter` above): push slides in from the
+              right, pop from the left, modal rises. */}
+          <div key={routeKind} data-route-enter={enter} className="flex min-h-0 flex-1 flex-col">
             <Outlet />
           </div>
         </AppHeaderHost>

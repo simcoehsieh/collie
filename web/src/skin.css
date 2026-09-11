@@ -168,3 +168,72 @@ header:has(> [data-slot="collapse"] [data-slot="header-row"]) {
     opacity: 0.5;
   }
 }
+
+/* ── Motion: WHICH WAY a route arrives ──────────────────────────────────────────────────────
+   The base rule higher up in this file gives every entrance the same 220ms rise. That is one
+   answer to three different questions — pushing into a pane, popping back to the dashboard and
+   opening Settings all looked identical — and on a phone, direction is how you know where you are.
+   `routes/root.tsx` now puts the KIND on the attribute (`routeEnter`), so these three override the
+   base by being one step more specific. The base stays: a bare `data-route-enter` still animates,
+   so nothing depends on the attribute always carrying a value.
+
+   260ms on cubic-bezier(0.32, 0.72, 0, 1) — iOS's own navigation curve, which is nearly all of its
+   travel in the first third and then a long settle. 16px sideways rather than a full-width slide:
+   the outgoing screen is NOT animated (React swaps it), so a long travel would be a screen sliding
+   in over nothing, and the short one reads as the page arriving rather than as a carousel. The
+   modal rises 24px, further, because up-from-the-bottom is a shorter perceptual distance than
+   sideways and 16px vertically barely registers.
+
+   NO horizontal overflow is created by this: the wrapper is inside `<AppHeaderHost>`'s own column
+   and the translate is inward (16px → 0), never outward past the right edge. */
+[data-route-enter="push"] {
+  animation: route-enter-push 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+[data-route-enter="pop"] {
+  animation: route-enter-pop 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+[data-route-enter="modal"] {
+  animation: route-enter-modal 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes route-enter-push {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes route-enter-pop {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes route-enter-modal {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Reduced motion: no entrance at all, the same answer the base rule gives. Restated here because
+   these three selectors are MORE SPECIFIC than the `[data-route-enter]` the earlier media query
+   turns off — without this, switching on the preference would have quietly done nothing. */
+@media (prefers-reduced-motion: reduce) {
+  [data-route-enter="push"],
+  [data-route-enter="pop"],
+  [data-route-enter="modal"] {
+    animation: none;
+  }
+}

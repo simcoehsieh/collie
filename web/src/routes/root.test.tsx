@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
-import { BootSplash, RootLayout, shownLastSeenAt } from "./root";
+import { BootSplash, RootLayout, routeEnter, shownLastSeenAt } from "./root";
 import { CONNECTION_LOST_MS } from "@/hooks/use-connection-lost";
 import { __resetConnectionHealth } from "@/lib/connection-health";
 import { collieMark, markIsLive, markPaper } from "@/test/collie-mark";
@@ -138,5 +138,32 @@ describe("RootLayout — the document itself never scrolls", () => {
       return el!;
     });
     expect(column.className).toMatch(/(?:^|\s)overflow-hidden(?=\s|$)/);
+  });
+});
+
+// FORK: one entrance for every kind of navigation was the loudest "this is a website" tell the app
+// had. What is pinned here is the DECISION, not the CSS: the animation lives in skin.css, and the
+// only thing that can be wrong in TypeScript is which of the three words this returns.
+describe("routeEnter — which way a route arrives", () => {
+  it("raises Settings and the Overview regardless of where they were opened from", () => {
+    expect(routeEnter("settings", "PUSH", 1, 0)).toBe("modal");
+    expect(routeEnter("overview", "PUSH", 1, 0)).toBe("modal");
+    // Even a Back INTO one of them rises: it has no sibling at its own level, so a sideways slide
+    // would claim a hierarchy that does not exist.
+    expect(routeEnter("settings", "POP", 1, 2)).toBe("modal");
+  });
+
+  it("pops on the browser's own Back, and on any move to a shallower path", () => {
+    expect(routeEnter("", "POP", 0, 2)).toBe("pop");
+    expect(routeEnter("", "PUSH", 0, 2)).toBe("pop");
+    expect(routeEnter("space", "PUSH", 2, 3)).toBe("pop");
+  });
+
+  it("pushes deeper — and answers a same-depth hop the SAME way, so nothing replays", () => {
+    expect(routeEnter("pane", "PUSH", 2, 0)).toBe("push");
+    // pane → pane keeps the wrapper mounted (it is keyed by route KIND), so a different answer here
+    // would change the attribute under a live element and replay an entrance for a hop that moved
+    // nothing.
+    expect(routeEnter("pane", "PUSH", 2, 2)).toBe("push");
   });
 });
