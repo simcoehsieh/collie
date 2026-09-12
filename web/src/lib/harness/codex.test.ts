@@ -12,6 +12,7 @@ import { detectAskRegion } from "./codex/ask";
 import { detectTrustRegion } from "./codex/trust";
 import { decorateCodexDisplay } from "./codex/display";
 import { describeAdapterConformance } from "./conformance";
+import { draftCarriesSend } from "../reply-action";
 
 const PANES_DIR = join(import.meta.dirname, "..", "..", "fixtures", "panes");
 
@@ -34,6 +35,7 @@ const PINNED = [
   "codex--ask-notes-focused.txt",
   "codex--ask-wizard-q1.txt",
   "codex--ask-wizard-q2.txt",
+  "codex--draft-blank-paragraph.txt",
   "codex--draft-wrapped.txt",
   "codex--draft.txt",
   "codex--fresh-idle.txt",
@@ -225,6 +227,43 @@ describe("chrome", () => {
     expect(codexAdapter.extractInputDraft(lines)).toBe(
       "move everything across including the images and then take the originals down",
     );
+  });
+
+  // FORK — RED-FIRST regression, from a live capture (v0.154.0): a message with a blank line between
+  // a list and a closing paragraph. The blank draft row is painted as ONE SPACE, and the walk up
+  // from the status row used to stop there, so the composer was never located: the reply path
+  // reported "didn't reach the input box", pressed no Enter, and the retry typed a second copy
+  // under the first (the capture shows exactly that — the text twice).
+  it("a blank row inside the draft is a paragraph break, not the end of the composer", () => {
+    const lines = fixtureLines("codex--draft-blank-paragraph.txt");
+    expect(locateComposer(lines)).not.toBeNull();
+    expect(codexAdapter.composerReady!(lines)).toBe(true);
+    // The capture holds the message TWICE (the retry's second copy), so it is read for shape only.
+    expect(codexAdapter.extractInputDraft(lines)).toContain(
+      "效能優化，你覺得還有什麼增進效能的地方嗎? 你分析完就直接開工",
+    );
+
+    // The synthetic shape, so the claim does not rest on one capture's status row.
+    const screen = [
+      "› first paragraph of a message",
+      "  1. a list item",
+      " ",
+      "  second paragraph after a blank line",
+      "",
+      "  gpt-6-astra high · ~/git/ai-live · Context 50% left",
+    ].join("\n");
+    const synthetic = splitLines(parseAnsi(screen));
+    expect(locateComposer(synthetic)).not.toBeNull();
+    const draft = codexAdapter.extractInputDraft(synthetic);
+    expect(draft).toBe("first paragraph of a message 1. a list item second paragraph after a blank line");
+    // The verify half: the message as the phone sent it (two newlines at the paragraph break) is
+    // carried by that draft — the fold seam absorbs the break.
+    expect(
+      draftCarriesSend("first paragraph of a message\n1. a list item\n\nsecond paragraph after a blank line", draft),
+    ).toBe(true);
+    // …and a transcript row above blanks still ends the walk: no composer, as before.
+    const foreign = ["• Worked for 3s", "", "  gpt-6-astra high · ~/git/ai-live · Context 50% left"].join("\n");
+    expect(locateComposer(splitLines(parseAnsi(foreign)))).toBeNull();
   });
 
   it("locates a draft whose continuation row is indented deeper than the gutter", () => {
