@@ -904,7 +904,15 @@ export interface Launcher {
  * own file. `home` is that host's operator home dir, so the client can shorten a pinned `cwd` with a
  * leading `~` without knowing which machine answered.
  */
+export interface CodexHandoffModel {
+  id: string;
+  label: string;
+  efforts: string[];
+  defaultEffort: string;
+}
+
 export interface LaunchersResponse {
+  handoffModels?: CodexHandoffModel[];
   launchers: Launcher[];
   home: string;
 }

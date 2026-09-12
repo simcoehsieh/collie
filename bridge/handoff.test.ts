@@ -51,6 +51,13 @@ describe("handoffHarnessOf — the first token names the harness", () => {
 });
 
 describe("handoffCommandLine — one shell line, the prompt single-quoted", () => {
+  test("passes model and effort as separate Codex flags without overriding configured launchers", () => {
+    const options = { model: "codex-test", effort: "high" };
+    expect(handoffCommandLine("codex", "go", options)).toBe(`codex --model 'codex-test' -c 'model_reasoning_effort="high"' 'go'`);
+    expect(handoffCommandLine("/opt/bin/codex", "go", options)).toStartWith("/opt/bin/codex --model");
+    expect(handoffCommandLine("codex --profile fast", "go", options)).toBeNull();
+    expect(handoffCommandLine("claude", "go", options)).toBeNull();
+  });
   test("a positional prompt for claude and codex, -i for agy", () => {
     expect(handoffCommandLine("claude", "Read x first.")).toBe("claude 'Read x first.'");
     expect(handoffCommandLine("codex --profile fast", "go")).toBe("codex --profile fast 'go'");

@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { findLinks } from "./links";
+import { findLinks, isPageSuggestion, lastLocalUrl } from "./links";
+
+describe("screenshot URL suggestions", () => {
+  it("skips health probes and API endpoints while keeping the last website URL", () => {
+    expect(lastLocalUrl("http://localhost:5173/\nhttp://127.0.0.1:4318/api/snapshot")).toBe("http://localhost:5173/");
+    expect(lastLocalUrl("http://127.0.0.1:4318/api/snapshot")).toBeNull();
+    expect(isPageSuggestion("http://localhost:5173/healthz")).toBe(false);
+    expect(isPageSuggestion("http://localhost:5173/data.json")).toBe(false);
+    expect(isPageSuggestion("http://localhost:5173/api-guide")).toBe(true);
+    expect(isPageSuggestion("javascript:alert(1)")).toBe(false);
+  });
+});
 
 describe("findLinks", () => {
   const hrefs = (s: string) => findLinks(s).map((l) => l.href);

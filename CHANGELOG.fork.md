@@ -13,6 +13,8 @@ stays true).
 
 ## On top of 1.8.0
 
+- **Choose the Codex model and effort when handing off.** The host's Codex catalog supplies supported pairs; omitted settings preserve launcher defaults. Configured launchers with existing arguments keep their own settings. Closing during the summary request cancels the pending handoff. Artifacts stay reachable even on an empty Codex pane, and Codex thread identities are recognized by artifact registration. Screenshot setup explains URL → viewport → capture → annotate → draft, excludes API/health probes from suggestions, and preserves a typed URL across terminal updates.
+
 - **The artifact library is easier to browse on a phone.** File-type and pinned filters, remembered search/window per host and session, a reload button, loading and stale states, and 40-card rendering batches. Search covers the entire library; more cards are revealed without another request. The search field has a visible focus ring and 16px text.
 - **Artifact refreshes follow the reader and recover missed events.** One shared 30-second fallback checks active libraries; hidden, offline and idle-locked screens pause background reads. Reopening or returning to the foreground catches up, failed reads can retry, and a poke during a request schedules one follow-up. Turn attachment walks the sorted timelines once instead of rescanning every turn for every artifact.
 - **Older conversation requests stop at the pane boundary.** Switching pane, host, session or leaving chat aborts pending pagination. Late responses cannot append the previous pane's turns, and rapid double taps share one read.

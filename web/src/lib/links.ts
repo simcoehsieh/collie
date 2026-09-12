@@ -123,10 +123,23 @@ export function lastLocalUrl(text: string): string | null {
   for (const link of findLinks(text).toReversed()) {
     try {
       const url = new URL(link.href);
-      if (LOCAL_HOSTS.has(url.hostname.toLowerCase())) return link.href;
+      if (LOCAL_HOSTS.has(url.hostname.toLowerCase()) && isPageSuggestion(link.href)) return link.href;
     } catch {
       // findLinks already required a plausible host; anything URL() still refuses is not one.
     }
   }
   return null;
+}
+
+
+/** Don't present a health/API probe printed by an agent as the website the operator is building. */
+export function isPageSuggestion(href: string): boolean {
+  try {
+    const url = new URL(href);
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+      !/^\/(?:api|health|healthz|metrics)(?:\/|$)/i.test(url.pathname) &&
+      !/\.(?:json|jsonl)(?:$|\/)/i.test(url.pathname);
+  } catch {
+    return false;
+  }
 }

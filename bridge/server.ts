@@ -1,3 +1,4 @@
+import { readHandoffModels } from "./handoff-models.ts";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, join, normalize, sep } from "node:path";
@@ -3891,7 +3892,7 @@ export async function launchersBody(
   getLaunchers: () => Promise<Launcher[]>,
 ): Promise<LaunchersResponse> {
   const rows = await getLaunchers();
-  return { launchers: rows, home: homedir() } satisfies LaunchersResponse;
+  return { launchers: rows, home: homedir(), handoffModels: await readHandoffModels() } satisfies LaunchersResponse;
 }
 
 // Launch one allowlisted command, either in a new throwaway Space (from the dashboard, no pane
@@ -4052,7 +4053,7 @@ export async function launch(
 // its opening prompt. The launch itself is `launch` above, unchanged: the route derives one shell
 // line from the operator's own row (`<row.command> '<prompt>'`, or `-i` for agy) and hands `launch`
 // a one-row allowlist holding exactly that line, so the allowlist argument still holds — the phone
-// named a row, and the only thing added to the operator's command is a path this bridge wrote.
+// named a row; optional model flags must match the local Codex catalog before anything is written.
 
 /** What the route reads and starts with — the same objects the history and launch routes hold. */
 interface HandoffDeps {
@@ -4063,6 +4064,7 @@ interface HandoffDeps {
   transcripts: TranscriptStore | null;
   artifacts: ArtifactStore;
   getLaunchers: () => Promise<Launcher[]>;
+  getHandoffModels?: typeof readHandoffModels;
 }
 
 export async function handoffPane(
@@ -4094,8 +4096,17 @@ export async function handoffPane(
   const rows = await deps.getLaunchers();
   const row = rows.find((r) => r.command === command);
   if (!row) return json({ ok: false, ...apiError("launch.not_allowlisted") } satisfies HandoffResponse, ae, 400);
+  const model = jsonStringField(fields.model);
+  const effort = jsonStringField(fields.effort);
+  let modelOptions: { model: string; effort: string } | undefined;
+  if (fields.model !== undefined || fields.effort !== undefined) {
+    const models = await (deps.getHandoffModels ?? readHandoffModels)();
+    const selected = models.find((m) => m.id === model);
+    if (!model || !effort || !selected?.efforts.includes(effort)) return text("model or effort is not in this host's Codex catalog", 400);
+    modelOptions = { model, effort };
+  }
   // The line is derived BEFORE anything is written, so a row this cannot start costs no artifact.
-  const probe = handoffCommandLine(row.command, "");
+  const probe = handoffCommandLine(row.command, "", modelOptions);
   if (probe === null) return text("the launcher is not a harness a handoff can start (claude, codex or agy)", 400);
 
   // The pane's newest turns, resolved exactly as the history route resolves them: the ref off the
@@ -4125,7 +4136,7 @@ export async function handoffPane(
       cwd: pane.cwd,
       paneId: pane.paneId,
       whenMs: Date.now(),
-      instruction,
+      instruction: modelOptions ? `${instruction}\n\nRequested Codex model: ${modelOptions.model}; reasoning effort: ${modelOptions.effort}.` : instruction,
       artifacts: made,
     },
     entries,
@@ -4147,7 +4158,7 @@ export async function handoffPane(
   const added = await deps.artifacts.add(slug === "" ? input : { ...input, slug });
   if (!added.ok) return text(`handoff not kept: ${added.reason}`, 500);
 
-  const line = handoffCommandLine(row.command, handoffPrompt(deps.artifacts.filePath(added.record), pane.agent));
+  const line = handoffCommandLine(row.command, handoffPrompt(deps.artifacts.filePath(added.record), pane.agent), modelOptions);
   // `probe` above already proved the row starts a known harness; only the path could have changed the answer.
   if (line === null || hasControlChar(line)) return text("the launch line carries a control character", 400);
   const synthetic: Launcher = { command: line, label: row.label };

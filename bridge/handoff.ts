@@ -83,11 +83,13 @@ export function handoffPrompt(documentPath: string, fromAgent: string): string {
  * argument for Claude Code and Codex, `-i` (`--prompt-interactive`) for agy. Null when the row's
  * command is not a harness this knows how to hand a prompt to.
  */
-export function handoffCommandLine(rowCommand: string, prompt: string): string | null {
+export function handoffCommandLine(rowCommand: string, prompt: string, options?: { model: string; effort: string }): string | null {
   const harness = handoffHarnessOf(rowCommand);
   if (harness === null) return null;
   const flag = harness === "agy" ? " -i " : " ";
-  return `${rowCommand.trim()}${flag}${shellQuote(prompt)}`;
+  if (options && (harness !== "codex" || rowCommand.trim().split(/\s+/u).length !== 1)) return null;
+  const flags = options ? ` --model ${shellQuote(options.model)} -c ${shellQuote(`model_reasoning_effort=${JSON.stringify(options.effort)}`)}` : "";
+  return `${rowCommand.trim()}${flags}${flag}${shellQuote(prompt)}`;
 }
 
 /** What the document is assembled from, beyond the transcript. */

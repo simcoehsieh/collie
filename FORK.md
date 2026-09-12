@@ -334,3 +334,20 @@ For a frontend-only update while the operator is away, build and test in a separ
 `build-info.json` and `sw.js` last. Publish the tested bytes. Do not run the broad bridge suite or
 restart bridge/herdr for this path. Verify the bridge PID, snapshot health, published build id and
 old/new assets afterwards. A future ordinary full build may discard the retained old assets.
+
+## Handoff and screenshot usability follow-up (2026-09-13)
+
+`bridge/handoff-models.ts` reads Codex's non-secret `models_cache.json` (bounded to 2 MiB,
+cached for 10 seconds). `/api/launchers` and boot expose optional `handoffModels`; older clients
+ignore it and a missing catalog leaves launcher defaults available. Handoff accepts an optional
+validated model/effort pair only for a bare Codex launcher; profiles and launcher flags remain
+authoritative. No Codex global configuration is changed. Tests use fake muxes and temporary stores.
+
+Empty panes retain the Artifacts menu and its All artifacts link. Registration also recognizes
+`CODEX_THREAD_ID`; assignment still requires an exact session match from the multiplexer. A pane
+with missing session metadata is never matched by newest log or working directory.
+
+Screenshot setup explains the complete workflow, labels screen sizes and preserves the entered
+address while terminal output changes. `links.ts` excludes API/health/JSON endpoints only from
+automatic suggestions; it does not change the screenshot route's host policy. The browser tests
+in `e2e/handoff-screenshot.spec.ts` cover all three surfaces on phone and tablet with fixture APIs.

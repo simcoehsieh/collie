@@ -1591,10 +1591,10 @@ export function deleteArtifact(id: string, scope?: Scope): Promise<void> {
  * launcher row exactly as `launch` does — the bridge derives the whole line; the phone never sends
  * one. `instruction` is what the next agent should do, verbatim into the handoff document.
  */
-export function handoffPane(paneId: string, command: string, instruction: string, scope?: Scope): Promise<HandoffResponse> {
+export function handoffPane(paneId: string, command: string, instruction: string, scope?: Scope, options?: { model: string; effort: string }): Promise<HandoffResponse> {
   return req<HandoffResponse>(withScope(`/api/pane/${encodeURIComponent(paneId)}/handoff`, scope), {
     method: "POST",
-    body: JSON.stringify({ command, instruction }),
+    body: JSON.stringify({ command, instruction, ...options }),
   });
 }
 

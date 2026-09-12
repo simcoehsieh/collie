@@ -2760,7 +2760,7 @@ describe("launch — an allowlisted space create, then the command and Enter", (
   // the line typed is the operator's row plus that one quoted path, and a row that cannot take a
   // prompt is refused before any artifact is written.
   describe("handoff — the pane's conversation, continued by another harness", () => {
-    function handoffRequest(body: { command?: string; instruction?: string }): Request {
+    function handoffRequest(body: { command?: string; instruction?: string; model?: string; effort?: string }): Request {
       return new Request("http://localhost/api/pane/w3%3Ap1/handoff", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -2769,7 +2769,7 @@ describe("launch — an allowlisted space create, then the command and Enter", (
     }
     const CODEX: Launcher = { command: "codex", label: "codex" };
 
-    test("writes the document as the pane's artifact, then launches the row with its path", async () => {
+    test.each([undefined, { model: "codex-test", effort: "high" }])("writes the document and launches the selected settings: %j", async (options) => {
       const dir = await mkdtemp(join(tmpdir(), "collie-handoff-"));
       try {
         const clock = fakeClock();
@@ -2786,9 +2786,10 @@ describe("launch — an allowlisted space create, then the command and Enter", (
             transcripts: null,
             artifacts,
             getLaunchers: rowsOf([PEEK, CODEX]),
+            getHandoffModels: () => Promise.resolve([{ id: "codex-test", label: "Test", efforts: ["low", "high"], defaultEffort: "low" }]),
           },
           "w3:p1",
-          handoffRequest({ command: "codex", instruction: "Finish the tests, then lint." }),
+          handoffRequest({ command: "codex", instruction: "Finish the tests, then lint.", ...options }),
           audit,
           "phone@example.com",
           "default",
@@ -2807,7 +2808,8 @@ describe("launch — an allowlisted space create, then the command and Enter", (
         expect(mux.createTabArgs).toEqual({ spaceId: "w3", label: "codex", cwd: "/home/op/beside" });
         // The operator's row, plus exactly one quoted argument: the path this bridge wrote.
         const path = artifacts.filePath(body.artifact);
-        expect(mux.texts).toEqual([["w2:p9", `codex 'Read ${path} first. It is the handoff from the previous agent (claude) in this directory. Then continue with its section "What to do next".'`]]);
+        const flags = options ? ` --model 'codex-test' -c 'model_reasoning_effort="high"'` : "";
+        expect(mux.texts).toEqual([["w2:p9", `codex${flags} 'Read ${path} first. It is the handoff from the previous agent (claude) in this directory. Then continue with its section "What to do next".'`]]);
         expect(mux.keys).toEqual([["w2:p9", ["Enter"]]]);
         const written = await readFile(path, "utf8");
         expect(written).toContain("# Handoff — claude → codex");
@@ -2834,6 +2836,7 @@ describe("launch — an allowlisted space create, then the command and Enter", (
           transcripts: null,
           artifacts,
           getLaunchers: rowsOf([PEEK, CODEX]),
+            getHandoffModels: () => Promise.resolve([{ id: "codex-test", label: "Test", efforts: ["low", "high"], defaultEffort: "low" }]),
         };
         const peek = await handoffPane(deps, "w3:p1", handoffRequest({ command: "rumen-peek" }), audit, null, "default", clock);
         expect(peek.status).toBe(400);
@@ -2842,6 +2845,16 @@ describe("launch — an allowlisted space create, then the command and Enter", (
         expect(await unlisted.json()).toMatchObject({ ok: false, code: "launch.not_allowlisted" });
         const gone = await handoffPane(deps, "w9:p9", handoffRequest({ command: "codex" }), audit, null, "default", clock);
         expect(gone.status).toBe(404);
+        for (const selection of [
+          { model: "unknown", effort: "high" },
+          { model: "codex-test", effort: "ultra" },
+          { model: "codex-test" },
+          { effort: "high" },
+          { model: "$(touch /tmp/no)", effort: "high" },
+        ]) {
+          const refused = await handoffPane(deps, "w3:p1", handoffRequest({ command: "codex", ...selection }), audit, null, "default", clock);
+          expect(refused.status).toBe(400);
+        }
         expect(await artifacts.list()).toEqual([]);
         expect(mux.createTabArgs).toBeNull();
       } finally {
@@ -2866,7 +2879,7 @@ describe("GET /api/launchers — this host's own rows, home included", () => {
   test("no launchers.toml answers an empty list, never an error", async () => {
     const res = await launchersRoute(() => Promise.resolve([]), null);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ launchers: [], home: homedir() });
+    expect(await res.json()).toMatchObject({ launchers: [], home: homedir(), handoffModels: expect.any(Array) });
   });
 });
 

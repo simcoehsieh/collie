@@ -1003,7 +1003,15 @@ export interface Launcher {
  * client knowing which machine answered (a peer's home is not this browser's, and is not even
  * necessarily the same string as the lead's).
  */
+export interface CodexHandoffModel {
+  id: string;
+  label: string;
+  efforts: string[];
+  defaultEffort: string;
+}
+
 export interface LaunchersResponse {
+  handoffModels?: CodexHandoffModel[];
   launchers: Launcher[];
   home: string;
 }

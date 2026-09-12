@@ -2629,8 +2629,8 @@ export function AgentChat({
           // FORK: hidden entirely when this bridge has no shot command — a row with no callback is
           // a row the sheet does not draw, which is the same gate find, history and zen ride.
           onAnnotate={shotEnabled ? () => setDrawer("annotate") : undefined}
-          // FORK: the pane's artifacts — a row whenever the pane has any (components/artifact-sheet.tsx).
-          onArtifacts={paneArtifactCount > 0 ? () => setDrawer("artifacts") : undefined}
+          // FORK: keep the artifacts library reachable even before this pane registers its first file.
+          onArtifacts={() => setDrawer("artifacts")}
           // FORK: offered only when a launcher row starts a harness other than this pane's, and
           // never on a shell or from a read-only device — the sheet would have nothing to do.
           onHandoff={

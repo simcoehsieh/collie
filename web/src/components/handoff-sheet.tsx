@@ -12,12 +12,13 @@ import {
   SUMMARY_TOTAL_TIMEOUT_MS,
   SUMMARY_WAIT_START,
   handoffTargets,
+  handoffHarnessOf,
   summaryStep,
   type SummaryWait,
 } from "@/lib/handoff";
 import { t } from "@/lib/i18n";
 import type { Scope } from "@/lib/scope";
-import type { AgentStatus, AgentView, ArtifactView, Launcher } from "@/lib/types";
+import type { AgentStatus, AgentView, ArtifactView, CodexHandoffModel, Launcher } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 // FORK — hand this pane's conversation to another harness (bridge/handoff.ts, lib/handoff.ts).
@@ -58,6 +59,12 @@ export function HandoffSheet({
   useLocale();
   const targets = handoffTargets(launchers, pane.agent);
   const [target, setTarget] = useState<string>("");
+  const [models, setModels] = useState<CodexHandoffModel[]>([]);
+  const [model, setModel] = useState("");
+  const [effort, setEffort] = useState("");
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const active = useRef(false);
+  const generation = useRef(0);
   const [instruction, setInstruction] = useState("");
   const [askSummary, setAskSummary] = useState(true);
   const [stage, setStage] = useState<Stage>("form");
@@ -68,15 +75,36 @@ export function HandoffSheet({
 
   // A fresh open is a fresh form: a failed attempt's message would otherwise greet the next one.
   useEffect(() => {
+    active.current = open;
+    generation.current++;
+    clearTimers();
     if (!open) return;
     setStage("form");
     setError("");
     fired.current = false;
     wait.current = SUMMARY_WAIT_START;
   }, [open]);
-  useEffect(() => () => clearTimers(), []);
+  useEffect(() => () => { active.current = false; generation.current++; clearTimers(); }, []);
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    setModelsLoading(true);
+    setModels([]);
+    setModel("");
+    setEffort("");
+    void api.fetchLaunchers(scope).then((res) => {
+      if (live) setModels(res.handoffModels ?? []);
+      return undefined;
+    }).catch(() => {
+      // The configured launcher remains usable when its optional model catalog is unavailable.
+    }).finally(() => { if (live) setModelsLoading(false); });
+    return () => { live = false; };
+  }, [open, scope]);
 
   const chosen = targets.find((row) => row.command === target) ?? targets[0];
+
+  const configurable = chosen !== undefined && handoffHarnessOf(chosen.command) === "codex" && chosen.command.trim().split(/\s+/u).length === 1;
+  const selectedModel = models.find((m) => m.id === model);
 
   function clearTimers() {
     for (const handle of timers.current) clearTimeout(handle);
@@ -84,12 +112,12 @@ export function HandoffSheet({
   }
 
   async function fire() {
-    if (fired.current || chosen === undefined) return;
+    if (!active.current || fired.current || chosen === undefined) return;
     fired.current = true;
     clearTimers();
     setStage("launching");
     try {
-      const res = await api.handoffPane(pane.paneId, chosen.command, instruction.trim(), scope);
+      const res = await api.handoffPane(pane.paneId, chosen.command, instruction.trim(), scope, configurable && selectedModel ? { model: selectedModel.id, effort } : undefined);
       if (!res.ok) {
         setError(describeApiError(res));
         setStage("failed");
@@ -118,6 +146,7 @@ export function HandoffSheet({
 
   async function submit() {
     if (chosen === undefined) return;
+    const attempt = generation.current;
     setError("");
     if (!askSummary) {
       await fire();
@@ -127,12 +156,14 @@ export function HandoffSheet({
     wait.current = SUMMARY_WAIT_START;
     try {
       const sent = await api.sendReply(pane.paneId, HANDOFF_SUMMARY_PROMPT, true, scope);
+      if (!active.current || generation.current !== attempt) return;
       if (!sent.ok) {
         setError(describeApiError(sent));
         setStage("failed");
         return;
       }
     } catch (thrown) {
+      if (!active.current || generation.current !== attempt) return;
       setError(describeThrownError(thrown));
       setStage("failed");
       return;
@@ -166,7 +197,7 @@ export function HandoffSheet({
                       role="radio"
                       aria-checked={on}
                       disabled={busy}
-                      onClick={() => setTarget(row.command)}
+                      onClick={() => { setTarget(row.command); setModel(""); setEffort(""); }}
                       className={cn(
                         "rounded-full border px-3 py-1.5 text-sm transition-colors",
                         on ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-foreground",
@@ -178,6 +209,29 @@ export function HandoffSheet({
                 })}
               </div>
             </div>
+            {configurable && (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="flex flex-col gap-1 text-sm">
+                  {t("handoff.model.label")}
+                  <select value={model} disabled={busy || modelsLoading} className="min-h-11 rounded-lg border bg-background px-3 text-base"
+                    onChange={(e) => { setModel(e.target.value); setEffort(models.find((m) => m.id === e.target.value)?.defaultEffort ?? ""); }}>
+                    <option value="">{t("handoff.model.default")}</option>
+                    {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-sm">
+                  {t("handoff.effort.label")}
+                  <select value={effort} disabled={busy || !selectedModel} className="min-h-11 rounded-lg border bg-background px-3 text-base"
+                    onChange={(e) => setEffort(e.target.value)}>
+                    {!selectedModel && <option value="">{t("handoff.model.default")}</option>}
+                    {selectedModel?.efforts.map((e) => <option key={e} value={e}>{e}</option>)}
+                  </select>
+                </label>
+                <p className="text-xs text-muted-foreground sm:col-span-2">
+                  {modelsLoading ? t("handoff.model.loading") : models.length === 0 ? t("handoff.model.unavailable") : t("handoff.model.hint")}
+                </p>
+              </div>
+            )}
             <label className="flex flex-col gap-1">
               <span className="text-xs font-medium text-muted-foreground">{t("handoff.instruction.label")}</span>
               <textarea
@@ -186,7 +240,7 @@ export function HandoffSheet({
                 onChange={(e) => setInstruction(e.target.value.slice(0, INSTRUCTION_MAX))}
                 rows={3}
                 placeholder={t("handoff.instruction.placeholder")}
-                className="min-h-20 rounded-lg border border-border bg-background px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                className="min-h-20 rounded-lg border border-border bg-background px-3 py-2 text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
               />
             </label>
             <label className="flex items-start gap-2 text-sm">

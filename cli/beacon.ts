@@ -349,11 +349,13 @@ interface HarnessSessionEnv {
  * Read in order; the first that is set wins.
  *
  * `CLAUDE_CODE_SESSION_ID` is Claude Code's (observed on 2.1.x, alongside `CLAUDECODE=1`);
- * `CODEX_SESSION_ID` is Codex's. A harness that publishes nothing simply cannot write a status line,
+ * `CODEX_THREAD_ID` is Codex's (with legacy `CODEX_SESSION_ID` as fallback). A harness that
+ * publishes nothing simply cannot write a status line,
  * which the verb says out loud rather than writing a file nothing will ever join.
  */
 const HARNESS_SESSION_ENV: readonly HarnessSessionEnv[] = [
   { harness: "claude", variable: "CLAUDE_CODE_SESSION_ID" },
+  { harness: "codex", variable: "CODEX_THREAD_ID" },
   { harness: "codex", variable: "CODEX_SESSION_ID" },
 ];
 

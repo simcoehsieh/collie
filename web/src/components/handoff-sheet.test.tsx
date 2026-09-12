@@ -35,9 +35,9 @@ function renderSheet(status: AgentStatus, onLaunched = vi.fn(), onClose = vi.fn(
   const view = render(
     <HandoffSheet open onClose={onClose} pane={pane} status={status} launchers={launchers} onLaunched={onLaunched} />,
   );
-  const rerenderWith = (next: AgentStatus) =>
+  const rerenderWith = (next: AgentStatus, open = true) =>
     view.rerender(
-      <HandoffSheet open onClose={onClose} pane={pane} status={next} launchers={launchers} onLaunched={onLaunched} />,
+      <HandoffSheet open={open} onClose={onClose} pane={pane} status={next} launchers={launchers} onLaunched={onLaunched} />,
     );
   return { onLaunched, onClose, rerenderWith };
 }
@@ -65,6 +65,44 @@ function bridge() {
 }
 
 describe("HandoffSheet", () => {
+  it("sends a selected Codex model and only that model's supported effort", async () => {
+    const { handoffs } = bridge();
+    server.use(http.get("/api/launchers", () => HttpResponse.json({ launchers, home: "/home/you", handoffModels: [
+      { id: "codex-test", label: "Test Codex", efforts: ["low", "high"], defaultEffort: "low" },
+      { id: "codex-other", label: "Other Codex", efforts: ["medium"], defaultEffort: "medium" },
+    ] })));
+    const user = userEvent.setup();
+    renderSheet("done");
+    await screen.findByRole("option", { name: "Test Codex" });
+    await user.selectOptions(screen.getByLabelText("Codex model"), "codex-test");
+    expect(screen.getByLabelText("Reasoning effort")).toHaveValue("low");
+    await user.selectOptions(screen.getByLabelText("Reasoning effort"), "high");
+    await user.selectOptions(screen.getByLabelText("Codex model"), "codex-other");
+    expect(screen.getByLabelText("Reasoning effort")).toHaveValue("medium");
+    expect(screen.queryByRole("option", { name: "high" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: /Ask claude/ }));
+    await user.click(screen.getByRole("button", { name: "Hand off to codex" }));
+    await waitFor(() => expect(handoffs).toEqual([{ command: "codex", instruction: "", model: "codex-other", effort: "medium" }]));
+  });
+
+  it("closing while the summary request is pending prevents a delayed handoff", async () => {
+    const { handoffs } = bridge();
+    let finish: (() => void) | undefined;
+    server.use(http.post("/api/pane/w1%3Ap1/reply", async () => {
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return HttpResponse.json({ ok: true });
+    }));
+    const user = userEvent.setup();
+    const { rerenderWith } = renderSheet("done");
+    await user.click(screen.getByRole("button", { name: "Hand off to codex" }));
+    await waitFor(() => expect(finish).toBeDefined());
+    rerenderWith("working", false);
+    finish?.();
+    rerenderWith("done", false);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(handoffs).toEqual([]);
+  });
+
   it("offers every other harness, never the pane's own", () => {
     renderSheet("done");
     const group = screen.getByRole("radiogroup", { name: "Who takes over" });

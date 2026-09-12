@@ -19,6 +19,7 @@ import { RightSheet } from "@/components/ui/right-sheet";
 import { useLocale } from "@/hooks/use-locale";
 import * as api from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
+import { isPageSuggestion } from "@/lib/links";
 import { buzz } from "@/lib/haptics";
 import { t, type MessageKey } from "@/lib/i18n";
 import { EMPTY_MARKUP, addMark, addMarks, canRedo, canUndo, clearMarkup, composeMarkup, dataUrlToFile, extensionForMime, paintMark, redoMarkup, undoMarkup, type Markup, type Point, type Mark, type MarkKind, canvasScaleFor } from "@/lib/markup";
@@ -431,6 +432,9 @@ export function AnnotateSheet({
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef<AbortController | null>(null);
 
+  const suggestedUrl = useRef(initialUrl);
+  suggestedUrl.current = initialUrl;
+
   // Opening resets everything but the URL: a sheet that re-opens onto the previous session's
   // drawing is a sheet that attaches the wrong picture to the next question.
   useEffect(() => {
@@ -438,14 +442,15 @@ export function AnnotateSheet({
       inFlight.current?.abort();
       return;
     }
-    setUrl(initialUrl);
+    const suggested = suggestedUrl.current;
+    setUrl(isPageSuggestion(suggested) ? suggested : "");
     setShot(null);
     setImage(null);
     setMarkup(EMPTY_MARKUP);
     setPins([]);
     setError(null);
     setBusy(null);
-  }, [open, initialUrl]);
+  }, [open, paneId, scope]);
 
   const shoot = useCallback(async () => {
     const spec = VIEWPORTS.find((v) => v.key === viewport)!;
@@ -582,9 +587,15 @@ export function AnnotateSheet({
   }
 
   return (
-    <RightSheet open={open} onClose={onClose} title={t("annotate.title")} subtitle={shot?.url ?? url}>
+    <RightSheet open={open} onClose={onClose} title={t("annotate.title")} subtitle={t("annotate.intro")}>
       <div className="flex flex-col gap-3 px-3 py-3 pb-[calc(var(--safe-bottom)_+_1rem)]">
-        <div className="flex gap-2">
+        <ol className="list-inside list-decimal space-y-1 text-sm text-muted-foreground">
+          <li>{t("annotate.step.source")}</li>
+          <li>{t("annotate.step.mark")}</li>
+          <li>{t("annotate.step.draft")}</li>
+        </ol>
+        <label className="flex flex-col gap-1 text-sm">
+          {t("annotate.url.label")}
           <input
             type="url"
             inputMode="url"
@@ -592,14 +603,10 @@ export function AnnotateSheet({
             onChange={(e) => setUrl(e.target.value)}
             placeholder={t("annotate.url.placeholder")}
             aria-label={t("annotate.url.label")}
-            className="min-w-0 flex-1 rounded-lg border border-rule bg-background px-2.5 py-2 text-sm"
+            className="min-h-11 min-w-0 rounded-lg border border-rule bg-background px-2.5 py-2 text-base focus-visible:outline-2 focus-visible:outline-ring"
           />
-          <Button onClick={() => void shoot()} disabled={busy !== null || url.trim() === ""}>
-            {busy === "shooting" ? <Loader2 className="size-4 animate-spin" /> : null}
-            {shot === null ? t("annotate.shoot") : t("annotate.retake")}
-          </Button>
-        </div>
-
+        </label>
+        <span className="text-xs font-medium text-muted-foreground">{t("annotate.viewport.label")}</span>
         <div className="flex gap-1" role="group" aria-label={t("annotate.viewport.label")}>
           {VIEWPORTS.map((v) => (
             <Button
@@ -607,13 +614,22 @@ export function AnnotateSheet({
               variant={viewport === v.key ? "default" : "outline"}
               size="sm"
               aria-pressed={viewport === v.key}
+              disabled={busy !== null}
               onClick={() => setViewport(v.key)}
             >
-              {t(`annotate.viewport.${v.key}`)}
+              {t(`annotate.viewport.${v.key}`)} · {v.width}
             </Button>
           ))}
         </div>
 
+        <div className="flex gap-2">
+          <Button className="min-h-11 w-full" onClick={() => void shoot()} disabled={busy !== null || url.trim() === ""}>
+            {busy === "shooting" ? <Loader2 className="size-4 animate-spin" /> : null}
+            {shot === null ? t("annotate.shoot") : t("annotate.retake")}
+          </Button>
+        </div>
+
+        {shot === null && <p className="text-xs text-muted-foreground">{t("annotate.photo.hint")}</p>}
         {error !== null && (
           <p className="rounded-lg border border-rule bg-muted/40 px-2.5 py-2 text-xs text-status-blocked">
             {error}

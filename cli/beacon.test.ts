@@ -13,6 +13,7 @@ import {
   cmdBeaconEmit,
   cmdBeaconStatus,
   readEnvMarkers,
+  readSessionFromEnv,
   runBeaconEmit,
 } from "./beacon.ts";
 import { context, fakeFiles, STATE } from "./fakes.ts";
@@ -72,6 +73,12 @@ function beacons(files: ReturnType<typeof fakeFiles>): Map<string, string> {
 }
 
 describe("the environment gate", () => {
+  test("accepts Codex's thread identity and preserves the child-session gate", () => {
+    expect(readSessionFromEnv({ CODEX_THREAD_ID: SESSION })).toEqual({ harness: "codex", session: SESSION });
+    expect(readSessionFromEnv({ CODEX_THREAD_ID: "invalid/../id" })).toBeNull();
+    expect(readSessionFromEnv({ CODEX_THREAD_ID: SESSION, CLAUDE_CODE_CHILD_SESSION: "1" })).toBeNull();
+    expect(readSessionFromEnv({ CODEX_THREAD_ID: SESSION, CLAUDE_CODE_CHILD_SESSION: "1" }, { allowChild: true })).toEqual({ harness: "codex", session: SESSION });
+  });
   test("reads tmux's pane raw, and the SOCKET out of $TMUX — never the server pid with it", () => {
     expect(readEnvMarkers(TMUX)).toEqual([
       { namespace: "tmux", scope: "/tmp/tmux-1000/default", pane: "%7" },
