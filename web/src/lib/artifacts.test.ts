@@ -1,3 +1,6 @@
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { vi } from "vitest";
+import { setLocked } from "./idle";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -6,6 +9,8 @@ import { fixtureArtifact } from "@/test/artifacts";
 import { server } from "@/test/setup";
 import {
   __resetArtifacts,
+  useArtifacts,
+  ARTIFACT_REFRESH_MS,
   artifactSize,
   artifactsForPane,
   artifactsSnapshot,
@@ -68,7 +73,7 @@ describe("grouping", () => {
 });
 
 describe("the store and the poke", () => {
-  it("reads once per scope, and a poke re-reads exactly the scopes that were read", async () => {
+  it("coalesces readers, refreshes active scopes and invalidates inactive ones", async () => {
     let calls = 0;
     server.use(
       http.get("/api/artifacts", () => {
@@ -82,8 +87,11 @@ describe("the store and the poke", () => {
     expect(artifactsSnapshot().phase).toBe("ready");
     expect(artifactsSnapshot().artifacts[0]!.title).toBe("read 1");
     expect(deliverArtifactPoke()).toBe(true);
-    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toBe(1); // no mounted readers, no network
+    const { result, unmount } = renderHook(() => useArtifacts());
+    await waitFor(() => expect(result.current.artifacts[0]?.title).toBe("read 2"));
     expect(calls).toBe(2);
+    unmount();
     expect(artifactsSnapshot().artifacts[0]!.title).toBe("read 2");
   });
 
@@ -95,5 +103,71 @@ describe("the store and the poke", () => {
     const snap = artifactsSnapshot();
     expect(snap.phase).toBe("failed");
     expect(snap.artifacts).toHaveLength(1);
+  });
+});
+
+
+describe("active library freshness", () => {
+  it("shares the fallback timer, pauses hidden/locked readers, catches up on return, and stops after unmount", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    server.use(http.get("/api/artifacts", () => {
+      calls++;
+      return HttpResponse.json({ ok: true, artifacts: [] });
+    }));
+    const first = renderHook(() => useArtifacts());
+    const second = renderHook(() => useArtifacts());
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(calls).toBe(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(ARTIFACT_REFRESH_MS); });
+      expect(calls).toBe(2);
+      const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+      act(() => { deliverArtifactPoke(); deliverArtifactPoke(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(ARTIFACT_REFRESH_MS * 2); });
+      expect(calls).toBe(2);
+      visibility.mockReturnValue("visible");
+      await act(async () => { document.dispatchEvent(new Event("visibilitychange")); await vi.advanceTimersByTimeAsync(0); });
+      expect(calls).toBe(3);
+      act(() => setLocked(true));
+      await act(async () => { await vi.advanceTimersByTimeAsync(ARTIFACT_REFRESH_MS * 2); });
+      expect(calls).toBe(3);
+      await act(async () => { setLocked(false); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(calls).toBe(4);
+      first.unmount(); second.unmount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(ARTIFACT_REFRESH_MS * 2); });
+      expect(calls).toBe(4);
+    } finally {
+      first.unmount(); second.unmount();
+      setLocked(false);
+      vi.restoreAllMocks(); vi.useRealTimers();
+    }
+  });
+
+  it("does not lose a poke arriving during a read", async () => {
+    let finish: (() => void) | undefined;
+    let calls = 0;
+    server.use(http.get("/api/artifacts", async () => {
+      const n = ++calls;
+      if (n === 1) await new Promise<void>((resolve) => { finish = resolve; });
+      return HttpResponse.json({ ok: true, artifacts: [fixtureArtifact({ title: `read ${n}` })] });
+    }));
+    const { result } = renderHook(() => useArtifacts());
+    await waitFor(() => expect(calls).toBe(1));
+    act(() => { deliverArtifactPoke(); deliverArtifactPoke(); finish?.(); });
+    await waitFor(() => expect(result.current.artifacts[0]?.title).toBe("read 2"));
+    expect(calls).toBe(2);
+  });
+
+  it("retries a failed initial read on remount", async () => {
+    server.use(http.get("/api/artifacts", () => new HttpResponse("nope", { status: 503 })));
+    const first = renderHook(() => useArtifacts());
+    await waitFor(() => expect(first.result.current.phase).toBe("failed"));
+    first.unmount();
+    server.use(http.get("/api/artifacts", () => HttpResponse.json({ ok: true, artifacts: [fixtureArtifact()] })));
+    const second = renderHook(() => useArtifacts());
+    await waitFor(() => expect(second.result.current.phase).toBe("ready"));
+    expect(second.result.current.artifacts).toHaveLength(1);
   });
 });

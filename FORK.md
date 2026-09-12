@@ -315,3 +315,22 @@ carries one failure that is NOT yours: "an unpinned client certificate is refuse
 runs" fails identically on an unmodified tree.
 
 The web suite (`cd web && bun run vitest run`) touches nothing and is safe to run at any time.
+
+
+## Mobile library and read lifecycle (2026-09-13)
+
+The next frontend pass keeps the bridge and multiplexer running. `web/src/lib/artifacts.ts` retains
+one reader count per scope and one fallback timer for the app: only mounted, visible, online,
+unlocked readers refetch. A poke invalidates every known scope but fetches only active ones; a poke
+received during a fetch is drained once afterwards. The 30-second fallback and foreground/online
+catch-up recover missed events. `routes/artifacts.tsx` keeps filters/search/revealed count in a
+bounded, per-scope memory map, renders 40 cards initially, and searches the complete list before
+windowing. `hooks/use-pane-transcript.ts` cancels older-page reads on address changes and unmount.
+The seven locale dictionaries and new `e2e/artifacts.spec.ts` cover the library surface.
+
+For a frontend-only update while the operator is away, build and test in a separate worktree using
+`bun run build`. Back up live `web/dist`, copy new hashed assets first while retaining old assets
+(open tabs may still lazy-load them), then atomically replace each nonhashed file, with `index.html`,
+`build-info.json` and `sw.js` last. Publish the tested bytes. Do not run the broad bridge suite or
+restart bridge/herdr for this path. Verify the bridge PID, snapshot health, published build id and
+old/new assets afterwards. A future ordinary full build may discard the retained old assets.

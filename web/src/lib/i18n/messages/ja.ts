@@ -1118,6 +1118,12 @@ export const ja: Dictionary = {
   "chat.view.transcript": "会話",
   "chat.view.terminal": "ターミナル",
   // FORK: the artifacts library (bridge/artifacts.ts).
+  "artifacts.filter.kind": "ファイルの種類",
+  "artifacts.filter.all": "すべて",
+  "artifacts.filter.pinned": "ピン留めのみ",
+  "artifacts.results": "{total} 件中 {shown} 件",
+  "artifacts.stale": "前回の一覧を表示しています。再読み込みしてお試しください。",
+  "artifacts.showMore": "もっと表示",
   "artifacts.title": "成果物",
   "artifacts.nav.aria": "成果物：エージェントが作ったもの",
   "artifacts.row.label": "成果物",

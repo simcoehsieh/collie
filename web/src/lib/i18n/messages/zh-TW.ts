@@ -1090,6 +1090,12 @@ export const zhTW: Dictionary = {
   "chat.view.transcript": "對話",
   "chat.view.terminal": "終端機",
   // FORK: the artifacts library (bridge/artifacts.ts).
+  "artifacts.filter.kind": "檔案類型",
+  "artifacts.filter.all": "全部",
+  "artifacts.filter.pinned": "只看釘選",
+  "artifacts.results": "顯示 {shown}／{total} 筆",
+  "artifacts.stale": "目前顯示上次的清單，請重新整理再試。",
+  "artifacts.showMore": "顯示更多",
   "artifacts.title": "產出",
   "artifacts.nav.aria": "產出：agent 做出來的東西",
   "artifacts.row.label": "產出",

@@ -1127,6 +1127,12 @@ export const es: Dictionary = {
   "chat.view.transcript": "Transcripción",
   "chat.view.terminal": "Terminal",
   // FORK: the artifacts library (bridge/artifacts.ts).
+  "artifacts.filter.kind": "Tipo de archivo",
+  "artifacts.filter.all": "Todos",
+  "artifacts.filter.pinned": "Solo fijados",
+  "artifacts.results": "{shown} de {total}",
+  "artifacts.stale": "Se muestra la última lista. Vuelve a cargar para reintentar.",
+  "artifacts.showMore": "Mostrar más",
   "artifacts.title": "Artefactos",
   "artifacts.nav.aria": "Artefactos: lo que hicieron los agentes",
   "artifacts.row.label": "Artefactos",

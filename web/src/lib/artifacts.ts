@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 
 import { fetchArtifacts } from "./api";
 import { scopeKey, type Scope } from "./scope";
+import { isLocked, useLocked } from "./idle";
 import type { ArtifactView, TranscriptEntry } from "./types";
 
 // FORK — the artifacts library, as the phone holds it (bridge/artifacts.ts has the store itself).
@@ -13,8 +14,8 @@ import type { ArtifactView, TranscriptEntry } from "./types";
 // scope once, and every card on screen updates from that one read (lib/overview.ts's argument for
 // the tails, applied to a list instead of a pane).
 //
-// POLL-AS-TRUTH, STILL: the poke is a hint to read now. A reader that mounts after a poke reads on
-// mount; a poke that never arrives costs a refresh on the next mount or `reload()`. Nothing here
+// POLL-AS-TRUTH, STILL: the poke is a hint to read now. Active readers check freshness every 30 seconds and on
+// foreground/reconnect. Hidden, idle-locked and unmounted libraries make no background reads. Nothing here
 // trusts a poke's body, because a poke has none.
 
 export type ArtifactsPhase = "idle" | "loading" | "ready" | "failed";
@@ -32,6 +33,49 @@ const snapshots = new Map<string, ArtifactsSnapshot>();
 const scopes = new Map<string, Scope | undefined>();
 const inFlight = new Map<string, Promise<void>>();
 const listeners = new Set<() => void>();
+const readers = new Map<string, number>();
+const dirty = new Set<string>();
+export const ARTIFACT_REFRESH_MS = 30_000;
+let refreshTimer: ReturnType<typeof setInterval> | undefined;
+
+function canRefresh(): boolean {
+  return document.visibilityState !== "hidden" && navigator.onLine !== false && !isLocked();
+}
+
+function refreshActive(): void {
+  if (!canRefresh()) return;
+  for (const key of readers.keys()) {
+    const snap = snapshots.get(key) ?? EMPTY;
+    if (dirty.has(key) || snap.phase !== "ready" || Date.now() - snap.readAt >= ARTIFACT_REFRESH_MS) {
+      void loadArtifacts(scopes.get(key));
+    }
+  }
+}
+
+function retain(scope?: Scope): () => void {
+  const key = keyOf(scope);
+  scopes.set(key, scope);
+  readers.set(key, (readers.get(key) ?? 0) + 1);
+  if (refreshTimer === undefined) {
+    refreshTimer = setInterval(refreshActive, ARTIFACT_REFRESH_MS);
+    document.addEventListener("visibilitychange", refreshActive);
+    window.addEventListener("online", refreshActive);
+  }
+  refreshActive();
+  return () => {
+    const count = (readers.get(key) ?? 1) - 1;
+    if (count > 0) readers.set(key, count);
+    else readers.delete(key);
+    if (readers.size === 0) stopRefreshing();
+  };
+}
+
+function stopRefreshing(): void {
+  clearInterval(refreshTimer);
+  refreshTimer = undefined;
+  document.removeEventListener("visibilitychange", refreshActive);
+  window.removeEventListener("online", refreshActive);
+}
 
 function emit(): void {
   for (const fn of listeners) fn();
@@ -63,8 +107,9 @@ export function loadArtifacts(scope?: Scope): Promise<void> {
   const running = inFlight.get(key);
   if (running) return running;
   scopes.set(key, scope);
+  dirty.delete(key);
   const before = snapshots.get(key) ?? EMPTY;
-  if (before.phase !== "ready") store(key, { ...before, phase: "loading" });
+  store(key, { ...before, phase: "loading" });
   const run = (async () => {
     try {
       const res = await fetchArtifacts({}, scope);
@@ -75,21 +120,20 @@ export function loadArtifacts(scope?: Scope): Promise<void> {
       store(key, { phase: "failed", artifacts: current.artifacts, readAt: current.readAt });
     } finally {
       inFlight.delete(key);
+      // An invalidation during the read may describe bytes newer than its response. Coalesce all
+      // such pokes into one follow-up; an unmounted/hidden reader catches up on return instead.
+      if (dirty.has(key) && readers.has(key) && canRefresh()) void loadArtifacts(scope);
     }
   })();
   inFlight.set(key, run);
   return run;
 }
 
-/**
- * The bridge said the library changed. Every scope that has been read is read again; returns
- * whether anyone was listening (the poller consumes the poke either way — see use-polling.ts).
- */
+/** Invalidate every known scope, but only spend network on libraries currently on screen. */
 export function deliverArtifactPoke(): boolean {
-  if (snapshots.size === 0) return false;
-  for (const [key, scope] of scopes) {
-    if (snapshots.has(key)) void loadArtifacts(scope);
-  }
+  if (scopes.size === 0) return false;
+  for (const key of scopes.keys()) dirty.add(key);
+  refreshActive();
   return true;
 }
 
@@ -101,12 +145,12 @@ export interface UseArtifacts {
 
 /** The library for a scope, read on first mount and kept current by pokes. */
 export function useArtifacts(scope?: Scope): UseArtifacts {
-  const key = keyOf(scope);
+  const locked = useLocked();
   const snap = useSyncExternalStore(subscribe, () => artifactsSnapshot(scope), () => EMPTY);
+  useEffect(() => retain(scope), [scope]);
   useEffect(() => {
-    if ((snapshots.get(key) ?? EMPTY).phase === "idle") void loadArtifacts(scope);
-    // `scope` is interned (lib/scope.ts), so it is the key's own identity here.
-  }, [key, scope]);
+    if (!locked) refreshActive();
+  }, [locked]);
   return { artifacts: snap.artifacts, phase: snap.phase, reload: () => void loadArtifacts(scope) };
 }
 
@@ -154,11 +198,15 @@ export function attachArtifactsToTurns(
   }
   if (starts.length === 0) return out;
   const ordered = artifacts.toSorted((a, b) => a.createdMs - b.createdMs);
+  let turnIndex = 0;
+  let owner: string | null = null;
   for (const artifact of ordered) {
-    let owner: string | null = null;
-    for (const s of starts) {
-      if (s.ms <= artifact.createdMs) owner = s.uuid;
-      else break;
+    // Both sequences are oldest-first: each turn is visited at most once, even in a long history.
+    while (turnIndex < starts.length) {
+      const start = starts[turnIndex];
+      if (!start || start.ms > artifact.createdMs) break;
+      owner = start.uuid;
+      turnIndex++;
     }
     if (owner === null) continue;
     const list = out.get(owner);
@@ -177,6 +225,9 @@ export function artifactSize(bytes: number): string {
 
 /** Test seam. */
 export function __resetArtifacts(): void {
+  stopRefreshing();
+  readers.clear();
+  dirty.clear();
   snapshots.clear();
   scopes.clear();
   inFlight.clear();

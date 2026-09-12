@@ -1179,6 +1179,12 @@ export const en = {
   "chat.view.transcript": "Transcript",
   "chat.view.terminal": "Terminal",
   // FORK: the artifacts library (bridge/artifacts.ts).
+  "artifacts.filter.kind": "File type",
+  "artifacts.filter.all": "All",
+  "artifacts.filter.pinned": "Pinned only",
+  "artifacts.results": "{shown} of {total}",
+  "artifacts.stale": "Showing the last saved list. Reload to try again.",
+  "artifacts.showMore": "Show more",
   "artifacts.title": "Artifacts",
   "artifacts.nav.aria": "Artifacts — what the agents made",
   "artifacts.row.label": "Artifacts",

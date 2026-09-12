@@ -1110,6 +1110,12 @@ export const ko: Dictionary = {
   "chat.view.transcript": "대화",
   "chat.view.terminal": "터미널",
   // FORK: the artifacts library (bridge/artifacts.ts).
+  "artifacts.filter.kind": "파일 유형",
+  "artifacts.filter.all": "전체",
+  "artifacts.filter.pinned": "고정 항목만",
+  "artifacts.results": "{total}개 중 {shown}개",
+  "artifacts.stale": "이전 목록을 표시하고 있습니다. 다시 불러오세요.",
+  "artifacts.showMore": "더 보기",
   "artifacts.title": "산출물",
   "artifacts.nav.aria": "산출물: 에이전트가 만든 것",
   "artifacts.row.label": "산출물",

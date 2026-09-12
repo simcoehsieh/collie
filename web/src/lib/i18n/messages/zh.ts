@@ -1096,6 +1096,12 @@ export const zh: Dictionary = {
   "chat.view.transcript": "对话",
   "chat.view.terminal": "终端",
   // FORK: the artifacts library (bridge/artifacts.ts).
+  "artifacts.filter.kind": "文件类型",
+  "artifacts.filter.all": "全部",
+  "artifacts.filter.pinned": "只看置顶",
+  "artifacts.results": "显示 {shown}／{total} 项",
+  "artifacts.stale": "当前显示上次的列表，请重新加载再试。",
+  "artifacts.showMore": "显示更多",
   "artifacts.title": "产出",
   "artifacts.nav.aria": "产出：agent 做出来的东西",
   "artifacts.row.label": "产出",

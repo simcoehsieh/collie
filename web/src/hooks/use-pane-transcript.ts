@@ -89,6 +89,14 @@ export function usePaneTranscript({
   // A thread belongs to the pane it was read from. Keyed on the ADDRESS, not the pane id: the same
   // pane id on another host or session is a different pane (the rule `useLatestReply` states).
   const address = paneScopeKey(scope, paneId);
+  const olderRequest = useRef<AbortController | null>(null);
+  useEffect(() => {
+    setLoading(false);
+    return () => {
+      olderRequest.current?.abort();
+      olderRequest.current = null;
+    };
+  }, [address, enabled]);
   useEffect(() => {
     setBase(null);
     setOlder([]);
@@ -146,11 +154,14 @@ export function usePaneTranscript({
 
   const loadOlder = useCallback(() => {
     const oldest = entries[0]?.uuid;
-    if (loading || !hasMore || oldest === undefined) return;
+    if (!enabled || olderRequest.current || loading || !hasMore || oldest === undefined) return;
+    const abort = new AbortController();
+    olderRequest.current = abort;
     setLoading(true);
     void (async () => {
       try {
-        const page = await fetchHistory(paneId, { limit: PANE_OLDER_PAGE, before: oldest }, scope);
+        const page = await fetchHistory(paneId, { limit: PANE_OLDER_PAGE, before: oldest }, scope, abort.signal);
+        if (abort.signal.aborted) return;
         if (!page.available) {
           setOlderHasMore(false);
           return;
@@ -160,10 +171,13 @@ export function usePaneTranscript({
       } catch {
         // Leave `hasMore` alone: the tap can be tried again.
       } finally {
-        setLoading(false);
+        if (olderRequest.current === abort) {
+          olderRequest.current = null;
+          setLoading(false);
+        }
       }
     })();
-  }, [entries, hasMore, loading, paneId, scope]);
+  }, [entries, hasMore, loading, paneId, scope, enabled]);
 
   // `loadOlder` closes over `entries`, which changes on every refresh; the ref keeps the identity of
   // the callback handed to a scroll listener stable without re-subscribing it per poll.

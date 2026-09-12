@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -11,7 +11,7 @@ import { fixtureAgents, fixtureTabs, fixtureWorkspaces } from "@/test/handlers";
 import { fixtureArtifact } from "@/test/artifacts";
 import { server } from "@/test/setup";
 import { withHeaderHost } from "@/test/header-host";
-import { ArtifactsRoute } from "./artifacts";
+import { ArtifactsRoute, __resetArtifactViews } from "./artifacts";
 
 // The library route (routes/artifacts.tsx): newest version of each artifact, pinned first, a search
 // that reads title / slug / tags / pane, and the two empty states.
@@ -59,7 +59,7 @@ function renderRoute() {
   return router;
 }
 
-beforeEach(() => __resetArtifacts());
+beforeEach(() => { __resetArtifacts(); __resetArtifactViews(); });
 afterEach(() => __resetArtifacts());
 
 describe("ArtifactsRoute", () => {
@@ -120,4 +120,45 @@ describe("ArtifactsRoute", () => {
     renderRoute();
     expect(await screen.findAllByText("Couldn't read the library.")).not.toHaveLength(0);
   });
+});
+
+
+it("bounds the rendered list, searches all items, and remembers filters after leaving", async () => {
+  server.use(http.get("/api/artifacts", () => HttpResponse.json({
+    ok: true,
+    artifacts: Array.from({ length: 125 }, (_, i) => fixtureArtifact({
+      id: `item-${i}`, slug: `item-${i}`, title: `Report ${i}`, kind: i === 124 ? "image" : "html", pinned: i === 124,
+    })),
+  })));
+  renderRoute();
+  await waitFor(() => expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(40));
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Show more" }));
+  expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(80);
+  await user.type(screen.getByRole("searchbox"), "Report 123");
+  expect(screen.getByRole("button", { name: "Open Report 123" })).toBeInTheDocument();
+  await user.clear(screen.getByRole("searchbox"));
+  await user.click(screen.getByRole("button", { name: "image" }));
+  await user.click(screen.getByRole("button", { name: "Pinned only" }));
+  expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Open Report 124" })).toBeInTheDocument();
+  cleanup();
+  renderRoute();
+  await screen.findByRole("button", { name: "Open Report 124" });
+  expect(screen.getByRole("button", { name: "Pinned only" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "image" })).toHaveAttribute("aria-current", "true");
+});
+
+it("keeps cached cards during a failed refresh, explains staleness, and lets the reader retry", async () => {
+  server.use(http.get("/api/artifacts", () => HttpResponse.json({ ok: true, artifacts: [fixtureArtifact()] })));
+  renderRoute();
+  await screen.findByRole("button", { name: "Open Q3 report" });
+  const user = userEvent.setup();
+  server.use(http.get("/api/artifacts", () => new HttpResponse("nope", { status: 503 })));
+  await user.click(screen.getByRole("button", { name: "Reload" }));
+  await screen.findByText("Showing the last saved list. Reload to try again.");
+  expect(screen.getByRole("button", { name: "Open Q3 report" })).toBeInTheDocument();
+  server.use(http.get("/api/artifacts", () => HttpResponse.json({ ok: true, artifacts: [fixtureArtifact({ title: "Recovered" })] })));
+  await user.click(screen.getByRole("button", { name: "Reload" }));
+  await screen.findByRole("button", { name: "Open Recovered" });
 });

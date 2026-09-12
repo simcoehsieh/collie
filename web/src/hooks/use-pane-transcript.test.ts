@@ -3,6 +3,7 @@ import { http, HttpResponse } from "msw";
 
 import { server } from "@/test/setup";
 import { usePaneTranscript } from "./use-pane-transcript";
+import { internScope } from "@/lib/scope";
 import type { TranscriptEntry } from "@/lib/types";
 
 // Chat mode's reader. The load-bearing claims are the CADENCE (it must never join the 1.5 s poll —
@@ -202,4 +203,34 @@ describe("usePaneTranscript", () => {
       vi.useRealTimers();
     }
   });
+});
+
+
+it("cancels older reads across sessions and ignores their late completion", async () => {
+  let finish: (() => void) | undefined;
+  let oldSignal: AbortSignal | undefined;
+  let olderCalls = 0;
+  server.use(http.get(/\/api\/pane\/[^/]+\/history/, async ({ request }) => {
+    const q = new URL(request.url).searchParams;
+    const session = q.get("session") ?? "one";
+    if (q.has("before")) {
+      olderCalls++;
+      oldSignal = request.signal;
+      await new Promise<void>((resolve) => { finish = resolve; });
+    }
+    return HttpResponse.json({ paneId: "w1:p1", available: true, entries: [turn(q.has("before") ? "old" : session, session)], hasMore: true, total: 2, fileTruncated: false });
+  }));
+  const { result, rerender } = renderHook(
+    ({ session }) => usePaneTranscript({ paneId: "w1:p1", scope: internScope({ session }), enabled: true, mirrorText: "screen" }),
+    { initialProps: { session: "one" } },
+  );
+  await waitFor(() => expect(result.current.ready).toBe(true));
+  act(() => { result.current.loadOlder(); result.current.loadOlder(); });
+  await waitFor(() => expect(olderCalls).toBe(1));
+  rerender({ session: "two" });
+  await waitFor(() => expect(result.current.entries[0]?.uuid).toBe("two"));
+  expect(oldSignal?.aborted).toBe(true);
+  await act(async () => { finish?.(); });
+  expect(result.current.entries.map((entry) => entry.uuid)).toEqual(["two"]);
+  expect(result.current.loading).toBe(false);
 });
