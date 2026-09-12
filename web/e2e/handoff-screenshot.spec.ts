@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { installApiStub } from "./fixtures/api";
 
 // These cases verify controls and navigation; sheet entrance animations are covered elsewhere.
-test.use({ reducedMotion: "reduce" });
+test.use({ contextOptions: { reducedMotion: "reduce" } });
 
 test.beforeEach(async ({ page }) => {
   await installApiStub(page);
