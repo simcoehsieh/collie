@@ -152,3 +152,23 @@ describe("AgentCard — the agent's status line", () => {
     expect(statusLine(container)!.querySelector(".font-content")).not.toBeNull();
   });
 });
+
+// ── FORK: WHICH MODEL AND EFFORT ─────────────────────────────────────────────
+// The bridge reads the pair off the agent's own log (bridge/session-facts.ts); the row shows it as
+// one monospace run and nothing else changes — same sort, same badge, same tap.
+describe("AgentCard — the model and effort line", () => {
+  const modelLine = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>('[data-slot="agent-model-line"]');
+
+  it("renders the trimmed model id and the effort under the address line", () => {
+    const { container } = render(
+      <AgentCard agent={agent({ model: "claude-fable-5-1", effort: "xhigh" })} onClick={() => {}} />,
+    );
+    expect(modelLine(container)).toHaveTextContent("fable-5-1 · xhigh");
+  });
+
+  it("renders nothing when the bridge has not read one", () => {
+    const { container } = render(<AgentCard agent={agent()} onClick={() => {}} />);
+    expect(modelLine(container)).toBeNull();
+  });
+});

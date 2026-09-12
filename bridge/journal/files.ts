@@ -107,6 +107,17 @@ export async function statFile(path: string): Promise<{ size: number; mtimeMs: n
   }
 }
 
+/**
+ * FORK — the LAST bytes of a file, for a fact that lives at the newest end (bridge/session-facts.ts).
+ * The mirror of `head`: a 32 MB log is read for its last screenful, not its whole. A short file is
+ * read whole. Throws when the file is gone, as `loadTail` does — the caller holds its last answer.
+ */
+export async function tail(path: string, bytes: number): Promise<string> {
+  const file = Bun.file(path);
+  const size = file.size;
+  return size <= bytes ? file.text() : file.slice(size - bytes).text();
+}
+
 /** First bytes of a file — enough to identify a log without reading a multi-megabyte one. */
 export async function head(path: string, bytes = 64 * 1024): Promise<string> {
   return Bun.file(path).slice(0, bytes).text();

@@ -10,6 +10,7 @@ import { HostChip } from "@/components/host-chip";
 import { SessionChip } from "@/components/session-chip";
 import { PaneHint } from "@/components/pane-hint";
 import { timeAgoShort } from "@/lib/format";
+import { modelLabel } from "@/lib/model-label";
 import { paneParts, paneTitleInTab } from "@/lib/pane-name";
 import type { PaneParts } from "@/lib/pane-name";
 import { statusLabel } from "@/lib/types";
@@ -122,6 +123,19 @@ function StatusLine({ line, at }: { line?: string; at?: number }) {
       {stale && at !== undefined && (
         <span className="shrink-0 tabular-nums">{t("agentCard.statusLine.stale", { age: timeAgoShort(at) })}</span>
       )}
+    </p>
+  );
+}
+
+// FORK — which model and effort the agent is on, as one small monospace run under the address line.
+// The same standing as the status line above it in the source: text, never a branch. It sits in the
+// row's muted register because it is a fact about the pane, not the pane's subject — the name is.
+function ModelLine({ model, effort }: { model?: string; effort?: string }) {
+  const label = modelLabel({ model, effort });
+  if (label === null) return null;
+  return (
+    <p data-slot="agent-model-line" className="mt-0.5 truncate font-mono text-[10px] leading-4 text-muted-foreground/80">
+      {label}
     </p>
   );
 }
@@ -305,6 +319,10 @@ function AgentCardImpl({
               a branch — and it is placed above because it is the more specific of the two: the hint
               describes a pane Collie is guessing at, this one is the pane telling you itself. */}
           <StatusLine line={agent.statusLine} at={agent.statusLineAt} />
+
+          {/* FORK: which model and effort the agent is on (bridge/session-facts.ts), when the bridge
+              has read it. Below the agent's own sentence because it is the drier fact of the two. */}
+          <ModelLine model={agent.model} effort={agent.effort} />
 
           {/* The bridge's own sentence about this pane, when it sent one — text, never a branch
               (components/pane-hint.tsx). It changes nothing about the row: a hinted pane is still a

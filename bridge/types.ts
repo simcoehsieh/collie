@@ -131,6 +131,22 @@ export interface AgentView {
    * timestamps above.
    */
   statusLineAt?: number;
+  /**
+   * FORK — WHICH MODEL THE AGENT IS RUNNING ON, in the harness's own spelling (`claude-fable-5-1`,
+   * `gpt-6-astra`), read off the newest turn of its own session log (bridge/session-facts.ts).
+   *
+   * PRESENTATION AND ONLY PRESENTATION, on the terms {@link statusLine} holds: it implies nothing
+   * about `agent` or `status`, enters no sort, arms nothing, and is text the client does not
+   * interpret. Absent on a pane whose harness has no journal, whose log has not been read yet
+   * (the cache is one poll behind on purpose), or whose log never names one.
+   */
+  model?: string;
+  /**
+   * FORK — the reasoning effort the newest turn ran at (`xhigh`, `medium`), the harness's own word.
+   * Same standing and same absences as {@link model}; the two travel together but either may be
+   * missing on its own.
+   */
+  effort?: string;
 }
 
 /**

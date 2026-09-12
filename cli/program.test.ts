@@ -65,6 +65,9 @@ const LINK_VERBS = ["link", "unlink"];
 // writes that published name into the agent's own settings.json (ADR 0021), and `beacon` is the
 // internal emitter the entry it writes calls.
 const BEACON_VERBS = ["hooks", "beacon"];
+// FORK: the artifact register (cli/artifact.ts) — declared right after `beacon` because it is the
+// same kind of thing, an agent-side write into this host's state dir, spelled by an agent.
+const ARTIFACT_VERBS = ["artifact"];
 
 // The device-pairing verbs. Declared between the diagnostics and the crew, because that is where
 // they sit in the table, and grouped separately for the same reason as the two above.
@@ -96,6 +99,7 @@ describe("the verb table", () => {
       ...DIAGNOSTIC_VERBS,
       ...LINK_VERBS,
       ...BEACON_VERBS,
+      ...ARTIFACT_VERBS,
       ...PAIRING_VERBS,
       ...PUSH_VERBS,
       ...STT_VERBS,
@@ -260,6 +264,8 @@ describe("the subcommand trees", () => {
     expect(COMMANDS.filter((c) => c.subcommands !== undefined).map((c) => c.name)).toEqual([
       "hooks",
       "beacon",
+      // FORK: `artifact add | list | promote` — a tree, like the others that write into the state dir.
+      "artifact",
       "devices",
       "push",
       "stt",
@@ -371,6 +377,9 @@ describe("exit codes", () => {
       // `beacon` is world-touching in the other direction: it would write a beacon into this host's
       // real state dir. cli/beacon.test.ts drives it against fakes.
       ...BEACON_VERBS,
+      // FORK: `artifact add` copies a file into this host's real artifact store; `list` and `promote`
+      // resolve the same real dir. cli/artifact.test.ts drives all three against a throwaway dir.
+      ...ARTIFACT_VERBS,
     ];
     // `skill` and `docs` print text compiled into this binary. They read nothing, resolve no state
     // dir and touch no machine, so the suite may run them for real.

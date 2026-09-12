@@ -137,4 +137,24 @@ export interface JournalAdapter {
   readonly agent: string;
   readonly source: TranscriptSource;
   parse(text: string): TranscriptEntry[];
+  /**
+   * FORK — what the harness says it is running on, read off the TAIL of its own log (see
+   * bridge/session-facts.ts for the read). PURE like `parse`, and optional: a harness whose log
+   * never names a model simply has no facts, and the pane renders exactly as it did without them.
+   *
+   * `null` means "this window says nothing" — a tail that happened to hold only tool traffic —
+   * which the store treats as "keep the last answer", never as "the model went away".
+   */
+  facts?(text: string): SessionFacts | null;
+}
+
+/**
+ * FORK — the two facts an operator asks of a running agent that no status carries: which model it
+ * is on, and at what reasoning effort. Both are the harness's OWN spelling (`claude-fable-5-1`,
+ * `xhigh`; `gpt-6-astra`, `medium`), not normalised, because a label the phone has to map is a label
+ * that goes stale the day a new model ships. Either may be absent when the log names only one.
+ */
+export interface SessionFacts {
+  model?: string;
+  effort?: string;
 }

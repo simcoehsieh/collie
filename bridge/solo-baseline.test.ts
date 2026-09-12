@@ -306,6 +306,11 @@ const PANE_WIRE_KEYS = {
   // published one, and no pane in this baseline has, so no golden byte moved.
   statusLine: true,
   statusLineAt: true,
+  // FORK, and not a crew dimension either: which model and effort the agent is on, read off its own
+  // session log. Optional-and-absent until the cache has read a log, and this baseline's fake
+  // journal roots hold none, so no golden byte moved.
+  model: true,
+  effort: true,
 } satisfies Record<keyof PaneWire, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -413,6 +418,9 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
     expect(Object.keys(PANE_WIRE_KEYS).toSorted()).toEqual([
       "agent",
       "cwd",
+      // FORK: which model and effort the agent is on, read off its own log — not written by a
+      // REQUEST, so the claim this test makes about the two address dimensions is untouched.
+      "effort",
       "focused",
       "hasSession",
       "hint",
@@ -420,6 +428,7 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
       "kind",
       "lastActiveAt",
       "lastSeenAt",
+      "model",
       "paneId",
       "paneLabel",
       "readableLines",

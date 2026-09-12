@@ -76,6 +76,7 @@ import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
 import { TranscriptStore } from "./journal/store.ts";
 // FORK: the agent-authored status line — one sentence per pane, read through a cache.
 import { fileStatusLineDirectory } from "./beacon-io.ts";
+import { SessionFactsStore } from "./session-facts.ts";
 import { StatusLineStore } from "./status-lines.ts";
 import type { JournalAdapter, TranscriptEntry } from "./journal/types.ts";
 import { isBlobHash, resolveBlobPath } from "./journal/pi.ts";
@@ -850,6 +851,12 @@ export function startServer(opts: {
    * to publish, not its conversation.
    */
   const statusLines = new StatusLineStore({ directory: fileStatusLineDirectory(cfg.stateDir) });
+  /**
+   * FORK: which model and effort each agent is on, read off the tail of its own session log through
+   * the same kind of cache (bridge/session-facts.ts). Rides `COLLIE_TRANSCRIPT` with the journals it
+   * reads — no registry, no facts — because it IS a read of the conversation's log.
+   */
+  const sessionFacts = new SessionFactsStore();
   /** Does this agent have a journal at all — the snapshot's History-affordance gate. */
   const hasJournal = (agent: string) => adapterFor(journals ?? {}, agent) !== undefined;
 
@@ -983,10 +990,20 @@ export function startServer(opts: {
       // serialise time, from a cache, for the same reason the two timestamps above are: as fresh as
       // the request, and never a filesystem call inside a synchronous builder. Assigned, never
       // conditionally spread, so a pane with no line is byte-identical to one on an older bridge.
-      if (stamped.agentSession === undefined) return stamped;
-      const said = statusLines.get(stamped.agentSession);
-      if (said === null) return stamped;
-      return { ...stamped, statusLine: said.line, statusLineAt: said.writtenMs };
+      const ref = stamped.agentSession;
+      if (ref === undefined) return stamped;
+      const said = statusLines.get(ref);
+      const told = said === null ? stamped : { ...stamped, statusLine: said.line, statusLineAt: said.writtenMs };
+      // FORK: and which model and effort the agent is on, from the same session ref through the
+      // journal adapter that already knows where its log is. Same cache discipline, same absence
+      // rule: a pane the store has not read yet is byte-identical to one on an older bridge.
+      const adapter = journals === null ? undefined : adapterFor(journals, journalAgentOf(told));
+      const facts = adapter === undefined ? null : sessionFacts.get(adapter, ref);
+      if (facts === null) return told;
+      const known: AgentView = { ...told };
+      if (facts.model !== undefined) known.model = facts.model;
+      if (facts.effort !== undefined) known.effort = facts.effort;
+      return known;
     };
     // The one place a pane leaves the bridge: the session ref is stripped to a presence flag here,
     // so an agent-reported filesystem path never reaches a browser (see toPaneWire). The flag is

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 
 import {
   codexCursor,
+  codexSessionFacts,
   codexToolOutput,
   CodexTranscriptSource,
   isCodexSessionId,
@@ -359,5 +360,37 @@ describe("parseCodexTranscript — update_plan", () => {
       name: "shell",
       summary: "bash -lc ls -la",
     });
+  });
+});
+
+// ── FORK: WHICH MODEL AND EFFORT (journal/codex.ts `codexSessionFacts`) ──────────────────────────
+// Read off the newest `turn_context` row — the row the transcript parser ignores. Verified shape
+// (codex-cli 0.153.4): `payload.model` + `payload.effort`, repeated under
+// `payload.collaboration_mode.settings` as `model` + `reasoning_effort`.
+describe("codexSessionFacts", () => {
+  const turnContext = (payload: Record<string, JsonValue>) =>
+    JSON.stringify({ timestamp: "2026-09-12T01:00:00.000Z", type: "turn_context", payload });
+
+  test("reads the pair off the newest turn_context row", () => {
+    const log = [
+      meta(),
+      turnContext({ model: "gpt-5-codex", effort: "high" }),
+      message("user", "go"),
+      turnContext({ model: "gpt-6-astra", effort: "medium" }),
+      message("assistant", "done"),
+    ].join("\n");
+    expect(codexSessionFacts(log)).toEqual({ model: "gpt-6-astra", effort: "medium" });
+  });
+
+  test("falls back to collaboration_mode.settings when the top-level copy is missing", () => {
+    const log = turnContext({
+      collaboration_mode: { mode: "default", settings: { model: "gpt-6-astra", reasoning_effort: "xhigh" } },
+    });
+    expect(codexSessionFacts(log)).toEqual({ model: "gpt-6-astra", effort: "xhigh" });
+  });
+
+  test("answers null when no turn_context is in the window", () => {
+    expect(codexSessionFacts([meta(), message("user", "hi"), message("assistant", "yo")].join("\n"))).toBeNull();
+    expect(codexSessionFacts("not json\n")).toBeNull();
   });
 });

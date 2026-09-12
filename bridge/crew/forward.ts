@@ -52,7 +52,10 @@ export function crewRouteFor(pathname: string): string | null {
  * but not across a link (or, worse, the reverse).
  */
 const FORWARDABLE: readonly RegExp[] = [
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|focus|diff|file))?$/,
+  // FORK: `shot`, `probe` and `handoff` are the fork's own pane routes, on the same literal in
+  // server.ts — each is answered by the member that owns the pane (its screen, its journal, its
+  // launchers), so each rides the link exactly as `reply` does.
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|focus|diff|file|shot|probe|handoff))?$/,
   /^tab$/,
   /^tab\/[^/]+\/(?:rename|close)$/,
   /^workspace$/,
@@ -135,8 +138,8 @@ export function forwardAuditAction(route: string): string | null {
   if (route.startsWith("tab/")) return route.endsWith("/close") ? "tab.close" : "tab.rename";
   const action = route.split("/")[2];
   if (action === undefined || action === "history" || action === "diff" || action === "file") return null;
-  if (action === "close" || action === "rename") return `pane.${action}`;
-  return action; // reply | keys | upload
+  if (action === "close" || action === "rename" || action === "handoff") return `pane.${action}`;
+  return action; // reply | keys | upload | shot | probe (FORK)
 }
 
 /**

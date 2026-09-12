@@ -33,6 +33,7 @@ import { codexPlanItems, isCodexPlanTool } from "./todo.ts";
 import type {
   AgentSessionRef,
   JournalAdapter,
+  SessionFacts,
   TranscriptEntry,
   TranscriptPart,
   TranscriptSource,
@@ -354,11 +355,64 @@ async function descending(dir: string): Promise<string[]> {
   }
 }
 
+/**
+ * FORK — which model and effort this thread is running on, from the NEWEST `turn_context` row.
+ *
+ * Codex writes one per turn (verified against codex-cli 0.153.4, 2026-09-12) carrying the model on
+ * `payload.model` and the reasoning effort on `payload.effort`, with the same pair repeated under
+ * `payload.collaboration_mode.settings` (`model`, `reasoning_effort`) — the fallback read here, for a
+ * build that drops the top-level copy. Newest row wins for the reason the Claude reader gives: both
+ * can change mid-thread. `null` when the window has no such row; the store keeps its last answer.
+ *
+ * `turn_context` is exactly the row `parseCodexTranscript` ignores — it is plumbing there and the
+ * fact wanted here — so this reader is the one place in the adapter that looks at it.
+ */
+export function codexSessionFacts(text: string): SessionFacts | null {
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i] ?? "";
+    if (line.trim() === "") continue;
+    let parsed: JsonValue;
+    try {
+      // SAFETY: `JSON.parse` output IS a JsonValue by construction — see parseCodexTranscript.
+      parsed = JSON.parse(line) as JsonValue;
+    } catch {
+      continue;
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    const row: CodexRow = parsed;
+    if (row.type !== "turn_context") continue;
+    const payload = row.payload;
+    if (payload === null || payload === undefined || typeof payload !== "object" || Array.isArray(payload)) continue;
+    const p: JsonObject = payload;
+    const settings = collaborationSettings(p);
+    const facts: SessionFacts = {};
+    const model = typeof p.model === "string" ? p.model : settings?.model;
+    if (typeof model === "string" && model !== "") facts.model = model;
+    const effort = typeof p.effort === "string" ? p.effort : settings?.reasoning_effort;
+    if (typeof effort === "string" && effort !== "") facts.effort = effort;
+    if (facts.model === undefined && facts.effort === undefined) continue;
+    return facts;
+  }
+  return null;
+}
+
+/** `payload.collaboration_mode.settings`, when it is an object — the fallback copy of the pair. */
+function collaborationSettings(p: JsonObject): JsonObject | null {
+  const mode = p.collaboration_mode;
+  if (mode === null || mode === undefined || typeof mode !== "object" || Array.isArray(mode)) return null;
+  const settings = mode.settings;
+  if (settings === null || settings === undefined || typeof settings !== "object" || Array.isArray(settings))
+    return null;
+  return settings;
+}
+
 /** Codex's journal adapter. `agent` matches the Herdr snapshot's `agent` string. */
 export function codexJournal(roots: string | readonly string[]): JournalAdapter {
   return {
     agent: "codex",
     source: new CodexTranscriptSource(roots),
     parse: parseCodexTranscript,
+    facts: codexSessionFacts,
   };
 }

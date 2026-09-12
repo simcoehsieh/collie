@@ -3296,3 +3296,24 @@ describe("Composer — stop and edit what you sent", () => {
   }, 15000);
 });
 
+
+// ── FORK: THE MODEL AND EFFORT, ON THE SAME BAND ─────────────────────────────
+// Between the machine and the state, as one monospace run; absent when the bridge has not read the
+// pane's log, and the status slot stays the band's last child either way.
+describe("Composer — the model and effort on the status band", () => {
+  const band = () => document.querySelector<HTMLElement>('[data-slot="composer-status"]')!;
+  const run = () => band().querySelector<HTMLElement>('[data-slot="composer-model"]');
+
+  it("shows the trimmed model id and the effort, ahead of the status slot", () => {
+    renderComposerWithStatus({ status: "working", model: "claude-fable-5-1", effort: "xhigh" });
+    expect(run()).toHaveTextContent("fable-5-1 · xhigh");
+    expect(band().lastElementChild).not.toBe(run());
+    cleanup();
+  });
+
+  it("renders nothing when the pane carries neither fact", () => {
+    renderComposerWithStatus({ status: "working" });
+    expect(run()).toBeNull();
+    cleanup();
+  });
+});

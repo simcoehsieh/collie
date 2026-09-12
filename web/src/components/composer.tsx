@@ -51,6 +51,7 @@ import { acceptAttribute, limitMb, offersFiles, PHOTO_ACCEPT, rejectAttachment, 
 import { ctrlPresetsFor } from "@/lib/operator-keys";
 import { isDestructiveInput } from "@/lib/destructive";
 import { HostChip } from "@/components/host-chip";
+import { modelLabel } from "@/lib/model-label";
 import { StatusWordSlot } from "@/components/status-badge";
 import { useAmbientHost, useHostLabel } from "@/components/crew-provider";
 import { clearDraft, fitsDraftStore, loadDraft, saveDraft } from "@/lib/drafts";
@@ -98,6 +99,14 @@ interface ComposerProps {
   status?: AgentStatus;
   /** The reading is the last snapshot's, not live — dims the word exactly as the header's dot dims. */
   stale?: boolean;
+  /**
+   * FORK — which model the agent is on and at what effort, as the bridge read them off its log
+   * (lib/types.ts `model` / `effort`). Shown on the status band between the machine and the state,
+   * where "which machine, which model, doing what" reads as one line; absent on most panes most of
+   * the time, and the band is unchanged then.
+   */
+  model?: string;
+  effort?: string;
   /** Pane is gone (no agent) — locks the composer with a distinct placeholder. */
   gone: boolean;
   /** This device isn't authorised to type — locks the composer with a distinct placeholder. */
@@ -270,7 +279,7 @@ function ComposerDock({
 const ATTACH_PRESS_MS = 220;
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { paneId, scope, agent, isShell, status, stale, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, setControlsOpen, onSent, paneName },
+  { paneId, scope, agent, isShell, status, stale, model, effort, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, setControlsOpen, onSent, paneName },
   ref,
 ) {
   const revalidator = useRevalidator();
@@ -314,6 +323,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // still owes the strip a word or a solo install's strip would be empty; a GONE pane has nothing
   // left to describe, and the strip stands empty rather than reporting a stale state as current.
   const statusWord: AgentStatus | "shell" | undefined = isShell ? "shell" : status;
+  // FORK: the model run for the same strip — one spelling, shared with the herd card (lib/model-label.ts).
+  const modelRun = modelLabel({ model, effort });
   // Its display name, or undefined when there is no crew — the copy-level half of the hide rule.
   const writeHostLabel = useHostLabel(scope?.host);
   // …and a ref alongside it, for the ONE caller that reads it after an await. `send()` checks
@@ -1636,6 +1647,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             )}
           />
           <HostChip host={writeHost} variant="caption" className="min-w-0" />
+          {/* FORK: the model and effort, between the machine and the state. A plain run in the
+              band's own 10px face — monospace because it is an id, not a word — and BEFORE the
+              status slot, so the slot stays the band's last child (composer.test.tsx reads it by
+              position). Absent when the bridge has not read the pane's log; nothing else moves. */}
+          {modelRun !== null && (
+            <span data-slot="composer-model" className="min-w-0 truncate font-mono text-muted-foreground">
+              {modelRun}
+            </span>
+          )}
           {/* The reserve opens to the word's RIGHT now, where nothing stands — the mirror of the
               slot's own default, which hugs a right inset because the band used to have one. The
               slot is still `shrink-0` and the host is still what truncates; only the side the

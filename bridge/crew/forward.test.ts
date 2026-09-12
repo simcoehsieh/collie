@@ -204,7 +204,21 @@ describe("which routes cross a link", () => {
     const tab = server.match(/^const TAB_ACTION_ROUTE = (.+);$/m)![1]!;
     const alternation = /\(([a-z]+(?:\|[a-z]+)+)\)/;
     const paneActions = pane.match(alternation)![1]!.split("|").toSorted();
-    expect(paneActions).toEqual(["close", "diff", "file", "focus", "history", "keys", "rename", "reply", "upload"]);
+    // FORK: `handoff`, `probe` and `shot` are fork routes on the same literal.
+    expect(paneActions).toEqual([
+      "close",
+      "diff",
+      "file",
+      "focus",
+      "handoff",
+      "history",
+      "keys",
+      "probe",
+      "rename",
+      "reply",
+      "shot",
+      "upload",
+    ]);
     for (const action of paneActions) expect(crewRouteFor(`/api/pane/x/${action}`)).toBe(`pane/x/${action}`);
     const tabActions = tab.match(alternation)![1]!.split("|").toSorted();
     expect(tabActions).toEqual(["close", "rename"]);
@@ -237,6 +251,10 @@ describe("which routes cross a link", () => {
     expect(forwardAuditAction("pane/w1:p1/upload")).toBe("upload");
     expect(forwardAuditAction("pane/w1:p1/close")).toBe("pane.close");
     expect(forwardAuditAction("pane/w1:p1/rename")).toBe("pane.rename");
+    // FORK: the three fork routes audit under the names server.ts writes for them.
+    expect(forwardAuditAction("pane/w1:p1/handoff")).toBe("pane.handoff");
+    expect(forwardAuditAction("pane/w1:p1/shot")).toBe("shot");
+    expect(forwardAuditAction("pane/w1:p1/probe")).toBe("probe");
     expect(forwardAuditAction("tab")).toBe("tab.create");
     expect(forwardAuditAction("tab/w1:t1/rename")).toBe("tab.rename");
     expect(forwardAuditAction("tab/w1:t1/close")).toBe("tab.close");

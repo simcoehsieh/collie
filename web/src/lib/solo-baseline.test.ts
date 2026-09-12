@@ -111,6 +111,11 @@ const AGENT_VIEW_KEYS = {
   // published one, so a snapshot from a herd that has not is byte-identical to the baseline.
   statusLine: true,
   statusLineAt: true,
+  // FORK, and not a crew dimension either: which model and effort the agent is on, read bridge-side
+  // off its own session log. Optional-and-absent until the bridge has read one, so a snapshot from
+  // a herd it has not is byte-identical to the baseline.
+  model: true,
+  effort: true,
 } satisfies Record<keyof AgentView, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -195,6 +200,9 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
     expect(Object.keys(AGENT_VIEW_KEYS).toSorted()).toEqual([
       "agent",
       "cwd",
+      // FORK: which model and effort the agent is on — read off its log, never turned on by a
+      // REQUEST, so the claim this case makes about the two address dimensions is untouched.
+      "effort",
       "focused",
       "hasSession",
       "hint",
@@ -202,6 +210,7 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
       "kind",
       "lastActiveAt",
       "lastSeenAt",
+      "model",
       "paneId",
       "paneLabel",
       "readableLines",

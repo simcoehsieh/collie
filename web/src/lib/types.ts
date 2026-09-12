@@ -104,6 +104,22 @@ export interface AgentView {
    *  Mirrors `AgentView.statusLineAt` in bridge/types.ts. */
   statusLineAt?: number;
   /**
+   * FORK — which model the agent is running on, in the harness's own spelling (`claude-fable-5-1`,
+   * `gpt-6-astra`), read bridge-side off the newest turn of its session log. Mirrors
+   * `AgentView.model` in bridge/types.ts.
+   *
+   * TEXT AND NOTHING ELSE, on the standing {@link statusLine} has: nothing branches on it, it
+   * implies nothing about `agent` or `status`, and it changes no sort and no affordance. Rendered
+   * through `lib/model-label.ts` and nowhere else. Absent on most panes most of the time — a
+   * harness with no journal, a log not yet read, an older bridge.
+   */
+  model?: string;
+  /**
+   * FORK — the reasoning effort the newest turn ran at (`xhigh`, `medium`), the harness's own word.
+   * Same standing and same absences as {@link model}; either may be present without the other.
+   */
+  effort?: string;
+  /**
    * Which member of the crew this pane lives on — the `?h=` value (CREW_PROTOCOL.md §4). Mirrors
    * `PaneWire.host` in bridge/types.ts.
    *

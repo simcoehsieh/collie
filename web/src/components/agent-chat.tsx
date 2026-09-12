@@ -2361,6 +2361,9 @@ export function AgentChat({
                   // `connecting` the dot reads, so the pair still dims as one.
                   status={agent?.status}
                   stale={connecting}
+                  // FORK: and which model and effort it is on, for the same strip.
+                  model={agent?.model}
+                  effort={agent?.effort}
                   // The one read of the keyboard, handed down. See `composing` above.
                   composing={composing}
                   gone={gone}

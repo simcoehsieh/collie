@@ -33,6 +33,7 @@ import { claudeTodoItems, isClaudeTodoTool } from "./todo.ts";
 import type {
   AgentSessionRef,
   JournalAdapter,
+  SessionFacts,
   TranscriptEntry,
   TranscriptPart,
   TranscriptSource,
@@ -414,6 +415,48 @@ export class ClaudeTranscriptSource implements TranscriptSource {
 }
 
 /**
+ * FORK — which model and effort this session is running on, from the NEWEST assistant row.
+ *
+ * Every `assistant` row names both (verified against Claude Code 2.1.267, 2026-09-12): the model on
+ * `message.model` and the effort the turn ran at on the row's own `effort` — the value `/effort` or
+ * `CLAUDE_CODE_EFFORT_LEVEL` set, as it was when the turn was made. Newest row wins because both can
+ * change mid-session (`/model`, `/effort`), so the answer is "now", not "at start".
+ *
+ * Read from the END, and only over the tail the store hands in — a session log can be 32 MB and
+ * the fact wanted is on its last screenful. Two rows are skipped on the way: sidechain rows, which
+ * are a SUBAGENT's turns and may well run a different model than the pane the operator is looking
+ * at; and the `<synthetic>` model Claude Code stamps on rows it wrote itself (an error, an aborted
+ * turn), which names no model at all. `null` when the window holds no assistant row — the store keeps
+ * its last answer, so a burst of tool output never blanks the chip.
+ */
+export function claudeSessionFacts(text: string): SessionFacts | null {
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i] ?? "";
+    if (line.trim() === "") continue;
+    let parsed: JsonValue;
+    try {
+      // SAFETY: `JSON.parse` output IS a JsonValue by construction — see parseClaudeTranscript.
+      parsed = JSON.parse(line) as JsonValue;
+    } catch {
+      continue; // partial trailing write, or the clipped first line of a tail read
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    const row: RawRow = parsed;
+    if (row.type !== "assistant" || row.isSidechain === true) continue;
+    const message = row.message;
+    if (message === null || message === undefined || typeof message !== "object" || Array.isArray(message)) continue;
+    const facts: SessionFacts = {};
+    if (typeof message.model === "string" && message.model !== "" && !message.model.startsWith("<"))
+      facts.model = message.model;
+    if (typeof row.effort === "string" && row.effort !== "") facts.effort = row.effort;
+    if (facts.model === undefined && facts.effort === undefined) continue;
+    return facts;
+  }
+  return null;
+}
+
+/**
  * Claude's journal adapter. `agent` matches the Herdr snapshot's `agent` string.
  *
  * `roots` is one projects directory or several (one per `CLAUDE_CONFIG_DIR` profile), searched in
@@ -424,5 +467,6 @@ export function claudeJournal(roots: string | readonly string[]): JournalAdapter
     agent: "claude",
     source: new ClaudeTranscriptSource(roots),
     parse: (text) => parseClaudeTranscript(text),
+    facts: claudeSessionFacts,
   };
 }
