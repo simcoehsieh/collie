@@ -5,29 +5,60 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- NO `viewport-fit=cover`, and that is the fix for the letterbox — see index.css for the
+         measurements. With cover, iOS 26 gave this app two answers at once: a layout viewport of 793
+         on an 852pt screen (already 852 minus a status bar, i.e. sized for an INSET web view) while
+         still placing the page under the status bar and reporting env(safe-area-inset-top) 59. The
+         59pt difference was letterboxed in page colour above the home indicator, and no CSS reaches
+         it — a shell stretched to cover it put the composer off the bottom of the screen instead.
+         Without cover the web view is simply inset to the safe area: every env() goes to 0, the OS
+         paints the status-bar and home-indicator bands itself, and the page's own box is the whole
+         of what it is given. The chrome does not move — the header's 59pt of inset-top is replaced
+         by the OS's own band of exactly the same height.
+         `interactive-widget=resizes-content` stays: it is what makes `dvh` shrink with the soft
+         keyboard, which is what holds the composer above it (hooks/use-keyboard.ts). -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+      content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
     />
     <!-- Blocking, and first: the pin class must be on <html> before anything paints. Same-origin,
          so `script-src 'self'` already allows it. -->
     <script src="/theme-init.js"></script>
     <!-- Browser chrome follows the OS for System users. useTheme rewrites these at runtime for
-         someone who has pinned the opposite of their OS. -->
+         someone who has pinned the opposite of their OS.
+         THESE ARE --background RASTERISED, and they have to be: in standalone the OS paints the
+         status-bar band in `theme-color` and the app paints the header underneath it, so any
+         other value is a permanent one-shade stripe across the top of every screen. They shipped
+         as #f5f5f5 / #0a0a0a, which are the MIRROR's two grounds (components/mirror-space.ts) —
+         right for the terminal, one step off the page. `oklch(0.965 0.005 255)` rasterises to
+         #f1f4f7 and `oklch(0.17 0.012 262)` to #0d0f15, measured in the browser at DPR 1.
+         KEEP THESE THREE IN STEP: index.css `--background`, hooks/use-theme.ts META_COLOR (the
+         same two values, for the pinned case), and vite.config.ts's manifest colours. Each of
+         those points back here. -->
     <meta
       name="theme-color"
-      content="#f5f5f5"
+      content="#f1f4f7"
       media="(prefers-color-scheme: light)"
     />
     <meta
       name="theme-color"
-      content="#0a0a0a"
+      content="#0d0f15"
       media="(prefers-color-scheme: dark)"
     />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <!-- Not `black-translucent`: iOS 27 blurs the top edge of a translucent one, into the header.
-         iOS reads this once, at Add to Home Screen, so a change needs a re-add to show. -->
+    <!-- `default`, NOT `black-translucent`, and the reason is measured. Under black-translucent on
+         iOS 26 this app was given a layout viewport of 793 on an 852pt screen — already sized for an
+         OPAQUE status bar (852 − 59) — while the web view was still placed under the status bar and
+         `env(safe-area-inset-top)` still reported 59. The page therefore ended 59pt above the bottom
+         of the screen and iOS letterboxed the difference in page colour, which no CSS can fill: a
+         shell stretched to 852 put the composer off the bottom of the screen instead (index.css says
+         the same from the other side). `default` asks for the placement the viewport was already
+         being sized for. The header loses its 59pt of inset-top and the status bar becomes the OS's
+         to paint, so the chrome lands in the same place it always did.
+         Upstream 1.8.2 arrived at the same value from the other side: iOS 27 blurs the top edge of a
+         translucent one, into the header. iOS reads this once, at Add to Home Screen, so a change
+         needs a re-add to show. -->
     <meta
       name="apple-mobile-web-app-status-bar-style"
       content="default"
@@ -43,24 +74,21 @@
          would spend everyone's first paint on a minority. Keep the URL in step with
          DEFAULT_UI_FONT_URL in src/lib/sw-routes.ts and the @font-face in src/index.css —
          fonts.test.ts pins all three. -->
-    <link
-      rel="preload"
-      href="/fonts/ui-aldrich-1.002-latin.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
+    <!-- FORK: the default face is the system one, so there is nothing to preload — the two shipped
+         webfonts are opt-in and fetched when a reader picks one. -->
     <!-- The web manifest <link> is injected by vite-plugin-pwa at build time. -->
     <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="shortcut icon" href="/favicon.ico" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-    <!-- First-paint splash: the galloping Collie shown the instant the PWA opens, bridging the OS
-         launch splash and React mount (createRoot replaces #root, so it clears itself). Critical CSS
-         is inlined here so it paints and animates before the app bundle/index.css load — pure CSS,
-         no JS. It mirrors routes/root.tsx's BootSplash (same sprite, 4rem, copy) so the hand-off is
-         seamless. Sprite math matches .dog-gallop in index.css: dog-gallop.png is a 768×128 strip of
-         six 128px frames, stepped with steps(6). -->
+    <!-- First-paint splash: the mark shown the instant the PWA opens, bridging the OS launch splash
+         and React mount (createRoot replaces #root, so it clears itself). Critical CSS is inlined
+         here so it paints before the app bundle/index.css load — pure CSS, no JS. It mirrors
+         routes/root.tsx's BootSplash (same mark, 4rem, copy) so the hand-off is seamless.
+         FORK: the mark is the cat over a terminal (components/meow-mark.tsx), drawn here as a CSS
+         mask so it takes the splash's own text colour in either theme; upstream's galloping-dog
+         sprite (dog-gallop.png) is no longer used here. The class name is kept so the markup below
+         and any selector upstream adds keep matching. -->
     <style>
       /* index.css has not loaded at this point, so the splash declares `color-scheme` itself —
          otherwise light-dark() below has nothing to resolve against and every value falls to its
@@ -126,12 +154,17 @@
         align-items: center;
         justify-content: center;
         gap: 0.75rem;
-        /* --background / --muted-foreground rasterized, because index.css has not loaded yet:
-           oklch(0.97)/oklch(0.48) light, oklch(0.145)/oklch(0.708) dark. The light pair used to be
-           #ffffff/#8a8a8a, which is neither token — the page stepped from white to rgb(245) on
-           hand-off to React, and the caption sat at 3.45:1. Keep in step with index.css. */
-        background: light-dark(#f5f5f5, #0a0a0a);
-        color: light-dark(#5d5d5d, #a1a1a1);
+        /* --background / --muted-foreground RASTERISED, because index.css has not loaded yet.
+           FORK: all four were upstream's numbers and this fork moved both tokens, so the splash was
+           painting the MIRROR's ground (#f5f5f5 / #0a0a0a) under a caption that was neither token —
+           the page stepped a full shade on hand-off to React, which is the seam this whole block
+           exists to close. Measured in the browser at DPR 1:
+             --background       oklch(0.965 0.005 255) #f1f4f7 · oklch(0.17 0.012 262) #0d0f15
+             --muted-foreground oklch(0.48 0.018 258)  #575e68 · oklch(0.71 0.018 258) #9ba2ad
+           Keep in step with index.css, and with the theme-color metas above, which are the same
+           --background pair. */
+        background: light-dark(#f1f4f7, #0d0f15);
+        color: light-dark(#575e68, #9ba2ad);
         font:
           500 0.875rem/1.4 var(--font-sans);
       }
@@ -143,6 +176,11 @@
          resolves through the default below, which is what it should do. Keep in step with
          index.css. */
       :root {
+        --font-sans:
+          ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+      }
+      :root.font-aldrich {
         --font-sans:
           "Aldrich", "Aldrich Fallback", ui-sans-serif, system-ui, -apple-system,
           "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -159,21 +197,54 @@
       }
       .boot-splash__dog {
         --dog-size: 4rem;
-        --dog-frames: 6;
+        position: relative;
         width: var(--dog-size);
         height: var(--dog-size);
-        background: url("/dog-gallop.png") no-repeat 0 0;
-        background-size: calc(var(--dog-frames) * var(--dog-size))
-          var(--dog-size);
-        animation: boot-dog-gallop 0.6s steps(6) infinite;
+        /* THE BRAND MOMENT IS NOT PAINTED IN THE QUIET-TEXT TOKEN. This was `currentColor`, and the
+           colour it inherited is the caption's --muted-foreground: the first thing the app ever
+           shows was drawn in the colour reserved for text you are not meant to read. It is
+           --foreground now, rasterised here because index.css has not loaded — oklch(0.18 0.012
+           262) #0f1217 light, oklch(0.965 0.006 255) #f1f4f8 dark. The window's interior is still
+           the page showing through, and the cursor is the one part that is not this colour (see
+           ::after). Static — the cursor starts blinking once React's mark takes over, and a still
+           frame needs no reduced-motion branch. */
+        background-color: light-dark(#0f1217, #f1f4f8);
+        -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 18 144 144'><polygon points='52,60 60,22 84,54'/><polygon points='128,60 120,22 96,54'/><path fill-rule='evenodd' d='M56,70 a34,26 0 0 1 68,0 Z M69,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z M101,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z'/><rect x='24' y='66' width='132' height='92' rx='14' fill='none' stroke='black' stroke-width='9'/><path d='M46,98 l14,12 l-14,12' fill='none' stroke='black' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat center / contain;
+        mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 18 144 144'><polygon points='52,60 60,22 84,54'/><polygon points='128,60 120,22 96,54'/><path fill-rule='evenodd' d='M56,70 a34,26 0 0 1 68,0 Z M69,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z M101,62 a5,7 0 1 0 10,0 a5,7 0 1 0 -10,0 Z'/><rect x='24' y='66' width='132' height='92' rx='14' fill='none' stroke='black' stroke-width='9'/><path d='M46,98 l14,12 l-14,12' fill='none' stroke='black' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat center / contain;
       }
-      @keyframes boot-dog-gallop {
+      /* THE CURSOR IS THE ONE PART IN THE ACCENT, and it is a second layer because a CSS mask paints
+         ONE colour. The body above is the same drawing minus this rect; this is the rect alone, over
+         it, in --primary rasterised — oklch(0.545 0.135 258) #3a6fbd light, oklch(0.74 0.13 258)
+         #76acfc dark. Why the cursor and not the ears: it is already the part React's mark animates
+         while loading (meow-mark.tsx blinks it at a terminal's own 0.6s), so the splash and the app
+         agree about which stroke carries the signal. Keep both hexes in step with index.css. */
+      .boot-splash__dog::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-color: light-dark(#3a6fbd, #76acfc);
+        -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 18 144 144'><rect x='72' y='97' width='12' height='27' rx='2'/></svg>") no-repeat center / contain;
+        mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 18 144 144'><rect x='72' y='97' width='12' height='27' rx='2'/></svg>") no-repeat center / contain;
+      }
+      /* The caption arrives AFTER the mark, and leaves with it. The splash is the mark plus one
+         line; fading the line in over the mark's own 260ms makes the mark the thing that is here
+         first and the words the thing that explains it — and on hand-off the mark visibly travels to
+         the header slot (skin.css `cm-handoff`) while the caption is simply gone, which is the same
+         260ms read backwards. `both` holds it invisible through the delay, so there is no flash of a
+         caption before the mark. */
+      .boot-splash > span:not(.boot-splash__dog) {
+        animation: boot-caption 260ms ease-out 140ms both;
+      }
+      @keyframes boot-caption {
+        from {
+          opacity: 0;
+        }
         to {
-          background-position: calc(-1 * var(--dog-frames) * var(--dog-size)) 0;
+          opacity: 1;
         }
       }
       @media (prefers-reduced-motion: reduce) {
-        .boot-splash__dog {
+        .boot-splash > span:not(.boot-splash__dog) {
           animation: none;
         }
       }

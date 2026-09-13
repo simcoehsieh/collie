@@ -175,3 +175,27 @@ describe("document language", () => {
     expect(document.documentElement.lang).toBe("en");
   });
 });
+
+// FORK: the fork overrides a handful of upstream strings — the ones that call the machines a herd —
+// without touching the seven dictionary files, so upstream's i18n stays a pure-insertion diff and
+// merges by itself. Two things can break silently: the layer not being applied to the eager English
+// bundle, and it not being applied to a bundle that arrives later by dynamic import. Both are here.
+describe("fork overrides", () => {
+  it("applies to English, which never passes through the loader", () => {
+    expect(t("error.boot.connecting")).toBe("Connecting…");
+    expect(t("idle.catchingUp.body")).toBe("Fetching what every pane is doing.");
+  });
+
+  it("applies to a bundle that arrives by dynamic import", async () => {
+    setLocale("de");
+    await whenLocaleReady("de");
+    expect(t("error.boot.connecting")).toBe("Verbindung wird aufgebaut…");
+  });
+
+  it("leaves every other string in that bundle alone", async () => {
+    setLocale("de");
+    await whenLocaleReady("de");
+    // An untouched neighbour in the same dictionary: the layer is a patch, not a replacement.
+    expect(t("error.boot.retry")).toBe("Erneut versuchen");
+  });
+});

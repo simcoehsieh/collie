@@ -18,7 +18,7 @@
 // would silently stop firing with nothing failing a test.
 //
 // IT NOW DOES A SECOND, IDENTICAL THING: the UI typeface (ADR 0033). Same shape, same reason — a
-// reader who chose Aldrich must not watch the app paint in Space Grotesk and then change voice. The
+// reader who chose Aldrich must not watch the app paint in the system face and then change voice. The
 // two are kept in one file because they are one job (get the root classes right before paint) and
 // because a second blocking <script> in <head> costs a round trip on the phone this app is for.
 //
@@ -47,10 +47,10 @@
     if (!raw) return;
     var d = JSON.parse(raw);
     if (!d || typeof d !== "object") return;
-    // The closed list, and the whole of it. `aldrich` is the default and wears NO class — no class
-    // means the --font-sans already in index.css, which is the stack index.html preloads. Anything
-    // else, including an `op:` value, falls through and leaves the element bare.
-    if (d.font === "system") root.classList.add("font-system");
+    // The closed list, and the whole of it. The system face is the default (fork) and wears NO
+    // class — no class means the --font-sans already in index.css. Anything else, including an
+    // `op:` value, falls through and leaves the element bare.
+    if (d.font === "aldrich") root.classList.add("font-aldrich");
     else if (d.font === "grotesk") root.classList.add("font-grotesk");
   } catch {
     // A truncated write, a hand-edited blob, or private mode. The default face is the right answer

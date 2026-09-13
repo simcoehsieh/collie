@@ -27,6 +27,8 @@ import security from "../docs/security.md" with { type: "text" };
 import troubleshooting from "../docs/troubleshooting.md" with { type: "text" };
 import upgrading from "../docs/upgrading.md" with { type: "text" };
 import voiceAndPush from "../docs/voice-and-push.md" with { type: "text" };
+// FORK: the phone guide for this fork's own features (artifacts, handoff, screenshots).
+import meowPhoneGuide from "../docs/meow-phone-guide.md" with { type: "text" };
 
 // The agent-facing brief, which is not one of the pages: it is hand-written, it carries two
 // placeholder tokens `cli/docs.ts` fills at print time, and `collie skill` prints it alone.
@@ -97,6 +99,11 @@ export const DOC_PAGES: readonly DocPage[] = [
     name: "troubleshooting",
     purpose: "Symptoms in the words you would actually search for",
     text: troubleshooting,
+  },
+  {
+    name: "meow-phone-guide",
+    purpose: "FORK — Meow on the phone: artifacts, handing a pane to another agent, screenshots",
+    text: meowPhoneGuide,
   },
 ];
 

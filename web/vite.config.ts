@@ -5,6 +5,7 @@ import { VitePWA } from "vite-plugin-pwa";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadBranding } from "./branding";
 import {
   channelFor,
   includeAssetsFor,
@@ -181,6 +182,23 @@ const buildInfoPlugin: Plugin = {
   },
 };
 
+// Per-machine PWA identity — the home screen icon and the label under it — from
+// `~/.config/collie/branding/`, or stock Collie when that directory does not exist. Resolved HERE,
+// at config time, because it decides `publicDir`: the build must never read the stock icons and
+// then have them swapped underneath the service worker's precache revisions. See branding.ts.
+const brand = loadBranding(import.meta.dirname);
+
+// FORK: A BRANDED MACHINE IS NEVER A "DEV" INSTALL. Upstream 1.8.1 paints a build whose HEAD is not
+// on its release tag with orange `-dev` tiles and calls it "Collie (dev)", so a developer's install
+// is never mistaken for the release next to it. This fork's HEAD is never on an upstream tag — the
+// version stamp above already says `-dev` for that reason — but the machine that serves it has its
+// own icon and name from `~/.config/collie/branding/`, and THAT is what tells its install apart. So
+// the icon channel follows the branding: branded → the release icon set (which the overlay's
+// `publicDir` then supplies), unbranded → upstream's rule as written. `channel` itself is untouched
+// and still stamps the build info.
+const branded = brand.publicDir !== resolve(import.meta.dirname, "public") || brand.htmlPlugin !== null;
+const iconChannel: Channel = branded ? "release" : channel;
+
 // A release build must ship index.html byte-for-byte unchanged, so this only rewrites the four
 // icon <link> hrefs, and only for index.html — never playground.html, which carries its own
 // -playground links statically instead (see playground.html itself). vite-icons.ts's
@@ -192,19 +210,28 @@ const channelIconsPlugin: Plugin = {
     order: "pre",
     handler(html, ctx) {
       if (!ctx.filename.endsWith("/index.html")) return html;
-      return transformIndexIcons(html, channel);
+      return transformIndexIcons(html, iconChannel);
     },
   },
 };
 
-const channelManifest = manifestFor(channel);
+const channelManifest = manifestFor(iconChannel);
 
 export default defineConfig({
-  define: { __BUILD_INFO__: JSON.stringify(BUILD_INFO) },
+  publicDir: brand.publicDir,
+  define: {
+    __BUILD_INFO__: JSON.stringify(BUILD_INFO),
+    // FORK: the machine's own name and the mux-logo toggle, from branding.json (src/lib/brand.ts).
+    __BRAND__: JSON.stringify({
+      shortName: brand.shortName ?? null,
+      hideMux: brand.hideMux ?? false,
+    }),
+  },
   plugins: [
     react(),
     tailwindcss(),
     buildInfoPlugin,
+    brand.htmlPlugin,
     channelIconsPlugin,
     VitePWA({
       // Build the manifest + service worker. We use `injectManifest` (not the default generateSW)
@@ -219,11 +246,12 @@ export default defineConfig({
       strategies: "injectManifest",
       srcDir: "src",
       filename: "sw.ts", // source; compiled to dist/sw.js (the bridge sets Service-Worker-Allowed: /)
-      includeAssets: includeAssetsFor(channel),
+      includeAssets: includeAssetsFor(iconChannel),
       manifest: {
-        name: channelManifest.name,
-        short_name: channelManifest.short_name,
-        description: "Monitor and reply to your terminal AI agents from your phone",
+        name: brand.name ?? channelManifest.name,
+        short_name: brand.shortName ?? channelManifest.short_name,
+        description:
+          brand.description ?? "Monitor and reply to your terminal AI agents from your phone",
         id: "/",
         start_url: "/",
         scope: "/",
@@ -235,8 +263,30 @@ export default defineConfig({
         // phone. `"any"` defers to the device instead of overriding it, so a tablet held in
         // landscape with rotation lock on still stays portrait.
         orientation: "any",
-        background_color: "#0a0a0a",
-        theme_color: "#0a0a0a",
+        // FORK: the phone's own automation. `share_target` lets the share sheet hand text to the
+        // pane this device opened last (a GET with `?send=`; routes/detail.tsx seeds the composer
+        // and the operator taps Send — never an auto-send). `shortcuts` are the home-screen
+        // long-press entries. Neither changes `id` or `start_url`, so an installed PWA stays the
+        // same install. iOS ignores both today (Shortcuts opens the URL directly instead); Android
+        // and desktop honour them.
+        share_target: {
+          action: "/pane/last",
+          method: "GET",
+          params: { text: "send", title: "send_title", url: "send_url" },
+        },
+        shortcuts: [
+          { name: "Overview", short_name: "Overview", url: "/overview" },
+          { name: "Home", short_name: "Home", url: "/" },
+        ],
+        // The install splash's paper and the installed chrome's colour. --background's DARK half,
+        // rasterised: `oklch(0.17 0.012 262)` is rgb(13,15,21). It was #0a0a0a, which is the
+        // MIRROR's ground and not the page's — the same one-shade seam index.html's `theme-color`
+        // metas carried, here spent on the Android install splash instead of the status bar.
+        // Both values move TOGETHER and stay dark: see the icon note below for why a manifest
+        // colour cannot follow the OS, and index.html / hooks/use-theme.ts for the other two
+        // places this pair is written down.
+        background_color: "#0d0f15",
+        theme_color: "#0d0f15",
         icons: [
           // The 192/512 are safe-zone-padded, so they serve as both the regular ("any") install
           // icon and the Android adaptive ("maskable") icon, and they paint their own paper —
@@ -249,13 +299,15 @@ export default defineConfig({
           // install splash as this icon centred on `background_color`, and a manifest colour is a
           // single value — it cannot follow the OS the way index.html's paired `theme-color` metas
           // and index.css's `light-dark()` do. `background_color` and `theme_color` were already
-          // both #0a0a0a, so the light tile that shipped first put a near-white square on black:
-          // the one combination that is wrong under EVERY theme. Making the tile dark makes all
-          // three manifest values agree, and it is the choice that costs least — flipping
+          // both the page's dark paper, so the light tile that shipped first put a near-white
+          // square on black: the one combination that is wrong under EVERY theme. Making the
+          // tile dark makes all three manifest values agree, and it is the choice that costs
+          // least — flipping
           // `background_color` to the light paper instead would leave `theme_color` dark, i.e. a
           // light splash under dark system bars, and it would still be one fixed polarity.
-          // The tile's own paper is #0f1113 against a #0a0a0a splash: a hair lighter, invisible in
-          // practice, and `background_color` is left alone so the installed chrome keeps one value.
+          // The tile's own paper is #0f1113 against a #0d0f15 splash: a hair lighter, invisible in
+          // practice, and the two manifest colours stay EQUAL so the installed chrome and its
+          // splash are one surface.
           // If these are ever re-copied, take the `collie-tile-dark-*` files, not the light ones.
           //
           // A dev build (channel !== "release") swaps this pair for the `-dev` tiles instead
@@ -277,7 +329,31 @@ export default defineConfig({
         // may carry the playground's — see vite-icons.ts's precacheIgnoresFor. Without this, a
         // release SW precached the dev AND playground icon sets too, every byte of it competing
         // with the app's own polls on a slow link (2026-09-12 proxy log on a phone).
-        globIgnores: precacheIgnoresFor(channel),
+        // FORK: two things the sweep above caught that nothing ever asks for.
+        //
+        // THE SIX LOCALE CHUNKS (324 KB raw, ~92 KB gz) are lazy BY DESIGN — `src/lib/i18n/index.ts`
+        // imports each one dynamically precisely so a herd that reads English never downloads
+        // Japanese. Precaching them undoes that on every install and again on every rebuild's SW
+        // update, for six dictionaries of which at most one is ever read. They stay in `dist/`, so
+        // switching locale fetches one over the network exactly as the lazy import intends.
+        //
+        // `dog-gallop.png` (54 KB) is the mascot sprite strip. `<DogGallop/>` is mounted nowhere in
+        // the app since the splash became an inline CSS mask — the component and its test remain, and
+        // the file is still served, but nothing requests it.
+        //
+        // Together ~26 % of the precache. VERIFY AFTER A BUILD: `bun run build` prints
+        // `precache N entries (… KiB)` — it was 34 / 1440 KiB before this line existed. If a chunk
+        // ever stops matching (vite renames an output), that number is where it shows.
+        globIgnores: [
+          ...precacheIgnoresFor(iconChannel),
+          "assets/de-*.js",
+          "assets/es-*.js",
+          "assets/ja-*.js",
+          "assets/ko-*.js",
+          "assets/zh-*.js",
+          "assets/zh-TW-*.js",
+          "dog-gallop.png",
+        ],
       },
       // Over plain HTTP (insecure context) the SW can't register; in dev we don't want it anyway.
       devOptions: { enabled: false },

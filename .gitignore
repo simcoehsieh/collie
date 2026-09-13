@@ -10,6 +10,11 @@ out/
 target/
 # The compiled `collie` binary — built from the checkout, never committed.
 /bin/
+# `bun build --compile` writes its output here first and renames it into /bin/, leaving the temp file
+# behind on the way. Untracked, it made every build stamp the version `-dirty` — which on a fork that
+# merges upstream regularly is the one signal worth keeping honest: "is my tree clean?" has to mean
+# something before a merge.
+/.*.bun-build
 
 # Logs
 *.log
@@ -47,6 +52,10 @@ Thumbs.db
 .claude/*
 !.claude/settings.json
 !.claude/hooks/
+# Fork-only. `collie-upstream-sync` is the procedure for merging upstream into this fork, and it has
+# to travel with the fork it describes — a skill that lives only in a runtime root is one nobody
+# finds again after a reinstall. Both runtime roots symlink to it (see FORK.md).
+!.claude/skills/
 
 # The tracker lives in the collie-workspace repo, never here
 .tracker/
@@ -58,6 +67,10 @@ docs/bugs/
 
 # Local tooling scratch (browser-automation captures)
 .playwright-mcp/
+
+# Python bytecode from the skills that ship scripts.
+__pycache__/
+*.pyc
 
 # The browser tier's output: a screenshot and a trace kept only when a case fails, plus the HTML
 # report over them. Evidence for whoever reads the failure, never a baseline — the CI job uploads

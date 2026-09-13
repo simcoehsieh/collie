@@ -96,7 +96,10 @@ What your adapter must satisfy (all pinned by `describeAdapterConformance`):
 
 1. Every action key comes from `menuKeyFor` — the screen's own footer, nothing inferred. The only
    additions are the arrows the screen **advertised** (a highlight row for Up/Down, an `←/→ to <verb>`
-   row for Left/Right, whose leading text is the live value the arrows adjust).
+   row for Left/Right, whose leading text is the live value the arrows adjust) — and, in this fork's
+   Claude adapter, an `Enter` flagged `select` when a highlight row exists and the footer named no
+   Enter (the `/resume` picker), because a highlight you can move but never commit is a dead end.
+   Enter commits the visible highlight and nothing else; it is not the digit ADR 0009 bans.
 2. **Never a digit**, however tempting the numbered rows look —
    [ADR 0009](./.adr/0009-a-generic-menu-is-driven-by-the-keys-it-names.md) records why (in `/model`
    a digit confirms *and* rewrites the user's default).
