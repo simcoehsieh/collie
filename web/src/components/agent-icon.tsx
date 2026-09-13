@@ -23,8 +23,10 @@ function brandKey(agent: string): string | undefined {
 /**
  * A square "app icon" tile for an agent, rendered as inline SVG (CSP-safe, theme-independent — the
  * tile carries its own brand background so the mark reads on any UI theme). Falls back to a neutral
- * initials tile for agents we don't have a logo for, so unknown agents stay legible. Size comes from
- * `className` (e.g. `size-9`).
+ * monogram tile — the SAME svg, the same viewBox, the same `rx` — for agents we don't have a logo
+ * for, so a roster reads as one system rather than as a pile of logos. Size comes from `className`
+ * (e.g. `size-9`), and the shape holds at every one of them because the radius is drawn in the
+ * tile's own units.
  */
 export function AgentIcon({
   agent,
@@ -41,17 +43,65 @@ export function AgentIcon({
   const gradId = `agent-icon-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
 
   if (!brand) {
+    // FORK — THE FALLBACK IS THE SAME TILE, NOT A DIFFERENT COMPONENT.
+    //
+    // It was an HTML `<span>` with `rounded-md` and a border, and at the sizes this is actually
+    // drawn at that is not a squircle: `--radius-md` is a CONSTANT, so on a 16px tile it rounds
+    // nearly to a circle while the SVG brands beside it keep `rx="5.3"` of a 24-unit box — 22% of
+    // whatever they are drawn at. One column therefore held orange squircles, black squircles and a
+    // grey CIRCLE with letters in it, which reads as a different component rather than a roster.
+    //
+    // So the monogram is drawn the same way the brands are: same viewBox, same `rx`, same inset, so
+    // the shape is identical at every size by construction and cannot drift again. The border goes
+    // with it — no brand tile has one, and an edge on only the unknown agents is the same "this one
+    // is different" claim in a second channel. `--muted` / `--muted-foreground` because an agent we
+    // have no mark for should be quiet, not invented.
     return (
-      <span
-        className={cn(
-          "inline-flex shrink-0 items-center justify-center rounded-md border bg-muted text-[0.5em] font-semibold uppercase leading-none text-muted-foreground",
-          className,
-        )}
+      <svg
+        viewBox="0 0 24 24"
+        className={cn("shrink-0", className)}
         role="img"
         aria-label={agent ? `${agent} icon` : "agent icon"}
       >
-        {initials(agent ?? "")}
-      </span>
+        <rect width="24" height="24" rx="5.3" fill="var(--muted)" />
+        <text
+          x="12"
+          y="12"
+          textAnchor="middle"
+          dominantBaseline="central"
+          fill="var(--muted-foreground)"
+          fontSize="11"
+          fontWeight="600"
+          letterSpacing="0.3"
+        >
+          {initials(agent ?? "")}
+        </text>
+      </svg>
+    );
+  }
+
+  // ARTWORK, not a path — the same tile, the same inset, the same accessible name, so nothing about
+  // this component's contract changes for the one brand that has no vector source to take a path
+  // from (agent-icon-data.ts says why). `<image>` inside the SVG rather than a sibling `<img>`: the
+  // tile stays one element with one role, and the mark inherits the padding every other logo gets.
+  if (brand.kind === "image") {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        className={cn("shrink-0", className)}
+        role="img"
+        aria-label={`${agent} logo`}
+      >
+        <rect width="24" height="24" rx="5.3" fill={brand.bg} />
+        <image
+          href={brand.src}
+          x="4.6"
+          y="4.6"
+          width="14.8"
+          height="14.8"
+          preserveAspectRatio="xMidYMid meet"
+        />
+      </svg>
     );
   }
 

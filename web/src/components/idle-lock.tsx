@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { CollieMark } from "@/components/collie-mark";
+import { MeowMark } from "@/components/meow-mark";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
@@ -15,9 +15,10 @@ import { useLocale } from "@/hooks/use-locale";
 //
 // It leads with the Collie mark for a plain reason: this is the one screen in the app with no header,
 // no herd chrome and no nav, so without it a full-viewport panel is unattributable — it could be any
-// app that happened to be open. The mark is <CollieMark/> still, and never <DogGallop/>:
-// that sprite's rest frame is a full-stretch mid-stride pose that reads as "frozen mid-run", and this
-// screen is the app's most literal rest state. The paused state carries no `loading` — the pause is
+// app that happened to be open. The mark is <MeowMark/> still: the galloping sprite this replaced had
+// no rest frame that read as rest (its idle pose is a full-stretch mid-stride that looks frozen
+// mid-run), and this screen is the app's most literal rest state. It is deleted now, not merely
+// unused. The paused state carries no `loading` — the pause is
 // not work in flight; the catch-up refetch is, and it blooms the same mark (see below).
 //
 // No lock iconography and no "for safety" — the pause guards nothing (.adr/0007). Saying otherwise
@@ -63,7 +64,7 @@ export function IdleLock({ onUnlock, catchingUp = false }: IdleLockProps) {
               it would put a lighter, half-transparent layer between the mark and any colour we could
               name. */}
           <span className="grid size-20 shrink-0 place-items-center">
-            <CollieMark size={64} weight="header" loading={catchingUp} paper="var(--card)" />
+            <MeowMark size={64} weight="header" loading={catchingUp} paper="var(--card)" />
           </span>
           <span className="text-lg font-semibold tracking-tight">Collie</span>
         </div>

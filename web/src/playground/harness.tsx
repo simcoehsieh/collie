@@ -16,6 +16,7 @@ import { CrewProvider } from "@/components/crew-provider";
 import { StripHost } from "@/components/ui/strip-host";
 import { UpdateRibbon } from "@/components/update-ribbon";
 import { CONNECTION_LOST_MS, TROUBLE_MS } from "@/hooks/use-connection-lost";
+import { seedPaneView } from "@/hooks/use-display-prefs";
 import { __resetConnectionHealth, markLive } from "@/lib/connection-health";
 import { saveDraft } from "@/lib/drafts";
 import {
@@ -27,7 +28,8 @@ import {
   type CrewData,
   type PaneData,
 } from "@/lib/loaders";
-import { internScope, scopeFromUrl, scopeKey } from "@/lib/scope";
+// FORK: `paneScopeKey` is what `pinTerminal` below writes the terminal pin under.
+import { internScope, paneScopeKey, scopeFromUrl, scopeKey } from "@/lib/scope";
 import type { DeviceAuth } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { CrewRoute } from "@/routes/crew";
@@ -275,6 +277,12 @@ export function PaneRouter({
     // Undefined scope: this harness hands `AgentChat` no `scope`, so the composer below reads the
     // solo key, and that is the key this must write.
     if (draft !== undefined) saveDraft(undefined, fixture.pane.paneId, draft);
+    // FORK: pin this card to the TERMINAL. Every fixture on this page is a captured terminal
+    // screen and the whole page is about how those render; chat mode's default would open each
+    // card on a transcript it would have to go and fetch, which is both the wrong picture and a
+    // break of this function's own "no fetch anywhere" promise. Written through the real store for
+    // the same reason the draft above is.
+    pinTerminal(fixture);
     const data: HomeData = readOnly
       ? { ...home, device: { enforced: true, device: "kitchen-phone", authorized: false } }
       : home;
@@ -402,9 +410,20 @@ export function PaneStackRouter({
   );
 }
 
+/**
+ * FORK: this page's cards open on the TERMINAL, whatever chat mode's default is — see the call in
+ * {@link PaneRouter}. One helper, so the two mounts cannot drift.
+ */
+function pinTerminal(fixture: PaneFixture): void {
+  seedPaneView(paneScopeKey(undefined, fixture.pane.paneId), "terminal");
+}
+
 /** The stack card's pane, reading the live gate off the context above rather than frozen loader data. */
 function StackPane({ data, fixture }: { data: HomeData; fixture: PaneFixture }) {
   const device = useContext(StackDeviceContext) ?? data.device;
+  // In a state initialiser so it lands BEFORE the child reads its prefs on mount — the same
+  // ordering PaneRouter's draft seed relies on.
+  useState(() => pinTerminal(fixture));
   return (
     <AgentChat
       paneId={fixture.pane.paneId}

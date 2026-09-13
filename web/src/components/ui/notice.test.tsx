@@ -39,7 +39,7 @@ describe("Notice — the one notice surface", () => {
     const box = container.firstElementChild;
     expect(box).toHaveClass("min-h-[42px]");
     expect(box).toHaveClass("py-2");
-    expect(box).toHaveClass("rounded-sm"); // 2px, the house corner — DESIGN.md §3
+    expect(box).toHaveClass("rounded-lg"); // FORK: the soft container corner — DESIGN.md §3
     expect(box?.className).not.toMatch(/(?:^|\s)h-\d/);
     // The first-line slot the floor is derived from, so a lone line sits optically centred against
     // a 24px slot instead of top-heavy while a wrapping body still starts at the top.

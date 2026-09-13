@@ -85,7 +85,11 @@ function ChatInput({ className, ref, ...props }: React.ComponentProps<"textarea"
         // It does NOT touch the placeholder: `::placeholder` above still says `whitespace-nowrap`,
         // and `white-space` beats any `overflow-wrap` there is — nothing may wrap what may not have
         // a line break. The one-line, clipped placeholder contract above stands unchanged.
-        "field-sizing-content wrap-anywhere max-h-[min(10rem,30dvh)] min-h-11 w-full resize-none rounded-md border border-input bg-transparent px-3 py-2.5 text-base shadow-xs transition-[color,box-shadow] placeholder:overflow-hidden placeholder:whitespace-nowrap placeholder:text-muted-foreground focus-visible:border-ring focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50",
+        // FORK: a soft field (rounded-lg) with its edge drawn AT REST — `border-input` — and a lighter
+        // fill, so the box reads as a field before it is tapped; focus only recolours the edge.
+        // (The first cut had a transparent edge over a --muted fill, which on a dark phone read as
+        // an unframed grey slab until it was tapped. Reported, and the edge came back.)
+        "field-sizing-content wrap-anywhere max-h-[min(10rem,30dvh)] min-h-11 w-full resize-none rounded-lg border border-input bg-background/60 px-3.5 py-2.5 text-base transition-[color,box-shadow,background-color,border-color] placeholder:overflow-hidden placeholder:whitespace-nowrap placeholder:text-muted-foreground focus-visible:border-ring focus-visible:bg-background focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       {...props}

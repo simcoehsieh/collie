@@ -51,23 +51,22 @@
 :root {
   color-scheme: light dark;
 
-  /* 2px, not the stock 0.65rem, and it does not ramp. The radius descends from the mark: the mark
-     holds a disc and a traced line, and it holds no stadium and no soft-cornered box anywhere. A
-     corner is either a full circle (width == height — a dot, an avatar, the switch thumb) or it is
-     effectively square. 2px is the smallest radius that still reads as intentional rather than as a
-     rasterizer artefact, so it is the floor the whole surface sits on. The four derived steps below
-     are hard-set to the same 2px: the stock shadcn calc() ramp subtracts up to 4px, which at this
-     base computes negative and is invalid. */
-  --radius: 2px;
+  /* FORK (2026-09-10): the surface is ROUND now. Upstream pins every corner to 2px so nothing can
+     drift rounder than the mark; this fork trades that for a modern, soft surface — a real ramp
+     (8 / 12 / 16 / 20 / 24, see @theme below) where containers are softer than the controls inside
+     them and a pill is a pill. The base is the control radius; the ramp is spelled out in @theme. */
+  --radius: 12px;
   /* Light deviates from stock shadcn in two places, both measured rather than taste:
      --background is a step off white (stock has background == card == popover == pure white, so the
      entire dashboard hierarchy rests on one 1.26:1 hairline), and --muted-foreground is darkened
      for headroom (see below). oklch(0.97) rasterizes to rgb(245,245,245), which is exactly the
      terminal mirror's inverted background — so the mirror stops showing a seam against the page. */
-  --background: light-dark(oklch(0.97 0 0), oklch(0.145 0 0));
-  --foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
-  --card: light-dark(oklch(1 0 0), oklch(0.205 0 0));
-  --card-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+  /* FORK palette: cool-tinted neutrals (hue ~258, chroma <= 0.014) on both sides, one accent. The
+     status / host / ANSI palettes below are upstream's, measured, and untouched. */
+  --background: light-dark(oklch(0.965 0.005 255), oklch(0.17 0.012 262));
+  --foreground: light-dark(oklch(0.18 0.012 262), oklch(0.965 0.006 255));
+  --card: light-dark(oklch(1 0 0), oklch(0.22 0.014 262));
+  --card-foreground: light-dark(oklch(0.18 0.012 262), oklch(0.965 0.006 255));
   /* THE GROUND UNDER THE THUMB — the composer's chrome block, and nothing else. Chrome is normally
      the page colour separated by a rule (see --muted below), and that rule holds everywhere the
      chrome sits on the PAGE. It cannot hold here: this block sits on the terminal mirror, and in
@@ -79,7 +78,32 @@
      already had in light, where --card is pure white and would land 1.04:1 against the inverted
      mirror. One name, because it answers one question: what does chrome stand on when it cannot
      stand on the page. */
-  --chrome: light-dark(oklch(0.94 0 0), oklch(0.205 0 0));
+  --chrome: light-dark(oklch(0.935 0.007 255), oklch(0.21 0.014 262));
+  /* THE GROUND UNDER THE CHROME — a trough cut INTO --chrome, and the only one: the composer's
+     segmented row (Keys · Type · Quick · Agent). It is a token rather than a value in skin.css
+     because the two offered answers were both measured and both fail, and the measurement is the
+     reason this value exists at all:
+       · move --chrome one step up off --muted (they are byte-identical in light, #e6eaee, so the
+         `color-mix(--muted 70%)` the skin painted composited to exactly the ground and the
+         container did not exist). At oklch(0.955) chrome vs muted is 1.058 — but chrome vs the
+         INVERTED MIRROR it sits on goes 1.109 -> 1.048, i.e. it buys the trough by spending the
+         one step --chrome was created to hold (see its comment above). Declined.
+       · paint the container --secondary + a 1px --border ring. --secondary on --chrome measures
+         1.018 in light. That is not a step, it is the same bug spelled differently. Declined.
+     Every existing token near this lightness was measured the same way: --accent 1.067, --border
+     1.097, --muted 1.000. None clears 1.08, which is the floor this fork treats as "a real step"
+     (the mirror's own well is built to it, skin.css). So the trough is its own value, one notch
+     below every one of them in light and one notch DARKER than the page in dark — a trough is a
+     hole, and a hole is darker than the surface in both themes.
+
+     Rasterised: #dadee4 light, #0b0e14 dark.
+       vs --chrome        1.12 light · 1.09 dark   (the cut itself)
+       vs --control-on    1.06 light · 1.57 dark   (the ON tile inside it)
+       vs --card          1.35 light               (a white tile, if one is ever drawn here)
+       1px --border ring  1.10 light · 1.32 dark against --chrome
+     The light ON tile is separated by CHROMA and not by luminance, exactly as --control-on's own
+     comment argues: #cfe7ff is the one saturated thing in a neutral trough. */
+  --trough: light-dark(oklch(0.9 0.009 255), oklch(0.165 0.014 262));
   /* Pinned to --card, not a value of its own. `bg-popover` / `text-popover-foreground` appear ZERO
      times in src/ — Collie's floating layer is the BottomSheet (ui/sheet.tsx), which is
      `bg-background` over a `bg-black/50` scrim. The pair is kept rather than deleted only so a
@@ -87,8 +111,46 @@
      stock white; it is an alias, and there is no third paper behind it. */
   --popover: var(--card);
   --popover-foreground: var(--card-foreground);
-  --primary: light-dark(oklch(0.205 0 0), oklch(0.922 0 0));
-  --primary-foreground: light-dark(oklch(0.985 0 0), oklch(0.205 0 0));
+  /* ── THE ONE RULE FOR THE ACCENT (FORK, 2026-09-11) ────────────────────────────────────────
+     TONAL --control-on MARKS STATE; SOLID --primary MARKS THE ONE ACTION A SCREEN WANTS.
+
+     It is written here, above both tokens, because the app owns two ways of saying "this one" and
+     was using the loud one for both jobs. Counted across web/src/**\/*.tsx before the rule:
+     `bg-primary` 39, `text-primary` 26, `border-primary` 23, `bg-control-on` 2 — the tonal state
+     tint, whose light half is tuned by CHROMA precisely so a row of it does not shout, was drawn
+     in exactly one place. The cost was three different "selected" treatments within 250px of each
+     other on the pane screen (a solid pill in the spaces strip, a lighter tab in the tab strip, a
+     solid pill in the pane strip), status dots landing ON a solid accent — which the status block
+     below forbids outright for a chip — and a dashboard with no accent pixels at all, so the one
+     colour that should mean "do this" meant nothing on the screen the app opens on.
+
+     Reading the rule:
+       STATE is a thing that is currently true and that the operator toggled or arrived at — an open
+       dock, an armed mode, the selected pane, the current space, the active tab, the row you are
+       looking at. It is tonal: --control-on / --control-on-foreground, or a 2px inset rail in
+       --primary where a fill would put a chip on a coloured ground (the session switcher does this
+       already, and the status block below records that it moved there FOR CONTRAST and looked
+       better). A screen may carry many of these at once, which is exactly why they must be quiet.
+       ACTION is the one thing this screen is for: Send, "Tap to resume", the update CTA, the
+       primary button in a sheet. Solid --primary with --primary-foreground on it. At most one per
+       screen; a second one is the signal that the screen has not decided what it is for.
+
+     This block retunes the tokens only. The pill classes that spend them are screen files. */
+  /* THE accent — one, desaturated indigo-blue. Dark carries dark text on it (9:1), light white.
+     The two halves have to read as ONE colour wearing two clothes, and they did not: light was
+     oklch(0.5 0.17) = #145ec1, a saturated corporate blue, against dark's oklch(0.74 0.13) =
+     #76acfc, a pastel periwinkle. On a light screen a filled pill in it was the loudest object on
+     the page; on a dark screen the same element whispered. The chroma is what separates them — 0.17
+     against 0.13 — so light drops to 0.135 and takes 0.045 of lightness to pay for it:
+       before  #145ec1  6.02:1 under --primary-foreground (#fcfcfc)
+       after   #3a6fbd  4.89:1 under the same
+     Rasterised at DPR 1, both. 4.89 clears 4.5 with ~0.39 of headroom and no more, so this is the
+     floor of the move and not a waypoint: any further desaturation has to come out of lightness
+     going DOWN, not up. Dark is untouched and still carries dark ink at 8.40:1.
+     It pairs with the rule above — the accent stops being the app's largest fill, so the value no
+     longer has to survive being drawn across a whole pill row. */
+  --primary: light-dark(oklch(0.545 0.135 258), oklch(0.74 0.13 258));
+  --primary-foreground: light-dark(oklch(0.99 0 0), oklch(0.16 0.02 262));
   /* The "this control is ON" tint — a very light sky. Its own token pair rather than reusing
      --secondary because the two say different things: secondary is a quieter surface, this is a
      STATE, and the row needs the difference legible at a glance (an open dock, an armed mode). Kept
@@ -99,13 +161,30 @@
      makes it visible is that it is the one saturated thing in a neutral row. Don't "fix" that number
      by darkening it into a mid blue. Text on the tint is what has to clear a contrast bar, and does:
      7.3:1 light, 9.2:1 dark. */
-  --control-on: light-dark(oklch(0.9 0.06 235), oklch(0.32 0.05 240));
+  --control-on: light-dark(oklch(0.92 0.05 255), oklch(0.33 0.07 258));
   --control-on-foreground: light-dark(
-    oklch(0.38 0.12 245),
-    oklch(0.89 0.06 235)
+    oklch(0.4 0.14 258),
+    oklch(0.88 0.07 255)
   );
-  --secondary: light-dark(oklch(0.94 0 0), oklch(0.269 0 0));
-  --secondary-foreground: light-dark(oklch(0.205 0 0), oklch(0.985 0 0));
+  /* The ON state's own hover and press, which it did not have. composer.tsx pins
+     `hover:bg-control-on` to the resting tint on purpose — without it, hovering an already-on
+     control repaints it with the ghost variant's grey and reads as switching OFF under the cursor
+     — so the tint had exactly one value and an ON control gave no feedback at all on a desktop.
+     A state that cannot be pressed is the one thing it must not look like.
+
+     The step is taken in CHROMA and lightness together, downward, so hover and press move toward
+     the accent rather than toward grey — the opposite direction from the ghost variant's hover,
+     which is what made the old behaviour read as a toggle-off. Rasterised:
+       light  rest #cfe7ff · hover #c1dfff (1.08 off rest) · pressed #b5d7ff (1.17)
+       dark   rest #1d3559 · hover #25426d (1.22)          · pressed #2f5081 (1.52)
+     --control-on-foreground still clears its bar on every one of them: 7.36 / 6.80 / 6.29 light,
+     8.52 / 6.99 / 5.62 dark. The light steps are small by WCAG and that is the same fact the
+     resting tint records — at this lightness nothing that still reads as light sky measures more,
+     and a pointer that is ON the control supplies the other half of the signal. */
+  --control-on-hover: light-dark(oklch(0.895 0.062 255), oklch(0.38 0.082 258));
+  --control-on-pressed: light-dark(oklch(0.87 0.072 255), oklch(0.43 0.09 258));
+  --secondary: light-dark(oklch(0.93 0.008 255), oklch(0.27 0.016 262));
+  --secondary-foreground: light-dark(oklch(0.2 0.012 262), oklch(0.965 0.006 255));
   /* The INERT fill — a well, a disabled track, a quiet chip on a card. Value unchanged (rgb 235
      light / 38 dark), but its old job is gone: it used to be the chrome band behind the header,
      "a step BELOW --background so the band still reads as a distinct surface". The band existed
@@ -114,12 +193,12 @@
      properly, and chrome is now the page colour (app-header.tsx, settings.tsx, pack.tsx).
      Do NOT put --muted back behind chrome: on the pane screen it re-opens the seam --background's
      0.97 was chosen to close, and it is the worst ground a status chip has ever landed on. */
-  --muted: light-dark(oklch(0.94 0 0), oklch(0.269 0 0));
+  --muted: light-dark(oklch(0.935 0.007 255), oklch(0.265 0.016 262));
   /* Light was oklch(0.556) — 4.74:1 on white, i.e. zero headroom, so every /70, /80 and opacity-60
      derivative in the app fell under 3:1 while its dark counterpart passed. Darkened to buy that
      headroom back; the alpha modifiers on small text were dropped as well, since no token value
      rescues a /70. */
-  --muted-foreground: light-dark(oklch(0.48 0 0), oklch(0.708 0 0));
+  --muted-foreground: light-dark(oklch(0.48 0.018 258), oklch(0.71 0.018 258));
   /* Light --accent must be a real step off --background, not stock shadcn's 0.97. Stock is right
      only while background is pure white; 0.18.0 deliberately moved background to 0.97 (see above),
      which silently made accent === background — so every "this is the current one" highlight
@@ -127,15 +206,30 @@
      as nothing at all in light mode. It sits a step BELOW --muted (0.94), not between it and
      --background: the switcher needs three separable values — resting 0.97, hover (bg-muted/60)
      ~0.94, active 0.92 — and 0.94 would have collided the last two. */
-  --accent: light-dark(oklch(0.92 0 0), oklch(0.269 0 0));
-  --accent-foreground: light-dark(oklch(0.205 0 0), oklch(0.985 0 0));
-  --destructive: light-dark(
-    oklch(0.577 0.245 27.325),
-    oklch(0.704 0.191 22.216)
-  );
+  --accent: light-dark(oklch(0.915 0.01 255), oklch(0.3 0.018 262));
+  --accent-foreground: light-dark(oklch(0.2 0.012 262), oklch(0.965 0.006 255));
+  /* TWO REDS MEANS NEITHER ONE IS THE RED. This was stock shadcn — oklch(0.577 0.245 27.3), chroma
+     0.245, the most saturated value left in a palette whose stated rule is cool neutrals and one
+     desaturated accent — while `--status-blocked` light is oklch(0.46 0.2 25), a deep oxblood. They
+     appear on the same screen: "Close pane" in bright red over blocked rows in oxblood. Retuned
+     onto blocked's own hue and chroma, so destructive and blocked are the same red at two weights,
+     which is what they mean: blocked is the state, destructive is the act.
+       light  #e7000b -> #c21725   4.57:1 -> 5.84:1 under --destructive-foreground (#fafafa)
+       dark   #ff6467 -> #ff6a68   2.77:1 -> 2.68:1 under the same
+     Rasterised at DPR 1, both halves, both before and after.
+
+     THE DARK HALF DOES NOT CLEAR 4.5 AND DID NOT BEFORE, and that is recorded rather than papered
+     over. A near-black palette puts its red at L ~0.70 so it glows on the ground it sits on, and
+     white on it cannot reach 4.5 at any chroma that still reads as red; stock shipped 2.77 and this
+     ships 2.68, i.e. the move neither caused the problem nor fixed it. THE FIX IS ALREADY IN THIS
+     FILE, one token up: --primary's dark half carries DARK ink (8.40:1) rather than white, exactly
+     because dark palettes put their accents where white text cannot follow. The same ink on this
+     red measures 6.95:1. It is left as a proposal and not taken here, because this commit moves one
+     variable — the hue — and flipping every destructive button's text in dark is a second one. */
+  --destructive: light-dark(oklch(0.52 0.2 25), oklch(0.72 0.19 24));
   --destructive-foreground: light-dark(oklch(0.985 0 0), oklch(0.985 0 0));
-  --border: light-dark(oklch(0.922 0 0), oklch(1 0 0 / 12%));
-  --input: light-dark(oklch(0.922 0 0), oklch(1 0 0 / 15%));
+  --border: light-dark(oklch(0.905 0.008 255), oklch(1 0 0 / 10%));
+  --input: light-dark(oklch(0.89 0.01 255), oklch(1 0 0 / 14%));
   /* The STRUCTURAL line, and deliberately stronger than --border. --border draws one component's
      edge; --rule draws the cut between two regions of chrome — the header's bottom edge, a strip
      separator, the composer's top edge — where the whole job is to separate chrome from page
@@ -146,13 +240,21 @@
        --rule            1.34:1 light  ·  2.06:1 dark
      rgb(214) on rgb(245) light; white 24% over rgb(10) = rgb(69) dark. At 3x DPR on a phone that
      is a crisp 1px cut, which is the mark's own vocabulary — a cut, not a wash. */
-  --rule: light-dark(oklch(0.875 0 0), oklch(1 0 0 / 24%));
+  --rule: light-dark(oklch(0.87 0.01 255), oklch(1 0 0 / 16%));
   /* Light is darkened off stock shadcn (0.708 → 0.62): at 0.708 the focus ring measures 2.58:1 on
      white, under the 3:1 WCAG 1.4.11 floor for a non-text indicator — and components draw it at
      `ring-ring/50`, which halves that again. On an app whose buttons type into a live shell, a focus
      ring you can't locate is a real problem. Still worth an on-device look: even at 0.62 the /50
      variant is marginal. */
-  --ring: light-dark(oklch(0.62 0 0), oklch(0.556 0 0));
+  --ring: light-dark(oklch(0.55 0.15 258), oklch(0.7 0.13 258));
+  /* FORK: elevation. `light-dark()` takes colours only, so the INK is themed and the geometry is
+     shared. Light surfaces get a real soft shadow tinted toward the page hue; dark surfaces lean on
+     their border and the second layer collapses to nothing. */
+  --shadow-ink-1: light-dark(oklch(0.2 0.03 262 / 0.07), oklch(0 0 0 / 0.35));
+  --shadow-ink-2: light-dark(oklch(0.2 0.03 262 / 0.1), oklch(0 0 0 / 0));
+  --shadow-ink-float: light-dark(oklch(0.2 0.04 262 / 0.28), oklch(0 0 0 / 0.6));
+  --elev-1: 0 1px 2px var(--shadow-ink-1), 0 4px 14px -4px var(--shadow-ink-2);
+  --elev-float: 0 12px 40px -12px var(--shadow-ink-float);
 
   /* Agent lifecycle status palette — the app's primary at-a-glance signal, so both halves are
      tuned against their own ground rather than one set being reused. The dark values glow on
@@ -225,6 +327,59 @@
      idle 154,170,186 and unknown 139,154,171. */
   --status-idle: light-dark(oklch(0.45 0.02 250), oklch(0.73 0.03 250));
   --status-unknown: light-dark(oklch(0.43 0.02 250), oklch(0.68 0.03 250));
+
+  /* ── THE MARK HALF OF THE STATUS PALETTE ────────────────────────────────────────────────────
+     FORK (2026-09-11). The block above ends "if that costs the dashboard its glance-ability
+     outdoors, the fallback is splitting fill and text into separate tokens." It cost it, and this
+     is that fallback taken: `--status-X` stays the TEXT value, tuned for 4.5:1 on a chip;
+     `--status-X-mark` is the same state drawn as an 8px disc, a hollow ring or a 6px progress
+     fill, where the only question is whether the operator can find it across a room.
+
+     WHY THE TEXT VALUES CANNOT DO BOTH JOBS. Rasterised, light `working` is #804a00 — a brown —
+     `done` is #006a29, a forest green, and `blocked` is #ac0010, an oxblood. Those are correct
+     for a word and wrong for a dot: at 8px hue is all that survives (status-badge.tsx's StatusWord
+     comment measures how little), and a hue at L 0.45 has no chroma left to carry it. Light and
+     dark therefore read as two different products — the dark halves already glow, because they
+     were tuned against near-black where "clears 4.5:1" and "glows" are the same instruction.
+
+     SO ONLY THE LIGHT HALVES MOVED. Each keeps its hue exactly (25 / 72 / 152 / 250) and gains
+     lightness and chroma; the dark halves are the values above restated verbatim, which is why
+     nothing in dark changes by a pixel. They are restated rather than aliased through `var()`
+     because a nested `light-dark()` is not something to bet a palette on.
+
+     RASTERISED, not arithmetic — same method as the table above, each cell painted by the browser
+     at DPR 1 and the pixel read back. A mark is a SOLID, so these are the plain ratios and not the
+     chip's /15 wash:
+
+       mark        light hex   on --background  on --card    (dark hex   on --bg  on --card)
+       blocked     #d93539       4.21             4.65        #ff5e5e     6.40     5.77
+       working     #e48f00       2.31             2.55        #f4b93c    10.81     9.75
+       done        #1a9951       3.33             3.67        #4ac777     8.87     8.00
+       idle        #6f7c89       3.87             4.27        #9aaaba     8.06     7.27
+       unknown     #677380       4.38             4.84        #8b9aab     6.67     6.01
+
+     `working` IS THE ONE CELL UNDER 3:1, and it is under it deliberately. Hue 72 is amber, and
+     amber's identity is high luminance: measured on this hue, reaching 3:1 against the page needs
+     L <= 0.635, which rasterises to #c37700 — a brown-orange, i.e. the exact failure this token
+     exists to fix. The floor it misses is WCAG 1.4.11, which binds a graphic REQUIRED to
+     understand the content, and this dot is not one: every place it is drawn either carries the
+     word beside it (StatusWordSlot) or is one of several encodings of the same fact, which is
+     status-badge.tsx's own argument for why the word exists at all. index.css already makes the
+     matching case one block up, for --control-on: a value can be found by CHROMA rather than by
+     luminance when it is the only saturated thing in a neutral row.
+
+     THE RESTING PAIR GOT QUIETER, NOT LOUDER, AND THAT IS THE POINT. idle/unknown are drawn as
+     HOLLOW RINGS (status-badge.tsx RESTING), so lifting them lightens the ring while the three
+     active states brighten — the gap between "something is happening" and "nothing is" widens in
+     both directions at once.
+
+     NO `--status-info-mark`: nothing in the app draws an info dot or an info fill. The one
+     surface that uses `--status-info` is the prerelease strip, which is text on a wash. */
+  --status-blocked-mark: light-dark(oklch(0.585 0.2 25), oklch(0.7 0.2 24));
+  --status-working-mark: light-dark(oklch(0.72 0.17 72), oklch(0.82 0.15 82));
+  --status-done-mark: light-dark(oklch(0.6 0.15 152), oklch(0.74 0.16 152));
+  --status-idle-mark: light-dark(oklch(0.58 0.025 250), oklch(0.73 0.03 250));
+  --status-unknown-mark: light-dark(oklch(0.55 0.025 250), oklch(0.68 0.03 250));
 
   /* Calm-info sky blue — same shape as the lifecycle palette above (dark brighter to glow on
      near-black). It is the palette's tightest light value: on the old rgb(235) header band its chip
@@ -325,26 +480,32 @@
 }
 
 @theme inline {
-  /* One radius, four names. There is no ramp to walk: sm/md/lg/xl all resolve to the same 2px, so
-     `rounded-md` and `rounded-xl` are the same corner and no component can drift rounder than its
-     neighbour by picking a bigger step. Written out rather than left as calc(): at --radius: 2px
-     the stock `- 2px` and `- 4px` forms compute 0 and -2px, and a negative radius is invalid. */
-  --radius-sm: 2px;
-  --radius-md: 2px;
-  --radius-lg: 2px;
-  --radius-xl: 2px;
+  /* FORK: a real ramp. Inner controls (sm/md) sit tighter than the containers that hold them
+     (lg/xl/2xl), so a button inside a card reads as nested rather than as a second card. */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius-3xl: 28px;
+
+  --shadow-card: var(--elev-1);
+  --shadow-float: var(--elev-float);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-chrome: var(--chrome);
+  --color-trough: var(--trough);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-control-on: var(--control-on);
   --color-control-on-foreground: var(--control-on-foreground);
+  --color-control-on-hover: var(--control-on-hover);
+  --color-control-on-pressed: var(--control-on-pressed);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -364,6 +525,13 @@
   --color-status-idle: var(--status-idle);
   --color-status-unknown: var(--status-unknown);
   --color-status-info: var(--status-info);
+
+  /* FORK: the fill half of the same five states — `bg-status-X-mark`, `border-status-X-mark`. */
+  --color-status-blocked-mark: var(--status-blocked-mark);
+  --color-status-working-mark: var(--status-working-mark);
+  --color-status-done-mark: var(--status-done-mark);
+  --color-status-idle-mark: var(--status-idle-mark);
+  --color-status-unknown-mark: var(--status-unknown-mark);
 
   --color-host-0: var(--host-0);
   --color-host-1: var(--host-1);
@@ -386,9 +554,12 @@
      gets, which is why it is still spelled here and not behind a class. The `:root.font-*` blocks
      below hold the others. See the @font-face block for what "chrome only" means and why the
      stand-in family in the middle of the stack is not optional. */
+  /* FORK: the DEFAULT is the phone's own interface face (SF on iOS, Roboto on Android, Segoe on
+     Windows) — the modern-app voice, and zero bytes on the critical path. Aldrich stays shipped and
+     is an opt-in class now, `:root.font-aldrich`, exactly as Space Grotesk always was. */
   --font-sans:
-    "Aldrich", "Aldrich Fallback", ui-sans-serif, system-ui, -apple-system,
-    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
 
   /* The CONTENT stack: exactly what the app rendered in before the UI typeface arrived. Anything an
      agent or a machine authored wears this, so the custom face never dresses someone else's words
@@ -586,6 +757,12 @@
     "Helvetica Neue", Arial, "Noto Sans", sans-serif;
   --default-font-family: var(--font-sans);
 }
+:root.font-aldrich {
+  --font-sans:
+    "Aldrich", "Aldrich Fallback", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --default-font-family: var(--font-sans);
+}
 :root.font-grotesk {
   --font-sans:
     "Space Grotesk", "Space Grotesk Fallback", ui-sans-serif, system-ui,
@@ -639,46 +816,114 @@
   }
 }
 
+/* ── THE APP'S FULL-SCREEN BOX ───────────────────────────────────────────────────────────────────
+   Every shell that paints a whole screen (the router root, the boot splash, the error screens)
+   states its height here rather than in a `h-[100dvh]` utility, so there is ONE place to change
+   when a platform disagrees about what a screen is — and one has.
+
+   THE SHELL IS ALWAYS EXACTLY THE VIEWPORT, and after two wrong turns that is not a default, it is
+   the conclusion. On the operator's iPhone 15 Pro home-screen web app the page measured:
+
+     innerHeight 793 · clientHeight 793 · screen 393x852
+     dvh 793 · lvh 852 · svh 793 · env top 59 bottom 34
+
+   and a 59pt band of dead page colour stood above the home indicator. `lvh` looked like the number
+   that knew better, so the shell was given `100dvh` plus `lvh - svh`. It measured 852, and the
+   composer went OFF THE BOTTOM OF THE SCREEN — which is the proof that settles it: the page cannot
+   paint into that band. 793 is the whole of what the page is given, `dvh` was right all along, and
+   anything taller is content the operator cannot reach.
+
+   So the band is not the shell's to fill, and the cause is upstream of CSS — see index.html, where
+   `viewport-fit=cover` is now gone (and the status-bar style with it): the layout viewport was
+   already sized for an INSET web view (852 − 59 = 793) while cover was still asking for the page to
+   be placed under the status bar, and the letterbox is the difference between those two answers.
+   Without cover the web view is inset for real, every `env()` reads 0, and the OS paints the bands
+   it is reserving — which is the same chrome in the same place, drawn by its owner.
+
+   ANY future attempt here must keep one invariant: the shell may never be taller than the viewport
+   the browser reports, because the composer lives at its bottom edge and the document does not
+   scroll. A cosmetic band is a nuisance; an unreachable Send button is not. */
+.app-viewport {
+  height: 100dvh;
+}
+
+/* ── ON A TOUCH DEVICE THE CHROME IS NOT SELECTABLE ──────────────────────────────────────────────
+   Reported twice from the operator's phone: a long-press on the tab strip's "+" started a full-page
+   selection. Both earlier fixes were correct and neither was enough, and the reason is worth stating
+   because it is the opposite of the obvious model:
+
+     iOS does not give up when the pressed element is unselectable. It walks UP for the nearest
+     SELECTABLE ancestor and starts the selection there.
+
+   So `select-none` on the button did nothing but move the selection one level out, and `select-none`
+   on the scroller moved it out again — the walk does not stop at an unselectable ancestor, it stops
+   at a selectable one, and above the strip sat the whole app. The only place that rule ends is a
+   root that is itself unselectable, so that is where this goes.
+
+   INVERTED, AND THAT IS THE POINT: chrome is not selectable, CONTENT is. `pre` and `code` are the
+   terminal mirror, the transcript, the markdown blocks and the updater's log tail — everything an
+   operator copies out of this app — and `[data-selectable]` is the escape hatch for the handful of
+   spans that are content in a chrome-shaped box (the build stamp's git hash). Form controls are
+   listed for Safari's sake, where an inherited `none` has historically reached inside them.
+
+   SCOPED TO TOUCH. This is a phone problem — a mouse selects deliberately, and taking that away on
+   the desktop would cost something real for nothing. `(hover: none) and (pointer: coarse)` is the
+   pair that means "no mouse", rather than a width guess that a tablet or a narrow window fails. */
+@media (hover: none) and (pointer: coarse) {
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  pre,
+  code,
+  input,
+  textarea,
+  [data-selectable] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+/* ── THE BOTTOM RESERVE ──────────────────────────────────────────────────────────────────────────
+   The band the home indicator sits in, as ONE token, because on this app's own target the platform
+   cannot report it.
+
+   `env(safe-area-inset-bottom)` is the right answer everywhere it has one — and without
+   `viewport-fit=cover` it has none BY DEFINITION: every inset reads 0, since the contract of the
+   default `viewport-fit` is that the viewport is already inside the safe area. iOS 26 does not
+   honour the bottom half of that contract. Measured on the operator's iPhone 15 Pro home-screen web
+   app after cover came off: `env` top 0 bottom 0, the letterbox gone — and the composer's last row
+   running under the home indicator, invisible in a screenshot (the framebuffer has the pixels) and
+   plainly cut on the glass. The page is inset from the status bar and placed hard against the
+   physical bottom edge.
+
+   So in STANDALONE the reserve has a floor of 34px — Apple's own bottom safe-area inset in portrait,
+   which is what every native app leaves and therefore what "normal" looks like. Outside standalone
+   the platform's number stands alone: a browser tab has its own toolbar over that band, and
+   `max()` keeps a real inset winning wherever one is reported (including a future iOS that reports
+   it here again).
+
+   THE FLOOR IS A CONSTANT AND THAT IS A LIABILITY, stated rather than hidden: it is right for an
+   iPhone with a home indicator and it is 34px of waste on a standalone install that has none. This
+   fork's only standalone client is that phone. If that stops being true, this has to become a
+   measurement rather than a number. */
+:root {
+  --safe-bottom: env(safe-area-inset-bottom);
+}
+
+@media (display-mode: standalone) {
+  :root {
+    --safe-bottom: max(env(safe-area-inset-bottom), 34px);
+  }
+}
+
 /* We don't use view transitions (removed). But React Router can still fire document.startViewTransition
    on a revalidation for a device carrying a stale persisted transition map from an older build (see
    router.tsx). Keep the whole document unnamed so any such stray transition captures nothing and swaps
    instantly — no full-page crossfade flicker. This is a no-op-izing safety net, not a transition. */
 :root {
   view-transition-name: none;
-}
-
-/* ── Collie gallop loader ────────────────────────────────────────────────────────────────────────
-   The mascot as the app's activity indicator (components/dog-gallop.tsx). A horizontal sprite strip
-   — public/dog-gallop.png, 768×128 = six 128px cells — stepped through with steps(6): one frame per
-   step, GPU-cheap, no JS. `--dog-size` sets the square render size AND scales the sprite so a frame
-   is exactly one box wide; the strip is 6 boxes wide, so the box shows one frame. The keyframe walks
-   background-position left by the full strip width; steps(6) jump-end holds each frame's start, so it
-   cycles frames 0→5 and never lands on the off-screen 6th position. Idle rests on frame 0. */
-.dog-gallop {
-  --dog-size: 1.5rem;
-  --dog-frames: 6;
-  display: inline-block;
-  flex: none;
-  width: var(--dog-size);
-  height: var(--dog-size);
-  background-image: url("/dog-gallop.png");
-  background-repeat: no-repeat;
-  background-position: 0 0;
-  background-size: calc(var(--dog-frames) * var(--dog-size)) var(--dog-size);
-}
-.dog-gallop--running {
-  animation: dog-gallop 0.6s steps(6) infinite;
-}
-@keyframes dog-gallop {
-  to {
-    background-position: calc(-1 * var(--dog-frames) * var(--dog-size)) 0;
-  }
-}
-/* Respect reduced motion: hold the rest frame instead of galloping. */
-@media (prefers-reduced-motion: reduce) {
-  .dog-gallop--running {
-    animation: none;
-  }
 }
 
 /* Submission progress bar — a slim indeterminate strip across the very top of the viewport while a

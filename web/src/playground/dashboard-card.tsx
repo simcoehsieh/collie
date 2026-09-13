@@ -103,7 +103,7 @@ function RowList() {
         {/* The real heading component. Labelled "Panes" rather than "Working" because this frame
             deliberately holds all four triage buckets in one run — the row is the subject here, not
             the sectioning. */}
-        <SectionHeader label="Panes" count={ROWS.length} dot="bg-status-working" />
+        <SectionHeader label="Panes" count={ROWS.length} dot="bg-status-working-mark" />
         <ListGroup>
           {ROWS.map((a) => (
             <AgentCard

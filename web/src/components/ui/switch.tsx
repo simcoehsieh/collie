@@ -23,7 +23,8 @@ function Switch({ checked, onCheckedChange, disabled, id, ...rest }: SwitchProps
       className={cn(
         // The track is 24×44 — wider than it is tall, so it is a stadium, and `rounded-full` on a
         // stadium is reserved shape this language does not spend. 2px, like every other box.
-        "relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50",
+        // FORK: the track is a stadium (`rounded-full`), the toggle idiom every phone OS uses.
+        "relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50",
         // The OFF track needs real contrast against the card it sits on, or you can't read your own
         // settings: `bg-muted` is 1.09:1 on a white card, and the thumb is white on top of that —
         // a white blob on white, legible only by its shadow. WCAG 1.4.11 wants 3:1 for state.
@@ -41,7 +42,7 @@ function Switch({ checked, onCheckedChange, disabled, id, ...rest }: SwitchProps
         // sideways on every flip. Same box in both states, no hop.
         checked
           ? "border-2 border-transparent bg-primary"
-          : "border-2 border-muted-foreground bg-muted",
+          : "border-2 border-transparent bg-muted-foreground/35",
       )}
       {...rest}
     >
@@ -49,11 +50,12 @@ function Switch({ checked, onCheckedChange, disabled, id, ...rest }: SwitchProps
         className={cn(
           // The thumb is the one full-round shape here, and it earns it: size-5 is square, so this
           // is a disc, not a stadium.
-          "inline-block size-5 transform rounded-full bg-background shadow transition-transform",
+          "inline-block size-6 transform rounded-full bg-white shadow-[0_1px_3px_rgb(0_0_0/0.35)] transition-transform duration-200 ease-out",
           // Measured against the CONTENT box, which the always-present 2px border insets on both
           // sides: the box is 40px wide and the thumb is 20px, so 0 and 1.25rem park it flush left
           // and flush right with an even 2px of track showing either side. The old 1.375rem was
           // measured against a borderless checked track and now overshoots by 2px.
+          // Content box is 44px wide (48 − 2×2 border) and the thumb 24px, so 0 / 1.25rem park it flush.
           checked ? "translate-x-[1.25rem]" : "translate-x-0",
         )}
       />

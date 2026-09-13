@@ -79,10 +79,16 @@ export function Chip({ label, active, ring, status, onClick, onLongPress, onTapA
         // that takes the drawn 34px box to a 46px TOUCH box. min-w-11 is the same floor in the other
         // axis: every chip but "All" is already past 44px wide, and "All" measured 43.
         STRIP_TAP_TARGET,
-        "flex min-w-11 shrink-0 select-none items-center justify-center gap-1.5 [-webkit-touch-callout:none] whitespace-nowrap rounded-md border border-transparent px-3 py-1.5 text-sm font-medium transition-colors active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        // FORK: a chip is a PILL here — `rounded-full`, the modern strip idiom. Upstream reserves the
+        // stadium; this fork spends it on exactly the shape that wants it.
+        "flex min-w-11 shrink-0 select-none items-center justify-center gap-1.5 [-webkit-touch-callout:none] whitespace-nowrap rounded-full border border-transparent px-3.5 py-1.5 text-sm font-medium transition-[background-color,color,transform] duration-150 active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        // FORK: SELECTED IS TONAL, NOT SOLID — see pane-strip.tsx's own note for the argument. The
+        // chip and the pane pill are one control at three levels (space › tab › pane), so they
+        // answer "selected" with one language or none. No `shadow-card` either: an elevation under
+        // a tint reads as a second, competing signal where the fill alone already says it.
         active
-          ? "bg-primary text-primary-foreground"
-          : "bg-muted text-muted-foreground hover:bg-muted/70",
+          ? "bg-control-on text-control-on-foreground"
+          : "bg-muted text-muted-foreground hover:bg-accent hover:text-foreground",
         ring && !active && "border-primary/40",
       )}
     >
@@ -91,7 +97,7 @@ export function Chip({ label, active, ring, status, onClick, onLongPress, onTapA
           {/* A hollow resting dot is filled with the chip's own fill, which differs when active. */}
           <StatusDot
             status={TRIAGE_STATUS[status]}
-            surface={active ? "bg-primary" : "bg-muted"}
+            surface={active ? "bg-control-on" : "bg-muted"}
             className="size-2"
           />
           {/* The dot is colour-only; say it in words for screen readers. */}

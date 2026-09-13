@@ -206,7 +206,7 @@ export function BottomSheet({
         aria-hidden="true"
         tabIndex={-1}
         className={cn(
-          "absolute inset-0 bg-black/50",
+          "absolute inset-0 bg-black/55 backdrop-blur-[2px]",
           !peeking && !continuingFromPeek && "duration-200 animate-in fade-in",
         )}
         style={peeking ? { opacity: Math.min(1, pull / 120) * 0.5 } : undefined}
@@ -241,12 +241,13 @@ export function BottomSheet({
           // floating layer at. The BACKDROP above stays `absolute inset-0` — the dim is the whole
           // screen or it is not a dim. Without this the panel spanned the whole viewport, 1366px on
           // a landscape 13-inch iPad, for rows that were drawn for a phone.
-          "relative z-10 mx-auto max-h-[82dvh] w-full max-w-screen-sm overflow-y-auto overscroll-contain rounded-t-md border-t border-rule bg-card shadow-2xl",
+          // FORK: `rounded-t-3xl` — a floating sheet with soft top corners, the phone idiom.
+          "relative z-10 mx-auto max-h-[82dvh] w-full max-w-screen-sm overflow-y-auto overscroll-contain rounded-t-3xl border-t border-rule bg-card shadow-float",
           // The slide-in entrance plays on a fresh open only. A peek has no entrance (it's tracking
           // the finger, not animating), and a drag that continues into an open gets its own 180ms
           // transform transition above rather than restarting from the keyframe's own 100%.
           !peeking && !continuingFromPeek && "duration-200 animate-in slide-in-from-bottom",
-          "pb-[calc(env(safe-area-inset-bottom)_+_1rem)]",
+          "pb-[calc(var(--safe-bottom)_+_1rem)]",
           className,
         )}
       >
@@ -254,7 +255,7 @@ export function BottomSheet({
           {/* Grab handle — pull down (from anywhere at the top) to dismiss. */}
           <div className="flex justify-center pt-2 pb-1">
             {/* 4px tall, 36px wide — a stadium, so it takes the house 2px rather than full-round. */}
-            <span className="h-1 w-9 rounded-md bg-muted-foreground/40" />
+            <span className="h-1.5 w-10 rounded-full bg-muted-foreground/35" />
           </div>
           <div data-slot="sheet-title-row" className="flex items-center justify-between px-4 pb-3">
             <span
@@ -349,7 +350,7 @@ export function SideSheet({
         className={cn(
           // Same ground and same edge as the bottom sheet above, for the same reason — one panel
           // surface app-wide, raised off the page rather than painted in the page's own colour.
-          "relative z-10 flex h-full w-[86%] max-w-sm flex-col border-r border-rule bg-card shadow-2xl duration-200 animate-in slide-in-from-left",
+          "relative z-10 flex h-full w-[86%] max-w-sm flex-col rounded-r-3xl border-r border-rule bg-card shadow-float duration-200 animate-in slide-in-from-left",
           className,
         )}
       >
@@ -372,7 +373,7 @@ export function SideSheet({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</div>
         {footer && (
-          <div className="shrink-0 border-t border-rule px-3 py-2 pb-[calc(env(safe-area-inset-bottom)_+_0.5rem)]">
+          <div className="shrink-0 border-t border-rule px-3 py-2 pb-[calc(var(--safe-bottom)_+_0.5rem)]">
             {footer}
           </div>
         )}

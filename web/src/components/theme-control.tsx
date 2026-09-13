@@ -60,11 +60,20 @@ export function ThemeControl() {
               className={cn(
                 // min-h-11 = 44px, the iOS/Android comfort target rather than the 24px AA floor.
                 "flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                // Selected is a filled pill, not a tint: `bg-secondary` on a white card is 1.09:1,
+                // Selected is a FILL, not a hairline tint: `bg-secondary` on a white card is 1.09:1,
                 // so the fill has to carry the selection on its own. `font-medium` is therefore
                 // unconditional: bold glyphs are wider, so putting the weight on at selection made
                 // the label grow inside its own button and the icon beside it slide.
-                selected ? "bg-primary text-primary-foreground" : "text-muted-foreground active:bg-muted",
+                //
+                // FORK: the fill is `--control-on`, not `--primary`. This is a segmented control —
+                // one of three mutually exclusive states, none of which is an action — and solid
+                // primary on a Settings card made the theme row shout louder than every actual
+                // button on the page. --control-on is the token written for exactly this ("a row of
+                // grey controls where one is on", index.css), and its foreground clears 7.3:1 light
+                // / 9.2:1 dark, so nothing is lost but the volume.
+                selected
+                  ? "bg-control-on text-control-on-foreground"
+                  : "text-muted-foreground active:bg-muted",
               )}
             >
               <option.icon className="size-4 shrink-0" />

@@ -4,7 +4,8 @@
 
 import { AlphaBar } from "@/components/alpha-bar";
 import { AppHeaderHost, RouteHeader, SettingsGear } from "@/components/app-header";
-import { CollieMark } from "@/components/collie-mark";
+// FORK: the mark this install wears is the cat; collie-mark.tsx stays as shipped, just unimported.
+import { MeowMark, type MarkState } from "@/components/meow-mark";
 import { homeSolo } from "../fixtures";
 import { Card, Group, RootRouter, Section, Stage, type SectionDef } from "../harness";
 import { TypefaceCard } from "../typeface-card";
@@ -36,6 +37,11 @@ export function BrandSection() {
               <MarkSample size={40} weight="header" loading />
               <MarkSample size={64} weight="header" loading={false} />
               <MarkSample size={64} weight="header" loading />
+              {/* FORK: the herd states the header drives off `worstTriage` (C-3). */}
+              <MarkSample size={40} weight="header" loading={false} herd="blocked" />
+              <MarkSample size={64} weight="header" loading={false} herd="blocked" />
+              <MarkSample size={40} weight="header" loading={false} herd="done" />
+              <MarkSample size={64} weight="header" loading={false} herd="done" />
             </div>
           </Stage>
         </Card>
@@ -148,25 +154,34 @@ function MarkSample({
   size,
   weight,
   loading,
+  herd,
   muted = false,
 }: {
   size: number;
   weight: "full" | "header";
   loading: boolean;
+  /** FORK: the herd states the header drives (C-3). `blocked` and `done` cannot be auditioned any
+   *  other way — `done` in particular runs once and never loops, so a page that cannot re-mount it
+   *  is a page that cannot show it. Named `herd` rather than MeowMark's own `state` on purpose: the
+   *  handle roll call (`e2e/handles.spec.ts`, `app.test.tsx`) reads every `state="…"` in this tree
+   *  as a Card handle, and `state="blocked"` here would be a handle no card carries. */
+  herd?: MarkState;
   muted?: boolean;
 }) {
   return (
     <div className="flex flex-col items-center gap-1.5">
-      <CollieMark
+      <MeowMark
         size={size}
         weight={weight}
         loading={loading}
+        state={herd}
         paper="var(--background)"
         className={muted ? "opacity-40 grayscale" : undefined}
       />
       <span className="font-mono text-[10px] text-muted-foreground">
         {size} {weight}
         {loading ? " loading" : ""}
+        {herd !== undefined && herd !== "idle" ? ` ${herd}` : ""}
         {muted ? " muted" : ""}
       </span>
     </div>

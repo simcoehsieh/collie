@@ -102,7 +102,7 @@ const accentIds = Object.keys(ACCENTS) as AccentId[];
 
 export const ACCENT_IDS: readonly AccentId[] = accentIds;
 
-let face: FaceId = "aldrich"; // the app's shipped default, so the page opens in its real dress
+let face: FaceId = "system"; // the app's shipped default (fork), so the page opens in its real dress
 let accent: AccentId = "default";
 const listeners = new Set<() => void>();
 

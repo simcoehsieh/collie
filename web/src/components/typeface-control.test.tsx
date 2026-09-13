@@ -44,7 +44,7 @@ describe("TypefaceControl", () => {
       "Space Grotesk",
       "Aldrich",
     ]);
-    expect(select).toHaveValue("aldrich");
+    expect(select).toHaveValue("system");
     // The default wears no class — that is what keeps JavaScript off the first-paint path for a
     // device that never opens this card.
     expect(document.documentElement.className).toBe("");
@@ -67,9 +67,9 @@ describe("TypefaceControl", () => {
     render(<TypefaceControl />);
 
     const select = await screen.findByLabelText("Family");
-    await user.selectOptions(select, "system");
-    expect(document.documentElement).toHaveClass("font-system");
     await user.selectOptions(select, "aldrich");
+    expect(document.documentElement).toHaveClass("font-aldrich");
+    await user.selectOptions(select, "system");
     expect(document.documentElement.className).toBe("");
   });
 
@@ -118,7 +118,7 @@ describe("TypefaceControl", () => {
     config({});
     render(<TypefaceControl />);
 
-    expect(await screen.findByLabelText("Family")).toHaveValue("aldrich");
+    expect(await screen.findByLabelText("Family")).toHaveValue("system");
     expect(designPrefs().font).toBe("op:gone.woff2");
     expect(localStorage.getItem(STORAGE_KEY)).toContain("op:gone.woff2");
   });

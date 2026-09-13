@@ -88,21 +88,22 @@ describe("the UI typefaces", () => {
   // Order is the whole mechanism: webfont, then the metric-matched stand-in, then the plain system
   // stack. Put the stand-in last and it never renders; leave it out and the swap reflows.
   it("puts the stand-in between the webfont and the plain system stack", () => {
+    // FORK: the default stack is the plain system one; the webfont stacks sit behind root classes.
     const stack = /--font-sans:\s*([\s\S]*?);/.exec(css)?.[1] ?? "";
-    expect(stack).toMatch(/^\s*"Aldrich",\s*"Aldrich Fallback",/);
+    expect(stack).not.toContain("Aldrich");
     expect(stack).toContain("system-ui");
+    const aldrich = /:root\.font-aldrich\s*\{[\s\S]*?--font-sans:\s*([\s\S]*?);/.exec(css)?.[1] ?? "";
+    expect(aldrich).toMatch(/^\s*"Aldrich",\s*"Aldrich Fallback",/);
+    expect(aldrich).toContain("system-ui");
   });
 
   // `crossorigin` is not optional on a font preload, even same-origin: fonts are fetched in CORS
   // mode, and without it the browser downloads the file twice and preloads nothing useful.
   // The DEFAULT face only. Preloading a face most devices never render would spend everyone's first
   // paint on a minority — an opt-in face is fetched when someone opts in.
-  it("preloads the default face from index.html, with crossorigin", () => {
-    const preload = /<link\s+rel="preload"[\s\S]*?\/>/.exec(html)?.[0] ?? "";
-    expect(preload).toContain(DEFAULT_UI_FONT_URL);
-    expect(preload).toContain('as="font"');
-    expect(preload).toContain('type="font/woff2"');
-    expect(preload).toContain("crossorigin");
+  // FORK: the default face is the system one, so no font may sit on the critical path.
+  it("preloads no font from index.html", () => {
+    expect(html).not.toMatch(/<link\s+rel="preload"[^>]*as="font"/);
   });
 
   // The boot splash paints before index.css exists, and its caption is the same string at the same
@@ -122,7 +123,7 @@ describe("the UI typefaces", () => {
   // The splash resolves --font-sans, so the root-class blocks have to be mirrored into it or the
   // face declared above is never actually selected for the caption.
   it("mirrors the typeface root classes into the boot splash", () => {
-    expect(html).toContain(":root.font-system");
+    expect(html).toContain(":root.font-aldrich");
     expect(html).toContain(":root.font-grotesk");
   });
 
@@ -130,8 +131,10 @@ describe("the UI typefaces", () => {
     // 27 KB today. The two symbol faces are 641 KB and 504 KB and are lazy behind `unicode-range`;
     // this one is not, so a candidate that cannot be subset under ~60 KB is the wrong candidate.
     // Only the DEFAULT is held to this: an opt-in face is not on anybody's first paint.
-    const bytes = statSync(resolve(root, `public${DEFAULT_UI_FONT_URL}`)).size;
-    expect(bytes).toBeLessThan(60 * 1024);
+    for (const url of UI_FONT_URLS) {
+      const bytes = statSync(resolve(root, `public${url}`)).size;
+      expect(bytes, url).toBeLessThan(60 * 1024);
+    }
   });
 });
 

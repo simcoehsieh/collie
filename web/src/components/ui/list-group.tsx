@@ -36,7 +36,7 @@ function ListGroup({
   return (
     <Comp
       data-slot="list-group"
-      className={cn("flex flex-col divide-y divide-border rounded-sm border border-rule", className)}
+      className={cn("flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-card shadow-card", className)}
       {...props}
     />
   );
