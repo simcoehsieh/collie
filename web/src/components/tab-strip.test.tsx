@@ -284,6 +284,64 @@ describe("TabStrip — long-press actions", () => {
   });
 });
 
+describe("TabStrip — a long-press must not hand iOS something to select", () => {
+  it("marks the whole SCROLLER unselectable, not just the controls in it", () => {
+    // The reported failure: holding the "+" highlighted the page. Its own `select-none` was correct
+    // and applied — iOS simply walks UP for the nearest selectable ancestor when the pressed element
+    // has none of its own, and the scroller was it. Read off the class because jsdom has no
+    // selection UI to observe.
+    const { container } = render(
+      <TabStrip
+        workspaceId="w1"
+        tabs={tabs}
+        agents={[]}
+        selected="w1:t1"
+        onSelect={() => {}}
+        onNewTab={() => {}}
+        allowAll={false}
+      />,
+    );
+    const scroller = container.querySelector(".overflow-x-auto");
+    expect(scroller?.className).toMatch(/(?:^|\s)select-none(?=\s|$)/);
+  });
+
+  it("refuses `selectstart` on the + itself, and only while a hold is wired", () => {
+    const { rerender } = render(
+      <TabStrip
+        workspaceId="w1"
+        tabs={tabs}
+        agents={[]}
+        selected="w1:t1"
+        onSelect={() => {}}
+        onNewTab={() => {}}
+        onNewTabHold={() => {}}
+        allowAll={false}
+      />,
+    );
+    const plus = screen.getByRole("button", { name: /new tab/i });
+    const wired = new Event("selectstart", { bubbles: true, cancelable: true });
+    plus.dispatchEvent(wired);
+    expect(wired.defaultPrevented).toBe(true);
+
+    // Without a hold there is no gesture to protect, and a listener that refused anyway would be a
+    // behaviour nobody asked this component for.
+    rerender(
+      <TabStrip
+        workspaceId="w1"
+        tabs={tabs}
+        agents={[]}
+        selected="w1:t1"
+        onSelect={() => {}}
+        onNewTab={() => {}}
+        allowAll={false}
+      />,
+    );
+    const bare = new Event("selectstart", { bubbles: true, cancelable: true });
+    screen.getByRole("button", { name: /new tab/i }).dispatchEvent(bare);
+    expect(bare.defaultPrevented).toBe(false);
+  });
+});
+
 describe("TabStrip — status on the chips", () => {
   const chipTabs: TabView[] = [
     { tabId: "w1:t1", workspaceId: "w1", number: 1, label: "code", focused: false, paneCount: 1 },

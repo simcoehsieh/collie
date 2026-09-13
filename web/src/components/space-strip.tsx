@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { memo, useRef } from "react";
 import { ChevronLeft, Loader2, Plus } from "lucide-react";
 
 import { Chip } from "@/components/ui/chip";
@@ -35,7 +35,7 @@ interface SpaceStripProps {
 // set), it leads with a Back button to the dashboard, then the sibling spaces for quick switching;
 // otherwise it leads with the "All" triage chip. A trailing + creates a new space. The space focused
 // in the desktop TUI gets a subtle ring; a space with a blocked agent gets a dot.
-export function SpaceStrip({
+export const SpaceStrip = memo(function SpaceStrip({
   workspaces,
   agents,
   selected,
@@ -133,4 +133,4 @@ export function SpaceStrip({
       )}
     </LabelledStrip>
   );
-}
+});

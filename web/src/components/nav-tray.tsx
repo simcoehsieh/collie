@@ -67,6 +67,29 @@ interface NavTrayProps {
 /** Stable default so an omitted prop never re-renders the pad. */
 const NO_REFUSED_KEYS: readonly string[] = [];
 
+// FORK — A KEYCAP LOOKS PRESSABLE, AND THAT IS ONE LINE OF SHADOW.
+//
+// The caps were flat `--muted` rectangles with no border and no bottom edge, which is the same
+// drawing this app uses for a DISABLED control — so a pad of live keys read as a pad of dead ones.
+// iOS's own keyboard carries a 1px bottom shadow for exactly this reason: it is the whole of what
+// says "this has a top surface you can push down".
+//
+// `--rule` and not `--border`: the edge under a cap separates the key from the panel it sits on,
+// which is the region-boundary job `--rule` is the stronger line for (see ui/list-group.tsx). The
+// shadow is UNCONDITIONAL — it rides in the shared class, in every state, so a cap that lights up
+// on a press keeps its bottom edge and only the fill changes (DESIGN.md §2; a box-shadow takes no
+// layout room either way, so this is paint and never reflow). `rounded-md` overrides size="sm"'s
+// `rounded-sm`: a keycap is a key, not a chip. The border is RECOLOURED, never added —
+// `ui/button.tsx` reserves `border border-transparent` in its base string, so a cap that gains an
+// edge here occupies exactly the box it always did.
+//
+// SHAPE and FILL are separate strings, and that split is load-bearing: a className wins over the
+// variant it is merged with, so a single "rounded + edge + bg-card" constant would have silently
+// painted over the `default` variant's fill and killed the press echo — the one thing on this pad
+// that says a key reached the terminal. Shape is unconditional; the fill is only the resting one.
+const KEYCAP = "rounded-md border-rule shadow-[0_1px_0_var(--rule)]";
+const KEYCAP_REST = "bg-card";
+
 const DIGITS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
 // F1–F12 — Herdr's send_keys grammar accepts them bare (HERDR_API.md), and harnesses bind them to
@@ -178,7 +201,12 @@ export function NavTray({
         aria-label={aria}
         // touch-action/select-none: without them a held button on iOS starts a text selection and
         // Android may treat the hold as a scroll gesture, both of which cancel the pointer stream.
-        className={cn("h-9 touch-manipulation select-none px-0 text-sm font-medium", extraClassName)}
+        className={cn(
+          KEYCAP,
+          held || phase !== "idle" ? undefined : KEYCAP_REST,
+          "h-9 touch-manipulation select-none px-0 text-sm font-medium",
+          extraClassName,
+        )}
       >
         {held ? (
           <span className="mx-auto flex items-center gap-1">
@@ -194,21 +222,29 @@ export function NavTray({
     );
   };
 
-  // A modifier button reads its own three-state mode from `mods`: outline when off, filled (default)
-  // when armed — once OR locked — with a small Lock glyph beside the label to distinguish locked from
-  // one-shot. Tapping cycles off → once → locked → off.
+  // A modifier button reads its own three-state mode from `mods`: a resting cap when off, armed —
+  // once OR locked — with a small Lock glyph beside the label to distinguish locked from one-shot.
+  // Tapping cycles off → once → locked → off.
   const modBtn = (m: Modifier, label: ReactNode, aria?: string) => {
     const mode = mods[m];
     return (
       <Button
         type="button"
-        variant={mode === "off" ? "outline" : "default"}
+        variant="outline"
         size="sm"
         disabled={disabled}
         onClick={() => arm(m)}
         aria-pressed={mode !== "off"}
         aria-label={aria}
-        className="h-9 px-0 text-sm font-medium"
+        // FORK: armed is TONAL, not solid. A modifier is a STATE — it stays on across presses and
+        // Sends — and the app's answer to state is `--control-on` (see pane-strip.tsx). Solid
+        // primary here also made three of the loudest objects on the screen sit in a row under a
+        // terminal. The Lock glyph still separates locked from one-shot.
+        className={cn(
+          KEYCAP,
+          "h-9 px-0 text-sm font-medium",
+          mode === "off" ? KEYCAP_REST : "bg-control-on text-control-on-foreground",
+        )}
       >
         {mode === "locked" && <Lock className="size-3" />}
         {label}
@@ -216,8 +252,10 @@ export function NavTray({
     );
   };
 
-  // A chip in the accordion row: ghost when its panel is closed, secondary (and pressed) when open.
-  // Tapping the already-open chip closes it — the accordion's one explicit way to collapse.
+  // A chip in the accordion row: ghost when its panel is closed, pressed when open. Tapping the
+  // already-open chip closes it — the accordion's one explicit way to collapse.
+  // FORK: the open chip is TONAL (`--control-on`) rather than a secondary fill — it names which of
+  // three mutually exclusive panels is showing, which is state, not an action.
   const chip = (panel: Exclude<OpenPanel, null>, label: ReactNode) => (
     <button
       type="button"
@@ -226,8 +264,8 @@ export function NavTray({
       className={cn(
         "h-7 rounded-md px-2 text-[11px] font-medium uppercase tracking-wide transition-colors",
         open === panel
-          ? "bg-secondary text-secondary-foreground"
-          : "text-muted-foreground hover:bg-background/60",
+          ? "bg-control-on text-control-on-foreground"
+          : "text-muted-foreground hover:bg-muted/60",
       )}
     >
       {label}
@@ -235,7 +273,11 @@ export function NavTray({
   );
 
   return (
-    <div className="space-y-0.5 border-t border-rule bg-muted/30 px-2 py-1.5">
+    // FORK: the pad has no ground of its own — `ComposerDock` paints it (bg-card, rounded-t-2xl),
+    // so the panel sits OVER the dock instead of sharing `--background` with it. A `bg-muted/30`
+    // wash inside a card is a second, fainter surface inside the first, and the caps are `--card`:
+    // the wash was the thing making them look sunken. The rule under the dock's title row stays.
+    <div className="space-y-0.5 border-t border-rule px-2 py-1.5">
       {/* Staging strip — visible only while composing (a modifier armed or keys queued). */}
       <KeyQueueStrip
         queue={queue}
@@ -297,6 +339,8 @@ export function NavTray({
                 disabled={disabled || !keysSendable(item.keys, unsupportedKeys)}
                 onClick={() => pressCtrl(item)}
                 className={cn(
+                  KEYCAP,
+                  variant === "outline" && KEYCAP_REST,
                   "h-9 text-sm font-medium",
                   item.danger && !isPending && phase === "idle" && "text-destructive",
                 )}

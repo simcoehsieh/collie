@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Bell, Loader2 } from "lucide-react";
+import { ArrowLeft, Bell } from "lucide-react";
 import { useLoaderData, useNavigate } from "react-router";
 
 import { RouteHeader } from "@/components/app-header";
@@ -14,6 +14,7 @@ import { SnoozeControl } from "@/components/snooze-control";
 import { ThemeControl } from "@/components/theme-control";
 import { HapticsControl } from "@/components/haptics-control";
 import { HandsFreeControl } from "@/components/hands-free-control";
+import { LowPowerControl } from "@/components/low-power-control";
 import { ZenControl } from "@/components/zen-control";
 import { InstallControl } from "@/components/install-control";
 import { LanguageControl } from "@/components/language-control";
@@ -21,6 +22,7 @@ import { FontSettingsControl } from "@/components/font-settings";
 import { TypefaceControl } from "@/components/typeface-control";
 import { UpdatesSettingsCard } from "@/components/updates-settings-card";
 import { Switch } from "@/components/ui/switch";
+import { Skeleton } from "@/components/ui/skeleton";
 import { fetchConfig } from "@/lib/api";
 import { usePushControl } from "@/hooks/use-push";
 import { useLocale } from "@/hooks/use-locale";
@@ -160,6 +162,9 @@ export function SettingsRoute() {
             zen takes away every way back except one floating button. */}
         <ZenControl />
 
+        {/* FORK: Low power — the poll cadence, per device. Same family as the three above. */}
+        <LowPowerControl />
+
         <Card className="gap-0 py-0">
           <div className="flex items-center justify-between gap-4 p-4">
             <div className="flex min-w-0 items-start gap-3">
@@ -169,8 +174,12 @@ export function SettingsRoute() {
                 <p className="text-sm text-muted-foreground">{t("settings.push.description")}</p>
               </div>
             </div>
-            {/* Fixed slot the size of the Switch (h-6 w-11): the spinner is smaller, so without it
-                the row — and the whole page under it — resized when state landed. */}
+            {/* Fixed slot the size of the Switch (h-6 w-11): the stand-in used to be smaller, so
+                without it the row — and the whole page under it — resized when state landed.
+                FORK: and the stand-in is now the switch's own stadium in grey rather than a spinning
+                disc. The wait has a shape — it is a switch, it is 24×44, it is right there — so a
+                bar the exact size of it says "this control is arriving" where a smaller spinner in
+                a bigger box said "something is happening somewhere in here". */}
             <div className="flex h-6 w-11 shrink-0 items-center justify-center">
               {state ? (
                 <Switch
@@ -180,7 +189,7 @@ export function SettingsRoute() {
                   aria-label={t("settings.push.title")}
                 />
               ) : (
-                <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                <Skeleton className="h-6 w-11 rounded-full" />
               )}
             </div>
           </div>
@@ -204,7 +213,8 @@ export function SettingsRoute() {
             whatever this particular device's push status turns out to be. */}
         {state?.availability !== "server-off" && (
           <>
-            <NotifyPrefsControl />
+            {/* FORK: the per-pane rows come from the snapshot this page already holds. */}
+            <NotifyPrefsControl panes={root?.agents ?? []} />
             <SnoozeControl snoozedUntil={root?.snoozedUntil ?? null} />
           </>
         )}

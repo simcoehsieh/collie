@@ -12,12 +12,34 @@ import {
 } from "lucide-react";
 import { useKeyboardOpen } from "@/hooks/use-keyboard";
 import { useSheetPull } from "@/hooks/use-sheet-pull";
+import { DiffSheet } from "@/components/diff-sheet";
+import { AnnotateSheet } from "@/components/annotate-sheet";
+import { QueuedSends } from "@/components/queued-sends";
+import { DocPanel } from "@/components/doc-panel";
+// FORK: the two read-only surfaces beside the Changes sheet — one file of the work tree, and one
+// HTML page the agent wrote.
+import { FileSheet } from "@/components/file-sheet";
+import { PreviewPanel } from "@/components/preview-panel";
+import { usePaneDiff } from "@/hooks/use-pane-diff";
+import { NoteCountChip } from "@/components/note-badge";
+import { NotesSheet } from "@/components/notes-sheet";
+import { useNotes } from "@/hooks/use-notes";
+import { NOTES_EVENT } from "@/hooks/use-hotkeys";
+import { addNote, pruneNotesForScope } from "@/lib/notes";
+import { classifyDocLink } from "@/lib/doc-links";
+import { lastLocalUrl } from "@/lib/links";
+import { uploadLimits } from "@/lib/attachments";
+import { saveDraft } from "@/lib/drafts";
+import { useDocHosts, useShotEnabled, useUploadCapability } from "@/lib/operator-config";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
-import { useLaunchers } from "@/lib/launchers";
+import { handoffTargets } from "@/lib/handoff";
+import { pinnedLauncher, useLaunchers } from "@/lib/launchers";
 import { buzz } from "@/lib/haptics";
-import { mirrorFont, useDisplayPrefs } from "@/hooks/use-display-prefs";
+import { mirrorFont, paneViewFor, useDisplayPrefs } from "@/hooks/use-display-prefs";
 import { useLatestReply } from "@/hooks/use-latest-reply";
+import { PaneTranscript } from "@/components/pane-transcript";
+import { ViewToggle } from "@/components/view-toggle";
 import { useMirrorImages } from "@/hooks/use-mirror-images";
 import { useStableTerminalDraft } from "@/hooks/use-terminal-draft";
 import { useLocale } from "@/hooks/use-locale";
@@ -37,8 +59,8 @@ import { AnsiOutput } from "@/components/ansi-output";
 import { MIRROR_SPACE, MIRROR_INVERT, segmentStyle } from "@/components/mirror-space";
 import { cn } from "@/lib/utils";
 import { paneTag } from "@/lib/pane-tag";
-import { parseAnsi } from "@/lib/ansi";
-import { splitLines } from "@/lib/blocks";
+import { useMirrorModel } from "@/hooks/use-mirror-model";
+import { useStableCallback } from "@/hooks/use-stable-callback";
 import { adapterFor } from "@/lib/harness";
 import { blockOwnsKeyboard } from "@/lib/harness/dialog-contract";
 import { FindBar } from "@/components/find-bar";
@@ -48,8 +70,10 @@ import { ThreadSidebar } from "@/components/agent-sidebar";
 import { AgentIcon } from "@/components/agent-icon";
 import { TabStrip } from "@/components/tab-strip";
 import { PaneStrip } from "@/components/pane-strip";
+import { CinemaCapsule } from "@/components/cinema-capsule";
 import { StripsSummary } from "@/components/strips-summary";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
+import { NewTabSheet } from "@/components/new-tab-sheet";
 import { CompactStripLabels, STRIP_TAP_TARGET_SQUARE } from "@/components/ui/labelled-strip";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { HostStaleBanner } from "@/components/host-stale-banner";
@@ -71,8 +95,8 @@ import { canGrowRequestedLines, growRequestedLines } from "@/lib/loaders";
 import { cwdBeyondName } from "@/lib/pane-name";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { hasJournalAdapter } from "@/lib/journal-agents";
-import { historyPath, spacePath } from "@/lib/nav";
-import { isReadOnly, statusLabel } from "@/lib/types";
+import { historyPath, spacePath, artifactPath, panePath } from "@/lib/nav";
+import { isReadOnly, paneDisplayName, statusLabel } from "@/lib/types";
 import { usePairing } from "@/lib/pairing";
 import type { AgentView, BridgeStatus, DeviceAuth, TabView } from "@/lib/types";
 import type {
@@ -82,7 +106,11 @@ import type {
   PromptModel,
   WizardModel,
 } from "@/lib/blocks";
-import type { Scope } from "@/lib/scope";
+import { paneScopeKey, type Scope } from "@/lib/scope";
+import { ArtifactSheet } from "@/components/artifact-sheet";
+import { HandoffSheet } from "@/components/handoff-sheet";
+import { ArtifactCountChip } from "@/components/artifact-card";
+import { artifactsForPane, latestVersions, useArtifacts } from "@/lib/artifacts";
 
 interface AgentChatProps {
   paneId: string;
@@ -110,6 +138,26 @@ interface AgentChatProps {
   bridge?: BridgeStatus | undefined;
   error?: boolean;
   stalled?: boolean;
+  /**
+   * FORK: the URL a preview surface beside this pane is showing, when there is one.
+   *
+   * It PREFILLS the annotate sheet's address field, and it takes precedence over the last
+   * `localhost:PORT` the mirror printed — a preview the operator is actually looking at is a better
+   * guess than the newest line of scrollback. Absent leaves the mirror's answer in place, which is
+   * what every caller does today.
+   */
+  previewUrl?: string;
+  /**
+   * FORK: told which URL is being annotated, whenever the sheet opens or takes a shot.
+   *
+   * The other half of the pair, and the wire a "Preview" chip hangs off: a surface that owns a
+   * preview of its own follows this to stay pointed at the same page as the screenshot. Optional,
+   * and nothing here depends on it — with no listener the sheet is simply self-contained.
+   *
+   * The mirror's own "Preview" chip (lib/line-chips.ts) reports through it too, so a caller that
+   * wires nothing still loses none of the chip's behaviour.
+   */
+  onPreviewUrl?: (url: string) => void;
   onBack: () => void;
   onSelect: (paneId: string) => void;
 }
@@ -127,7 +175,24 @@ function foldLabelKey(tabCount: number, paneCount: number): MessageKey {
 
 // At most one drawer/sheet is open at a time; null = none. (The composer's own Keys/Quick/Agent
 // sheets are separate and live inside <Composer>.)
-type Drawer = "switcher" | "paneMenu" | null;
+// FORK: `file`, `preview`, `notes` and `annotate` join `diff` as drawer arms rather than taking state of their
+// own, because the invariant this type exists to make unrepresentable — at most one open — is
+// exactly as load-bearing for them.
+type Drawer =
+  | "switcher"
+  | "paneMenu"
+  | "newTab"
+  | "doc"
+  | "diff"
+  | "file"
+  | "preview"
+  | "notes"
+  | "annotate"
+  // FORK: the pane's artifacts (components/artifact-sheet.tsx).
+  | "artifacts"
+  // FORK: hand the conversation to another harness (components/handoff-sheet.tsx).
+  | "handoff"
+  | null;
 
 /**
  * Is the caret in the MESSAGE COMPOSER's field, as opposed to any other input on the screen?
@@ -185,6 +250,8 @@ export function AgentChat({
   bridge = "connected",
   error = false,
   stalled = false,
+  previewUrl,
+  onPreviewUrl,
   onBack,
   onSelect,
 }: AgentChatProps) {
@@ -200,7 +267,7 @@ export function AgentChat({
   const { newTab, launch, launching, creatingTab } = useSpaceActions();
   const { launchers, home: launchersHome } = useLaunchers(scope);
   // Single display-prefs instance: the View controls (in <Composer>) write it, the mirror reads it.
-  const { prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply } =
+  const { prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, setControlsOpen, setPaneView } =
     useDisplayPrefs();
   // The chosen terminal font (Settings → Terminal font), applied by re-pointing `--font-mono` on
   // the two mirror surfaces below and NOWHERE else — see mirrorFont() for how, and why it is not a
@@ -296,10 +363,121 @@ export function AgentChat({
   // Drawers/sheets are mutually exclusive — at most one open. A single value makes that invariant
   // unrepresentable to violate.
   const [drawer, setDrawer] = useState<Drawer>(null);
+  // The document behind the panel, when one is open. Cleared on close so the frame unmounts and the
+  // megabyte it was showing goes with it — the median kb document is ~860 KB of inlined images.
+  const [doc, setDoc] = useState<{ slug: string; path: string; href: string } | null>(null);
+  // FORK: which file the viewer is showing, and which page the preview panel is framing. Both are
+  // cleared on close for `doc`'s reason — the frame unmounts and what it was holding goes with it.
+  const [filePath, setFilePath] = useState<string | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
   const closeDrawer = () => {
     setDrawer(null);
+    setDoc(null);
+    setFilePath(null);
+    setPreviewPath(null);
     setPull(0);
   };
+
+  // Which hosts this bridge can serve documents for. Empty on every bridge that has none configured
+  // and on every bridge older than the field, and empty means the classifier below declines
+  // everything — so the mirror's links behave exactly as they did before this feature existed.
+  const docHosts = useDocHosts();
+  // FORK: the pane's own working directory is the preview jail, client-side as well as on the
+  // bridge. An absent pane is an empty string, which recognises nothing — the same fail direction
+  // `docHosts` has, and the reason a phone that has not loaded a pane simply sees external links.
+  const paneCwd = agent?.cwd ?? "";
+  // FORK: whether this bridge can take a screenshot at all (bridge/shot.ts). False on every bridge
+  // with no `COLLIE_SHOT_COMMAND`, and false until `/api/config` has landed — both mean "draw no
+  // button for it", so the pane menu's row is absent rather than disabled.
+  const shotEnabled = useShotEnabled();
+  const uploadCap = uploadLimits(useUploadCapability());
+  // The address the annotate sheet opens on. A preview surface's own URL wins; otherwise it is the
+  // LAST loopback URL this pane printed, which is what a dev server announces when it starts.
+  // Memoised on the mirror text because `findLinks` walks the whole scrollback and this component
+  // re-renders on every poll.
+  // A URL the operator tapped Preview on in the mirror wins over both: it is the page they are
+  // looking at right now, chip in hand.
+  const [chipUrl, setChipUrl] = useState<string | null>(null);
+  const annotateUrl = useMemo(
+    () => chipUrl ?? previewUrl ?? lastLocalUrl(text) ?? "",
+    [chipUrl, previewUrl, text],
+  );
+  // `useCallback` is not optional: AnsiOutput is memo()'d with the default shallow comparison and
+  // this component re-renders on every 1.5s snapshot, so a fresh function per render would re-render
+  // the whole mirror 40 times a minute.
+  const handleLinkOpen = useCallback(
+    (href: string) => {
+      const target = classifyDocLink(href, docHosts, paneCwd);
+      if (target.kind === "doc") {
+        setDoc({ slug: target.slug, path: target.path, href });
+        setDrawer("doc");
+        return true;
+      }
+      // FORK: an HTML file the agent wrote, inside this pane's cwd. Same contract as a document —
+      // returning true is what tells the anchor the app took the tap.
+      if (target.kind === "preview") {
+        setPreviewPath(target.path);
+        setDrawer("preview");
+        return true;
+      }
+      return false;
+    },
+    [docHosts, paneCwd],
+  );
+
+  // FORK: what the agent changed, read once per pane and again when it settles (hooks/use-pane-diff).
+  // Two surfaces read it and neither is the Changes sheet: the header chip below, and the mirror's
+  // file chips, which are a LOOKUP against this list rather than a path heuristic.
+  const { summary: diffSummary, refresh: refreshDiff } = usePaneDiff(paneId, agent?.status, scope, agent !== undefined);
+  const diffPaths = useMemo(() => diffSummary.files.map((f) => f.path), [diffSummary]);
+
+  // FORK: a mirror chip's tap. Both are `useCallback` for `handleLinkOpen`'s reason — a fresh
+  // function per render would re-render the whole memo'd mirror on every poll.
+  const handleUrlChip = useCallback(
+    (href: string, local: boolean) => {
+      // The URL always opens where the operator expects a URL to open. A local server additionally
+      // tells the app it exists — see `onPreviewUrl`'s doc for who is waiting to hear that.
+      if (local) onPreviewUrl?.(href);
+      // With a shot command configured, a local server's chip is the door to annotate-and-ask —
+      // the screenshot is of THAT page, at the phone's own viewport. Without one, it is a link.
+      if (local && shotEnabled) {
+        setChipUrl(href);
+        setDrawer("annotate");
+        return;
+      }
+      window.open(href, "_blank", "noopener,noreferrer");
+    },
+    [onPreviewUrl, shotEnabled],
+  );
+  const handleFileChip = useCallback((path: string) => {
+    setFilePath(path);
+    setDrawer("file");
+  }, []);
+  // ── FORK: anchored notes ──────────────────────────────────────────────────
+  // The pane's own notes, wherever they were taken — a diff hunk in the panel over this screen, a
+  // transcript turn on the history route, a document in the browser. The chip in the header is the
+  // count and the one way into the list; `n` is the same door for a desk (hooks/use-hotkeys.ts).
+  const notes = useNotes(scope, paneId);
+  useEffect(() => {
+    const onNotes = () => setDrawer("notes");
+    document.addEventListener(NOTES_EVENT, onNotes);
+    return () => document.removeEventListener(NOTES_EVENT, onNotes);
+  }, []);
+  // A note whose pane is gone points at nothing. Pruned from here because this is the screen that
+  // holds a pane list AND an address to scope it by — and only against a snapshot that is actually
+  // live, so a poll that failed can never delete something the operator wrote (see the store).
+  //
+  // The dependency is the JOINED list, not the two arrays: the loader hands this component fresh
+  // arrays on every poll, so an identity dep would re-run this once a second forever on a screen
+  // where nothing about which panes exist had changed.
+  const livePaneIds = useMemo(
+    () => [...agents, ...shellPanes].map((p) => p.paneId).join(" "),
+    [agents, shellPanes],
+  );
+  useEffect(() => {
+    if (bridge !== "connected" || error) return;
+    pruneNotesForScope(scope, livePaneIds.split(" "));
+  }, [bridge, error, scope, livePaneIds]);
 
   // ── ZEN MODE — chrome-free, mirror-only viewing ───────────────────────────────
   // On a phone the chrome IS most of the viewport: measured at 390x844 this route spends 199px above
@@ -411,12 +589,41 @@ export function AgentChat({
   // the composer sandwiched between the panel and the thumb dragging it.
   const [pull, setPull] = useState(0);
   const [pullFrom, setPullFrom] = useState(0);
+  // FORK — THE DOCK CAN BE PUT AWAY. The grab handle reads as a sheet handle, and the operator's
+  // first instinct on a phone was to drag it DOWN; upstream only wires UP (the pane switcher) and a
+  // tap (same). So a downward pull now folds the whole dock — status band, controls, input — down
+  // to the 30px handle, and the mirror takes the rows. A tap or an upward pull on the folded handle
+  // brings it back; so does tapping the mirror (focusFromMirror). Session state on purpose, not a
+  // display pref: a folded composer is a "right now" choice, and reopening the app should never
+  // greet the operator with no way to type in sight.
+  const [dockOpen, setDockOpen] = useState(true);
+  // FORK — CINEMA MODE, THE SECOND RUNG OF THE SAME LADDER (components/cinema-capsule.tsx).
+  //
+  // Folding the dock buys back ~110px at the bottom; the header and the two strips are ~180px at the
+  // top, and much of that is redundant (the header already reads `collie › docs`, and the SPACES
+  // strip says it again). So a SECOND downward pull, on the already-folded handle, takes the chrome
+  // too and leaves the mirror the whole glass.
+  //
+  // WHY DOWN TWICE AND UP TO COME BACK. The handle's four gestures were all spoken for: with the
+  // dock open, up is the pane switcher and down is the fold; with it folded, up brings the dock back
+  // and a tap does the same. Down-on-a-folded-handle was the only free one — and it reads as the
+  // same sentence continued, because the direction already means "take something away". The way out
+  // is `onPullUp` (the new mirror of `onPullDown` in use-sheet-pull.ts), wired ONLY while cinema is
+  // on so it never shadows the switcher, or a tap on the capsule. The ladder pops in reverse order:
+  // cinema → dock → switcher. Session state alongside `dockOpen`, and reset by DetailRoute's
+  // key={paneId} remount, so a pane always opens with its chrome.
+  const [cinema, setCinema] = useState(false);
   const sheetPull = useSheetPull({
-    onPull: setPull,
+    // The switcher peeks only under an open dock: a pull-up on the folded handle is "bring the dock
+    // back", and a sheet rising under it would answer a question nobody asked.
+    onPull: (px) => {
+      if (dockOpen) setPull(px);
+    },
     onAnchor: setPullFrom,
     onOpen: () => {
       buzz();
-      setDrawer("switcher");
+      if (dockOpen) setDrawer("switcher");
+      else setDockOpen(true);
       setPull(0);
       setPullFrom(0);
     },
@@ -424,6 +631,17 @@ export function AgentChat({
       setPull(0);
       setPullFrom(0);
     },
+    onPullDown: () => {
+      buzz();
+      if (dockOpen) setDockOpen(false);
+      else setCinema(true);
+    },
+    onPullUp: cinema
+      ? () => {
+          buzz();
+          setCinema(false);
+        }
+      : undefined,
   });
   // ── COMPOSING MODE — read ONCE, here, for the whole pane ──────────────────────
   // The soft keyboard takes roughly 45% of a phone. What is left has to hold the header, the tab
@@ -533,10 +751,30 @@ export function AgentChat({
   // — no strips at all, and zen, where the band is closed and the 4px is the hidden header's air
   // rather than a tab's floor. Zen's resting geometry is byte-identical either way, which is the
   // point of naming it here rather than folding it into `stripsExist`.
-  const mirrorGap = stripsExist && !zen ? "mt-0" : "mt-1";
+  // FORK: `&& !cinema` for exactly zen's reason — with the band closed there is no folder tab
+  // standing on the 4px, so the mirror takes the gap back and reads as the top of the glass.
+  const mirrorGap = stripsExist && !zen && !cinema ? "mt-0" : "mt-1";
   // Fold state for the "Switch pane" sheet's two long tails, shared with the dashboard so one
   // "hide the long tail" preference means the same thing in both places.
   const dash = useDashPrefs();
+
+  // WHAT THE "+" OPENS. A launcher row when the operator pinned one and it is STILL declared, and a
+  // plain shell otherwise — which is the default and the behaviour every install shipped with.
+  //
+  // The pref stores the row's COMMAND, not its label or its index: `POST /api/launch` matches on the
+  // command, so a row the operator renames keeps working, and a row they delete resolves to nothing
+  // here and falls back to the shell rather than failing a create nobody remembers pinning.
+  //
+  // Launched BESIDE this pane, and that is what makes it a TAB of this space rather than a new
+  // Space: the route takes a pane id and calls `createTab` on its workspace (bridge/server.ts).
+  const pinned = pinnedLauncher(launchers, dash.prefs.newTabLauncher);
+  const openNewTab = (workspaceId: string) => {
+    if (pinned !== undefined) {
+      void launch(pinned.command, paneId);
+      return;
+    }
+    void newTab(workspaceId);
+  };
 
   // Mirror freeze: at the bottom we follow live output; the moment you scroll up to read backscroll
   // we hold the text steady (no reflow / no re-pin) until you jump back to latest — so a long
@@ -577,13 +815,18 @@ export function AgentChat({
   // sat in the TUI. ALL its rows: a configured statusline is routinely 2–3 rows tall, and we used to
   // surface only the first, silently losing the rest. Routed through the SAME adapter (adapterFor)
   // whose buildBlocks strips the chrome, so the two can't drift; empty when there's no adapter for
-  // the agent, a menu is up, or no box at the tail, in which case the strip is hidden. A second parse
-  // of `display`, but memoised on it, so it only recomputes when the buffer content changes — off the
-  // render hot path.
+  // the agent, a menu is up, or no box at the tail, in which case the strip is hidden.
+  //
+  // FORK: ONE parse of the mirror (hooks/use-mirror-model.ts). The three probes below and the
+  // render inside <AnsiOutput> all read the same `lines` / `blocks`; nothing here re-parses
+  // `display`. The adapter is picked the way the render picks it — off `mirrorAgent`, which is
+  // `undefined` while raw-terminal is on — so the probes and the mirror can't disagree.
+  const mirrorAgent = grammarsOn ? agent?.agent : undefined;
+  const mirror = useMirrorModel(display, mirrorAgent);
+  const mirrorAdapter = adapterFor(mirrorAgent);
   const statusLines = useMemo(
-    () =>
-      grammarsOn ? adapterFor(agent?.agent)?.extractStatusLines(splitLines(parseAnsi(display))) ?? [] : [],
-    [display, agent?.agent, grammarsOn],
+    () => mirrorAdapter?.extractStatusLines(mirror.lines) ?? [],
+    [mirrorAdapter, mirror.lines],
   );
 
   // A user draft stranded on the input box's "❯" line — a message queued while the agent was busy
@@ -593,11 +836,8 @@ export function AgentChat({
   // exclusively phone-owned. Same parse source + same adapter as the statusline, so the two can't
   // drift; null when raw-terminal is on, there's no adapter, no box is at the tail, or the line is empty.
   const rawTerminalDraft = useMemo(
-    () =>
-      grammarsOn
-        ? adapterFor(agent?.agent)?.extractInputDraft(splitLines(parseAnsi(display))) ?? null
-        : null,
-    [display, agent?.agent, grammarsOn],
+    () => mirrorAdapter?.extractInputDraft(mirror.lines) ?? null,
+    [mirrorAdapter, mirror.lines],
   );
   // Is a dialog (prompt/wizard/preview/multi-select/menu) on screen right now? A block whose screen
   // owns the TUI's keyboard means the composer must refuse a free-text send: the text would be
@@ -610,15 +850,8 @@ export function AgentChat({
   // `kind !== "raw"`. The two were the same set until a PRESENTATIONAL non-raw kind shipped: the
   // slash-command `autocomplete` popup is painted while the agent's input box is live under it, so
   // treating it as a dialog would lock the composer out of a pane that is demonstrably typeable.
-  const dialogPresent = useMemo(
-    () =>
-      grammarsOn
-        ? (adapterFor(agent?.agent)?.buildBlocks(splitLines(parseAnsi(display))) ?? []).some(
-            blockOwnsKeyboard,
-          )
-        : false,
-    [display, agent?.agent, grammarsOn],
-  );
+  // With no adapter the blocks are one raw block, which owns nothing — so no gate is needed here.
+  const dialogPresent = useMemo(() => mirror.blocks.some(blockOwnsKeyboard), [mirror.blocks]);
 
   // Both are threaded to the composer: the RAW value (live) plus a stabilised one. extractInputDraft
   // is stateless, so it can't distinguish a stranded draft from the ~350ms flash where our OWN
@@ -693,6 +926,39 @@ export function AgentChat({
     requestedLines < agent.readableLines &&
     canGrowRequestedLines(paneId, scope);
 
+  // ── FORK: CHAT MODE — THE PANE'S TWO REPRESENTATIONS, AND WHICH ONE IS ON SCREEN ──────────────
+  //
+  // An agent pane is a CONVERSATION that happens to be rendered in a terminal, and until now Collie
+  // only ever showed the terminal — a 51-row photograph whose top edge cuts every long answer in
+  // half, because an agent's TUI runs on the alternate screen and keeps no scrollback ring. The
+  // journal has the thread; `components/pane-transcript.tsx` renders it, in the SAME slot the
+  // latest-reply card and `hiddenMirrorLines` already share, so this adds no row to the screen.
+  //
+  // THE MIRROR IS NEVER MORE THAN ONE TAP AWAY, AND TWO STATES TAKE IT BACK WITHOUT ASKING:
+  //
+  //  • A DIALOG OWNS THE KEYBOARD (`dialogPresent`, from the dialog contract). Answering a prompt
+  //    means seeing the prompt, the up-levelled option buttons live in the mirror, and the journal
+  //    has not been written yet anyway — so a pane that blocks swaps itself back. This is the rule
+  //    that makes chat mode safe to leave ON for a pane: there is no state in which the operator is
+  //    left looking at a thread while the agent waits on a question they cannot see. (It was the
+  //    DEFAULT for one morning; a pane opens on the terminal again since 2026-09-11 — the
+  //    `paneView` field in use-display-prefs.ts has the why — and the thread is one tap away.)
+  //  • FIND IS OPEN. Find searches the mirror's buffer and highlights inside it (the transcript has
+  //    its own find, on the history route), so the surface it searches has to be the one on screen.
+  //
+  // Neither writes the preference: they are conditions, not choices, and the pane returns to the
+  // operator's own view the moment they clear.
+  const paneKey = paneScopeKey(scope, paneId);
+  // FORK: what this pane's agent made — the chip's count and the sheet's rows (lib/artifacts.ts).
+  const { artifacts: artifactLibrary } = useArtifacts(scope);
+  const paneArtifactCount = latestVersions(artifactsForPane(artifactLibrary, paneId)).length;
+  // A pane with no journal has no transcript to show, so it is never offered one — and a bare shell
+  // is a screen you watch rather than a thread you read, which is the other half of the same test.
+  const transcriptOffered = historyAvailable && !isShell;
+  const chosenView = paneViewFor(prefs, paneKey, transcriptOffered);
+  const transcriptMode =
+    transcriptOffered && chosenView === "transcript" && !dialogPresent && !findOpen;
+
   // The newest reply, REPLACING the mirror rows that could only hold its end.
   //
   // The mirror IS the viewport for an agent pane (alternate screen, no scrollback ring), so a reply
@@ -712,7 +978,10 @@ export function AgentChat({
   const latestReply = useLatestReply({
     paneId,
     scope,
-    enabled: historyAvailable && prefs.expandClippedReply,
+    // FORK: not while the transcript is on screen — the card exists to put back what the MIRROR
+    // clipped, and in chat mode the whole thread is already there. Leaving it on would also mean two
+    // journal readers on one pane, each re-parsing the same log on the same settle.
+    enabled: historyAvailable && prefs.expandClippedReply && !transcriptMode,
     mirrorText: display,
   });
   const placement = useMemo(
@@ -1067,6 +1336,49 @@ export function AgentChat({
     }
     onBack();
   }
+  // FORK: the strips are memo()'d (tab-strip.tsx, pane-strip.tsx), so what they are handed must
+  // hold its identity across a poll tick or the memo buys nothing. Each of these calls whatever the
+  // latest render's function is (hooks/use-stable-callback.ts) — the handlers above are plain
+  // closures over this render's state and are meant to stay that way.
+  const onTabSelect = useStableCallback((id: string | null) => {
+    if (id) goToTab(id);
+  });
+  const onNewTab = useStableCallback((workspaceId: string) => openNewTab(workspaceId));
+  const onNewTabHold = useStableCallback(() => setDrawer("newTab"));
+  const revalidate = useStableCallback(() => revalidator.revalidate());
+  const onTabClosed = useStableCallback((tabId: string) => {
+    if (agent?.tabId === tabId) closeCurrentTab(tabId);
+    else revalidator.revalidate();
+  });
+  const onPaneSelect = useStableCallback((id: string) => switchTo(id));
+  const onPaneClosed = useStableCallback((id: string) => {
+    if (id === paneId) onBack();
+    else revalidator.revalidate();
+  });
+  const onToggleStrips = useStableCallback(() => toggleStrips());
+  // The fold's own control, pinned to the row's trailing end where it costs no height — the tab
+  // row is already 44px, so this centres in pixels the row was spending anyway. Same 32px square
+  // recipe as the "+" beside it: they are two controls of the same rank in the same row, and
+  // drawing them differently would rank them. Memoised on its label so the strip sees one element.
+  const foldLabel = t(foldLabelKey(stripTabs.length, tabPanes.length));
+  const foldControl = useMemo(
+    () => (
+      <button
+        type="button"
+        onClick={onToggleStrips}
+        aria-expanded={true}
+        aria-label={foldLabel}
+        className={cn(
+          STRIP_TAP_TARGET_SQUARE,
+          "flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent active:scale-95",
+        )}
+      >
+        <ChevronUp className="size-4" />
+      </button>
+    ),
+    [onToggleStrips, foldLabel],
+  );
+
 
   // Open a space from the nav hub — go to its detail route (its tabs + panes, incl. shells). A step
   // back up out of the pane, so it slides backward.
@@ -1090,6 +1402,16 @@ export function AgentChat({
   //  - the user is selecting text (a long-press selection), so copy works instead of the tap
   //    collapsing the selection and popping the keyboard.
   function focusFromMirror(e: ReactMouseEvent<HTMLDivElement>) {
+    // FORK: a tap on the mirror while the dock is folded brings the dock back — there is no input
+    // to focus yet, and this is the biggest target on the screen for "I want to type now".
+    if (!dockOpen) {
+      // SAFETY: same invariant as `target` below — a click's target inside this div is an Element,
+      // and the optional call covers the one case it somehow is not.
+      const tapped = e.target as Element | null;
+      if (tapped?.closest?.("button, a")) return;
+      setDockOpen(true);
+      return;
+    }
     if (!prefs.tapToFocus) return;
     // SAFETY: a React mouse event's `target` is the DOM node the tap landed on — an Element by
     // construction for a click inside this div. React types it as the generic `EventTarget`, which
@@ -1156,7 +1478,9 @@ export function AgentChat({
           // Zen takes the whole row off the screen — the one shell owns the <header> element, so
           // only the shell can stop drawing it, and this is how a route asks. See HeaderClaim.hidden
           // for what survives (the element, its safe-area inset, its reserved rule) and why.
-          hidden={zen}
+          // FORK: cinema asks for the same thing, for the same reason — the difference between the
+          // two is what stays BELOW (zen takes the composer, cinema keeps it).
+          hidden={zen || cinema}
           override={
             findOpen ? (
               <FindBar
@@ -1211,6 +1535,22 @@ export function AgentChat({
           rightLead={
             agent ? (
               <>
+                {/* FORK: the "3 files · +82 −11" chip that stood here is gone (2026-09-11, Simcoe:
+                    it took header width and was never tapped). The numbers are still one tap away
+                    in the pane menu's Changes row, and the mirror's own file chips still draw from
+                    the same `usePaneDiff` read. */}
+                {/* FORK: the notes waiting on this pane, and the door to the list. It appears only
+                    when there ARE notes, which the header's own budget allows because it costs no
+                    HEIGHT — the chip is 28px inside the row's stated 60px floor (DESIGN.md §6) — and
+                    the width it takes comes off the Identity, which is the row's one flexible
+                    element and the thing the budget protects. The alternative, a permanent chip
+                    reading "0", spends that width on a fact nobody needs. */}
+                {notes.length > 0 && <NoteCountChip count={notes.length} onClick={() => setDrawer("notes")} />}
+                {/* FORK: the artifacts this pane made, on the notes chip's terms — drawn only when
+                    there are any, so the common case spends nothing (components/artifact-sheet.tsx). */}
+                {paneArtifactCount > 0 && (
+                  <ArtifactCountChip count={paneArtifactCount} onClick={() => setDrawer("artifacts")} />
+                )}
                 <button
                   type="button"
                   onClick={() => setDrawer("paneMenu")}
@@ -1418,7 +1758,7 @@ export function AgentChat({
             // — by the strip band while it is showing something, by the header itself while it is
             // not (`app-header.tsx`). Claiming it here would pay for it twice, whichever of the two
             // currently holds it.
-            zen && "[padding-bottom:env(safe-area-inset-bottom)]",
+            zen && "[padding-bottom:var(--safe-bottom)]",
           )}
         >
           {/* THE ONE WAY OUT OF ZEN. A single floating affordance over the mirror rather than a
@@ -1441,6 +1781,18 @@ export function AgentChat({
               (mirror-space.ts), so a control painted in it would have no ground at all (DESIGN.md
               §4). Full-round is allowed here because the box is square, which is what §3 reserves it
               for. */}
+          {/* FORK: cinema's one remaining piece of chrome — the mark, the pane's status dot and its
+              name, 28px over the mirror's top-left corner. Its own file says why it is top-LEFT
+              where zen's exit is top-right. Never both: zen unmounts the composer whose handle is
+              the only way into cinema, so the two cannot be on at once. */}
+          {cinema && agent && (
+            <CinemaCapsule
+              name={paneDisplayName(agent)}
+              {...(agent.kind === "shell" ? {} : { status: agent.status })}
+              onExit={() => setCinema(false)}
+            />
+          )}
+
           {zen && (
             <button
               type="button"
@@ -1483,7 +1835,14 @@ export function AgentChat({
               for, and a banner that appears while zen is on simply appears inside a closed box.
               `Collapse` unmounts at the end of the exit, so every pill in both strips leaves the tab
               order with the pixels. */}
-          <Collapse open={!zen}>
+          {/* FORK: `|| !cinema` — cinema folds the same four surfaces zen does, through the same
+              Collapse, because they are the same set for the same reason (Collie talking ABOUT the
+              pane rather than the pane's own output) and DESIGN.md §1 has one sanctioned way for an
+              in-flow surface to leave. The banners go with them, as they already do in zen; the
+              composer below stays, which is the whole difference between the two modes, and a
+              read-only or host-stale refusal still reaches the operator through the composer's own
+              disabled state and its status band. */}
+          <Collapse open={!zen && !cinema}>
             {/* Read-only notice when this device isn't allowlisted (the composer below is disabled too). */}
             <ReadOnlyBanner device={device} />
 
@@ -1542,35 +1901,36 @@ export function AgentChat({
                     tabs={tabs}
                     agents={agents}
                     selected={agent.tabId}
-                    onSelect={(id) => id && goToTab(id)}
-                    onNewTab={newTab}
+                    onSelect={onTabSelect}
+                    onNewTab={onNewTab}
+                    onNewTabHold={launchers.length > 0 ? onNewTabHold : undefined}
                     creatingTab={creatingTab.has(agent.workspaceId)}
                     allowAll={false}
                     scope={scope}
                     readOnly={readOnly}
-                    onRenamed={() => revalidator.revalidate()}
+                    onRenamed={revalidate}
                     // Closing the tab this pane lives in must not eject you to Home — see closeCurrentTab:
                     // it lands you on a neighbouring tab of this space, and only falls back to onBack() when
                     // the space has nothing left to land on. Closing any other tab just revalidates so it
                     // drops out of the strip.
-                    onClosed={(tabId) => (agent?.tabId === tabId ? closeCurrentTab(tabId) : revalidator.revalidate())}
-                    // The fold's own control, pinned to the row's trailing end where it costs no height
-                    // — the tab row is already 44px, so this centres in pixels the row was spending
-                    // anyway. Same 32px square recipe as the "+" beside it: they are two controls of the
-                    // same rank in the same row, and drawing them differently would rank them.
+                    onClosed={onTabClosed}
+                    // FORK: chat mode's one control rides here, beside the fold chevron — the tab
+                    // row says which pane, this says which face of it. Offered only on a pane that
+                    // HAS a transcript; the value is what is ON SCREEN (a dialog forces the mirror
+                    // without touching the stored choice), and the switch is disabled while it is
+                    // forced — see `transcriptMode` above. It used to lead the composer's Controls
+                    // row and ellipsised the four controls beside it; view-toggle.tsx has the rest.
                     trailing={
-                      <button
-                        type="button"
-                        onClick={toggleStrips}
-                        aria-expanded={true}
-                        aria-label={t(foldLabelKey(stripTabs.length, tabPanes.length))}
-                        className={cn(
-                          STRIP_TAP_TARGET_SQUARE,
-                          "flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent active:scale-95",
+                      <>
+                        {transcriptOffered && (
+                          <ViewToggle
+                            value={transcriptMode ? "transcript" : "terminal"}
+                            disabled={dialogPresent || findOpen}
+                            onChange={(view) => setPaneView(paneKey, view)}
+                          />
                         )}
-                      >
-                        <ChevronUp className="size-4" />
-                      </button>
+                        {foldControl}
+                      </>
                     }
                   />
                 )}
@@ -1583,12 +1943,12 @@ export function AgentChat({
                     // this row appearing and line 1 gaining a `pN` are one decision, taken once.
                     panes={tabPanes}
                     currentPaneId={paneId}
-                    onSelect={switchTo}
+                    onSelect={onPaneSelect}
                     scope={scope}
                     readOnly={readOnly}
-                    onRenamed={() => revalidator.revalidate()}
+                    onRenamed={revalidate}
                     // Mirror closePane's success branch: closing the open pane returns Home, else revalidate.
-                    onClosed={(id) => (id === paneId ? onBack() : revalidator.revalidate())}
+                    onClosed={onPaneClosed}
                   />
                 )}
                 </div>
@@ -1662,12 +2022,17 @@ export function AgentChat({
               selection. It is a touch convenience layered over an already-reachable action. */}
           <div
             role="presentation"
+            data-slot="mirror"
             className={cn(
               mirrorGap,
               "min-h-0 min-w-0 flex-1 border-t border-rule",
-              mirrorFace.className,
+              // FORK: the terminal FACE dresses the terminal and nothing else. In chat mode this
+              // wrapper holds agent PROSE, which DESIGN.md § "Chrome wears the app face" puts in
+              // `font-content` — an inline `font-family` here would be inherited by every word of it
+              // and quietly re-render the thread in the operator's chosen terminal stack.
+              !transcriptMode && mirrorFace.className,
             )}
-            style={mirrorFace.style}
+            style={transcriptMode ? undefined : mirrorFace.style}
             onClick={focusFromMirror}
           >
             <ChatMessageList
@@ -1683,7 +2048,22 @@ export function AgentChat({
               // composer.
               className="px-2 pt-0 pb-3"
             >
-              {display ? (
+              {/* FORK: chat mode takes this slot whole — the thread instead of the screen. It is one
+                  branch and not a second scroller, so the bottom-pinning, the re-pin observer and
+                  every wrapper above are exactly the ones the mirror already had. */}
+              {transcriptMode ? (
+                <PaneTranscript
+                  paneId={paneId}
+                  scope={scope}
+                  agent={agent?.agent}
+                  working={agent?.status === "working"}
+                  mirrorText={display}
+                  lastSeenAt={agent?.lastSeenAt}
+                  onShowTerminal={() => setPaneView(paneKey, "terminal")}
+                  // FORK: a card under a turn opens the artifact route (lib/artifacts.ts).
+                  onOpenArtifact={(a) => navigate(artifactPath(a.id, scope))}
+                />
+              ) : display ? (
                 <>
                   {/* Top-of-buffer affordance, reached by scrolling up. WHICH button appears is decided
                       by what the pane can actually offer, because the two are never both possible:
@@ -1763,12 +2143,13 @@ export function AgentChat({
                   )}
                   <AnsiOutput
                     text={display}
+                    model={mirror}
                     wrap={prefs.wrap}
                     fontSize={prefs.fontSize}
                     query={findOpen ? findQuery : ""}
                     currentMatch={findOpen ? currentMatch : -1}
                     onMatchCount={findOpen ? handleMatchCount : undefined}
-                    agent={grammarsOn ? agent?.agent : undefined}
+                    agent={mirrorAgent}
                     onPromptAction={handlePromptAction}
                     onWizardAction={handleWizardAction}
                     onPreviewAction={handlePreviewAction}
@@ -1776,8 +2157,14 @@ export function AgentChat({
                     onMenuAction={handleMenuAction}
                     promptDisabled={readOnly || gone}
                     hideLeadingLines={hiddenMirrorLines}
+                    onLinkOpen={handleLinkOpen}
                     images={mirrorImages}
                     onImageClusterCount={setImageClusterCount}
+                    // FORK: the trailing-ornament chips. `filePaths` is the pane's own diff list, so
+                    // the file chip is a lookup and never a guess (lib/line-chips.ts).
+                    filePaths={diffPaths}
+                    onUrlChip={handleUrlChip}
+                    onFileChip={handleFileChip}
                   />
                 </>
               ) : (
@@ -1794,7 +2181,7 @@ export function AgentChat({
               up-levelled prompt buttons) — it now lives as a slim row just below the header.
 
               ── `shrink-0`, STATED, AND WHY IT IS NOT `min-h-0` ──────────────────────────
-              This is the flex sibling of the mirror inside a `h-[100dvh]` column. The mirror above
+              This is the flex sibling of the mirror inside the `.app-viewport` column. The mirror above
               carries `min-h-0 flex-1`, so IT is the row that gives — and it gives all the way to
               zero. What happens after that is what the operator reported as "the bottom is cut off":
               nothing else in this column can shrink, so the surplus paints past the bottom edge of
@@ -1941,20 +2328,33 @@ export function AgentChat({
                 <Collapse
                   open={
                     !composing &&
-                    (agents.length + shellPanes.length > 0 || launchers.length > 0)
+                    (!dockOpen || agents.length + shellPanes.length > 0 || launchers.length > 0)
                   }
                 >
+                  {/* FORK: the same handle is also how the folded dock comes back (see `dockOpen`),
+                      so it is drawn whenever the dock is folded, even on a lone pane with nothing to
+                      switch to — otherwise the fold would be a one-way door. */}
                   <button
                     type="button"
-                    aria-label={t("chat.switcher.aria")}
+                    aria-label={dockOpen ? t("chat.switcher.aria") : t("chat.dock.showAria")}
+                    aria-expanded={dockOpen}
                     ref={sheetPull.ref}
-                    onClick={() => setDrawer("switcher")}
-                    className="flex w-full touch-none items-center justify-center py-3 transition-colors active:bg-muted/50"
+                    onClick={() => (dockOpen ? setDrawer("switcher") : setDockOpen(true))}
+                    // FORK: py-2 (22px row), was py-3 — the row under it is a handle too, and the two together
+                    // stood 62px above the input on a phone.
+                    className="flex w-full touch-none flex-col items-center justify-center gap-1 py-2 transition-colors active:bg-muted/50"
                   >
-                    <span className="h-1.5 w-12 rounded-md bg-muted-foreground/50" />
+                    {!dockOpen && <ChevronUp className="size-4 text-muted-foreground" aria-hidden />}
+                    <span className="h-1.5 w-12 rounded-full bg-muted-foreground/50" />
                   </button>
                 </Collapse>
 
+                {/* FORK: the dock folds through Collapse, the house exit, and unmounts at the end of
+                    it; the draft survives because Composer persists it per pane (lib/drafts.ts). */}
+                <Collapse open={dockOpen}>
+
+                {/* FORK: the sends waiting for the link, above the composer they came from. */}
+                <QueuedSends paneId={paneId} scope={scope} />
                 <Composer
                   ref={composerRef}
                   paneId={paneId}
@@ -1967,6 +2367,9 @@ export function AgentChat({
                   // `connecting` the dot reads, so the pair still dims as one.
                   status={agent?.status}
                   stale={connecting}
+                  // FORK: and which model and effort it is on, for the same strip.
+                  model={agent?.model}
+                  effort={agent?.effort}
                   // The one read of the keyboard, handed down. See `composing` above.
                   composing={composing}
                   gone={gone}
@@ -1985,8 +2388,12 @@ export function AgentChat({
                   setRawTerminal={setRawTerminal}
                   setTapToFocus={setTapToFocus}
                   setExpandClippedReply={setExpandClippedReply}
+                  setControlsOpen={setControlsOpen}
                   onSent={onSent}
+                  // FORK: the `## Feedback:` heading of a send that carries anchored notes.
+                  paneName={paneName}
                 />
+                </Collapse>
               </div>
             </div>
           </Collapse>
@@ -2059,6 +2466,146 @@ export function AgentChat({
             node. FindBar's own mount effect then focuses the input and pops the keyboard. Verified in
             agent-chat.test.tsx rather than reasoned about, because the ordering is the whole
             argument. */}
+        {/* Held the "+" — what should it open? Mounted beside the other sheets and sharing the one
+            `drawer` value, so it cannot be open at the same time as the switcher or the pane menu. */}
+        <NewTabSheet
+          open={drawer === "newTab"}
+          onClose={closeDrawer}
+          launchers={launchers}
+          home={launchersHome}
+          selected={dash.prefs.newTabLauncher}
+          onPick={(command) => {
+            dash.setNewTabLauncher(command);
+            // Opened NOW as well as pinned: the sheet's own subtitle promises it, and a setting that
+            // does nothing until the next tap is a setting whose effect you cannot see.
+            if (command === "") {
+              if (agent) void newTab(agent.workspaceId);
+              return;
+            }
+            void launch(command, paneId);
+          }}
+        />
+        {/* A knowledge-base document, served by this bridge from its own origin (bridge/docs.ts) and
+            framed here rather than opened in Safari — or, with no document, the BROWSER that finds
+            one (doc-panel.tsx). Mounted at THIS level and not inside <AnsiOutput>: a `fixed inset-0`
+            element is positioned by its nearest transformed ancestor, and the mirror lives inside a
+            scroll container — the same reason every other sheet is here. Shares the one `drawer`
+            value, so it cannot be open alongside the switcher. */}
+        <DocPanel open={drawer === "doc"} onClose={closeDrawer} initial={doc} paneId={paneId} scope={scope} />
+        {/* FORK: what the agent changed in this pane's work tree, read-only (bridge/diff.ts). */}
+        <DiffSheet
+          open={drawer === "diff"}
+          onClose={() => {
+            // Closing it re-reads the summary: the operator may have been looking at a tree the
+            // agent moved without changing state, which is the one moment `usePaneDiff`'s
+            // status trigger cannot catch.
+            refreshDiff();
+            closeDrawer();
+          }}
+          paneId={paneId}
+          scope={scope}
+          fontSize={prefs.fontSize}
+          mirrorFace={mirrorFace}
+          home={launchersHome}
+          // FORK: a row's second affordance — the file itself rather than its patch. It hands over
+          // to the viewer rather than growing a third view inside the sheet, because an UNCHANGED
+          // file has no row here at all and the viewer has to stand on its own anyway.
+          onOpenFile={(path) => {
+            setFilePath(path);
+            setDrawer("file");
+          }}
+        />
+        {/* FORK: one file of that same work tree (bridge/file-view.ts) — the question a patch cannot
+            answer, since an unchanged file has no diff and a hunk's context is three lines. */}
+        <FileSheet
+          open={drawer === "file"}
+          onClose={closeDrawer}
+          paneId={paneId}
+          path={filePath}
+          scope={scope}
+          fontSize={prefs.fontSize}
+          mirrorFace={mirrorFace}
+          // An `.html` in the work tree is a page this bridge can also FRAME, so the viewer offers
+          // the hop rather than making the operator find the path a second way. Validated through
+          // the same classifier a tapped link goes through — the sheet holds a repo-relative path
+          // and the preview route takes one inside the pane's cwd, so the join happens here, once.
+          onPreview={(path) => {
+            const target = classifyDocLink(`${paneCwd}/${path}`, docHosts, paneCwd);
+            if (target.kind !== "preview") return;
+            setPreviewPath(target.path);
+            setDrawer("preview");
+          }}
+        />
+        {/* FORK: an HTML page the agent WROTE, framed beside the terminal (bridge/preview.ts).
+            Mounted at THIS level for `DocPanel`'s reason — a `fixed inset-0` element is positioned
+            by its nearest transformed ancestor and the mirror lives inside a scroll container. */}
+        <PreviewPanel open={drawer === "preview"} onClose={closeDrawer} paneId={paneId} path={previewPath} />
+        {/* FORK: the pane's anchored notes — edit, delete, mark sent, and the one button that turns
+            what is waiting into a single prompt. A `drawer` arm like every other sheet here, so it
+            cannot be open at the same time as the switcher, the pane menu or either panel. */}
+        {/* FORK: the pane's artifacts (bridge/artifacts.ts), a `drawer` arm like the rest. */}
+        <ArtifactSheet open={drawer === "artifacts"} onClose={closeDrawer} paneId={paneId} scope={scope} />
+        {/* FORK: hand the conversation to another harness (bridge/handoff.ts). Mounted only for a live
+            agent pane; on success the phone goes straight into the new pane, the same way a launch does. */}
+        {agent && !isShell && (
+          <HandoffSheet
+            open={drawer === "handoff"}
+            onClose={closeDrawer}
+            pane={agent}
+            status={agent.status}
+            scope={scope}
+            launchers={launchers}
+            onLaunched={(newPaneId) => navigate(panePath(newPaneId, scope))}
+          />
+        )}
+        <NotesSheet
+          open={drawer === "notes"}
+          onClose={closeDrawer}
+          paneId={paneId}
+          scope={scope}
+          title={paneName || paneId}
+          agent={agent?.agent}
+          status={agent?.status}
+        />
+        {/* FORK: annotate-and-ask (components/annotate-sheet.tsx). Shares the one `drawer` value, so
+            it cannot be open alongside the diff sheet or the switcher. It NEVER sends: "Attach &
+            ask" uploads the flattened picture through the existing chain and seeds this pane's
+            draft, and the operator taps Send — the same rule `routes/detail.tsx` states for
+            `?send=`. */}
+        <AnnotateSheet
+          open={drawer === "annotate"}
+          onClose={closeDrawer}
+          paneId={paneId}
+          scope={scope}
+          initialUrl={annotateUrl}
+          onPreviewUrl={onPreviewUrl}
+          maxUploadBytes={uploadCap.maxBytes}
+          // FORK: the probed element becomes an anchored note beside the text draft, so it rides in
+          // the next "Send N notes" prompt with the selector, bounds and component the bridge's
+          // Chrome read — the `{kind:"element"}` arm lib/notes.ts reserved for exactly this.
+          onElementNote={(p) =>
+            addNote({
+              paneId,
+              scope,
+              anchor: {
+                kind: "element",
+                selector: p.selector,
+                box: { x: p.probe.box.x, y: p.probe.box.y, w: p.probe.box.width, h: p.probe.box.height },
+                text: p.probe.text,
+                screenshotPath: p.screenshotPath,
+                component: p.probe.reactComponents,
+              },
+              comment: p.note,
+            })
+          }
+          onDraft={(seed) => {
+            // The composer reads its draft once, in its own `useState` initialiser, so the seed has
+            // to be on disk before it next mounts — which is exactly what `saveDraft` does and
+            // exactly how the `?send=` seed reaches it.
+            saveDraft(scope, paneId, seed);
+            revalidator.revalidate();
+          }}
+        />
         <PaneActionsSheet
           open={drawer === "paneMenu"}
           onClose={closeDrawer}
@@ -2081,6 +2628,30 @@ export function AgentChat({
           // flexible element the budget protects. Zen is also the same FAMILY as the two rows it
           // joins — "look at the output differently" — so the menu it belongs in already existed.
           onZen={zenAvailable && display ? enterZen : undefined}
+          // FORK: the two panels beside the terminal. Changes is offered for every pane — a shell
+          // has a cwd too; the bridge answers "not a repo" honestly. Documents only when this
+          // bridge serves any (the same `docHosts` gate the mirror's links use).
+          onDiff={() => setDrawer("diff")}
+          // FORK: hidden entirely when this bridge has no shot command — a row with no callback is
+          // a row the sheet does not draw, which is the same gate find, history and zen ride.
+          onAnnotate={shotEnabled ? () => setDrawer("annotate") : undefined}
+          // FORK: keep the artifacts library reachable even before this pane registers its first file.
+          onArtifacts={() => setDrawer("artifacts")}
+          // FORK: offered only when a launcher row starts a harness other than this pane's, and
+          // never on a shell or from a read-only device — the sheet would have nothing to do.
+          onHandoff={
+            agent && !isShell && !readOnly && handoffTargets(launchers, agent.agent).length > 0
+              ? () => setDrawer("handoff")
+              : undefined
+          }
+          onDocs={
+            docHosts.length > 0
+              ? () => {
+                  setDoc(null);
+                  setDrawer("doc");
+                }
+              : undefined
+          }
         />
       </div>
     </CompactStripLabels>

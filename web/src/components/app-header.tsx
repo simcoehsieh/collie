@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { Settings } from "lucide-react";
+import { BatteryLow, Settings } from "lucide-react";
 import { useNavigate } from "react-router";
 
 import { isConnecting } from "@/lib/connection";
@@ -19,10 +19,13 @@ import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/hooks/use-locale";
 import { useMuxLogoUrl, useMuxName } from "@/lib/mux-capability";
+import { BRAND, BRAND_WORD } from "@/lib/brand";
 import { useConnectionLost, useConnectionTrouble } from "@/hooks/use-connection-lost";
 import { useLoadingStalled } from "@/hooks/use-loading-stalled";
+import { useLowPower } from "@/hooks/use-dash-prefs";
 import { settingsPath } from "@/lib/nav";
 import { CollieHome } from "@/components/collie-home";
+import type { MarkState } from "@/components/meow-mark";
 import { AlphaBar } from "@/components/alpha-bar";
 import { Collapse } from "@/components/ui/collapse";
 import { useStripBandOpen } from "@/components/ui/strip-host";
@@ -110,6 +113,14 @@ interface AppHeaderHostProps {
   // no way for them to be right differently.
   bridge: BridgeStatus | undefined;
   error: boolean;
+  /** FORK: what the HERD is doing, as one word — the mark in the top-left of EVERY screen says it,
+   *  so the operator reads the herd off a 40px drawing in their peripheral vision instead of off a
+   *  count on the one screen that shows counts. It is a prop and not a hook for the same reason
+   *  `bridge` and `error` are: RootLayout already holds the snapshot and already runs the triage
+   *  this is derived from, so deriving it a second time here would be a second answer to a question
+   *  that has one. Absent is `idle`, which is the mark's own rest drawing — so a host mounted
+   *  without it (the playground, the header tests) renders exactly what it always did. */
+  herd?: MarkState;
   /** The routes below it. Not a sibling: the host RENDERS the outlet, so there is no arrangement of
    *  this app in which a route is mounted without a header above it. */
   children: ReactNode;
@@ -136,7 +147,7 @@ interface AppHeaderHostProps {
  * Routes feed it through `<RouteHeader/>`; see the note there for why that is a portal and not a
  * store of nodes.
  */
-export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
+export function AppHeaderHost({ bridge, error, herd = "idle", children }: AppHeaderHostProps) {
   // The same two shared-clock signals the ConnectionBanner reads, so the dog and the bar agree by
   // construction: bloom while troubled (≥4s not-live), rest muted once lost (≥15s, latched).
   useLocale();
@@ -293,6 +304,7 @@ export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
                   onHome={() => home.current?.fn?.()}
                   trouble={trouble}
                   lost={lost}
+                  state={herd}
                 />
                 {/* THE IDENTITY, STACKED: the brand over the multiplexer this collie drives, both
                     beside the mark. It was ONE 18px line — "Collie on <mux>" — and on a phone that
@@ -352,53 +364,66 @@ export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
                     aria-label would otherwise replace both lines for a screen reader. The brand word moved out of the button with it, so the tap target
                     is the mark's own 44px box and nothing else — the floor §6 asks for, and the same
                     box the gear at the other end of the row has. */}
+                {/* Upstream 1.8.1: the identity stays MOUNTED across routes and only hides inside a
+                    pane, so the multiplexer's logo is fetched once per page rather than once per
+                    dashboard open. `hidden`, not a conditional. */}
                 <div
                   data-slot="header-identity"
                   hidden={!claim.wordmark}
                   className="relative min-w-0"
                 >
-                  <SectionLabel className="absolute bottom-full left-0 max-w-full truncate leading-none">
-                    Collie
-                  </SectionLabel>
-                  {/* The line the freed width is FOR — "on <mux>", the sentence the brand line
-                      above starts. `min-h-6` RESERVES it whether or not a name has arrived:
-                      nothing renders until a bridge has actually named one (an old bridge, a
-                      cached page or a read still in flight all leave it empty, never an "on
-                      unknown" placeholder), and a box with no line box inside it is 0px tall — so
-                      without the reservation the brand line would jump 24px upward the moment
-                      /api/config landed. DESIGN.md §2: a state with nothing to say keeps its slot.
+                    {/* FORK: `hideMux` in branding.json drops the whole "on <mux>" line, so the name is
+                        the block's one flow child at the line's own size — an eyebrow with nothing under
+                        it would sit 24px above the row's centre. */}
+                    {BRAND.hideMux ? (
+                      <span className="block min-h-6 truncate text-base font-medium">{BRAND_WORD}</span>
+                    ) : (
+                    <>
+                    <SectionLabel className="absolute bottom-full left-0 max-w-full truncate leading-none">
+                      {/* FORK: the machine's own name when branding.json gives one (src/lib/brand.ts). */}
+                      {BRAND_WORD}
+                    </SectionLabel>
+                    {/* The line the freed width is FOR — "on <mux>", the sentence the brand line
+                        above starts. `min-h-6` RESERVES it whether or not a name has arrived:
+                        nothing renders until a bridge has actually named one (an old bridge, a
+                        cached page or a read still in flight all leave it empty, never an "on
+                        unknown" placeholder), and a box with no line box inside it is 0px tall — so
+                        without the reservation the brand line would jump 24px upward the moment
+                        /api/config landed. DESIGN.md §2: a state with nothing to say keeps its slot.
 
-                      The prefix stays a dictionary string and stays on this line. It is the word
-                      that makes two stacked runs one sentence rather than two loose labels, and it
-                      is the only translated word here — the brand and the multiplexer's own name
-                      are names, and names are not translated. */}
-                  <span className="block min-h-6 truncate text-base">
-                    {mux !== "" && (
-                      <>
-                        {t("nav.mux.onPrefix")}{" "}
-                        {/* The multiplexer's own mark, between "on" and its name. `alt=""` and
-                            nothing else: the name is right there in the same sentence, so a screen
-                            reader announcing the picture too would read the multiplexer twice —
-                            this is decoration OF that word. An `<img>` and never inline SVG: these
-                            bytes come from an adapter, and the one way to be certain adapter-
-                            supplied markup can never become document markup is to never put it in
-                            the document (the mirror's XSS boundary, same rule). The bridge serves
-                            it sandboxed. Sized in `em` so it tracks this line's own type rather
-                            than a pixel guess, and inline so the line stays ONE text run — the
-                            sentence is still "on <name>" to a screen reader and to a text query.
-                            Nothing renders when the bridge published no URL. */}
-                        {muxLogo !== "" && (
-                          <img
-                            src={muxLogo}
-                            alt=""
-                            className="mr-1 inline-block size-[1.15em] align-[-0.2em]"
-                          />
-                        )}
-                        {mux}
-                      </>
+                        The prefix stays a dictionary string and stays on this line. It is the word
+                        that makes two stacked runs one sentence rather than two loose labels, and it
+                        is the only translated word here — the brand and the multiplexer's own name
+                        are names, and names are not translated. */}
+                    <span className="block min-h-6 truncate text-base">
+                      {mux !== "" && (
+                        <>
+                          {t("nav.mux.onPrefix")}{" "}
+                          {/* The multiplexer's own mark, between "on" and its name. `alt=""` and
+                              nothing else: the name is right there in the same sentence, so a screen
+                              reader announcing the picture too would read the multiplexer twice —
+                              this is decoration OF that word. An `<img>` and never inline SVG: these
+                              bytes come from an adapter, and the one way to be certain adapter-
+                              supplied markup can never become document markup is to never put it in
+                              the document (the mirror's XSS boundary, same rule). The bridge serves
+                              it sandboxed. Sized in `em` so it tracks this line's own type rather
+                              than a pixel guess, and inline so the line stays ONE text run — the
+                              sentence is still "on <name>" to a screen reader and to a text query.
+                              Nothing renders when the bridge published no URL. */}
+                          {muxLogo !== "" && (
+                            <img
+                              src={muxLogo}
+                              alt=""
+                              className="mr-1 inline-block size-[1.15em] align-[-0.2em]"
+                            />
+                          )}
+                          {mux}
+                        </>
+                      )}
+                    </span>
+                    </>
                     )}
-                  </span>
-                </div>
+                  </div>
                 {/* Center region: the breadcrumb (or, on the dashboard/space, an empty flex-1 spacer that
                     pushes the right cluster to the edge). min-w-0 so the breadcrumb truncates when tight.
                     Unmounted, not hidden, while a route owns the row: an empty `flex-1` box left standing
@@ -411,6 +436,9 @@ export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
                 {/* gap-1, not gap-3: the icon buttons now carry their own 12px of padding to reach 44px,
                     so a 12px gap on top of that reads as a gulf. 4px keeps the apparent spacing between
                     icons close to what it was. */}
+                {/* FORK: Low power is on (Settings) — a muted glyph, so the slower mirror reads as
+                    a choice and not a fault. Sits before the route's own cluster, on every route. */}
+                <LowPowerGlyph />
                 <div data-slot="header-right" ref={setRight} className="flex items-center gap-1" />
               </>
             )}
@@ -563,5 +591,22 @@ export function SettingsGear({ scope }: { scope?: Scope }) {
     >
       <Settings className="size-5" />
     </button>
+  );
+}
+
+// FORK: see the call site. Renders nothing while Low power is off, which is every install by default.
+function LowPowerGlyph() {
+  useLocale();
+  const on = useLowPower();
+  if (!on) return null;
+  return (
+    <span
+      data-slot="low-power-glyph"
+      className="grid size-8 place-items-center text-muted-foreground"
+      title={t("settings.lowPower.title")}
+      aria-label={t("settings.lowPower.title")}
+    >
+      <BatteryLow className="size-4" />
+    </span>
   );
 }

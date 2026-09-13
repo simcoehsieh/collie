@@ -1,9 +1,14 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { Check, Copy, ExternalLink, FileCode, MonitorPlay } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { parseAnsi } from "@/lib/ansi";
 import { buildBlocks } from "@/lib/harness";
+import type { MirrorModel } from "@/hooks/use-mirror-model";
+import { buzz } from "@/lib/haptics";
+import { codeFences, type CodeFence } from "@/lib/code-fences";
+import { lineChips, type LineChips } from "@/lib/line-chips";
 import {
   dropLeadingLines,
   lineText,
@@ -54,7 +59,15 @@ type GenericMenuBlock = Extract<Block, { kind: "menu" }>;
 type AutoBlock = Extract<Block, { kind: "autocomplete" }>;
 
 export interface AnsiOutputProps {
+  /** The mirror text. Parsed here unless `model` is given, in which case this is not read. */
   text: string;
+  /**
+   * FORK: the mirror ALREADY PARSED — the lines and the Block AST the caller built once for its
+   * own probes (hooks/use-mirror-model.ts). Given, this component renders them and parses nothing;
+   * absent, it parses `text` itself, so every other caller (the transcript, the playground) is
+   * unchanged. `agent` is then only the adapter the caller already chose — the blocks are theirs.
+   */
+  model?: MirrorModel;
   className?: string;
   /** true = wrap; the block breaks at the viewport width instead of scrolling horizontally. Default
    *  true — the mirror is mostly agent prose, and a phone shows far fewer columns than the desktop
@@ -119,6 +132,29 @@ export interface AnsiOutputProps {
    * why AgentChat sets this to 0 whenever the find bar is open.
    */
   hideLeadingLines?: number;
+  /**
+   * Injected: a tap on an autolinked URL. Return true to say the app TOOK the tap — the anchor then
+   * suppresses its own navigation. Absent, or false, and the link keeps every behaviour it has
+   * today, so a bridge that publishes no document host needs no branch here at all.
+   */
+  onLinkOpen?: (href: string) => boolean;
+  /**
+   * FORK: the pane's own diff file list, for the file chip.
+   *
+   * A LOOKUP and never a heuristic (lib/line-chips.ts states the argument): a chip is offered only
+   * when one of these exact strings appears verbatim on a line, so the false-positive rate a path
+   * detector would have is zero here. Absent, or empty, and no line earns a file chip — which is
+   * every pane that is not a work tree, and every pane whose list has not arrived yet.
+   */
+  filePaths?: readonly string[];
+  /**
+   * FORK: a tap on a line's URL chip. `local` says the URL names a port on the machine the agent is
+   * running on — a dev server it just started — which is a different offer from an ordinary link.
+   * Absent means no URL chip is drawn at all.
+   */
+  onUrlChip?: (href: string, local: boolean) => void;
+  /** FORK: a tap on a line's file chip, with the repo-relative path from the list it matched. */
+  onFileChip?: (path: string) => void;
 }
 
 // Stable empty result so the "not searching" path keeps the same `matches` reference across polls
@@ -163,6 +199,11 @@ const LINK_CLASS =
 function preClass(wrap: boolean, className?: string): string {
   return cn(
     "m-0 font-mono leading-[1.25] tracking-normal text-foreground [font-variant-ligatures:none]",
+    // FORK: the mirror is its own layout and paint island. Nothing outside the <pre> depends on
+    // the geometry of what is inside it (the scroller sizes it, the dialogs sit after it), so a
+    // changed line no longer invalidates layout beyond the pre, and its paint is clipped to its
+    // box — which is what lets the browser skip it entirely when the composer repaints over it.
+    "[contain:layout_paint]",
     MIRROR_SPACE,
     MIRROR_INVERT,
     wrap
@@ -246,7 +287,7 @@ const renderImageCluster = (
   url === null ? (
     <span
       key={key}
-      className="my-1 inline-flex items-center gap-1.5 rounded border border-border/40 bg-muted/30 px-2 py-1 text-xs"
+      className="my-1 inline-flex items-center gap-1.5 rounded-sm border border-border/40 bg-muted/30 px-2 py-1 text-xs"
     >
       {t("mirror.imageBadge")}
     </span>
@@ -267,7 +308,7 @@ const renderImageCluster = (
         <img
           src={url}
           alt={t("mirror.imageAlt")}
-          className="mx-auto max-h-80 w-auto max-w-full rounded object-contain"
+          className="mx-auto max-h-80 w-auto max-w-full rounded-sm object-contain"
           loading="lazy"
           // A load that fails falls back to the badge (see FAILED IMAGES in the component). The
           // handler reports the URL, not the cluster: the same blob can sit under two clusters.
@@ -284,8 +325,108 @@ const renderImageCluster = (
     </span>
   );
 
+/** The frozen empty fence list, for a block with no code fence in it. */
+const NO_FENCES: readonly CodeFence[] = Object.freeze([]);
+
+/** How long the ✓ holds on a fence's Copy button before it turns back into the clipboard glyph. */
+const COPIED_MS = 1200;
+
+// FORK. The one-tap way to lift a code block off the mirror. A phone can select text in the
+// mirror (index.css exempts `pre` from the touch-selection rule by name), but dragging two handles
+// across a fenced block inside a scrolling <pre> is the single most repeated fiddle a pane asks
+// for, and the block's edges are ALREADY known — they are the fences.
+//
+// It sits INSIDE the <pre>, so it renders in the mirror's dark colour space and is inverted with it
+// under the light theme (.adr/0002): the tint is chosen so both readings are a quiet chip. It is
+// `inline-flex` on the closing fence's own line — no block box, no extra row, no offset moved.
+function CopyFenceButton({ lines, fence }: { lines: StyledLine[]; fence: CodeFence }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current !== null) clearTimeout(timer.current);
+    },
+    [],
+  );
+  async function copy() {
+    const text = lines
+      .slice(fence.open + 1, fence.close)
+      .map(lineText)
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      buzz();
+      setCopied(true);
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), COPIED_MS);
+    } catch {
+      // No clipboard (plain-HTTP context, or the browser refused): the button keeps its glyph and
+      // claims nothing — the text is still selectable by hand, exactly as before.
+      setCopied(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      data-slot="copy-fence"
+      aria-label={copied ? t("mirror.copied") : t("mirror.copyBlock")}
+      title={copied ? t("mirror.copied") : t("mirror.copyBlock")}
+      className="ml-2 inline-flex h-[1.6em] cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 align-middle font-sans text-[0.85em] leading-none text-white/80 select-none hover:bg-white/20 active:scale-95"
+    >
+      {copied ? <Check className="size-[1em]" /> : <Copy className="size-[1em]" />}
+      <span>{copied ? t("mirror.copied") : t("mirror.copy")}</span>
+    </button>
+  );
+}
+
+/** FORK: the frozen empty chip list, for a block where no line earned one. */
+const NO_CHIPS: readonly (LineChips | null)[] = Object.freeze([]);
+
+/**
+ * FORK. A chip riding one mirror line — `CopyFenceButton`'s shape, and deliberately the same one.
+ *
+ * It is a TRAILING ORNAMENT (the cheapest of the four shapes a non-text surface can take here): it
+ * sits inline after the line's own spans, inside the `<pre>`, so it adds no row to the grid, moves
+ * no character of the shared find/link offset space, and restructures nothing. "A button is not
+ * text" is the whole licence, and it is why this costs nothing rather than costing an offset walk.
+ *
+ * It also renders in the mirror's dark colour space and inverts with it under the light theme
+ * (.adr/0002), which is why the tint is the copy button's `bg-white/10` and not an app token: a
+ * `dark:` variant or a `--muted` here would come out backwards, silently.
+ */
+function LineChip({
+  label,
+  title,
+  icon: Icon,
+  onTap,
+}: {
+  label: string;
+  title: string;
+  icon: typeof ExternalLink;
+  onTap: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-slot="line-chip"
+      aria-label={title}
+      title={title}
+      onClick={() => {
+        buzz();
+        onTap();
+      }}
+      className="ml-2 inline-flex h-[1.6em] cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 align-middle font-sans text-[0.85em] leading-none text-white/80 select-none hover:bg-white/20 active:scale-95"
+    >
+      <Icon className="size-[1em]" />
+      <span>{label}</span>
+    </button>
+  );
+}
+
 export const AnsiOutput = memo(function AnsiOutput({
   text,
+  model,
   className,
   wrap = true,
   fontSize = 11,
@@ -300,14 +441,26 @@ export const AnsiOutput = memo(function AnsiOutput({
   onMenuAction,
   promptDisabled,
   hideLeadingLines = 0,
+  onLinkOpen,
   images,
   onImageClusterCount,
+  filePaths,
+  onUrlChip,
+  onFileChip,
 }: AnsiOutputProps) {
   // The mirror is agent output and is not translated — but the two strings the image cluster
   // renders are Collie's own words, so this subscribes for the same reason every t() caller does.
   useLocale();
-  const segments = useMemo(() => parseAnsi(text), [text]);
-  const blocks = useMemo(() => buildBlocks(splitLines(segments), { agent }), [segments, agent]);
+  // One parse, or none: a caller holding a MirrorModel has already paid for it (agent-chat, whose
+  // three probes derive from the same object). The `text` path is what it always was.
+  const ownLines = useMemo(
+    () => (model === undefined ? splitLines(parseAnsi(text)) : model.lines),
+    [model, text],
+  );
+  const blocks = useMemo(
+    () => (model === undefined ? buildBlocks(ownLines, { agent }) : model.blocks),
+    [model, ownLines, agent],
+  );
 
   const rawBlocks = useMemo(
     () =>
@@ -354,6 +507,23 @@ export const AnsiOutput = memo(function AnsiOutput({
   // image, however many cells it covers. Computed here rather than inside the render loop because
   // the TOTAL is what the caller needs before a single node is emitted.
   const clustersByBlock = useMemo(() => rawBlocks.map((b) => imageClusters(b.lines)), [rawBlocks]);
+  // FORK: the fenced code blocks of each raw block, by block index — the regions a Copy button
+  // stands beside. Only CLOSED fences: an open one is still being written, and copying half of it
+  // is the kind of help that costs a retype.
+  const fencesByBlock = useMemo(() => rawBlocks.map((b) => codeFences(b.lines)), [rawBlocks]);
+  // FORK: which lines earn a chip, by block index. Computed ONCE per mirror text rather than inside
+  // the render loop, for the reason every other grammar here is memoised: this component re-renders
+  // on every poll and a ~600-line screen would otherwise pay a per-line URL scan 40 times a minute.
+  // Nothing is computed at all when neither handler is wired, so a caller that wants no chips (the
+  // transcript, the playground) is exactly as cheap as it was.
+  const wantChips = onUrlChip !== undefined || onFileChip !== undefined;
+  const chipsByBlock = useMemo(
+    () =>
+      wantChips
+        ? rawBlocks.map((b) => lineChips(b.lines, onFileChip === undefined ? [] : (filePaths ?? [])))
+        : [],
+    [rawBlocks, wantChips, onFileChip, filePaths],
+  );
   const clusterCount = useMemo(
     () => clustersByBlock.reduce((sum, c) => sum + c.length, 0),
     [clustersByBlock],
@@ -506,8 +676,25 @@ export const AnsiOutput = memo(function AnsiOutput({
       const pieceStart = at;
       at += p.text.length;
       if (p.matchIndex === null) return <Fragment key={i}>{renderFind(p.text, pieceStart)}</Fragment>;
+      // Hoisted, and not tidiness: TypeScript drops the `p.matchIndex !== null` narrowing inside the
+      // closure below, so `links[p.matchIndex]!` written inline in `onClick` would not typecheck the
+      // same way — and this keeps the non-null assertion in one place.
+      const href = links[p.matchIndex]!.href;
       return (
-        <a key={i} href={links[p.matchIndex]!.href} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
+        <a
+          key={i}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={LINK_CLASS}
+          onClick={(e) => {
+            // preventDefault ONLY when the app says it took the tap. A link the classifier declines
+            // keeps everything it has today, iOS long-press → Copy Link / Open in New Tab included,
+            // and the fallback needs no branch in the JSX. The anchor keeps its real `href` either
+            // way, so the link is still copyable and still says where it goes.
+            if (onLinkOpen?.(href)) e.preventDefault();
+          }}
+        >
           {renderFind(p.text, pieceStart)}
         </a>
       );
@@ -527,7 +714,26 @@ export const AnsiOutput = memo(function AnsiOutput({
   // nothing to pan, so the table would be silently un-pannable, which is the exact failure this
   // change exists to fix. A frame row that is NOT in a run, a lone menu or panel border, keeps its clip
   // untouched: a detected table owns its own rows, and nothing beyond them.
-  const renderLine = (line: StyledLine, li: number, lead: boolean, inRun: boolean): ReactNode => {
+  // FORK: a line's key is its TEXT (plus an occurrence count for repeats), never its index. The
+  // mirror is a rendered grid: one new row of output shifts every index by one, and index keys made
+  // React rewrite the text of all ~600 lines on every tick the agent streamed — the same rows, one
+  // slot down. Keyed by content, the reconciler sees one row leave the top and one arrive at the
+  // bottom, and the 598 between them keep their DOM nodes. The counter is per block, so two
+  // identical blank lines stay distinct siblings.
+  const seen = new Map<string, number>();
+  const lineKey = (line: StyledLine): string => {
+    const content = lineText(line);
+    const n = seen.get(content) ?? 0;
+    seen.set(content, n + 1);
+    return n === 0 ? content : `${n}\u0000${content}`;
+  };
+  const renderLine = (
+    line: StyledLine,
+    li: number,
+    lead: boolean,
+    inRun: boolean,
+    trailing: ReactNode = null,
+  ): ReactNode => {
     if (li > 0) offset += 1; // the "\n" separating this line from the previous
     const segNodes = line.segments.map((s, si) => {
       const segStart = offset;
@@ -550,9 +756,10 @@ export const AnsiOutput = memo(function AnsiOutput({
       segNodes
     );
     return (
-      <Fragment key={li}>
+      <Fragment key={lineKey(line)}>
         {li > 0 && lead ? "\n" : null}
         {content}
+        {trailing}
       </Fragment>
     );
   };
@@ -561,11 +768,61 @@ export const AnsiOutput = memo(function AnsiOutput({
   let clusterIndex = 0;
   const renderBlock = (block: RawBlock, bi: number) => {
     if (bi > 0) offset += 1; // the "\n" separating this block from the previous
+    seen.clear();
     const runs = runsByBlock[bi] ?? NO_RUNS;
     const clusters = clustersByBlock[bi] ?? NO_CLUSTERS;
+    const fences = fencesByBlock[bi] ?? NO_FENCES;
+    const chips = chipsByBlock[bi] ?? NO_CHIPS;
     const nodes: ReactNode[] = [];
     let ri = 0;
     let ci = 0;
+    let fi = 0;
+    // The Copy button rides the CLOSING fence line, inline after its three backticks, so it adds no
+    // row to the grid and moves no offset: the find and link coordinate spaces are text, and a
+    // button is not text.
+    const fenceTrailing = (li: number): ReactNode => {
+      const fence: CodeFence | undefined = fences[fi];
+      if (!fence || fence.close !== li) return null;
+      fi++;
+      return <CopyFenceButton key="copy" lines={block.lines} fence={fence} />;
+    };
+    // FORK: the line's own chips, on the same trailing slot and for the same reason the Copy button
+    // is there — inline after the line's spans, no row added, no offset moved. A line that earns
+    // both a URL chip and a Copy button gets both, in the order they are listed here.
+    const chipTrailing = (li: number): ReactNode => {
+      const earned = chips[li];
+      if (!earned) return null;
+      const url = earned.url;
+      const path = earned.path;
+      return (
+        <>
+          {url !== undefined && onUrlChip !== undefined && (
+            <LineChip
+              key="url"
+              label={url.local ? t("mirror.chip.preview") : t("mirror.chip.open")}
+              title={url.local ? t("mirror.chip.previewAria", { url: url.href }) : t("mirror.chip.openAria", { url: url.href })}
+              icon={url.local ? MonitorPlay : ExternalLink}
+              onTap={() => onUrlChip(url.href, url.local)}
+            />
+          )}
+          {path !== undefined && onFileChip !== undefined && (
+            <LineChip
+              key="file"
+              label={t("mirror.chip.file")}
+              title={t("mirror.chip.fileAria", { path })}
+              icon={FileCode}
+              onTap={() => onFileChip(path)}
+            />
+          )}
+        </>
+      );
+    };
+    const trailingFor = (li: number): ReactNode => (
+      <>
+        {fenceTrailing(li)}
+        {chipTrailing(li)}
+      </>
+    );
     for (let li = 0; li < block.lines.length; ) {
       const cluster: ImageCluster | undefined = clusters[ci];
       if (cluster && cluster.start === li) {
@@ -592,7 +849,7 @@ export const AnsiOutput = memo(function AnsiOutput({
       }
       const run: TableRun | undefined = runs[ri];
       if (!run || run.start !== li) {
-        nodes.push(renderLine(block.lines[li]!, li, true, false));
+        nodes.push(renderLine(block.lines[li]!, li, true, false, trailingFor(li)));
         li++;
         continue;
       }

@@ -11,6 +11,7 @@ import type { Scope } from "@/lib/scope";
 import type { HostHealth } from "@/lib/host-health";
 import type { ServerSummary, WorktreeView } from "@/lib/types";
 import { Collapse } from "@/components/ui/collapse";
+import { DirPicker } from "@/components/dir-picker";
 import { BottomSheet } from "@/components/ui/sheet";
 import { useHoldReload } from "@/lib/reload-guard";
 import { t } from "@/lib/i18n";
@@ -83,6 +84,11 @@ interface NewSpaceSheetProps {
   onCreateWorktree?: (workspaceId: string, branch: string) => void;
   /** Show a worktree that exists on disk but is not open as a space. */
   onOpenWorktree?: (workspaceId: string, path: string) => void;
+  /**
+   * Directories worth one tap in the picker — the open spaces' own `cwd`s, most recent first, and
+   * already deduped. Absent renders no shortcut strip; the browser below it is unaffected.
+   */
+  dirShortcuts?: readonly string[];
   /** Session scope for the listing read. */
   scope?: Scope;
 }
@@ -97,6 +103,7 @@ export function NewSpaceSheet({
   repos = NO_REPOS,
   onCreateWorktree,
   onOpenWorktree,
+  dirShortcuts,
   scope,
 }: NewSpaceSheetProps) {
   useLocale();
@@ -348,8 +355,25 @@ export function NewSpaceSheet({
           </>
         ) : (
         <>
-        <label className="flex flex-col gap-1">
+        {/* PICK, then type only if you have to. The manual field is unchanged and stays BELOW the
+            picker rather than being replaced by it: it is the route to everything the picker cannot
+            reach on purpose (a dotted directory, a path outside home) and the only one that works by
+            dictation. The two share one piece of state — the picker writes the path the field shows,
+            so there is never a chosen directory the field disagrees with.
+
+            REMOUNTED PER OPEN, via `key`. The picker starts its browse at whatever `cwd` holds when
+            it mounts, and the sheet resets `cwd` to "" on every open; without a fresh mount the
+            browser would still be standing in last time's directory while the field says home. */}
+        <div className="flex flex-col gap-1">
           <span className="text-xs font-medium text-muted-foreground">{t("space.new.dir.label")}</span>
+          <DirPicker
+            key={open ? "open" : "closed"}
+            value={cwd}
+            onChange={setCwd}
+            shortcuts={dirShortcuts}
+            scope={scope}
+            disabled={refusal !== undefined}
+          />
           <input
             value={cwd}
             onChange={(e) => setCwd(e.target.value)}
@@ -357,9 +381,9 @@ export function NewSpaceSheet({
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
-            className="h-11 rounded-lg border border-border bg-background px-3 font-mono text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className="mt-1 h-11 rounded-lg border border-border bg-background px-3 font-mono text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           />
-        </label>
+        </div>
         <label className="flex flex-col gap-1">
           <span className="text-xs font-medium text-muted-foreground">{t("space.new.label.label")}</span>
           <input

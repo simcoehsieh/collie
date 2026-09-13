@@ -64,3 +64,14 @@ export const PAIRED_DEVICES_HASH = "paired-devices";
 export function pairedDevicesPath(scope?: Scope): string {
   return `${settingsPath(scope)}#${PAIRED_DEVICES_HASH}`;
 }
+
+/** FORK: the artifacts library — everything the agents made, newest first (routes/artifacts.tsx). */
+export function artifactsPath(scope?: Scope): string {
+  return `/artifacts${scopeSearch(scope)}`;
+}
+
+/** FORK: one artifact, opened to read (routes/artifact.tsx). */
+export function artifactPath(id: string, scope?: Scope): string {
+  return `/artifacts/${encodeURIComponent(id)}${scopeSearch(scope)}`;
+}
+

@@ -1,7 +1,11 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { vi } from "vitest";
+import { http, HttpResponse } from "msw";
+import { afterEach, vi } from "vitest";
+import { __resetOperatorCommands } from "@/lib/operator-config";
+import { __resetQuota } from "@/lib/quota";
+import { server } from "@/test/setup";
 
 import { CrewProvider } from "@/components/crew-provider";
 import { ROOT_ROUTE_ID, type HomeData } from "@/lib/loaders";
@@ -301,5 +305,45 @@ describe("the dashboard across sessions", () => {
     renderHome(widened(), "/?all=1");
     await settled();
     expect(screen.getAllByLabelText(/1 pane/i).length).toBe(1);
+  });
+});
+
+// FORK: the usage section — drawn only on a bridge that says it can answer `/api/quota`.
+describe("the usage section on the dashboard", () => {
+  afterEach(() => {
+    __resetOperatorCommands();
+    __resetQuota();
+  });
+
+  it("is absent when /api/config carries no `quota`, so a plain bridge's dashboard is unchanged", async () => {
+    __resetOperatorCommands();
+    renderHome(homeData({ agents: fixtureAgents }));
+    await settled();
+    expect(screen.queryByRole("heading", { name: /usage/i })).toBeNull();
+  });
+
+  it("is drawn, foldable, when the bridge publishes `quota: true`", async () => {
+    __resetOperatorCommands();
+    server.use(
+      http.get("/api/config", () => HttpResponse.json({ push: false, vapidPublicKey: "", quota: true })),
+      http.get("/api/quota", () =>
+        HttpResponse.json(
+          {
+            ok: true,
+            fetchedAt: "t",
+            agents: [
+              { key: "claude", name: "claude", status: "ok", windows: [] },
+              { key: "codex", name: "codex", status: "missing", windows: [] },
+              { key: "agy", name: "agy", status: "missing", windows: [] },
+            ],
+          },
+          { headers: { etag: '"q"' } },
+        ),
+      ),
+    );
+    renderHome(homeData({ agents: fixtureAgents }));
+    await settled();
+    expect(await screen.findByRole("heading", { name: /usage/i })).toBeInTheDocument();
+    expect(await screen.findByTestId("quota-row-claude")).toBeInTheDocument();
   });
 });

@@ -105,3 +105,41 @@ export function findLinks(text: string): LinkMatch[] {
   }
   return links;
 }
+
+// ── FORK: the dev server the agent just started ───────────────────────────────────────────────
+
+/** Hostnames that mean "on the machine the bridge is running on". Mirrors bridge/shot.ts's list. */
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "[::1]"]);
+
+/**
+ * The LAST loopback URL the pane printed, or null.
+ *
+ * It is what prefills the annotate sheet's address field, and "last" is the whole point: a dev
+ * server prints its URL when it starts and again on every restart, so the newest line is the one
+ * still listening. Built on {@link findLinks} rather than a second scanner — there is one idea of
+ * what a URL in terminal output is, and it lives there.
+ */
+export function lastLocalUrl(text: string): string | null {
+  for (const link of findLinks(text).toReversed()) {
+    try {
+      const url = new URL(link.href);
+      if (LOCAL_HOSTS.has(url.hostname.toLowerCase()) && isPageSuggestion(link.href)) return link.href;
+    } catch {
+      // findLinks already required a plausible host; anything URL() still refuses is not one.
+    }
+  }
+  return null;
+}
+
+
+/** Don't present a health/API probe printed by an agent as the website the operator is building. */
+export function isPageSuggestion(href: string): boolean {
+  try {
+    const url = new URL(href);
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+      !/^\/(?:api|health|healthz|metrics)(?:\/|$)/i.test(url.pathname) &&
+      !/\.(?:json|jsonl)(?:$|\/)/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}

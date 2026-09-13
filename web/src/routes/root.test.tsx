@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
-import { BootSplash, RootLayout, shownLastSeenAt } from "./root";
+import { BootSplash, RootLayout, routeEnter, shownLastSeenAt } from "./root";
 import { RouteHeader } from "@/components/app-header";
 import { server } from "@/test/setup";
 import { __resetOperatorCommands } from "@/lib/operator-config";
@@ -24,13 +24,13 @@ describe("BootSplash — escalates a stuck cold start", () => {
 
   it("blooms the mark on the connecting splash before the threshold", () => {
     const { container } = render(<BootSplash />);
-    expect(screen.getByText("Connecting to the herd…")).toBeInTheDocument();
+    expect(screen.getByText("Connecting…")).toBeInTheDocument();
     // The bloom is a colour as well as turning — a reduced-motion reader gets the accents only.
     expect(markIsLive(container)).toBe(true);
     expect(markPaper(container)).toBe("var(--background)");
     // still the plain splash a beat before the threshold
     act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS - 1));
-    expect(screen.getByText("Connecting to the herd…")).toBeInTheDocument();
+    expect(screen.getByText("Connecting…")).toBeInTheDocument();
     expect(markIsLive(container)).toBe(true);
     expect(screen.queryByText("Not connected")).not.toBeInTheDocument();
   });
@@ -38,15 +38,14 @@ describe("BootSplash — escalates a stuck cold start", () => {
   it("escalates to 'Not connected' with a Retry once stuck past the threshold", () => {
     const { container } = render(<BootSplash />);
     act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS));
-    expect(screen.queryByText("Connecting to the herd…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Connecting…")).not.toBeInTheDocument();
     expect(screen.getByText("Not connected")).toBeInTheDocument();
     expect(screen.getByText(/Can.t reach Collie/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     // Same mark throughout — it is never swapped for a second drawing, it only stops blooming: the
     // rest state is that mark still, muted. No bloom, because we have stopped trying, and a
-    // blooming mark would say otherwise. No gallop sprite on this screen either (the app mounts one
-    // animal).
-    expect(container.querySelector(".dog-gallop")).toBeNull();
+    // blooming mark would say otherwise. (The "no gallop sprite here" assertion went with the
+    // sprite itself — `dog-gallop` no longer exists to match, so the check had become vacuous.)
     const mark = collieMark(container);
     expect(markIsLive(container)).toBe(false);
     expect(mark?.getAttribute("class")).toMatch(/grayscale/);
@@ -137,7 +136,7 @@ describe("RootLayout — the document itself never scrolls", () => {
     // The loader resolves on a microtask even though it's synchronous — the route isn't hydrated yet
     // on the first render.
     const column = await waitFor(() => {
-      const el = container.querySelector(".flex.h-\\[100dvh\\].flex-col");
+      const el = container.querySelector(".app-viewport.flex.flex-col");
       expect(el).not.toBeNull();
       return el!;
     });
@@ -254,7 +253,9 @@ describe("RootLayout — the shell survives a navigation", () => {
     expect(container.querySelector("[data-slot='strip-live-polite']")).toBe(polite);
     expect(container.querySelector("[data-slot='strip-live-assertive']")).toBe(assertive);
     // …while the region that DOES remount is the one holding the route.
-    expect(container.querySelector("[data-slot='screen-transition']")).not.toBeNull();
+    // FORK: the fork's own entrance wrapper (routes/root.tsx `data-route-enter`), not upstream's
+    // `screen-transition` slot.
+    expect(container.querySelector("[data-route-enter]")).not.toBeNull();
     expect(rootLoads).toBe(1);
   });
 });
@@ -343,5 +344,32 @@ describe("RootLayout — the header identity survives a round trip to a pane", (
     expect(container.querySelector('[data-slot="header-identity"]')).toBe(identity);
     expect(container.querySelector('[data-slot="header-identity"] img')).toBe(logo);
     expect(identity).toBeVisible();
+  });
+});
+
+// FORK: one entrance for every kind of navigation was the loudest "this is a website" tell the app
+// had. What is pinned here is the DECISION, not the CSS: the animation lives in skin.css, and the
+// only thing that can be wrong in TypeScript is which of the three words this returns.
+describe("routeEnter — which way a route arrives", () => {
+  it("raises Settings and the Overview regardless of where they were opened from", () => {
+    expect(routeEnter("settings", "PUSH", 1, 0)).toBe("modal");
+    expect(routeEnter("overview", "PUSH", 1, 0)).toBe("modal");
+    // Even a Back INTO one of them rises: it has no sibling at its own level, so a sideways slide
+    // would claim a hierarchy that does not exist.
+    expect(routeEnter("settings", "POP", 1, 2)).toBe("modal");
+  });
+
+  it("pops on the browser's own Back, and on any move to a shallower path", () => {
+    expect(routeEnter("", "POP", 0, 2)).toBe("pop");
+    expect(routeEnter("", "PUSH", 0, 2)).toBe("pop");
+    expect(routeEnter("space", "PUSH", 2, 3)).toBe("pop");
+  });
+
+  it("pushes deeper — and answers a same-depth hop the SAME way, so nothing replays", () => {
+    expect(routeEnter("pane", "PUSH", 2, 0)).toBe("push");
+    // pane → pane keeps the wrapper mounted (it is keyed by route KIND), so a different answer here
+    // would change the attribute under a live element and replay an entrance for a hop that moved
+    // nothing.
+    expect(routeEnter("pane", "PUSH", 2, 2)).toBe("push");
   });
 });

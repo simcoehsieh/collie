@@ -334,8 +334,32 @@ export function paneTextWithDraft(base = "hello from the pane"): string {
 // Default happy-path handlers; individual tests can override via server.use(...).
 export const handlers = [
   http.get("/api/snapshot", () => HttpResponse.json(fixtureSnapshot)),
+  // FORK: the cold-boot bundle answers 404 by default — i.e. "a bridge without the route", which is
+  // the fallback path every other suite in this tree should be exercising. A suite that wants the
+  // bundle overrides this with `server.use(...)` and asserts what it primed (lib/boot.test.ts).
+  // Named rather than left unhandled so an absent route reads as a decision, not as MSW's warning.
+  http.get("/api/boot", () => new HttpResponse("not found", { status: 404 })),
+  // FORK: the artifacts library (bridge/artifacts.ts) — read by every pane view for the header chip
+  // and by the thread for the cards. Empty by default: no chip, no cards, which is what every
+  // existing case expects.
+  http.get("/api/artifacts", () => HttpResponse.json({ ok: true, artifacts: [] })),
   http.get(/\/api\/pane\/[^/]+$/, () =>
     HttpResponse.json({ paneId: "w1:p1", text: paneTextWithDraft(), truncated: false, revision: 1 }),
+  ),
+  // FORK: the pane's work-tree summary. A DEFAULT handler because the pane view now reads it on
+  // every open (hooks/use-pane-diff.ts) for the header chip and the mirror's file chips — without
+  // one, every AgentChat case issues an unhandled request and pays MSW's warning for it. A clean
+  // tree is the right default: the chip is then absent, which is what every existing case expects.
+  http.get(/\/api\/pane\/[^/]+\/diff/, () =>
+    HttpResponse.json({
+      ok: true,
+      mode: "stat",
+      cwd: "/home/you/proj",
+      repoRoot: "/home/you/proj",
+      branch: "main",
+      files: [],
+      truncated: false,
+    }),
   ),
   // Pane transcript history. Two turns, newest-anchored, with nothing older behind them.
   http.get(/\/api\/pane\/[^/]+\/history/, () =>
@@ -392,6 +416,37 @@ export const handlers = [
   // Default world: no `launchers.toml`. Session-scoped (server.ts), so a test that wants rows
   // overrides this with its own `/api/launchers` handler rather than adding a field to `/api/config`.
   http.get("/api/launchers", () => HttpResponse.json({ launchers: [], home: "" })),
+  // Default world: a small home directory with two projects under `~/git`. A test that needs a
+  // different tree overrides this handler; one that needs a refusal answers a non-2xx, which is the
+  // only failure shape this route has (bridge/dirs.ts says why it carries no coded body).
+  http.get("/api/dirs", ({ request }) => {
+    const asked = new URL(request.url).searchParams.get("path") ?? "";
+    const home = "/home/op";
+    if (asked === "" || asked === home) {
+      return HttpResponse.json({
+        ok: true,
+        path: home,
+        parent: null,
+        home,
+        entries: [{ name: "git", path: "/home/op/git" }],
+        truncated: false,
+      });
+    }
+    if (asked === "/home/op/git") {
+      return HttpResponse.json({
+        ok: true,
+        path: asked,
+        parent: home,
+        home,
+        entries: [
+          { name: "ai-stock", path: "/home/op/git/ai-stock" },
+          { name: "collie", path: "/home/op/git/collie" },
+        ],
+        truncated: false,
+      });
+    }
+    return HttpResponse.json({ ok: true, path: asked, parent: "/home/op/git", home, entries: [], truncated: false });
+  }),
   http.post<never, { snoozedUntil: number | null }>("/api/notifications/snooze", async ({ request }) => {
     const { snoozedUntil } = await request.json();
     return HttpResponse.json({ snoozedUntil });

@@ -142,7 +142,7 @@ export function SpaceRoute() {
         {/* An available update / needed restart, then the build stamp (which bundle you're
             running, with a stale-cache nudge). */}
         <UpdateBanner className="px-4 pt-3" />
-        <BuildStamp className="px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)_+_0.5rem)]" />
+        <BuildStamp className="px-4 pt-3 pb-[calc(var(--safe-bottom)_+_0.5rem)]" />
       </div>
 
       {/* Status overlay, anchored to the bottom of the viewport. Stays outside the scroller. Same

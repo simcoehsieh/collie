@@ -64,7 +64,7 @@ describe("the header — the one shared shell", () => {
       </Header>,
     );
     expect(screen.queryByRole("status")).toBeNull(); // no connection pill of any kind
-    expect(container.querySelector(".dog-gallop")).toBeNull(); // mark at rest (static icon)
+    expect(markIsLive(container)).toBe(false); // mark at rest, not blooming
     expect(screen.getByText("webapp › main")).toBeInTheDocument(); // the breadcrumb slot
     expect(screen.getByText("working")).toBeInTheDocument(); // the agent status badge
     expect(screen.getByText("Collie")).not.toBeVisible(); // no brand line ON SCREEN in a pane
@@ -80,7 +80,7 @@ describe("the header — the one shared shell", () => {
       <Header bridge="connected" error={false} wordmark rightTrail={<SettingsGear />} />,
     );
     expect(screen.getByText("Collie")).toBeInTheDocument(); // the identity's brand line
-    expect(container.querySelector(".dog-gallop")).toBeNull(); // mark at rest while live
+    expect(markIsLive(container)).toBe(false); // mark at rest while live
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
 
@@ -236,8 +236,8 @@ describe("the header — a quiet crew member is not the phone's connection", () 
         <Header bridge="connected" error={false} wordmark />
       </CrewProvider>,
     );
-    // Nothing about a peer feeds `isConnecting`, so: no gallop, no pill, no escalation.
-    expect(container.querySelector(".dog-gallop")).toBeNull();
+    // Nothing about a peer feeds `isConnecting`, so: no bloom, no pill, no escalation.
+    expect(markIsLive(container)).toBe(false);
     expect(screen.queryByRole("status")).toBeNull();
     expect(isLostLatched()).toBe(false);
   });

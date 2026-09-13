@@ -1,29 +1,43 @@
 import {
+  isRouteErrorResponse,
   Outlet,
   useLoaderData,
+  useLocation,
+  useMatches,
   useNavigation,
+  useNavigationType,
   useParams,
   useRouteError,
+  useRevalidator,
   useRouteLoaderData,
 } from "react-router";
+
+import { useEffect, useRef } from "react";
+import { TriangleAlert } from "lucide-react";
 
 import { usePolling } from "@/hooks/use-polling";
 import { usePollBusy } from "@/hooks/use-poll-busy";
 import { useBusyWhile } from "@/lib/busy";
 import { useAgentTransitions } from "@/hooks/use-transitions";
+import { useAppBadge } from "@/hooks/use-app-badge";
 import { usePushSetup } from "@/hooks/use-push";
 import { useConnectionLost } from "@/hooks/use-connection-lost";
+import { useHotkeys } from "@/hooks/use-hotkeys";
+import { HotkeysSheet } from "@/components/hotkeys-sheet";
 import { UpdateRibbon } from "@/components/update-ribbon";
 import { ConnectionBanner } from "@/components/connection-banner";
 import { AppHeaderHost } from "@/components/app-header";
 import { StripHost } from "@/components/ui/strip-host";
-import { ScreenTransition } from "@/components/screen-transition";
 import { CrewProvider } from "@/components/crew-provider";
-import { CollieMark } from "@/components/collie-mark";
+import { MeowMark } from "@/components/meow-mark";
+import { EmptyState } from "@/components/empty-state";
+import { Button } from "@/components/ui/button";
 import { describeThrownError } from "@/lib/api-error-message";
 import { homePath } from "@/lib/nav";
 import { scopeFromUrl } from "@/lib/session";
 import { PANE_ROUTE_ID, type HomeData, type PaneData } from "@/lib/loaders";
+import { worstTriage, type TriageKey } from "@/lib/triage";
+import type { MarkState } from "@/components/meow-mark";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
@@ -47,9 +61,59 @@ export function shownLastSeenAt(home: HomeData, pane: PaneData | undefined): num
   return home.lastSeenAt;
 }
 
+/** Which direction a route arrives from — the value of `data-route-enter`, drawn by skin.css. */
+export type RouteEnter = "push" | "pop" | "modal";
+
+/**
+ * FORK: THE KIND OF NAVIGATION, NOT JUST THE FACT OF ONE.
+ *
+ * Every route entrance used to be the same 6px rise, so pushing into a pane, popping back to the
+ * dashboard and opening Settings looked identical. On a phone, direction is how you know where you
+ * are; its absence is the loudest "this is a website" tell an app has.
+ *
+ * Three answers and no fourth:
+ *   • `modal` — Settings and the Overview. Both are places you look at and come back from rather
+ *     than places you go, and neither has a sibling at its own level, so a sideways slide would be
+ *     claiming a hierarchy that isn't there. They rise.
+ *   • `pop` — the browser's own Back (navigation type POP: the swipe gesture, the hardware key, the
+ *     header's home button through `navigate(-1)`), or any move to a SHALLOWER path. Comes from the
+ *     left, which is where the thing you are returning to went.
+ *   • `push` — everything else, including equal depth. Equal depth matters more than it looks: a
+ *     pane→pane hop must resolve to the SAME value as the navigation that opened the first pane, or
+ *     the attribute changes under a wrapper React deliberately does not remount and the entrance
+ *     replays on a hop that moved nothing (routes/root.tsx keys by route KIND for exactly that
+ *     reason).
+ *
+ * Pure, and exported, because the whole of this decision is four comparisons and the wrong answer
+ * is invisible in a screenshot — it only shows up as the screen sliding the wrong way.
+ */
+export function routeEnter(
+  routeKind: string,
+  navigationType: string,
+  depth: number,
+  previousDepth: number,
+): RouteEnter {
+  if (routeKind === "settings" || routeKind === "overview") return "modal";
+  if (navigationType === "POP") return "pop";
+  return depth < previousDepth ? "pop" : "push";
+}
+
 // The data root: owns the snapshot loader, drives polling, and fans the herd out to the child
 // routes (home + pane detail) via the router's loader data. Mounted only while unlocked (the
 // idle-lock in App swaps the whole RouterProvider out), so polling pauses when the app is locked.
+// FORK: triage bucket -> what the mark shows. The two vocabularies are deliberately not the same
+// size: `pinned` and `recent` are ORDERING, not urgency, so both land on the rest drawing, and the
+// three buckets that mean something is happening each get their own. Written as a Record so a new
+// bucket in lib/triage.ts fails this file at compile time rather than silently falling through to
+// idle — a herd state the mark quietly stops reporting is the worst failure this feature has.
+const HERD_MARK = {
+  pinned: "idle",
+  needs: "blocked",
+  ready: "done",
+  working: "working",
+  recent: "idle",
+} satisfies Record<TriageKey, MarkState>;
+
 export function RootLayout() {
   // SAFETY: this component IS the root route's element, and `rootLoader` — the loader `router.tsx`
   // pairs with it — returns `HomeData`. React Router types `useLoaderData()` as `unknown` in data
@@ -59,11 +123,38 @@ export function RootLayout() {
   // `/pane/:paneId` child is active. useAgentTransitions uses it to suppress a notification for the
   // pane you're already looking at.
   const { paneId } = useParams();
+  const pathname = useLocation().pathname;
+  const routeKind = pathname.split("/")[1] ?? "";
+  // FORK: which way the next entrance slides. The depth of the path the operator is LEAVING is the
+  // only thing this needs that the router does not already hand over, so it is one ref updated in an
+  // effect — read during render (the value from the last committed route), written after paint.
+  const depth = pathname.split("/").filter(Boolean).length;
+  const previousDepth = useRef(depth);
+  const enter = routeEnter(routeKind, useNavigationType(), depth, previousDepth.current);
+  useEffect(() => {
+    previousDepth.current = depth;
+  }, [depth]);
   // The active pane's loader data, or undefined when a pane isn't the active route — the router
   // already carries both stamps, so dating the bar by what's on screen needs no store of its own.
   // SAFETY: PANE_ROUTE_ID names the route whose `loader` is paneLoader (router.tsx pairs the two),
   // so the only value that can appear under that id is the PaneData that loader returned.
   const pane = useRouteLoaderData(PANE_ROUTE_ID) as PaneData | undefined;
+  // FORK: a loader that answered from cache on a navigation (`pending`) is owed its real read at
+  // once — not on the next poll tick, which can be 6s away on an idle herd. One effect for every
+  // loader on the poll loop, because the flag means the same thing on each of them and revalidate()
+  // re-runs every active loader. Read off the matches rather than by route id, so a loader that
+  // gains the flag (settings, crew) is covered without this file naming it. History is NOT here on
+  // purpose: it opts out of revalidation, and its own view re-reads on the flag.
+  const matches = useMatches();
+  // SAFETY: a match's `data` is whatever its loader returned, typed `unknown` by React Router; every
+  // loader in router.tsx returns one of the lib/loaders.ts shapes, and each of those declares
+  // `pending?: boolean` with the same meaning — so reading that one optional field is the contract
+  // those loaders share, and a loader without it simply answers undefined.
+  const pendingRead = matches.some((m) => (m.data as { pending?: boolean } | undefined)?.pending === true);
+  const { revalidate } = useRevalidator();
+  useEffect(() => {
+    if (pendingRead) void revalidate();
+  }, [pendingRead, revalidate]);
 
   // The scope rides along so a "look now" on foreground lands on the machine and session the page is
   // actually showing — a refresh aimed at the lead would leave a peer's herd exactly as stale.
@@ -81,7 +172,18 @@ export function RootLayout() {
   // the common one — say nothing at all.
   useBusyWhile(useNavigation().state !== "idle");
   useAgentTransitions(data.agents, paneId ?? null);
+  // FORK: the app icon's badge follows what needs you (hooks/use-app-badge.ts).
+  useAppBadge(data.agents);
   usePushSetup();
+  // FORK: desktop shortcuts, live only with a fine pointer (hooks/use-hotkeys.ts).
+  const hotkeys = useHotkeys(data);
+  // FORK: the herd in one word, for the mark in the header of every screen (components/meow-mark.tsx
+  // says what the drawing does with it). `worstTriage` is the app's existing "what is the most urgent
+  // thing in this set" — the same function the tab and space chips advertise themselves with — so the
+  // mark can never disagree with the dots under it. Derived HERE because this is where the snapshot
+  // is, and passed down as a prop; the header deriving it again would be a second answer.
+  // `null` is an empty herd, which has nothing to report: idle, the rest drawing.
+  const herd: MarkState = HERD_MARK[worstTriage(data.agents) ?? "recent"];
 
   // A viewport-height flex column: the top banners (when shown) are in-flow rows at the top and the
   // active route fills the rest (each route root is `min-h-0 flex-1`). This is what keeps a banner
@@ -97,7 +199,8 @@ export function RootLayout() {
     // second derivation of it, so the tolerance can never be computed against a cadence we aren't
     // using. That mattered more once the cadence gained inputs beyond the snapshot (#156).
     <CrewProvider servers={data.servers} sessions={data.sessions} ts={data.ts} pollMs={pollMs}>
-      <div className="flex h-[100dvh] flex-col overflow-hidden">
+      {/* FORK: `.app-viewport` (index.css) is the column — the 100dvh the skin measures, not a utility. */}
+      <div className="app-viewport flex flex-col overflow-hidden">
         {/* THE BAND, and the rule that there is only ever one strip in it. Four facts can be true at
             once above the header — the auth refusal, a lost connection, a degraded one, an update on
             offer — and none of them excludes another. Before this host arbitrated them, each row
@@ -139,19 +242,22 @@ export function RootLayout() {
             `bridge` and `error` are read here, once, off the root snapshot every route was
             forwarding them from anyway — six copies of the same two fields was six chances to
             disagree with the ConnectionBanner two lines up. */}
-          <AppHeaderHost bridge={data.bridge} error={data.error}>
-            {/* The everyday move, animated: dashboard → pane slides in from the right, back from
-                the left, and every other navigation — a poll revalidation, a scope change, pane to
-                pane — arrives with no animation at all. It wraps the OUTLET and sits BELOW the
-                header for the reason the header sits above it: the key inside remounts the route's
-                subtree so the entrance replays, and everything that must survive a navigation (the
-                band, the header shell, the mark's 37 animations) is already outside it. It is not
-                the View Transitions API and may not become one — see the file's header. */}
-            <ScreenTransition>
+          <AppHeaderHost bridge={data.bridge} error={data.error} herd={herd}>
+            {/* FORK: the route's entrance, kept over upstream 1.8.1's `ScreenTransition` (which only
+                knew pane-in / pane-out). Keyed by the KIND of route (dashboard / space / pane /
+                settings / crew), so a dashboard→pane tap replays the entrance in skin.css while a
+                pane→pane hop — which must keep DetailRoute mounted (routes/detail.tsx) — does not
+                remount anything. The wrapper mirrors the column each route already draws. It sits
+                BELOW the header for the same reason upstream's did: everything that must survive a
+                navigation (the band, the header shell, the mark's animations) is outside the key.
+                The attribute's VALUE says which way (see `routeEnter` above): push slides in from the
+                right, pop from the left, modal rises. */}
+            <div key={routeKind} data-route-enter={enter} className="flex min-h-0 flex-1 flex-col">
               <Outlet />
-            </ScreenTransition>
+            </div>
           </AppHeaderHost>
         </StripHost>
+        <HotkeysSheet open={hotkeys.helpOpen} onClose={() => hotkeys.setHelpOpen(false)} />
       </div>
     </CrewProvider>
   );
@@ -161,7 +267,7 @@ export function RootLayout() {
 // router's HydrateFallback, so it stays mounted until the FIRST loader run settles — and over a dead
 // tailnet that initial fetch can hang well past its timeout (or forever on a WebView without
 // AbortSignal.timeout). Left as-is, a PWA reopened while the host is unreachable would bloom the mark
-// on "Connecting to the herd…" indefinitely, with no way to retry. So once we've been stuck here for
+// on "Connecting…" indefinitely, with no way to retry. So once we've been stuck here for
 // CONNECTION_LOST_MS (the same wall-clock threshold as the in-app prompt — `connecting` is trivially
 // true the whole time we're mounted), the splash escalates to an honest, actionable "Not connected"
 // state: the mark stills, the copy says we can't reach Collie, and a Retry
@@ -172,27 +278,34 @@ export function BootSplash() {
   const stuck = useConnectionLost(true);
   if (!stuck) {
     return (
-      <div className="flex h-[100dvh] flex-col items-center justify-center gap-3 text-muted-foreground">
+      <div className="app-viewport flex flex-col items-center justify-center gap-3 text-muted-foreground">
         {/* The bloom: the same mark as the rest state below, but turning and at full chroma. It is
             a COLOUR as well as motion, which is the half a reduced-motion reader still gets —
             `prefers-reduced-motion` stops the orbit and cannot stop the accents. `paper` is this
             screen's ground, `bg-background`, the knockout that puts a near-side bead in front of
-            the head. The "Connecting to the herd…" copy below carries the accessible meaning, so
-            the mark is decorative. */}
-        <CollieMark size={64} weight="header" loading paper="var(--background)" />
-        <span className="text-sm">{t("error.boot.connecting")}</span>
+            the head. The "Connecting…" copy below carries the accessible meaning, so
+            the mark is decorative.
+            FORK: `text-foreground`, and it is a fix rather than a flourish. This screen's own colour
+            is --muted-foreground (the caption's), the mark drew in `currentColor`, and so the first
+            thing the app ever shows was painted in the token reserved for text you are not meant to
+            read. The CURSOR stays --primary — `loading` sets --cm-a1 — which keeps the one moving
+            stroke as the one accented stroke, exactly as index.html's first-paint splash now does.
+            `data-slot` is for the caption's own fade in skin.css; this element takes no animation
+            of its own, because the hand-off is played by the ARRIVING header mark (see there). */}
+        <MeowMark size={64} weight="header" loading paper="var(--background)" className="text-foreground" />
+        <span data-slot="boot-caption" className="text-sm">{t("error.boot.connecting")}</span>
       </div>
     );
   }
   return (
-    <div className="flex h-[100dvh] flex-col items-center justify-center gap-3 p-6 text-center">
+    <div className="app-viewport flex flex-col items-center justify-center gap-3 p-6 text-center">
       {/* Rest = the Collie mark still, muted (grayscale + dimmed) to read asleep
           — never the gallop's own rest frame, whose full-stretch mid-stride pose looks frozen
           mid-run. No `loading`: we have stopped trying, and a blooming mark would say otherwise.
           `paper` is this screen's ground, `bg-background`, which is the knockout colour that puts a
           near-side bead in front of the head. The "Not connected" copy below carries the accessible
           meaning, so the mark is decorative. */}
-      <CollieMark size={64} weight="header" paper="var(--background)" className="opacity-40 grayscale" />
+      <MeowMark size={64} weight="header" paper="var(--background)" className="opacity-40 grayscale" />
       <p className="font-medium text-foreground">{t("error.boot.title")}</p>
       <p className="max-w-xs text-sm text-muted-foreground">{t("error.boot.body")}</p>
       <button
@@ -208,27 +321,59 @@ export function BootSplash() {
 
 // Last-resort recovery screen for a render-phase error or a loader throw — a full reload re-runs the
 // loaders from scratch, which clears most transient failures.
+//
+// FORK — AND IT IS THE NOT-FOUND SCREEN TOO. There is no splat route in router.tsx and there should
+// not be one: an address that matches nothing already arrives here as a 404 ErrorResponse, so a
+// `path: "*"` would only be a second door onto the same room. What it needs is to stop calling that
+// "Something went wrong / Unknown error" — a mistyped URL is not a crash, and "Unknown error" is the
+// app admitting it did not look. `isRouteErrorResponse` is that look.
+//
+// The screen itself was a red line, a muted line and "Reload" as a BARE UNDERLINED LINK — the only
+// underlined link in an app where every other action is a button. It is now the house empty state
+// with a solid-primary action: a screen with nothing else on it is the one place in the app where
+// the accent is unambiguous.
+// Reload home, but stay on the machine and in the session you were in (read from the LIVE URL, since
+// the router context may be the throwing one). Lead + primary → "/". Module scope because it closes
+// over nothing — the throwing render is the last place to allocate a fresh closure per paint.
+function goHome(): void {
+  window.location.assign(homePath(scopeFromUrl(window.location.href)));
+}
+
 export function RootError() {
   useLocale();
   const error = useRouteError();
+  const notFound = isRouteErrorResponse(error) && error.status === 404;
   // An ApiError knows the bridge's code and can therefore say the refusal in the operator's
   // language; anything else (a render-phase throw, a router error) keeps its own message.
   const message = error instanceof Error ? describeThrownError(error) : t("error.root.unknown");
   return (
-    <div className="flex h-[100dvh] flex-col items-center justify-center gap-3 p-6 text-center">
-      <p className="font-medium text-destructive">{t("error.root.title")}</p>
-      <p className="max-w-xs text-sm text-muted-foreground">{message}</p>
-      <button
-        type="button"
-        onClick={() => {
-          // Reload home, but stay on the machine and in the session you were in (read from the
-          // live URL, since the router context may be the throwing one). Lead + primary → "/".
-          window.location.assign(homePath(scopeFromUrl(window.location.href)));
-        }}
-        className="text-sm underline underline-offset-4"
-      >
-        {t("error.root.reload")}
-      </button>
+    <div className="app-viewport flex flex-col items-center justify-center">
+      {notFound ? (
+        <EmptyState
+          heading={t("error.notFound.title")}
+          body={t("error.notFound.body")}
+          action={
+            <Button size="lg" onClick={goHome}>
+              {t("empty.goToDashboard")}
+            </Button>
+          }
+        />
+      ) : (
+        <EmptyState
+          mark={<TriangleAlert className="size-7 text-destructive" />}
+          heading={t("error.root.title")}
+          body={t("error.root.body")}
+          // The machine's own words, as a QUOTE rather than as prose the app wrote — the previous
+          // screen set them in the same muted body type as its own sentence, so "Unknown error"
+          // read as something Collie had decided rather than something it had been handed.
+          detail={message}
+          action={
+            <Button size="lg" onClick={goHome}>
+              {t("error.root.reload")}
+            </Button>
+          }
+        />
+      )}
     </div>
   );
 }

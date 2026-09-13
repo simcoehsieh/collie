@@ -5,6 +5,9 @@ import { App } from "./App";
 import { initDesign } from "./lib/design";
 import { initOperatorFonts } from "./lib/operator-config";
 import "./index.css";
+// FORK: the visual skin — a fork-only sheet that restyles by `data-slot`, so it never conflicts
+// with an upstream edit to a component file. See FORK.md → "The redesign".
+import "./skin.css";
 // Registers the service worker (precaches the app shell, enables install) and wires auto/manual
 // updates. Guards on `serviceWorker in navigator`, so over plain HTTP (insecure context) it no-ops.
 import "./lib/pwa";

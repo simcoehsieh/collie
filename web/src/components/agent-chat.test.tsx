@@ -26,8 +26,11 @@ import { __resetOperatorCommands } from "@/lib/operator-config";
 import { submitPromptOption } from "@/lib/prompt-action";
 import { submitWizardKeys } from "@/lib/wizard-action";
 import { fixtureAgents, fixtureShellPanes, fixtureTabs } from "@/test/handlers";
+import { fixtureArtifact } from "@/test/artifacts";
+import { __resetArtifacts } from "@/lib/artifacts";
 import { CrewProvider } from "./crew-provider";
 import type { AgentStatus, AgentView, ServerSummary, TabView } from "@/lib/types";
+import { paneScopeKey } from "@/lib/scope";
 import { withHeaderHost } from "@/test/header-host";
 import { COLLAPSE_MS } from "./ui/collapse";
 import { AgentChat } from "./agent-chat";
@@ -70,6 +73,28 @@ function renderChat(overrides: Partial<ComponentProps<typeof AgentChat>> = {}) {
   const router = createMemoryRouter([{ path: "/", element: withHeaderHost(<AgentChat {...props} />) }]);
   const { container } = render(<RouterProvider router={router} />);
   return { props, container };
+}
+
+// ── FORK: CHAT MODE GAVE AN AGENT PANE A SECOND VIEW ─────────────────────────
+// A pane that HAS a transcript can show it instead of the mirror (agent-chat.tsx § chat mode). The
+// default is the TERMINAL (it was the transcript for one morning — use-display-prefs.ts says why it
+// flipped), so a case about the mirror needs no pin; the pin is kept where a case wants to SAY it
+// is on the mirror, and its twin below puts a pane on the transcript for the cases about leaving
+// it. Both write the operator's own per-pane choice exactly as the app writes it — the stored
+// display prefs — rather than reaching past the preference with a prop, so what these tests
+// exercise is still the shipped path. `localStorage` is cleared between cases by the shared setup,
+// so nothing leaks forward.
+function pinPaneView(view: "terminal" | "transcript", paneId: string = fixtureAgents[0]!.paneId) {
+  localStorage.setItem(
+    "collie:display-prefs:v4",
+    JSON.stringify({ paneView: { [paneScopeKey(undefined, paneId)]: view } }),
+  );
+}
+function pinTerminalView(paneId: string = fixtureAgents[0]!.paneId) {
+  pinPaneView("terminal", paneId);
+}
+function pinTranscriptView(paneId: string = fixtureAgents[0]!.paneId) {
+  pinPaneView("transcript", paneId);
 }
 
 // Find and History are ROWS in the pane's actions sheet now — the header spends ONE ⋮ on the whole
@@ -721,8 +746,12 @@ describe("AgentChat — block-grammar scoping (an agent with no adapter)", () =>
       expect(handleRow).not.toBeNull();
       // Same parent, and the handle's row is the sibling immediately before the composer — so
       // nothing, statusline or otherwise, can ever get between the two.
-      expect(handleRow.parentElement).toBe(composer.parentElement);
-      expect(handleRow.nextElementSibling).toBe(composer);
+      // FORK: the composer stands in a Collapse of its own too (the dock folds on a downward pull
+      // of this handle), so the adjacency is between the two ROWS, handle's and dock's.
+      const dockRow = composer.closest('[data-slot="collapse"]')!;
+      expect(dockRow).not.toBeNull();
+      expect(handleRow.parentElement).toBe(dockRow.parentElement);
+      expect(handleRow.nextElementSibling).toBe(dockRow);
       // THAT SHARED PARENT IS THE CHROME BLOCK, and it is what answers the operator's later report
       // that the drawer was "really hard to distinguish" in dark. The handle used to stand on the
       // mirror's own black — `--background` IS the mirror's fill in dark (mirror-space.ts) — so a
@@ -1079,6 +1108,7 @@ describe("AgentChat — top-of-mirror history affordance", () => {
   it("an agent pane with a transcript offers the full history, not scrollback paging", () => {
     // A Claude pane: alt-screen, so readableLines is just its viewport — there IS no scrollback.
     const agent = { ...fixtureAgents[0]!, hasSession: true, readableLines: 51 };
+    pinTerminalView();
     renderChat({ agent, agents: [agent], requestedLines: 600 });
     expect(showHistory()).toBeInTheDocument();
     expect(loadOlder()).not.toBeInTheDocument();
@@ -1114,6 +1144,7 @@ describe("AgentChat — top-of-mirror history affordance", () => {
 
   it("a transcript wins even when the pane also reports scrollback", () => {
     const agent = { ...fixtureAgents[0]!, hasSession: true, readableLines: 6946 };
+    pinTerminalView();
     renderChat({ agent, agents: [agent], requestedLines: 600 });
     expect(showHistory()).toBeInTheDocument();
     expect(loadOlder()).not.toBeInTheDocument();
@@ -1141,6 +1172,7 @@ describe("AgentChat — no session reported", () => {
 
   it("says nothing once the pane has reported a session", () => {
     const agent = { ...fixtureAgents[0]!, agent: "claude", hasSession: true };
+    pinTerminalView();
     renderChat({ agent, agents: [agent] });
     expect(noSessionNote()).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /show entire history/i })).toBeInTheDocument();
@@ -1449,7 +1481,7 @@ describe("AgentChat — closing the current tab", () => {
 // THE BOTTOM FITS THE SCREEN IT IS ON — and the screen is measured, never assumed.
 //
 // The operator's report: "here for example the bottom is cut off, and when the keyboard is open…".
-// It is arithmetic, not a padding bug. The route column is `h-[100dvh]` (routes/root.tsx). Inside
+// It is arithmetic, not a padding bug. The route column is `.app-viewport` (routes/root.tsx). Inside
 // it the mirror carries `min-h-0 flex-1`, so the mirror is the row that gives — and it gives all
 // the way to zero. Everything below it is content-sized, so once the mirror is at zero the surplus
 // paints past the bottom edge of the viewport, under the soft keyboard, and the send button becomes
@@ -1577,7 +1609,7 @@ describe("the pane fits its viewport", () => {
       // indicator, so reserving for it as well is ~24px spent on the one screen that has none.
       const dock = container.querySelector('[data-slot="composer-status"]')!.parentElement!;
       expect(dock.className).toMatch(/(?:^|\s)pb-2(?=\s|$)/);
-      expect(dock.className).not.toMatch(/safe-area-inset-bottom/);
+      expect(dock.className).not.toMatch(/--safe-bottom/);
     } finally {
       kb.restore();
     }
@@ -1801,7 +1833,9 @@ describe("AgentChat — zen mode", () => {
     expect(screen.getAllByRole("button", { name: "Zen mode" })).toHaveLength(1);
     await user.keyboard("{Escape}");
 
-    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    // FORK: the controls row is closed by default; the status band opens it.
+    await user.click(screen.getByRole("button", { name: "Show the controls row" }));
+    await user.click(await screen.findByRole("button", { name: "Display settings" }));
     expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Zen mode" })).not.toBeInTheDocument();
   });
@@ -2398,6 +2432,10 @@ describe("AgentChat — full latest reply", () => {
     return () => hits;
   }
 
+  // Every case here is about the MIRROR of a pane that has a transcript, which chat mode now opens
+  // on the transcript instead — so the whole describe looks at the terminal view.
+  beforeEach(() => pinTerminalView());
+
   const card = () => screen.queryByRole("button", { name: /full reply/i });
   const sessionAgent = () => ({ ...fixtureAgents[0]!, hasSession: true, readableLines: 51 });
   /** Just the terminal mirror's text — the card renders the same words, so a screen-wide query can't
@@ -2468,9 +2506,16 @@ describe("AgentChat — full latest reply", () => {
   // The pref is the whole opt-out: off, the pane is exactly what it was before this existed — and it
   // costs no journal read either, which is the reason it is a pref rather than always-on.
   it("reads no journal at all once the operator turns it off", async () => {
+    // This case writes the whole prefs object, so it carries the terminal view itself — the
+    // describe's `pinTerminalView` is overwritten by this very line.
     localStorage.setItem(
       "collie:display-prefs:v4",
-      JSON.stringify({ wrap: true, fontSize: 12, expandClippedReply: false }),
+      JSON.stringify({
+        wrap: true,
+        fontSize: 12,
+        expandClippedReply: false,
+        paneView: { [paneScopeKey(undefined, fixtureAgents[0]!.paneId)]: "terminal" },
+      }),
     );
     const hits = withJournalReply(REPLY);
     renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: REPLY.slice(120) });
@@ -2487,5 +2532,378 @@ describe("AgentChat — full latest reply", () => {
     await waitFor(() => expect(screen.getByText(/bigger claim/)).toBeInTheDocument());
     expect(hits()).toBe(0);
     expect(card()).not.toBeInTheDocument();
+  });
+});
+
+// ── The document panel ────────────────────────────────────────────────────────────────────────
+// A knowledge-base link an agent printed in the mirror opens BESIDE the terminal instead of throwing
+// the operator out of the PWA (bridge/docs.ts, lib/doc-links.ts, ui/right-sheet.tsx). Each of those
+// three has its own tests; this is the only place the three meet, and the seam between them is where
+// the failure would be invisible — a classifier that says "doc" and a panel that never mounts looks
+// exactly like a link that was never tappable.
+//
+// The host list arrives from `/api/config`, so these cases also pin the thing that decides whether
+// the feature exists at all on a given bridge.
+describe("AgentChat — a knowledge-base link opens in the panel", () => {
+  const MIRROR = "see https://knowledge.agnex.dev/d/herdr-interface-anatomy and https://example.com/x";
+
+  function withDocHosts() {
+    server.use(
+      http.get("/api/config", () =>
+        HttpResponse.json({ push: false, vapidPublicKey: "", docHosts: ["knowledge.agnex.dev"] }),
+      ),
+    );
+  }
+
+  it("frames the document from COLLIE's own origin, not the knowledge base's", async () => {
+    // The whole design in one assertion: the `src` is same-origin and path-only. A src pointing at
+    // knowledge.agnex.dev would render blank — that host refuses framing, and behind Cloudflare
+    // Access with third-party cookies blocked it would answer a login page that also refuses.
+    withDocHosts();
+    const user = userEvent.setup();
+    renderChat({ text: MIRROR });
+    const link = await screen.findByRole("link", { name: /herdr-interface-anatomy/ });
+
+    await user.click(link);
+
+    const frame = await screen.findByTitle("herdr-interface-anatomy");
+    expect(frame.tagName).toBe("IFRAME");
+    expect(frame).toHaveAttribute("src", "/api/doc/herdr-interface-anatomy");
+    // Withheld capabilities, spelled on the embedder as well as in the response's own CSP: neither
+    // side should be the only thing between an agent-written document and Collie's origin.
+    expect(frame).toHaveAttribute("sandbox", "");
+  });
+
+  it("leaves every other link an ordinary external one", async () => {
+    // The fallback needs no branch anywhere: an undeclined tap keeps the anchor's own navigation,
+    // which is what makes "the bridge serves no documents" absent rather than broken.
+    withDocHosts();
+    const user = userEvent.setup();
+    renderChat({ text: MIRROR });
+    const other = await screen.findByRole("link", { name: /example\.com/ });
+    expect(other).toHaveAttribute("target", "_blank");
+
+    await user.click(other);
+
+    expect(screen.queryByTitle("herdr-interface-anatomy")).not.toBeInTheDocument();
+  });
+
+  it("a bridge that publishes no hosts leaves the SAME link external", async () => {
+    // The default `/api/config` handler carries no `docHosts`, which is every bridge older than the
+    // field and every bridge whose operator configured no knowledge base. The link must behave
+    // exactly as it did before this feature existed — not be tappable-but-broken.
+    const user = userEvent.setup();
+    renderChat({ text: MIRROR });
+    const link = await screen.findByRole("link", { name: /herdr-interface-anatomy/ });
+
+    await user.click(link);
+
+    expect(screen.queryByTitle("herdr-interface-anatomy")).not.toBeInTheDocument();
+  });
+
+  it("closing the panel unmounts the frame, so the megabyte goes with it", async () => {
+    // The median kb document is ~860 KB of inlined images and the largest is 2.3 MB. Closing has to
+    // drop the state, not just hide the panel — `RightSheet` renders nothing when closed, so a
+    // lingering `doc` would keep the frame alive on the next open of any OTHER sheet.
+    withDocHosts();
+    const user = userEvent.setup();
+    renderChat({ text: MIRROR });
+    await user.click(await screen.findByRole("link", { name: /herdr-interface-anatomy/ }));
+    await screen.findByTitle("herdr-interface-anatomy");
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    await waitFor(() =>
+      expect(screen.queryByTitle("herdr-interface-anatomy")).not.toBeInTheDocument(),
+    );
+  });
+});
+
+// ── FORK: the read-only surfaces beside the terminal ─────────────────────────────────────────────
+//
+// Three things arrive here at once, and they share one fact: the pane's own diff answer. The header
+// chip draws its numbers, the mirror's file chips look paths up in its list, and both are read once
+// per pane rather than on the mirror's 1 Hz cadence (hooks/use-pane-diff.ts).
+describe("AgentChat — what changed, the file viewer, and the mirror's chips", () => {
+  const CHANGED = {
+    ok: true,
+    mode: "stat",
+    cwd: "/home/you/proj",
+    repoRoot: "/home/you/proj",
+    branch: "main",
+    files: [
+      { path: "bridge/preview.ts", status: "A", staged: false, additions: 80, deletions: 0, binary: false },
+      { path: "bridge/server.ts", status: "M", staged: false, additions: 2, deletions: 11, binary: false },
+    ],
+    truncated: false,
+  };
+
+  function serveChanged() {
+    server.use(http.get(/\/api\/pane\/[^/]+\/diff/, () => HttpResponse.json(CHANGED, { headers: { etag: '"c1"' } })));
+  }
+
+  // FORK (2026-09-11): the header no longer draws the "2 files · +82 −11" chip — it took header
+  // width and was never tapped. The numbers stay one tap away, in the pane menu's Changes row.
+  it("draws no totals in the header even on a changed tree; the Changes row still opens the sheet", async () => {
+    serveChanged();
+    const user = userEvent.setup();
+    renderChat();
+    await screen.findByText("recent pane output");
+    expect(screen.queryByRole("button", { name: /What changed/ })).not.toBeInTheDocument();
+    await openPaneMenu(user);
+    await user.click(screen.getByRole("button", { name: "What changed" }));
+    expect(await screen.findByRole("dialog", { name: "Changes" })).toBeInTheDocument();
+  });
+
+  it("a path from that list earns a chip on the mirror line that names it, and opens the viewer", async () => {
+    serveChanged();
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/file/, () =>
+        HttpResponse.json(
+          { ok: true, mode: "file", path: "bridge/preview.ts", text: "export const x = 1;\n", bytes: 20, truncated: false },
+          { headers: { etag: '"f1"' } },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderChat({ text: "wrote bridge/preview.ts\n" });
+    await user.click(await screen.findByRole("button", { name: "Open bridge/preview.ts" }));
+    expect(await screen.findByRole("dialog", { name: "bridge/preview.ts" })).toBeInTheDocument();
+    expect(await screen.findByText("export const x = 1;")).toBeInTheDocument();
+  });
+
+  it("a local server's chip opens the URL AND tells the app the server exists", async () => {
+    // The second half is the seam the annotate work consumes: nothing else in this app knows an
+    // agent has a dev server up. The first half is unconditional — a URL chip always opens the URL.
+    const onPreviewUrl = vi.fn();
+    const open = vi.fn();
+    vi.stubGlobal("open", open);
+    const user = userEvent.setup();
+    renderChat({ text: "vite ready at http://localhost:5173/\n", onPreviewUrl });
+    await user.click(
+      await screen.findByRole("button", { name: "Open the local server at http://localhost:5173/" }),
+    );
+    expect(open).toHaveBeenCalledWith("http://localhost:5173/", "_blank", "noopener,noreferrer");
+    expect(onPreviewUrl).toHaveBeenCalledWith("http://localhost:5173/");
+    vi.unstubAllGlobals();
+  });
+
+  it("a page on the web gets an Open chip and never reaches onPreviewUrl", async () => {
+    const onPreviewUrl = vi.fn();
+    const open = vi.fn();
+    vi.stubGlobal("open", open);
+    const user = userEvent.setup();
+    renderChat({ text: "docs at https://herdr.dev/docs\n", onPreviewUrl });
+    await user.click(await screen.findByRole("button", { name: "Open https://herdr.dev/docs" }));
+    expect(open).toHaveBeenCalledWith("https://herdr.dev/docs", "_blank", "noopener,noreferrer");
+    expect(onPreviewUrl).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("an HTML file the agent wrote opens in a sandboxed frame, jailed to the pane's own cwd", async () => {
+    // The end-to-end of the preview arm: the viewer offers the hop, `classifyDocLink` validates the
+    // path against THIS pane's cwd, and what frames it grants nothing.
+    const agent = fixtureAgents[0]!;
+    serveChanged();
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/file/, () =>
+        HttpResponse.json(
+          { ok: true, mode: "file", path: "report.html", text: "<h1>hi</h1>\n", bytes: 12, truncated: false },
+          { headers: { etag: '"f2"' } },
+        ),
+      ),
+      http.get(/\/api\/pane\/[^/]+\/diff/, () =>
+        HttpResponse.json(
+          {
+            ...CHANGED,
+            files: [{ path: "report.html", status: "?", staged: false, additions: 1, deletions: 0, binary: false }],
+          },
+          { headers: { etag: '"c2"' } },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderChat({ text: "wrote report.html\n" });
+    await user.click(await screen.findByRole("button", { name: "Open report.html" }));
+    await user.click(await screen.findByRole("button", { name: "Preview" }));
+    const frame = await screen.findByTitle("report.html");
+    expect(frame).toHaveAttribute("sandbox", "");
+    expect(frame.getAttribute("src")).toContain(`path=${encodeURIComponent(`${agent.cwd}/report.html`)}`);
+  });
+});
+
+// ── FORK: CHAT MODE — WHICH OF THE PANE'S TWO REPRESENTATIONS IS ON SCREEN ───
+//
+// An agent pane is a conversation that happens to be rendered in a terminal. It OPENS on the
+// terminal (the default flipped back from the transcript on 2026-09-11 — use-display-prefs.ts), with
+// the conversation one tap away; what is pinned here is everything that keeps the transcript from
+// being a view you can get stuck in: the mirror is one tap away, and two states take it back WITHOUT
+// asking — a dialog that owns the keyboard, and an open find bar. Neither writes the preference.
+describe("AgentChat — chat mode", () => {
+  const sessionAgent = () => ({ ...fixtureAgents[0]!, hasSession: true, readableLines: 51 });
+  const toggle = () => screen.queryByRole("radiogroup", { name: /pane view/i });
+  /** The switch rides in the TAB ROW's trailing slot, beside the fold chevron — so a test that is
+   *  about the switch renders the pane with its space's tab, the way a real pane always has one.
+   *  `tabs: []` (renderChat's default) draws no TabStrip and therefore no switch. (The mirror is
+   *  still ONE tap from the transcript itself: its scroller ends in a "Show the terminal" row, which
+   *  the cases below also exercise.) */
+  const withTab = { tabs: [fixtureTabs[0]!] }; // w1:t1 — fixtureAgents[0]'s own tab
+  const transcriptTab = () => screen.getByRole("radio", { name: "Transcript" });
+  const terminalTab = () => screen.getByRole("radio", { name: "Terminal" });
+  /** The mirror's own <pre>: present exactly when the terminal view is the one on screen. */
+  const mirror = () => document.querySelector("pre");
+
+  it("an agent pane with a transcript opens on the terminal, the conversation one tap away", async () => {
+    const user = userEvent.setup();
+    renderChat({ ...withTab, agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    expect(mirror()).not.toBeNull();
+    await waitFor(() => expect(toggle()).toBeInTheDocument());
+    expect(terminalTab()).toHaveAttribute("aria-checked", "true");
+
+    await user.click(transcriptTab());
+    await waitFor(() => expect(mirror()).toBeNull());
+    expect(transcriptTab()).toHaveAttribute("aria-checked", "true");
+  });
+
+  // ONE TAP, from the transcript itself: its scroller ends in this row, so the mirror never depends
+  // on the Controls row being open.
+  it("the thread's own footer hands the screen back to the terminal in one tap", async () => {
+    const user = userEvent.setup();
+    pinTranscriptView();
+    renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    expect(mirror()).toBeNull();
+    await user.click(await screen.findByRole("button", { name: /show the terminal/i }));
+    await waitFor(() => expect(mirror()).not.toBeNull());
+    expect(mirror()).toHaveTextContent("recent pane output");
+  });
+
+  it("the switch remembers the choice per pane and per device", async () => {
+    const user = userEvent.setup();
+    const { props } = renderChat({ ...withTab, agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    await waitFor(() => expect(toggle()).toBeInTheDocument());
+
+    await user.click(transcriptTab());
+    await waitFor(() => expect(mirror()).toBeNull());
+
+    // The choice is in the stored display prefs, under THIS pane's address — not a global switch.
+    const stored = JSON.parse(localStorage.getItem("collie:display-prefs:v4") ?? "{}");
+    expect(stored.paneView[paneScopeKey(undefined, props.paneId)]).toBe("transcript");
+  });
+
+  // THE RULE THAT MAKES CHAT MODE SAFE TO DEFAULT ON. Answering a prompt means seeing the prompt,
+  // and the up-levelled option buttons live in the mirror.
+  it("a dialog that owns the keyboard takes the mirror back without being asked", async () => {
+    const text = readFileSync(
+      join(import.meta.dirname, "..", "fixtures", "panes", "claude--permission-bash.txt"),
+      "utf8",
+    );
+    pinTranscriptView();
+    renderChat({ ...withTab, agent: sessionAgent(), agents: [sessionAgent()], text });
+    await waitFor(() => expect(mirror()).not.toBeNull());
+    // The control says what is ON SCREEN rather than what is stored, and cannot be moved right now.
+    expect(terminalTab()).toHaveAttribute("aria-checked", "true");
+    expect(terminalTab()).toBeDisabled();
+  });
+
+  // Find searches the mirror's buffer and highlights inside it, so the surface it searches has to be
+  // the one on screen.
+  it("opening find hands the mirror back too", async () => {
+    const user = userEvent.setup();
+    pinTranscriptView();
+    renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    expect(mirror()).toBeNull();
+
+    await openFind(user);
+    await waitFor(() => expect(mirror()).not.toBeNull());
+  });
+
+  // Both negative cases render WITH the tab, and pin the fold chevron beside the (absent) switch:
+  // a row that never drew would make "no switch" trivially true and prove nothing.
+  it("a shell pane is never offered a transcript it has no journal for", () => {
+    const shell = { ...fixtureAgents[0]!, kind: "shell" as const, hasSession: false };
+    renderChat({ ...withTab, agent: shell, agents: [shell], text: "recent pane output" });
+    expect(mirror()).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Hide tabs" })).toBeInTheDocument();
+    expect(toggle()).not.toBeInTheDocument();
+  });
+
+  it("an agent pane that never reported a session keeps the mirror and the toggle stays away", () => {
+    const noSession = { ...fixtureAgents[0]!, hasSession: false };
+    renderChat({ ...withTab, agent: noSession, agents: [noSession], text: "recent pane output" });
+    expect(mirror()).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Hide tabs" })).toBeInTheDocument();
+    expect(toggle()).not.toBeInTheDocument();
+  });
+});
+
+// ── FORK: ARTIFACTS — the chip, the sheet, the row ──────────────────────────
+// What this pane's agent made is a header chip on the notes chip's terms (drawn only when there is
+// something to count), a sheet off it, and a row in the pane menu. All three gated on the same
+// count, so a pane that made nothing spends nothing.
+describe("AgentChat — artifacts", () => {
+  beforeEach(() => __resetArtifacts());
+  afterEach(() => __resetArtifacts());
+
+  it("shows the chip only when this pane made something, and opens the sheet with its rows", async () => {
+    server.use(
+      http.get("/api/artifacts", () =>
+        HttpResponse.json({
+          ok: true,
+          // Newest first, as the bridge lists them.
+          artifacts: [
+            fixtureArtifact({ id: "a2-00000002", slug: "q3-report", version: 2, title: "Q3 report v2" }),
+            fixtureArtifact({ id: "a1-00000001", title: "Q3 report" }),
+            fixtureArtifact({ id: "b1-00000001", slug: "other", title: "Other pane's", pane: { paneId: "w2:p1", workspaceId: "w2", workspaceLabel: "collie", agent: "codex" } }),
+          ],
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderChat();
+    // One slug, two versions: the count is of artifacts, not of versions.
+    const chip = await screen.findByRole("button", { name: "1 artifacts — open the list" });
+    await user.click(chip);
+    expect(await screen.findByText("Made by this pane")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Q3 report v2" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Other pane's" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Q3 report" })).not.toBeInTheDocument();
+  });
+
+  it("draws no chip for a pane that made nothing", async () => {
+    renderChat();
+    await screen.findByRole("button", { name: "Pane actions" });
+    expect(screen.queryByRole("button", { name: /artifacts — open the list/ })).not.toBeInTheDocument();
+  });
+});
+
+
+// ── FORK: HAND OFF TO ANOTHER HARNESS ────────────────────────────────────────
+// The pane menu offers the row only when a launcher starts a harness other than this pane's
+// (lib/handoff.ts); the row opens the sheet (components/handoff-sheet.tsx).
+describe("AgentChat: hand off", () => {
+  it("offers the row when another harness is declared, and the row opens the sheet", async () => {
+    server.use(
+      http.get("/api/launchers", () =>
+        HttpResponse.json({ launchers: [{ command: "codex", label: "codex" }], home: "/home" }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderChat();
+    await openPaneMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Hand off to another agent" }));
+    expect(await screen.findByRole("radiogroup", { name: "Who takes over" })).toHaveTextContent("codex");
+  });
+
+  it("does not offer the row when the only launcher is this pane's own harness", async () => {
+    server.use(
+      http.get("/api/launchers", () =>
+        HttpResponse.json({ launchers: [{ command: "claude", label: "claude" }], home: "/home" }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderChat();
+    await openPaneMenu(user);
+    expect(screen.getByRole("button", { name: "Rename" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Hand off to another agent" })).not.toBeInTheDocument();
   });
 });

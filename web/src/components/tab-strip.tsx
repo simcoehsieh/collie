@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2, Plus } from "lucide-react";
 
 import { AgentIcon } from "@/components/agent-icon";
@@ -6,6 +6,7 @@ import { STRIP_TAP_TARGET_SQUARE } from "@/components/ui/labelled-strip";
 import { TabActionsSheet } from "@/components/tab-actions-sheet";
 import { StatusDot } from "@/components/status-badge";
 import { useLongPress } from "@/hooks/use-long-press";
+import { useOverflowFade } from "@/hooks/use-overflow-fade";
 import { useRevealActive } from "@/hooks/use-reveal-active";
 import { cn } from "@/lib/utils";
 import { TRIAGE_STATUS, worstTriage, type TriageKey } from "@/lib/triage";
@@ -27,6 +28,15 @@ interface TabStripProps {
   selected: string | null;
   onSelect: (tabId: string | null) => void;
   onNewTab: (workspaceId: string) => void;
+  /**
+   * Long-press on the "+", for choosing what it opens. Absent leaves the button a plain tap — the
+   * caller decides whether there is anything to choose BETWEEN, since it owns the launcher rows.
+   *
+   * A long-press rather than a second button: the tab row is the most width-starved strip in the
+   * app (it holds one chip per tab and must stay scrollable on a 393pt screen), and what the "+"
+   * opens is a setting you touch once, not an action you take beside it.
+   */
+  onNewTabHold?: () => void;
   /** True while this Space's own "+" create is in flight — disables the button and swaps its icon
    *  for a spinner, so a second tap during the round trip is refused rather than silently ignored
    *  (the hook already ignores it; this is the feedback that stops the operator tapping twice). */
@@ -88,7 +98,7 @@ interface TabStripProps {
 // the accessible name (now an `aria-label`, since there is no visible word to point at), and the
 // `-mx-4 px-4` that lets the last tab scroll clean off the screen while the first still starts on
 // the route's 16px gutter. Spaces and Panes keep the primitive and keep their labels.
-export function TabStrip({
+export const TabStrip = memo(function TabStrip({
   workspaceId,
   tabs,
   agents,
@@ -96,6 +106,7 @@ export function TabStrip({
   selected,
   onSelect,
   onNewTab,
+  onNewTabHold,
   creatingTab = false,
   allowAll = true,
   scope,
@@ -108,10 +119,38 @@ export function TabStrip({
   const [sheetTab, setSheetTab] = useState<TabView | null>(null);
   // Asked of the machine these tabs live on (M22/03); absent scope is the lead, as everywhere.
   const newTab = useMuxCapability("createTab", scope);
+  // Bound unconditionally so the hook order never depends on a prop; the handler is what is absent
+  // when there is nothing to choose, and `useLongPress` treats an undefined callback as "no hold".
+  const newTabHold = useLongPress(onNewTabHold);
+  // …and refuse the selection at the EVENT as well as in the cascade. `selectstart` is not a React
+  // synthetic event, so it is attached by hand; it fires on the element the gesture began on, which
+  // is the one place a preventDefault can stop the selection before iOS goes looking for something
+  // to select. Belt and braces with the `select-none` above on purpose: neither is reliable alone on
+  // a control whose own content (an icon) is nothing a reader would ever want to select.
+  const plusRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const node = plusRef.current;
+    if (!node || !onNewTabHold) return;
+    const refuse = (e: Event) => e.preventDefault();
+    node.addEventListener("selectstart", refuse);
+    return () => node.removeEventListener("selectstart", refuse);
+  }, [onNewTabHold]);
+  // FORK: bound unconditionally, like `newTabHold` above and for the same reason — the hook order
+  // must not depend on whether this row happens to overflow today.
+  const overflowFade = useOverflowFade<HTMLDivElement>();
   // Actions need both callbacks wired (revalidate on rename, fall back on close); without them the
   // tabs stay plain tap-to-switch — long-press is inert.
   const actionsEnabled = !!onRenamed && !!onClosed;
   const scrollerRef = useRef<HTMLDivElement>(null);
+  // FORK: one element, two consumers — upstream's reveal hook reads a RefObject, the fork's overflow
+  // fade wants a callback ref. One callback feeds both; `overflowFade` is itself stable per mount.
+  const scroller = useCallback(
+    (el: HTMLDivElement | null) => {
+      scrollerRef.current = el;
+      overflowFade(el);
+    },
+    [overflowFade],
+  );
   // Keyed on `selected` (not `workspaceId`): a many-tab strip must reveal the active tab on mount
   // AND every time the operator switches tabs, and `selected` is the value that changes on a switch.
   useRevealActive(scrollerRef, selected);
@@ -141,7 +180,10 @@ export function TabStrip({
         className={cn("shrink-0 border-b border-rule px-4", trailing && "flex items-stretch")}
       >
         <div
-          ref={scrollerRef}
+          // FORK: the overflow fade's two halves — the slot skin.css draws on, and the observer that
+          // says when. See hooks/use-overflow-fade.ts for why CSS cannot ask this on its own.
+          data-slot="tab-scroller"
+          ref={scroller}
           // -mx-4 px-4: the gutter moves onto the scroller and is cancelled by the negative margin,
           // so the last tab scrolls clean off the screen edge while the first still starts on the
           // route's 16px gutter. The two halves are ONE number and must move together.
@@ -150,7 +192,12 @@ export function TabStrip({
           // active tab's cover strip lives in. items-start keeps every tab's TOP on the same line,
           // which is what makes the row read as tabs rather than as boxes of different sizes.
           className={cn(
-            "-mb-px flex items-start gap-1 overflow-x-auto pb-px [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            // `select-none` on the SCROLLER, not only on the controls inside it. iOS does not give
+            // up when the pressed element is unselectable — it walks UP for the nearest selectable
+            // ancestor and starts the selection there, which is how a long-press on the "+" ended up
+            // highlighting the page. The pills have carried it for their own long-press since they
+            // were written; what was missing is that there be nothing selectable BEHIND them.
+            "-mb-px flex select-none items-start gap-1 overflow-x-auto pb-px [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
             // With a pinned control the right half of the edge-to-edge trick is spent on it: the
             // scroller becomes the flex row's growing child, keeps the LEFT gutter cancellation so
             // the first tab still starts on the route's 16px, and stops at the control instead of at
@@ -194,6 +241,8 @@ export function TabStrip({
           {newTab.capable && (
             <button
               type="button"
+              ref={plusRef}
+              {...newTabHold}
               onClick={() => onNewTab(workspaceId)}
               disabled={creatingTab}
               aria-label={translate("space.tabStrip.new.aria")}
@@ -206,7 +255,10 @@ export function TabStrip({
               // row and the gap keeps it clear of its neighbour.
               className={cn(
                 STRIP_TAP_TARGET_SQUARE,
-                "flex size-8 shrink-0 self-center items-center justify-center rounded-full border border-dashed border-border text-muted-foreground transition-colors hover:bg-accent active:scale-95 disabled:opacity-100",
+                // select-none + -webkit-touch-callout:none for the same reason the tab pills carry
+                // them: without both, iOS Safari's selection loupe fires `pointercancel` mid-hold
+                // and the long-press never completes (hooks/use-long-press.ts states the pair).
+                "flex size-8 shrink-0 select-none self-center items-center justify-center rounded-full border border-dashed border-border [-webkit-touch-callout:none] text-muted-foreground transition-colors hover:bg-accent active:scale-95 disabled:opacity-100",
               )}
             >
               {/* Same box, same icon size, swapped in place — the button never resizes between its
@@ -223,7 +275,7 @@ export function TabStrip({
             is a control beside the tabs, not a tab, so it centres in the row rather than hanging
             from the top line. */}
         {trailing !== undefined && (
-          <div className="flex shrink-0 self-center pl-1">{trailing}</div>
+          <div className="flex shrink-0 items-center gap-1 self-center pl-1">{trailing}</div>
         )}
       </nav>
 
@@ -240,7 +292,7 @@ export function TabStrip({
       )}
     </>
   );
-}
+});
 
 // The ONE agent a tab runs, or undefined. Undefined is the honest answer in two different cases and
 // both must stay unmarked: a tab with no agent at all (a bare shell), and a tab running two brands at

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Maximize2, Monitor, Pencil, ScrollText, Search, XCircle } from "lucide-react";
+import { ArrowRightLeft, BookOpen, Camera, FileDiff, Maximize2, Monitor, Pencil, ScrollText, Search, XCircle, FileCode2 } from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { ActionRow, DestructiveActionRow, RenameView } from "@/components/action-sheet-rows";
@@ -54,6 +54,24 @@ interface PaneActionsSheetProps {
    *  buffered output to look at. Absence IS the gate, exactly as it is for find and history above —
    *  a device that never asked for zen sees a sheet byte-identical to today's. */
   onZen?: () => void;
+  /** FORK: open the Changes sheet — what the agent changed in this pane's work tree (read-only). */
+  onDiff?: () => void;
+  /**
+   * FORK: open annotate-and-ask for this pane. Absent when this bridge has no shot command
+   * configured (`/api/config` → `shot`), and absent is the row not being drawn — the same
+   * a-row-with-no-callback-is-hidden rule find, history and zen already ride.
+   */
+  onAnnotate?: () => void;
+  /** FORK: open the knowledge-base browser. Absent when this bridge serves no documents. */
+  onDocs?: () => void;
+  /** FORK: the pane's artifacts sheet (components/artifact-sheet.tsx). Absent ⇒ no row. */
+  onArtifacts?: () => void;
+  /**
+   * FORK: hand this pane's conversation to another harness (components/handoff-sheet.tsx). Absent
+   * when nothing could take it — a shell, a read-only device, or no launcher row that starts a
+   * harness other than this one — and absent is the row not being drawn.
+   */
+  onHandoff?: () => void;
 }
 
 type Mode = "actions" | "rename";
@@ -79,6 +97,11 @@ export function PaneActionsSheet({
   onFind,
   onHistory,
   onZen,
+  onDiff,
+  onAnnotate,
+  onDocs,
+  onArtifacts,
+  onHandoff,
 }: PaneActionsSheetProps) {
   useLocale();
   const [mode, setMode] = useState<Mode>("actions");
@@ -256,7 +279,7 @@ export function PaneActionsSheet({
           sheet; rename and close are the half you arrive at deliberately.
           Hidden in `rename` mode with the rest of the list — that view is a sub-screen, not a
           section. */}
-      {mode === "actions" && (onFind || onHistory || onZen) && (
+      {mode === "actions" && (onFind || onHistory || onZen || onDiff || onDocs || onAnnotate || onArtifacts || onHandoff) && (
         <div className="mb-1 flex flex-col gap-1">
           {onFind && (
             <ActionRow
@@ -292,6 +315,65 @@ export function PaneActionsSheet({
               onClick={() => {
                 onClose();
                 onZen();
+              }}
+            />
+          )}
+          {/* FORK: two more READ rows, after zen for the reason zen trails find — each opens a
+              panel beside the terminal, and neither writes to it. Close-then-act, as above. */}
+          {onDiff && (
+            <ActionRow
+              icon={<FileDiff className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("diff.row.label")}
+              onClick={() => {
+                onClose();
+                onDiff();
+              }}
+            />
+          )}
+          {onDocs && (
+            <ActionRow
+              icon={<BookOpen className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("docs.row.label")}
+              onClick={() => {
+                onClose();
+                onDocs();
+              }}
+            />
+          )}
+          {/* FORK: what this pane's agent MADE (bridge/artifacts.ts) — beside Documents because it is
+              the same family: things to read, not things to send. */}
+          {onArtifacts && (
+            <ActionRow
+              icon={<FileCode2 className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("artifacts.row.label")}
+              onClick={() => {
+                onClose();
+                onArtifacts();
+              }}
+            />
+          )}
+          {/* FORK: hand the conversation to another harness (components/handoff-sheet.tsx) — the
+              one row here that ends this pane's part of the work and starts another pane's. */}
+          {onHandoff && (
+            <ActionRow
+              icon={<ArrowRightLeft className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("handoff.row.label")}
+              onClick={() => {
+                onClose();
+                onHandoff();
+              }}
+            />
+          )}
+          {/* FORK: the third of them, and the only one that starts something rather than reading:
+              it asks the Mac's headless browser for a picture of a local page (bridge/shot.ts).
+              Last, because it is the row an operator reaches for least often. */}
+          {onAnnotate && (
+            <ActionRow
+              icon={<Camera className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("annotate.row.label")}
+              onClick={() => {
+                onClose();
+                onAnnotate();
               }}
             />
           )}

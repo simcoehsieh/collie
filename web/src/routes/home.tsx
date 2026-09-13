@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { LayoutGrid, Library } from "lucide-react";
 import { useNavigate } from "react-router";
 
 import { RouteHeader, SettingsGear } from "@/components/app-header";
@@ -6,9 +7,10 @@ import { SessionSwitcher } from "@/components/session-switcher";
 import { ServerSwitcher } from "@/components/server-switcher";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { AgentList } from "@/components/agent-list";
-import { LaunchStrip } from "@/components/launch-strip";
 import { SpaceOverview } from "@/components/space-overview";
 import { NewSpaceSheet, type WorktreeRepo } from "@/components/new-space-sheet";
+import { PinSheet } from "@/components/pin-sheet";
+import { QuotaCard } from "@/components/quota-card";
 import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
 import { BuildStamp } from "@/components/build-stamp";
@@ -17,8 +19,12 @@ import { UpdateBanner } from "@/components/update-banner";
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { useMuxCapability } from "@/lib/mux-capability";
+import { useQuotaEnabled } from "@/lib/operator-config";
 import { ambientPanes, leadHost, paneScope, sessionsOnHost } from "@/lib/hosts";
-import { panePath, spacePath } from "@/lib/nav";
+import { panePath, spacePath, artifactsPath } from "@/lib/nav";
+import { overviewPath } from "@/lib/overview";
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/hooks/use-locale";
 import type { AgentView } from "@/lib/types";
 import { useRootData } from "@/lib/route-data";
 
@@ -32,7 +38,12 @@ import { useRootData } from "@/lib/route-data";
 export function HomeRoute() {
   const data = useRootData();
   const navigate = useNavigate();
+  useLocale();
   const { newSpace, newWorktree, showWorktree, creatingSpace } = useSpaceActions();
+  // FORK: the row a long press picked up, for the pin sheet. Null while the sheet is closed.
+  const [held, setHeld] = useState<AgentView | null>(null);
+  const hold = useCallback((pane: AgentView) => setHeld(pane), []);
+  const knownIds = useMemo(() => data.agents.map((a) => a.paneId), [data.agents]);
 
   // Which repos a worktree could be branched from: one entry per repo, taken from the space that
   // shows the repo ITSELF (a worktree's own space would branch from the same repo, so listing both
@@ -45,22 +56,57 @@ export function HomeRoute() {
         .filter((w) => w.repoRoot !== undefined && w.isWorktree === false)
         .map((w) => ({ workspaceId: w.workspaceId, repoRoot: w.repoRoot!, label: w.label }))
     : [];
+  // ONE TAP each in the new-space picker: the directories this operator is demonstrably already
+  // working in. Repo roots lead, because a project's root is what you want far more often than
+  // wherever a pane happens to have cd'd to; the panes' own cwds follow and fill in everything that
+  // is not a repo. Deduped in that order, and capped — a strip you scroll is not a shortcut.
+  //
+  // NARROWED TO THE MACHINE the picker will browse. A pack's rows come from every member, and a
+  // peer's path pasted into the lead's browser is a 404 with no explanation; `ambientPanes` is the
+  // same narrowing every other list on this page already does.
+  const dirShortcuts = useMemo(() => {
+    const host = data.scope?.host;
+    const onHost = <T extends { host?: string }>(row: T): boolean =>
+      host === undefined || row.host === undefined || row.host === host;
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const path of [
+      ...data.workspaces.filter(onHost).map((w) => w.repoRoot),
+      ...[...data.agents, ...data.shellPanes].filter(onHost).map((p) => p.cwd),
+    ]) {
+      if (path === undefined || path === "" || seen.has(path)) continue;
+      seen.add(path);
+      out.push(path);
+      if (out.length === 8) break;
+    }
+    return out;
+  }, [data.workspaces, data.agents, data.shellPanes, data.scope?.host]);
   const [newSpaceOpen, setNewSpaceOpen] = useState(false);
-  const { prefs, setSpacesOpen, setLaunchOpen, setRecentOpen, setRecentDir } = useDashPrefs();
+  const { prefs, setSpacesOpen, setRecentOpen, setRecentDir, setQuotaOpen } = useDashPrefs();
+  // FORK: the usage section draws only on a bridge that can answer `/api/quota` — absent from
+  // `/api/config` is the feature off, and the dashboard is byte for byte what it was.
+  const quotaOn = useQuotaEnabled();
   // No stored choice yet? The space count decides — a two-space install shouldn't be handed a
   // mystery collapsed header, and a forty-space one shouldn't be handed a wall.
   const spacesOpen = openForCount(prefs.spacesOpen, data.workspaces.length);
   // The Launch section folds on the same terms. Its count comes from the component (it owns the
   // config read), so the un-chosen default is decided there against the same threshold.
-  const launchOpen = prefs.launchOpen;
 
   // A row is opened with the PANE's host, never the ambient one: the dashboard is one list across
   // every machine (hosts are a label, not a split), so the row you tapped may well live somewhere
   // other than where the URL currently points. Resolving it here is what stops a reply landing on the
   // right pane name on the wrong terminal. Solo: every pane is untagged, so this is `data.scope`.
-  const open = (pane: AgentView) =>
-    navigate(panePath(pane.paneId, paneScope(data.scope, pane, data.servers, data.sessions)));
-  const drillInto = (id: string) => navigate(spacePath(id, data.scope));
+  // FORK: stable, because AgentList and the space overview below are memo()'d and a fresh arrow
+  // per render would hand them a new prop on every poll tick.
+  const open = useCallback(
+    (pane: AgentView) =>
+      navigate(panePath(pane.paneId, paneScope(data.scope, pane, data.servers, data.sessions))),
+    [navigate, data.scope, data.servers, data.sessions],
+  );
+  const drillInto = useCallback(
+    (id: string) => navigate(spacePath(id, data.scope)),
+    [navigate, data.scope],
+  );
   // The space navigator is LEAD-LOCAL (the merge deliberately does not union peer workspaces — their
   // ids are only unique per machine), so the spaces on screen belong to the lead and their panes must
   // be looked up under the lead's host. Undefined when solo, which keys everything exactly as before.
@@ -89,6 +135,27 @@ export function HomeRoute() {
         width="column"
         rightLead={
           <>
+            {/* FORK: the overview — every agent's last lines on one screen (routes/overview.tsx).
+                A plain glyph like the gear, ahead of the switchers, because it is a place to go
+                rather than a dimension to change. */}
+            {/* FORK: the artifacts library — what the agents made (routes/artifacts.tsx). A glyph like
+                the overview's, for the same reason: a place to go. */}
+            <button
+              type="button"
+              onClick={() => navigate(artifactsPath(data.scope))}
+              aria-label={t("artifacts.nav.aria")}
+              className="grid size-11 place-items-center text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <Library className="size-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(overviewPath(data.scope))}
+              aria-label={t("overview.title")}
+              className="grid size-11 place-items-center text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <LayoutGrid className="size-5" />
+            </button>
             {/* Host first, then session — outer dimension first, and the two are deliberately
                 different shapes (bordered server pill vs filled layers capsule) so a glance can tell
                 "change machine" from "change session on this machine". Both self-hide. */}
@@ -123,8 +190,20 @@ export function HomeRoute() {
             onRecentOpenChange={setRecentOpen}
             error={data.error}
             lastSeenAt={data.lastSeenAt}
+            pinned={prefs.pinned}
+            onLongPress={hold}
           />
-          <LaunchStrip open={launchOpen} onOpenChange={setLaunchOpen} scope={data.scope} />
+          {/* THE LAUNCH STRIP IS DELIBERATELY NOT HERE (fork, 2026-09-06). Upstream renders the
+              operator's `launchers.toml` rows as one-tap buttons on the dashboard, and a tap
+              CREATES A THROWAWAY SPACE running that command — which reads as a picker but behaves
+              as a create, and that is what made it confusing rather than useful here.
+
+              `launchers.toml` itself is KEPT: agent-chat.tsx still reads it for the tab strip's
+              "+" hold, where the same rows do the thing their shape promises (pick what the "+"
+              opens). The two consumers are independent, so removing this line removes exactly the
+              dashboard strip and nothing else. To restore upstream's behaviour, put back:
+                <LaunchStrip open={prefs.launchOpen} onOpenChange={setLaunchOpen} scope={data.scope} />
+              plus its import and the `setLaunchOpen` binding from useDashPrefs. */}
           <SpaceOverview
             workspaces={data.workspaces}
             agents={navPanes.agents}
@@ -136,6 +215,10 @@ export function HomeRoute() {
             open={spacesOpen}
             onOpenChange={setSpacesOpen}
           />
+          {/* FORK: what the three agents have left (components/quota-card.tsx). Under Spaces and
+              above the footer: it is information, not a thing to act on, so it sits below
+              everything that is. Foldable like Spaces; the fold is a dash pref. */}
+          {quotaOn && <QuotaCard open={prefs.quotaOpen} onOpenChange={setQuotaOpen} />}
         </main>
 
         {/* The footer is the dashboard's meta zone, in widening order: the crew you're part of, an
@@ -143,7 +226,7 @@ export function HomeRoute() {
             with a stale-cache nudge). The crew line self-hides on a solo install. */}
         <CrewFooterLink scope={data.scope} className="px-4 pt-3" />
         <UpdateBanner className="px-4 pt-3" />
-        <BuildStamp className="px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)_+_0.5rem)]" />
+        <BuildStamp className="px-4 pt-3 pb-[calc(var(--safe-bottom)_+_0.5rem)]" />
       </div>
 
       {/* Status overlay, anchored to the bottom of the viewport (no input here) — same slim line,
@@ -157,11 +240,22 @@ export function HomeRoute() {
         <StatusArea />
       </ToastViewport>
 
+      {/* FORK: pin / un-pin / reorder, from a long press on a row. */}
+      <PinSheet
+        open={held !== null}
+        pane={held}
+        pinned={prefs.pinned}
+        known={knownIds}
+        onClose={() => setHeld(null)}
+        onOpen={open}
+      />
+
       <NewSpaceSheet
         open={newSpaceOpen}
         onClose={() => setNewSpaceOpen(false)}
         onCreate={newSpace}
         repos={worktreeRepos}
+        dirShortcuts={dirShortcuts}
         scope={data.scope}
         onOpenWorktree={(workspaceId, path) => void showWorktree(workspaceId, path)}
         onCreateWorktree={(workspaceId, branch) => void newWorktree(workspaceId, branch)}
