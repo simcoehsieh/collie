@@ -207,6 +207,18 @@ describe("extractStatusLines — recovers the stripped statusline run", () => {
     expect(rows[0]).toContain("tokens");
   });
 
+  // FORK: Claude Code paints its remote-control indicator among the status rows, right-aligned.
+  // It is about the desktop's link, not the pane, and on the phone it was a row saying "/rc".
+  it("drops the remote-control indicator row, whatever padding aligns it", () => {
+    const rows = statusText(
+      boxWithStatusRows("❯", ["                                        /rc", "⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent"]),
+    );
+    expect(rows).toEqual(["⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent"]);
+    expect(statusText(boxWithStatusRows("❯", ["/rc connecting…", "model · cwd"]))).toEqual(["model · cwd"]);
+    // "/rcx" or "/rc-anything" is not the indicator; only the bare verb, optionally with its state.
+    expect(statusText(boxWithStatusRows("❯", ["/rcache warm", "model · cwd"]))).toEqual(["/rcache warm", "model · cwd"]);
+  });
+
   it("footer variant: returns the statusline + hint, but NOT the background-agents footer", () => {
     const rows = statusText(fixtureLines("claude--draft-footer-empty.txt"));
     expect(rows[0]).toContain("ctx:33%"); // the statusline itself
@@ -773,6 +785,7 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "menu-model-picker", statusRows: 0, draft: null, stripped: 1 },
     { fixture: "menu-model-picker-dismissed", statusRows: 3, draft: null, stripped: 7 },
     { fixture: "menu-model-picker-moved", statusRows: 0, draft: null, stripped: 1 },
+    { fixture: "menu-resume-picker", statusRows: 0, draft: null, stripped: 8 },
     { fixture: "plan-approval--numbered-body", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "plan-approval--feedback-focused", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "plan-approval--feedback-typed", statusRows: 0, draft: null, stripped: 0 },

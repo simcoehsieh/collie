@@ -75,14 +75,22 @@ export function locateComposer(lines: StyledLine[]): ComposerBox | null {
   if (statusRow < 0 || !isStatusRow(texts[statusRow]!, lines[statusRow])) return null;
 
   // One blank row separates the prompt/draft run from the status row (every capture); above the
-  // gap the run is CONTIGUOUS non-blank rows — wrapped-draft continuations under the `› ` prompt.
+  // gap the run is wrapped-draft continuations under the `› ` prompt — and, FORK, the blank rows a
+  // draft carries of its own.
   const top = skipBlanksUp(texts, statusRow - 1);
   if (top < 0) return null;
   for (let i = top; i >= 0 && top - i < MAX_DRAFT_ROWS; i--) {
     const t = texts[i]!;
     if (promptText(t) !== null) return { promptRow: i, statusRow };
-    // A blank or foreign-shaped row inside the run means this status row is not under a composer.
-    if (isBlank(t) || !CONTINUATION.test(t) || isStatusRow(t, lines[i])) return null;
+    // FORK: a blank row INSIDE the run is a paragraph break the operator typed — Codex paints an
+    // empty draft line as one space — not the end of the composer, so the walk continues up to the
+    // `›` row. Before this, any message carrying a blank line (a list, then a paragraph) made the
+    // composer invisible to the reply path: the text landed, the verify read found no composer,
+    // the phone reported "didn't reach the input box" and never pressed Enter — and the retry,
+    // finding no draft to clear, typed a second copy under the first
+    // (`codex--draft-blank-paragraph.txt` is that screen). A foreign-shaped row still ends it.
+    if (isBlank(t)) continue;
+    if (!CONTINUATION.test(t) || isStatusRow(t, lines[i])) return null;
   }
   return null;
 }

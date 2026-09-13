@@ -160,6 +160,9 @@ async function runAdvanceMacro(args: GuardArgs): Promise<ActionResult> {
   if (!guarded.ok) return guarded.result;
 
   const sleep = args.sleep ?? defaultSleep;
+  if (args.multi.submitKeys !== undefined) {
+    return runDirectSubmit(args, args.multi.submitKeys, guarded.region, sleep);
+  }
   // Bound the walk: enough nudges to cross every navigable row (options + free-text + Submit + Chat)
   // with slack for a couple of swallowed keys, so a wedged pane can't loop forever.
   const maxSteps = args.multi.options.length + 6;
@@ -202,5 +205,50 @@ async function runAdvanceMacro(args: GuardArgs): Promise<ActionResult> {
     await sleep(NAV_SETTLE_MS);
   }
   // Never landed on the advance row within the bounded walk — refresh rather than blind-send.
+  return { status: "changed" };
+}
+
+/**
+ * The direct-submit variant (`MultiSelectModel.submitKeys`): the TUI submits the set on one key from
+ * any OPTION row, so there is no advance row to walk onto — but the same key on the free-text row
+ * opens a field instead (agy's `Write-in...`), so the pointer is still read fresh before every send.
+ * On an option row: send the keys (the first write bound to the guarded region). On any other pointed
+ * row: nudge Up (the free-text row is the bottom one on every capture) and re-read. No visible
+ * pointer: refuse — we cannot say where the key would land.
+ */
+async function runDirectSubmit(
+  args: GuardArgs,
+  submitKeys: string[],
+  region: string,
+  sleep: Sleep,
+): Promise<ActionResult> {
+  if (args.multi.phase !== "checkbox") return { status: "changed" };
+  let expectedPrompt: string | undefined = region;
+  const sendStep = async (keys: string[]) => {
+    const expected = expectedPrompt;
+    expectedPrompt = undefined;
+    return sendBoundKeys(args, keys, expected);
+  };
+  const maxSteps = args.multi.options.length + 4;
+  for (let step = 0; step < maxSteps; step++) {
+    let fresh;
+    try {
+      fresh = await readDialog(target(args));
+    } catch {
+      await sleep(NAV_SETTLE_MS);
+      continue;
+    }
+    const m = fresh.model;
+    if (!m) {
+      await sleep(NAV_SETTLE_MS);
+      continue;
+    }
+    if (!multiSelectIdentity(m, args.multi) || m.phase !== "checkbox") return { status: "changed" };
+    if (m.pointer === "option") return sendStep(submitKeys);
+    if (m.pointer === null) return { status: "changed" };
+    const nudged = await sendStep(["Up"]);
+    if (nudged.status !== "sent") return nudged;
+    await sleep(NAV_SETTLE_MS);
+  }
   return { status: "changed" };
 }

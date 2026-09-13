@@ -220,6 +220,7 @@ is why a composer send used to be typed straight into it. Claimed by the last-re
 |---|---|
 | `claude--menu-model-picker.txt` | Picker open, `❯` on row 1: title `Select model`, five numbered rows with description columns, an `◐ Medium effort ←/→ to adjust` row, and the key-hint footer `Enter to set as default · s to use this session only · Esc to cancel`. Lifts a `menu` block with three actions + Up/Down + Left/Right |
 | `claude--menu-model-picker-moved.txt` | The same picker after `2×Down` (`❯` on row 3) — same title and actions, **different signature**. The race-guard fixture: a committing key must refuse a tap on the earlier render, an arrow must not |
+| `claude--menu-resume-picker.txt` | The `/resume` session picker (2.1.267, captured 2026-09-11 in a throwaway `dev` pane on `/private/tmp/collie-resume-sandbox`, one session listed): title `Resume session`, a `⌕ Search…` box, `❯` on the only row, and a key-hint footer that names **no Enter** — `Ctrl+A … · Ctrl+B to only show current branch · Space to preview · Ctrl+R to rename · Type to search · Esc to cancel` — and **wraps**, so the last line is `search · Esc to cancel`. Lifts a `menu` block with a **synthesised** `Select` (Enter) first, then Cancel, plus Up/Down. No `moved` variant: with one row, Down moves nothing |
 | `claude--menu-model-picker-dismissed.txt` | After `Esc`: the ordinary input box + statusline are back. The **negative control** — its statusline is `·`-separated like a key-hint footer, so only the input-box gate keeps it raw |
 
 ## Slash-autocomplete corpus (captured 2026-09-01, Claude Code v2.1.257, live pane)
@@ -466,6 +467,27 @@ paints no dialog and cannot be used to generate one.
   and free-text escape rows ("Type something.", "Tell Claude what to change") all occur; footers
   are the most stable discriminator ("Enter to select/confirm", "Esc to cancel").
 
+
+## agy 1.2.0 corpus (captured 2026-09-10, Antigravity CLI 1.2.0, herdr sandbox pane)
+
+Byte-faithful `GET /api/pane/:id?lines=200` captures from a throwaway herdr workspace running `agy
+--new-project` in a scratch git repo. Sanitised with LENGTH-PRESERVING substitutions (the account email →
+`sandbox.user@ex.test`) and the shell's own scrollback rows dropped; nothing else touched. The blank row
+agy leaves between a modal's `Keyboard:` footer and the status row is real. Every keystroke recipe these
+back is in `web/src/lib/grammar/AGY_NOTES.md`.
+
+| Fixture | State / what's in it | Lifts |
+|---|---|---|
+| `agy--wizard-q1.txt` | Two-question ask_user_question, `Question 1/2: Which color?`, Red/Green/Blue + Write-in, `enter Select` footer. Digit `2` probed: chose Green AND advanced | `prompt-select` |
+| `agy--wizard-q2.txt` | `Question 2/2: Which size?`, footer gains `← Back`. Esc probed: skips the question | `prompt-select` |
+| `agy--multi-select-unchecked.txt` | `is_multi_select` question: `1. [ ] Cheese` … `4. Write-in...`, `space Toggle · enter Submit` footer, pointer on 1 | `multi-select` |
+| `agy--multi-select-checked.txt` | Same dialog after `2`, `space`, `↓`, `space`: Mushrooms `[x]`, pointer on 3. Enter probed: submitted Mushrooms only | `multi-select` |
+| `agy--multi-select-writein.txt` | Enter on the Write-in row: `Your answer:` field open, `enter Submit · esc Back` footer — a digit would TYPE | nothing (refused) |
+| `agy--menu-model.txt` | `/model`: `Switch Model`, `>` on the current model, `Effort ◂ ● ━ ◉ ▸` slider, `Keyboard: ↑/↓ Navigate  ←/→ Effort  enter Select  esc Go Back` | `menu` |
+| `agy--menu-permissions.txt` | `/permissions`: `Permission Config Editor`, scope rows, `Keyboard: ↑/↓ Navigate  enter Save  esc Close` | `menu` |
+| `agy--autocomplete-slash.txt` | `/mo` typed: five `/command  description` rows under the box, `↓ 6 more`, `↑/↓ Navigate · enter Select · tab Complete` | `autocomplete` (box live) |
+| `agy--help-overlay.txt` | `?` overlay: 25 shortcut rows, `[1-25 of 33 items]`, `Keyboard: … esc Close` | nothing (no anchoring rule) |
+| `agy--draft-multiline.txt` | A three-line draft in the box (pasted text is inserted literally — no placeholder) | nothing |
 
 ## agy corpus (captured 2026-08-26, Antigravity CLI 1.1.17, sandbox panes)
 

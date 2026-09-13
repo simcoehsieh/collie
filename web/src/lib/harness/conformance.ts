@@ -317,6 +317,7 @@ function emittableKeys(block: Block): string[] | null {
         ? [
             ...block.multi.options.map((o) => String(o.n)),
             ...(block.multi.escape ? [String(block.multi.escape.n)] : []),
+            ...(block.multi.submitKeys ?? []),
             "Up",
             "Down",
             "Enter",
@@ -359,9 +360,21 @@ function emittableKeys(block: Block): string[] | null {
  */
 export function describeAdapterConformance(
   adapter: HarnessAdapter,
-  opts: { ownFixtures: string[]; foreignFixtures: string[]; neutralFixtures: string[] },
+  opts: {
+    ownFixtures: string[];
+    foreignFixtures: string[];
+    neutralFixtures: string[];
+    /**
+     * Dialog kinds this harness is KNOWN not to have, each with the measured reason — e.g. agy has
+     * no wizard (a multi-question call is a run of `Question k/N:` selects with no stepper) and no
+     * preview variant (its tool schema carries no preview field). A kind listed here registers a
+     * real assertion that the corpus lifts none of it, instead of the open `todo` a kind that is
+     * merely uncaptured leaves behind. Listing a kind the adapter DOES emit fails the suite.
+     */
+    notApplicable?: Partial<Record<DialogKind, string>>;
+  },
 ): void {
-  const { ownFixtures, foreignFixtures, neutralFixtures } = opts;
+  const { ownFixtures, foreignFixtures, neutralFixtures, notApplicable = {} } = opts;
 
   describe(`HarnessAdapter conformance — ${adapter.agent}`, () => {
     describe("conservative detection (fail-closed on foreign + neutral buffers)", () => {
@@ -535,6 +548,13 @@ export function describeAdapterConformance(
     describe("dialog models (signature + identity contract)", () => {
       for (const kind of DIALOG_KINDS) {
         const kindFixtures = ownFixtures.filter((name) => modelsOf(adapter, name, kind).length > 0);
+        const reason = notApplicable[kind];
+        if (reason !== undefined) {
+          it(`${kind}: not applicable to this harness — ${reason}`, () => {
+            expect(kindFixtures, `${adapter.agent} lifts ${kind} yet declares it not applicable`).toEqual([]);
+          });
+          continue;
+        }
         if (kindFixtures.length === 0) {
           it.todo(`adapter lifts no ${kind} blocks from its own fixtures`);
           continue;

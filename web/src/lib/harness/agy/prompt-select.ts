@@ -174,10 +174,12 @@ export function detectPromptSelectRegion(lines: StyledLine[]): PromptRegion | nu
     options.push({
       label: row.label,
       description: desc.length ? desc.join(" ") : undefined,
-      keys:
-        family === "select" || family === "plan"
-          ? [String(row.n), "Enter"]
-          : [String(row.n)],
+      // The digit ALONE, for every family. Live-probed on Antigravity CLI 1.2.0 (2026-09-10,
+      // AGY_NOTES.md): a digit selects AND submits a single question, and selects AND advances a
+      // step of a multi-question call. The old `[digit, "Enter"]` recipe was measured to be wrong
+      // in the worst way — on `Question 1/2` the digit had already advanced, so the trailing Enter
+      // chose the NEXT question's pointed default sight unseen.
+      keys: [String(row.n)],
     });
   }
   if (options.length === 0) return null;

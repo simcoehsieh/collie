@@ -429,3 +429,91 @@ describe("multiSelectEquals / multiSelectIdentity — wizard step identity", () 
     expect(multiSelectEquals(q1, onSubmit)).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// The DIRECT-SUBMIT variant (`MultiSelectModel.submitKeys`) — agy's shape, where Enter submits the set
+// from any option row and there is no advance row to walk onto. The detector is agy's real one over
+// its verified layout (AGY_NOTES.md, 2026-09-10).
+// ---------------------------------------------------------------------------------------------
+
+import { detectMultiSelect as detectAgyMultiSelect } from "./harness/agy/multi-select";
+
+const AGY_STATUS = "esc to cancel                                                Gemini 3.8 Flash · high";
+const AGY_FOOTER = "  ↑/↓ Navigate · space Toggle · enter Submit · esc Skip";
+
+function agyBuffer(opts: { pointer?: 1 | 2 | 3 | "writein" | "none"; checked?: number[] } = {}): string {
+  const pointer = opts.pointer ?? 1;
+  const checked = new Set(opts.checked ?? []);
+  const row = (n: number, label: string) =>
+    `${pointer === n ? ">" : " "} ${n}. [${checked.has(n) ? "x" : " "}] ${label}`;
+  return [
+    "Question 1/1: Which toppings do you want?",
+    row(1, "Cheese"),
+    row(2, "Olives"),
+    row(3, "Mushrooms"),
+    `${pointer === "writein" ? ">" : " "} 4. Write-in...`,
+    AGY_FOOTER,
+    AGY_STATUS,
+  ].join("\n");
+}
+
+function agyModel(text: string): MultiSelectModel {
+  const m = detectAgyMultiSelect(splitLines(parseAnsi(text)));
+  if (!m) throw new Error("synthetic agy buffer did not detect a multi-select dialog");
+  return m;
+}
+
+const agyBase = { ...base, agent: "agy" };
+
+describe("advance with submitKeys (agy): Enter from an option row, never from the Write-in row", () => {
+  it("sends the submit keys at once when the pointer sits on an option, bound to the region", async () => {
+    const m = agyModel(agyBuffer({ pointer: 3, checked: [3] }));
+    expect(m.phase === "checkbox" && m.submitKeys).toEqual(["Enter"]);
+    script(agyBuffer({ pointer: 3, checked: [3] }));
+    const res = await submitMultiSelectIntent({ ...agyBase, multi: m, intent: { kind: "advance" } });
+    expect(res.status).toBe("sent");
+    expect(mockSendKeys).toHaveBeenCalledTimes(1);
+    expect(mockSendKeys.mock.calls[0]![1]).toEqual(["Enter"]);
+    expect(mockSendKeys.mock.calls[0]![3]).toContain("Question 1/1: Which toppings do you want?");
+  });
+
+  it("nudges Up off the Write-in row and re-reads before pressing Enter", async () => {
+    const m = agyModel(agyBuffer({ pointer: "writein", checked: [2] }));
+    // The entry guard's read, then the macro's first read (still on Write-in → Up), then the re-read.
+    script(
+      agyBuffer({ pointer: "writein", checked: [2] }),
+      agyBuffer({ pointer: "writein", checked: [2] }),
+      agyBuffer({ pointer: 3, checked: [2] }),
+    );
+    const res = await submitMultiSelectIntent({ ...agyBase, multi: m, intent: { kind: "advance" } });
+    expect(res.status).toBe("sent");
+    expect(mockSendKeys.mock.calls.map((c) => c[1])).toEqual([["Up"], ["Enter"]]);
+    // Only the first write is bound; the Up deliberately moved the region's pointer.
+    expect(mockSendKeys.mock.calls[0]![3]).toBeDefined();
+    expect(mockSendKeys.mock.calls[1]![3]).toBeUndefined();
+  });
+
+  it("refuses when no pointer is visible — it cannot say where Enter would land", async () => {
+    const m = agyModel(agyBuffer({ pointer: 1 }));
+    script(agyBuffer({ pointer: "none" }));
+    const res = await submitMultiSelectIntent({ ...agyBase, multi: m, intent: { kind: "advance" } });
+    expect(res.status).toBe("changed");
+    expect(mockSendKeys).not.toHaveBeenCalled();
+  });
+
+  it("aborts when a box flipped underfoot between the tap and the read", async () => {
+    const m = agyModel(agyBuffer({ pointer: 1, checked: [1] }));
+    script(agyBuffer({ pointer: 1, checked: [1, 2] }));
+    const res = await submitMultiSelectIntent({ ...agyBase, multi: m, intent: { kind: "advance" } });
+    expect(res.status).toBe("changed");
+    expect(mockSendKeys).not.toHaveBeenCalled();
+  });
+
+  it("a digit still toggles through the ordinary guarded path", async () => {
+    const m = agyModel(agyBuffer({ pointer: 1 }));
+    script(agyBuffer({ pointer: 1 }));
+    const res = await submitMultiSelectIntent({ ...agyBase, multi: m, intent: { kind: "toggle", n: 2 } });
+    expect(res.status).toBe("sent");
+    expect(mockSendKeys.mock.calls[0]![1]).toEqual(["2"]);
+  });
+});

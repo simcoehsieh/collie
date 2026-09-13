@@ -22,6 +22,14 @@ function menuBlock() {
   return block;
 }
 
+// FORK: the /resume picker's footer names no Enter, so the adapter supplies the Select its `❯` row
+// implies (harness/claude/menu.ts). The model carries a flag, not a string, and the renderer puts
+// the word on it — pinned here because a flag nobody labels renders an empty primary button.
+const RESUME = readFileSync(
+  join(import.meta.dirname, "..", "fixtures", "panes", "claude--menu-resume-picker.txt"),
+  "utf8",
+);
+
 function renderMenu(onAction = vi.fn()) {
   const block = menuBlock();
   render(<MenuBlock menu={block.menu} lines={block.lines} onAction={onAction} />);
@@ -77,6 +85,17 @@ describe("MenuBlock", () => {
 
     await user.click(screen.getByRole("button", { name: "Move down" }));
     expect(onAction).toHaveBeenCalledWith({ keys: ["Down"], nav: true });
+  });
+
+  it("labels a synthesised Select and sends its Enter as a committing action", async () => {
+    const block = claudeBuildBlocks(splitLines(parseAnsi(RESUME))).find((b) => b.kind === "menu");
+    if (!block || block.kind !== "menu") throw new Error("the /resume fixture lifted no menu block");
+    const onAction = vi.fn();
+    render(<MenuBlock menu={block.menu} lines={block.lines} onAction={onAction} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    expect(onAction).toHaveBeenCalledWith({ keys: ["Enter"], nav: false });
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
   });
 
   it("renders but refuses taps when disabled", async () => {

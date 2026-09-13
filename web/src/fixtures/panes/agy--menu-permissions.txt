@@ -1,0 +1,70 @@
+  [0m[38;2;103;185;244m▄[0m[38;2;107;199;163m[48;2;100;182;246m▀[0m[38;2;100;182;246m▀[0m      [0m[38;2;56;134;251m▀[0m[38;2;72;129;244m[48;2;56;131;249m▀[0m[38;2;61;133;252m▄[0m
+[0m[1m[38;2;38;139;210m> /model[0m
+[0m[1m[38;2;38;139;210m  ⎿  [0m[38;2;147;161;161mExited /model command[0m
+
+[0m[38;2;7;54;66m────────────────────────────────────────────────────────────[0m
+[0m[1m[38;2;38;139;210m> paste line 1 lorem ipsum dolor sit amet consectetur[0m
+[0m[1m[38;2;38;139;210m  paste line 2 lorem ipsum dolor sit amet consectetur[0m
+[0m[1m[38;2;38;139;210m  paste line 3 lorem ipsum dolor sit amet consectetur[0m
+[0m[1m[38;2;38;139;210m  paste line 4 lorem ipsum dolor sit amet consectetur[0m
+[0m[1m[38;2;38;139;210m  paste line 5 lorem ipsum dolor sit amet consectetur[0m
+[0m[1m[38;2;38;139;210m  paste line 6 lorem ipsum dolor sit amet consectetur[0m
+[0m[1m[38;2;38;139;210m  paste line 7 lorem ipsum dolor sit amet consectetur[0m
+[0m[1m[38;2;38;139;210m  paste line 8 lorem ipsum dolor sit amet consectetur[0m
+[0m[1m[38;2;38;139;210m  paste line 9 lorem ipsum dolor sit amet consectetur[0m
+[0m[1m[38;2;38;139;210m  paste line 10 lorem ipsum dolor sit amet consectetur[0m
+[0m[1m[38;2;38;139;210m  paste line 11 lorem ipsum dolor sit amet consecteturUse the ask_user_question[0m
+[0m[1m[38;2;38;139;210m  tool to ask me exactly ONE question 'Which toppings do you want?' with options[0m
+[0m[1m[38;2;38;139;210m  Cheese, Olives, Mushrooms, and allow selecting MULTIPLE options (multi-select).[0m
+[0m[1m[38;2;38;139;210m  Do nothing else.[0m
+
+[0m[38;2;147;161;161m▸ Thought for 6s, 1.6k tokens[0m
+[0m[38;2;147;161;161m  Formulating the Question Prompt[0m
+
+[0m[1m[38;2;181;137;0m?[0m Which toppings do you want?
+[0m[1m[38;2;38;139;210m> Mushrooms[0m
+
+  [0m[38;2;238;232;213m收到，已記錄您的選擇：Mushrooms。                                              [0m
+
+[0m[38;2;7;54;66m────────────────────────────────────────────────────────────[0m
+[0m[1m[38;2;38;139;210m> Use the ask_user_question tool ONCE to ask me TWO questions in the same call:[0m
+[0m[1m[38;2;38;139;210m  'Which color?' with options Red, Green, Blue; and 'Which size?' with options[0m
+[0m[1m[38;2;38;139;210m  Small, Large. Do nothing else.[0m
+
+[0m[1m[38;2;181;137;0m?[0m Which color?
+[0m[1m[38;2;38;139;210m> Green[0m
+[0m[1m[38;2;181;137;0m?[0m Which size?
+[0m[1m[38;2;38;139;210m> Small[0m
+
+  [0m[38;2;238;232;213m收到，已記錄您的選擇：顏色為 Green，尺寸為 Small。[0m
+
+[0m[38;2;7;54;66m────────────────────────────────────────────────────────────[0m
+[0m[1m[38;2;38;139;210m> 2[0m
+
+  [0m[38;2;238;232;213m請問「2」是指什麼需求或選項呢？若有需要協助的地方，請隨時告訴我！[0m
+
+[0m[38;2;7;54;66m────────────────────────────────────────────────────────────[0m
+[0m[1m[38;2;38;139;210m> Use the ask_user_question tool to ask me exactly ONE question 'Pick a fruit' with[0m
+[0m[1m[38;2;38;139;210m  options Apple, Banana, Cherry. Do nothing else.[0m
+
+[0m[1m[38;2;181;137;0m?[0m Pick a fruit
+[0m[1m[38;2;38;139;210m> Banana[0m
+
+  [0m[38;2;238;232;213m收到，已記錄您的選擇：Banana。[0m
+
+[0m[38;2;7;54;66m────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;38;139;210m>[0m
+[0m[38;2;7;54;66m────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[1mPermission Config Editor[0m
+
+[0m[38;2;147;161;161mSelect a config scope to edit:[0m
+
+[0m[38;2;38;139;210m> Project[0m
+  Shared with Antigravity
+  Global
+
+  [0m[38;2;147;161;161mRules that apply only to this project (highest priority)[0m
+
+[0m[1mKeyboard: [0m[38;2;38;139;210m↑/↓[0m [0m[38;2;131;148;150mNavigate[0m  [0m[38;2;38;139;210menter[0m [0m[38;2;131;148;150mSave[0m  [0m[38;2;38;139;210mesc[0m [0m[38;2;131;148;150mClose[0m
+
+                                                             [0m[38;2;131;148;150mGemini 3.8 Flash · high[0m

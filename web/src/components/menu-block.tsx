@@ -157,7 +157,10 @@ export function MenuBlock({ menu, lines, onAction, disabled }: MenuBlockProps) {
                 className="font-content flex w-full items-center justify-center gap-2 rounded-lg border border-primary/60 bg-primary/15 px-3 py-2 text-sm font-medium text-foreground transition-colors active:bg-primary/25 disabled:opacity-60"
               >
                 {sending === id ? spinner : null}
-                {action.label}
+                {/* FORK: a synthesised Select carries a flag, not a translated string — the model is
+                    harness-neutral and has no locale. Every footer-named action keeps the footer's
+                    own words. */}
+                {action.select ? t("dialog.menu.select") : action.label}
               </button>
             );
           })}

@@ -19,6 +19,7 @@
 
 import { fetchPane, sendReply } from "./api";
 import { describeApiError, describeThrownError } from "./api-error-message";
+import { classifySendFailure, type SendFailure } from "./send-failure";
 import { parseAnsi } from "./ansi";
 import { splitLines } from "./blocks";
 import { t } from "./i18n";
@@ -47,8 +48,10 @@ export type ReplyOutcome =
    *  `noEcho`: the prompt the last verification read saw, when the reason the text never appeared is
    *  that the screen is deliberately not showing it — see lib/no-echo.ts. */
   | { status: "stalled"; error: string; noEcho?: string }
-  /** Transport/RPC failure. `textDelivered` = text is in the pane but unsubmitted; don't resend. */
-  | { status: "error"; error: string; textDelivered?: boolean };
+  /** Transport/RPC failure. `textDelivered` = text is in the pane but unsubmitted; don't resend.
+   *  FORK: `transport` names the failure when it was the LINK and not the pane — nothing was typed,
+   *  and the message can be kept to send when the link is back (lib/send-queue.ts). */
+  | { status: "error"; error: string; textDelivered?: boolean; transport?: SendFailure };
 
 /** Minimum visible characters that must match before we believe the input box holds OUR text. */
 export const MIN_MATCH_CHARS = 8;
@@ -296,7 +299,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
       if (!adapter.composerReady?.(lines)) return { status: "blocked", error: noBoxMessage() };
       previousDraft = adapter.extractInputDraft(lines);
     } catch (e) {
-      return { status: "error", error: message(e) };
+      return transportError(e);
     }
   }
   for (let i = 0; i < chunks.length - 1; i++) {
@@ -304,7 +307,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
     try {
       part = await sendReply(args.paneId, chunks[i]!, false, args.scope);
     } catch (e) {
-      return { status: "error", error: message(e) };
+      return transportError(e);
     }
     if (!part.ok) return { status: "error", error: describeApiError(part) };
     delivered += chunks[i]!;
@@ -331,7 +334,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
   try {
     typed = await sendReply(args.paneId, chunks[chunks.length - 1]!, false, args.scope);
   } catch (e) {
-    return { status: "error", error: message(e) };
+    return transportError(e);
   }
   if (!typed.ok) return { status: "error", error: describeApiError(typed) };
 
@@ -488,7 +491,7 @@ async function preflight(adapter: HarnessAdapter, args: GuardedReplyArgs): Promi
       try {
         prep = await args.onComposerSeen({ promptRegion });
       } catch (e) {
-        return { status: "error", error: message(e) };
+        return transportError(e);
       }
       if (!prep.ok) return { status: "error", error: prep.error };
       if (!prep.keysSent) return null; // the read above is still the freshest thing there is
@@ -522,7 +525,7 @@ async function oneShot(args: GuardedReplyArgs): Promise<ReplyOutcome> {
     const res = await sendReply(args.paneId, args.text, true, args.scope);
     return res.ok ? { status: "sent" } : { status: "error", error: describeApiError(res) };
   } catch (e) {
-    return { status: "error", error: message(e) };
+    return transportError(e);
   }
 }
 
@@ -553,6 +556,16 @@ async function submitOnly(
   } catch (e) {
     return { status: "error", error: message(e), textDelivered: true };
   }
+}
+
+/**
+ * FORK: a throw before anything reached the pane, as the outcome — with the failure's KIND when it
+ * was the link rather than the pane, so the caller can keep the words for later instead of handing
+ * them back to be retyped.
+ */
+function transportError<TThrown>(e: TThrown): ReplyOutcome {
+  const transport = classifySendFailure(e);
+  return transport === null ? { status: "error", error: message(e) } : { status: "error", error: message(e), transport };
 }
 
 function message<TThrown>(e: TThrown): string {

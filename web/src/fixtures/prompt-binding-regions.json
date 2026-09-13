@@ -30,6 +30,11 @@
     "region": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n   Select model\n   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names, specify with --model.\n\n   ❯ 1. Default (recommended) ✔  Opus 5 with 1M context · Best for everyday, complex tasks\n     2. Opus (1M context)        Opus 5 with 1M context · Best for everyday, complex tasks\n     3. Fable                    Fable 5 · Most capable for your hardest and longest-running tasks\n     4. Sonnet                   Sonnet 5 · Efficient for routine tasks\n     5. Haiku                    Haiku 4.5 · Fastest for quick answers\n\n   ◐ Medium effort ←/→ to adjust\n\n   Enter to set as default · s to use this session only · Esc to cancel"
   },
   {
+    "fixture": "claude--menu-resume-picker.txt",
+    "detector": "menu",
+    "region": "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n   Resume session\n   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n   │ ⌕ Search…                                                                                                      │\n   ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯\n     collie-resume-sandbox\n\n   ❯ (session)\n     59 seconds ago · main · 4.7KB\n\n     Ctrl+A to show all projects · Ctrl+B to only show current branch · Space to preview · Ctrl+R to rename · Type to\n     search · Esc to cancel"
+  },
+  {
     "fixture": "claude--permission-bash.txt",
     "detector": "prompt-select",
     "region": "│           /…/scratchpad/fixture-sandbox            │                                                                                                                                                              │\n╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯\n\n ▎ Fable 5 is back.\n ▎ Until July 7, you can use up to 50% of your plan's weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with usage credits. Fable 5 draws down usage faster than Opus 4.8. Learn more\n ▎ (https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access)\n\n❯ Use the AskUserQuestion tool to ask me one question: which color theme should the dashboard use? Offer exactly three options: Red, Green, Blue.                                                                    \n\n● User answered Claude's questions:\n  ⎿  · Which color theme should the dashboard use? → Green\n\n● You chose the Green theme — a calm, natural look with green as the primary accent color. Let me know what you'd like to do next with the dashboard.\n\n✻ Sautéed for 9s\n\n❯ Create a file named hello.txt in this directory containing exactly the single word: hello                                                                                                                          \n\n● Write(hello.txt)\n  ⎿  Wrote 1 line to hello.txt\n      1 hello\n\n● Created hello.txt containing the single word hello.\n\n✻ Sautéed for 5s\n\n❯ Now run exactly this bash command: mkfifo fixture-fifo                                                                                                                                                             \n\n  Running 1 shell command…\n  ⎿  $ mkfifo fixture-fifo\n\n─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n Bash command\n\n   mkfifo fixture-fifo\n   Create a named pipe (FIFO)\n\n This command requires approval\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don’t ask again for: mkfifo fixture-fifo *\n   3. No\n\n Esc to cancel · Tab to amend · ctrl+e to explain"
@@ -183,5 +188,35 @@
     "fixture": "claude--wizard-submit.txt",
     "detector": "wizard",
     "region": "←  ☒ Focus area  ☒ Scope  ☒ Workflow  ✔ Submit  →\n\nReview your answers\n\n ● Which focus area should we work on?\n   → UI\n ● What scope should this work have?\n   → Medium\n ● How should we approach the work?\n   → Plan first\n  \nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel"
+  },
+  {
+    "fixture": "agy--autocomplete-slash.txt",
+    "detector": "menu",
+    "region": "────────────────────────────────────────────────────────────────────────────────────\n> /model                               Set a model, or run a single prompt on an...\n  /migrate-workflows                   Automatically migrate legacy workflows to...\n  /permissions                         Manage tool permissions\n  /time-context                        Establish accurate time/timezone/market-s...\n  /gsap-frameworks                     Official GSAP skill for Vue, Svelte, and ...\n   ↓ 6 more\n\n  ↑/↓ Navigate · enter Select · tab Complete\nesc to cancel                                                Gemini 3.8 Flash · high"
+  },
+  {
+    "fixture": "agy--multi-select-checked.txt",
+    "detector": "menu",
+    "region": "────────────────────────────────────────────────────────────────────────────────────\n\nQuestion 1/1: Which toppings do you want?\n\n  1. [ ] Cheese\n  2. [ ] Olives\n> 3. [x] Mushrooms\n  4. Write-in...\n\n  ↑/↓ Navigate · space Toggle · enter Submit · esc Skip\nesc to cancel                                                Gemini 3.8 Flash · high"
+  },
+  {
+    "fixture": "agy--multi-select-unchecked.txt",
+    "detector": "menu",
+    "region": "────────────────────────────────────────────────────────────────────────────────────\n\nQuestion 1/1: Which toppings do you want?\n\n> 1. [ ] Cheese\n  2. [ ] Olives\n  3. [ ] Mushrooms\n  4. Write-in...\n\n  ↑/↓ Navigate · space Toggle · enter Submit · esc Skip\nesc to cancel                                                Gemini 3.8 Flash · high"
+  },
+  {
+    "fixture": "agy--multi-select-writein.txt",
+    "detector": "menu",
+    "region": "────────────────────────────────────────────────────────────────────────────────────\n\nQuestion 1/1: Which toppings do you want?\n\n  1. [ ] Cheese\n  2. [ ] Olives\n  3. [ ] Mushrooms\n> 4. Write-in...\n\n  Your answer:\n   \n\n\n\n  enter Submit · esc Back\nesc to cancel                                                Gemini 3.8 Flash · high"
+  },
+  {
+    "fixture": "agy--wizard-q1.txt",
+    "detector": "menu",
+    "region": "────────────────────────────────────────────────────────────────────────────────────\n\nQuestion 1/2: Which color?\n\n> 1. Red\n  2. Green\n  3. Blue\n  4. Write-in...\n\n  ↑/↓ Navigate · enter Select · esc Skip\nesc to cancel                                                Gemini 3.8 Flash · high"
+  },
+  {
+    "fixture": "agy--wizard-q2.txt",
+    "detector": "menu",
+    "region": "────────────────────────────────────────────────────────────────────────────────────\n\nQuestion 2/2: Which size?\n\n> 1. Small\n  2. Large\n  3. Write-in...\n\n  ↑/↓ Navigate · ← Back · enter Select · esc Skip\nesc to cancel                                                Gemini 3.8 Flash · high"
   }
 ]
