@@ -33,6 +33,8 @@ import { ZELLIJ_BINARY_OPTION, ZELLIJ_MUX } from "../bridge/mux/zellij/adapter.t
 import { resolveZellijBinary, zellijBinaryCandidates } from "../bridge/mux/zellij/exec.ts";
 import { chooseSession, parseSessionList, ZELLIJ_LIST_SESSIONS_ARGS } from "../bridge/mux/zellij/protocol.ts";
 import { bindIsWildcard } from "../bridge/crew/config.ts";
+import { validateOperatorLaunchers } from "../bridge/operator-launchers.ts";
+import { validateOperatorNotifyRules } from "../bridge/operator-notify.ts";
 import { deriveMode } from "../bridge/crew/mode.ts";
 import type { HelloResult, CrewFetch, PeerOutcome } from "../bridge/crew/peer-client.ts";
 import { crewRuntimePath, parseMarker, rosterDrift, type CrewRuntimeMarker } from "../bridge/crew/staleness.ts";
@@ -191,6 +193,8 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
     bindWildcard(deps),
     acl(deps),
     frontDoor(deps, mode),
+    launchers(deps),
+    notifyRules(deps),
     mux(deps),
     beaconHooks(deps, hookEntries, declaration?.supports.agentDetection ?? true),
     await beacons(deps, hookEntries.length > 0),
@@ -876,6 +880,104 @@ function liveServeStatus(deps: DoctorDeps): ReturnType<typeof parseServeStatus> 
  * `doctor` is run when something is already wrong, and a hung diagnostic is a worse answer than
  * "it did not answer".
  */
+// ── launchers.toml — the rows behind the tab strip's "+" ─────────────────────
+// The one operator file whose absence is INVISIBLE from the phone. With no rows the "+" opens a
+// plain shell and its long-press is not wired at all (web/src/components/agent-chat.tsx hands
+// TabStrip no `onNewTabHold`), and nothing on screen says why — a fresh machine that got its `.env`
+// but not this file reads as a broken gesture, and it took a session of tracing to learn the file
+// had simply never been copied over. The bridge is right to treat "no file" as the ordinary case
+// (bridge/operator-file.ts); `doctor` is where the ordinary case gets NAMED.
+//
+// Absent is `ok`, not `warn`: declaring nothing is a choice, and a healthy install must warn about
+// nothing. The detail carries the consequence and the verb instead, exactly as `path-link` says
+// "not linked — `collie link` would publish …". A file that IS there is judged by the bridge's own
+// validator, so this can never count a row the bridge would drop, and a row it drops or a file it
+// cannot parse is a `warn` here because on the phone both look identical to "declared nothing".
+function launchers(deps: DoctorDeps): Finding {
+  const path = join(deps.ctx.configDir, "launchers.toml");
+  const text = deps.files.read(path);
+  if (text === null) {
+    return ok(
+      "launchers",
+      `none at ${path} — the tab strip's "+" opens a plain shell and its long-press offers no menu; ` +
+        "copy launchers.toml.example there to declare rows (read live, no restart)",
+    );
+  }
+  const dropped: string[] = [];
+  let rows: ReturnType<typeof validateOperatorLaunchers>;
+  try {
+    // SAFETY: the same claim bridge/operator-file.ts makes — `validateOperatorLaunchers` reads every
+    // field as `unknown` and checks it before believing it, so this asserts only "a document came
+    // back".
+    const doc = Bun.TOML.parse(text) as { launchers?: unknown };
+    rows = validateOperatorLaunchers(doc, (message) => dropped.push(message));
+  } catch (err) {
+    return warn(
+      "launchers",
+      `${path} does not parse (${String(err)}) — the bridge keeps the last good rows it read, which on a fresh host is none`,
+      `fix the TOML in ${path}; it is re-read live, no restart`,
+    );
+  }
+  const kept = `${rows.length} row${rows.length === 1 ? "" : "s"}`;
+  if (dropped.length > 0) {
+    return warn(
+      "launchers",
+      `${kept} kept, ${dropped.length} dropped: ${dropped.join("; ")}`,
+      `fix the dropped row(s) in ${path}; it is re-read live, no restart`,
+    );
+  }
+  if (rows.length === 0) {
+    return ok(
+      "launchers",
+      `${kept} at ${path} (every row commented out) — the tab strip's "+" opens a plain shell and its long-press offers no menu`,
+    );
+  }
+  return ok("launchers", `${kept} at ${path}: ${rows.map((row) => row.label).join(", ")}`);
+}
+
+// ── FORK: notify.toml — the operator's own per-pane notification rules ───────
+// The same shape as `launchers` above, for the same reason: with no file the phone's Settings page
+// shows every pane on "default" and nothing says a file could have said otherwise. Absent is `ok`;
+// a file is judged by the bridge's own validator (bridge/operator-notify.ts).
+function notifyRules(deps: DoctorDeps): Finding {
+  const path = join(deps.ctx.configDir, "notify.toml");
+  const text = deps.files.read(path);
+  if (text === null) {
+    return ok(
+      "notify",
+      `none at ${path} — per-pane notification rules come only from the phone's Settings; ` +
+        "copy notify.toml.example there to declare rules in a file (read live, no restart)",
+    );
+  }
+  const dropped: string[] = [];
+  let rules: ReturnType<typeof validateOperatorNotifyRules>;
+  try {
+    // SAFETY: as `launchers` — `validateOperatorNotifyRules` reads every field as `unknown` and
+    // checks it before believing it, so this asserts only "a document came back".
+    const doc = Bun.TOML.parse(text) as { panes?: unknown };
+    rules = validateOperatorNotifyRules(doc, (message) => dropped.push(message));
+  } catch (err) {
+    return warn(
+      "notify",
+      `${path} does not parse (${String(err)}) — the bridge keeps the last good rules it read, which on a fresh host is none`,
+      `fix the TOML in ${path}; it is re-read live, no restart`,
+    );
+  }
+  const kept = `${rules.length} rule${rules.length === 1 ? "" : "s"}`;
+  if (dropped.length > 0) {
+    return warn(
+      "notify",
+      `${kept} kept, ${dropped.length} dropped: ${dropped.join("; ")}`,
+      `fix the dropped rule(s) in ${path}; it is re-read live, no restart`,
+    );
+  }
+  if (rules.length === 0) return ok("notify", `${kept} at ${path} (every rule commented out)`);
+  return ok(
+    "notify",
+    `${kept} at ${path}: ${rules.map((r) => `${r.label ?? r.paneId ?? "?"} → ${r.mode}`).join(", ")}`,
+  );
+}
+
 async function ownSnapshot(deps: DoctorDeps): Promise<string | null> {
   const host = resolvedBind(deps);
   const dialled = bindIsWildcard(host) ? "127.0.0.1" : host;

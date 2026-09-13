@@ -110,6 +110,43 @@ export interface AgentView {
    * `done` agent IS the "finished while you weren't looking" state — there is no stored seen flag.
    */
   lastSeenAt?: number;
+  /**
+   * FORK — WHAT THE AGENT ITSELF SAYS IT IS WORKING ON. One sentence, written by the agent through
+   * `collie beacon status "<line>"`, rendered under the pane name and NOWHERE else.
+   *
+   * PRESENTATION AND ONLY PRESENTATION, on exactly the terms {@link hint} already holds and for the
+   * reason .adr/0024 gives: a beacon sets what Collie SHOWS, never what it does. It implies nothing
+   * about `agent` or `status`, enters no sort, arms no mode, relaxes no gate, and is text the client
+   * does not interpret. `bridge/beacon/status-line.ts` carries the whole argument, including why
+   * this is the ADR's permitted road rather than its forbidden one.
+   *
+   * Already sanitised and clamped at the parse — control characters gone, one line, 120 chars — so
+   * the client renders it as-is. Absent on every pane whose agent has never written one.
+   */
+  statusLine?: string;
+  /**
+   * Epoch ms the line was written. The card DIMS a line older than fifteen minutes and never hides
+   * one, so this is the number that decides the dimming — sent as a stamp rather than an age because
+   * a cached snapshot's age would be wrong the moment it was cached, exactly as for the two
+   * timestamps above.
+   */
+  statusLineAt?: number;
+  /**
+   * FORK — WHICH MODEL THE AGENT IS RUNNING ON, in the harness's own spelling (`claude-fable-5-1`,
+   * `gpt-6-astra`), read off the newest turn of its own session log (bridge/session-facts.ts).
+   *
+   * PRESENTATION AND ONLY PRESENTATION, on the terms {@link statusLine} holds: it implies nothing
+   * about `agent` or `status`, enters no sort, arms nothing, and is text the client does not
+   * interpret. Absent on a pane whose harness has no journal, whose log has not been read yet
+   * (the cache is one poll behind on purpose), or whose log never names one.
+   */
+  model?: string;
+  /**
+   * FORK — the reasoning effort the newest turn ran at (`xhigh`, `medium`), the harness's own word.
+   * Same standing and same absences as {@link model}; the two travel together but either may be
+   * missing on its own.
+   */
+  effort?: string;
 }
 
 /**
@@ -867,7 +904,15 @@ export interface Launcher {
  * own file. `home` is that host's operator home dir, so the client can shorten a pinned `cwd` with a
  * leading `~` without knowing which machine answered.
  */
+export interface CodexHandoffModel {
+  id: string;
+  label: string;
+  efforts: string[];
+  defaultEffort: string;
+}
+
 export interface LaunchersResponse {
+  handoffModels?: CodexHandoffModel[];
   launchers: Launcher[];
   home: string;
 }
@@ -921,6 +966,24 @@ export interface BridgeConfig {
    * `COLLIE_MAX_UPLOAD_MB` still answers for itself when the bytes arrive. See docs/configure.md.
    */
   upload?: UploadCapability;
+  /**
+   * The hostnames whose `/d/<slug>` documents this bridge serves itself, from its own origin, over
+   * loopback (bridge/docs.ts). Omitted entirely when it serves none — and it publishes a host only
+   * when it can actually ANSWER for it, so the client reads this as "these open in the panel", not
+   * "these are interesting". Mirrored in web/src/lib/types.ts.
+   */
+  docHosts?: string[];
+  /**
+   * FORK: `true` when `/api/quota` answers (bridge/quota.ts) — the usage card's gate. Absent is the
+   * feature off, which is also what every bridge older than the field sends.
+   */
+  quota?: boolean;
+  /**
+   * FORK: `true` when `POST /api/pane/:id/shot` answers (bridge/shot.ts) — annotate-and-ask's gate.
+   * Absent is the feature off, which is also what every bridge older than the field sends, and the
+   * pane menu hides the "Screenshot & annotate…" row entirely.
+   */
+  shot?: boolean;
 }
 
 /**
@@ -960,3 +1023,132 @@ export const STATUS_RANK = {
   idle: 3,
   done: 4,
 } satisfies Record<AgentStatus, number>;
+
+// ── FORK: what the three agents have left (bridge/quota.ts) ───────────────────────────────────
+// The wire shape of `GET /api/quota`, normalised from the operator's `ai-quota --json` so the
+// phone never sees the CLI's own vocabulary (providers, windows named by label) — only the three
+// agents it already knows by name and the two numbers that matter for each.
+
+/** The agent the operator runs, in the name the dashboard already uses for its panes. */
+export type QuotaAgentKey = "claude" | "codex" | "agy";
+
+/** Which of an agent's limits a window is: the rolling five hours, the week, or something else. */
+export type QuotaWindowKind = "5h" | "weekly" | "other";
+
+export interface QuotaWindow {
+  kind: QuotaWindowKind;
+  /** The provider's own label, shown only for `other` windows. */
+  label: string;
+  /** 0–100. */
+  usedPercent: number;
+  /** ISO-8601, when the provider said; null when it did not. The phone counts down from it. */
+  resetAt: string | null;
+  resetAfterSeconds: number | null;
+  /** The provider's word for the window's state, e.g. `allowed`; passed through, never interpreted. */
+  status: string;
+}
+
+export interface QuotaModel {
+  label: string;
+  usedPercent: number;
+  resetAfterSeconds: number | null;
+}
+
+export interface QuotaAgent {
+  key: QuotaAgentKey;
+  name: string;
+  /** `missing` is a provider the CLI did not report at all; `error` is one it could not read. */
+  status: "ok" | "error" | "missing";
+  plan?: string;
+  /** The five-hour and weekly windows first, in that order where present, then the rest. */
+  windows: QuotaWindow[];
+  models?: QuotaModel[];
+  /** A balance the provider states as text, e.g. `$0`. */
+  credits?: string;
+  /** One line, the CLI's own words, only ever from its structured `error` field. */
+  error?: string;
+}
+
+/** GET /api/quota */
+export interface QuotaResponse {
+  ok: true;
+  /** ISO-8601, when the CLI was last run — the body may be older than the request. */
+  fetchedAt: string;
+  /** Always all three, in the order claude, codex, agy. */
+  agents: QuotaAgent[];
+}
+
+// ── FORK: a picture of a local page, and one element out of it (bridge/shot.ts) ────────────────
+// The wire shapes of `POST /api/pane/:id/shot` and `POST /api/pane/:id/probe`. Both are normalised
+// from the operator's own command so the phone never sees its vocabulary, and the probe's every
+// field is budgeted here as well as there — see the module header for why twice.
+
+/**
+ * The element's computed CSS, by property name.
+ *
+ * An interface rather than `Record<string, string>` so the index signature has a NAMED owner —
+ * ADR 0019's rule, and the same arrangement `TemplateVars` in the i18n runtime uses. At most the
+ * sixteen properties bridge/shot.ts names, and never a key that is not a CSS property name.
+ */
+export interface ProbeStyles {
+  readonly [property: string]: string;
+}
+
+/** The size a page is laid out at, in CSS pixels — the phone's own, or a tablet's, or a desktop's. */
+export interface Viewport {
+  width: number;
+  height: number;
+}
+
+/** What a phone asks for: a page, and the screen to pretend it is being read on. */
+export interface ShotAsk extends Viewport {
+  url: string;
+  dpr: number;
+}
+
+/** A rectangle in the shot's own CSS pixels, so the phone can draw a pin on it. */
+export interface ProbeBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** POST /api/pane/:id/shot */
+export interface ShotResponse {
+  ok: true;
+  /** `data:image/webp;base64,…` — inline, so there is no new file-serving route and no new jail. */
+  image: string;
+  mime: "image/webp" | "image/png";
+  /** The viewport the page was laid out at, after clamping — what the phone must draw at. */
+  width: number;
+  height: number;
+  dpr: number;
+  /** The URL as the bridge parsed it, which is the one the command was given. */
+  url: string;
+}
+
+/** POST /api/pane/:id/probe — one element, in the words a question about it would use. */
+export interface ProbeResponse {
+  ok: true;
+  tag: string;
+  id: string | null;
+  classes: string;
+  selector: string;
+  elementPath: string;
+  text: string;
+  box: ProbeBox;
+  role: string;
+  accessibleName: string;
+  /** At most sixteen properties, the noisy defaults already dropped by the command. */
+  computedStyles: ProbeStyles;
+  htmlSnippet: string;
+  nearbyText: string[];
+  nearbyElements: string[];
+  /** The page's own URL, sanitised — never the raw `location.href`. */
+  url: string;
+  /** The React component chain, when the page is a React build that says so. */
+  reactComponents?: string;
+  /** The file the element was written in, ONLY when the page resolved it. Never guessed. */
+  sourceFile?: string;
+}

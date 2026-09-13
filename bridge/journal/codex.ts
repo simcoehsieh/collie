@@ -29,9 +29,11 @@ import { join } from "node:path";
 import type { JsonObject, JsonValue } from "../json.ts";
 import { containedRealpath, exists, loadTail, rootList, statFile } from "./files.ts";
 import { clamp, MAX_RESULT_CHARS, MAX_TEXT_CHARS, oneLine, stripAnsi, summarizeToolInput } from "./text.ts";
+import { codexPlanItems, isCodexPlanTool } from "./todo.ts";
 import type {
   AgentSessionRef,
   JournalAdapter,
+  SessionFacts,
   TranscriptEntry,
   TranscriptPart,
   TranscriptSource,
@@ -112,15 +114,28 @@ export function codexToolOutput(raw: JsonValue | undefined): string {
   return raw;
 }
 
+/**
+ * FORK: `arguments` as a VALUE — the field arrives as a JSON string, not an object.
+ *
+ * Undefined when it is neither parseable JSON nor already a value, which every reader below treats
+ * as "not the shape I was looking for" rather than as an error.
+ */
+function codexToolArguments(args: JsonValue | undefined): JsonValue | undefined {
+  if (typeof args !== "string") return args;
+  try {
+    // SAFETY: `JSON.parse` output IS a JsonValue by construction.
+    return JSON.parse(args) as JsonValue;
+  } catch {
+    return undefined;
+  }
+}
+
 /** `arguments` arrives as a JSON string, not an object — parse before summarising. */
 function codexToolSummary(args: JsonValue | undefined): string {
   if (typeof args !== "string") return summarizeToolInput(args);
-  try {
-    // SAFETY: `JSON.parse` output IS a JsonValue by construction.
-    return summarizeToolInput(JSON.parse(args) as JsonValue);
-  } catch {
-    return oneLine(args); // malformed/partial arguments still say something useful
-  }
+  const parsed = codexToolArguments(args);
+  // malformed/partial arguments still say something useful
+  return parsed === undefined ? oneLine(args) : summarizeToolInput(parsed);
 }
 
 /**
@@ -145,6 +160,10 @@ export function parseCodexTranscript(text: string): TranscriptEntry[] {
   const seen = new Map<string, number>();
   // call_id → the part awaiting its output, so a `function_call_output` lands on its own call.
   const pendingTools = new Map<string, Extract<TranscriptPart, { kind: "tool" }>>();
+  // FORK: call_ids whose OUTPUT is bookkeeping — the plan tool's acknowledgement. Its call already
+  // rendered as a `todo` part, so the answer has nothing to attach to and would otherwise land as an
+  // orphan output row (see the plan branch below, and journal/todo.ts).
+  const swallowedOutputs = new Set<string>();
 
   for (const line of text.split("\n")) {
     if (line.trim() === "") continue;
@@ -206,9 +225,19 @@ export function parseCodexTranscript(text: string): TranscriptEntry[] {
     }
 
     if (p.type === "function_call") {
+      const name = typeof p.name === "string" ? p.name : "tool";
+      // FORK: `update_plan` carries the whole checklist in its arguments, and the ordinary one-line
+      // summary would keep only its first step. Kept whole as a `todo` part (journal/todo.ts); an
+      // `update_plan` whose arguments are not that shape falls through to the tool part below.
+      const plan = isCodexPlanTool(name) ? codexPlanItems(codexToolArguments(p.arguments)) : null;
+      if (plan !== null) {
+        if (typeof p.call_id === "string") swallowedOutputs.add(p.call_id);
+        entries.push({ uuid, ts, role: "assistant", parts: [{ kind: "todo", items: plan }] });
+        continue;
+      }
       const part: Extract<TranscriptPart, { kind: "tool" }> = {
         kind: "tool",
-        name: typeof p.name === "string" ? p.name : "tool",
+        name,
         summary: codexToolSummary(p.arguments),
       };
       if (typeof p.call_id === "string") pendingTools.set(p.call_id, part);
@@ -218,6 +247,8 @@ export function parseCodexTranscript(text: string): TranscriptEntry[] {
 
     if (p.type === "function_call_output") {
       const id = typeof p.call_id === "string" ? p.call_id : "";
+      // FORK: the plan tool's own acknowledgement, dropped where its call was kept whole.
+      if (swallowedOutputs.delete(id)) continue;
       const target = pendingTools.get(id);
       const outputText = stripAnsi(codexToolOutput(p.output));
       if (target) {
@@ -324,11 +355,64 @@ async function descending(dir: string): Promise<string[]> {
   }
 }
 
+/**
+ * FORK — which model and effort this thread is running on, from the NEWEST `turn_context` row.
+ *
+ * Codex writes one per turn (verified against codex-cli 0.153.4, 2026-09-12) carrying the model on
+ * `payload.model` and the reasoning effort on `payload.effort`, with the same pair repeated under
+ * `payload.collaboration_mode.settings` (`model`, `reasoning_effort`) — the fallback read here, for a
+ * build that drops the top-level copy. Newest row wins for the reason the Claude reader gives: both
+ * can change mid-thread. `null` when the window has no such row; the store keeps its last answer.
+ *
+ * `turn_context` is exactly the row `parseCodexTranscript` ignores — it is plumbing there and the
+ * fact wanted here — so this reader is the one place in the adapter that looks at it.
+ */
+export function codexSessionFacts(text: string): SessionFacts | null {
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i] ?? "";
+    if (line.trim() === "") continue;
+    let parsed: JsonValue;
+    try {
+      // SAFETY: `JSON.parse` output IS a JsonValue by construction — see parseCodexTranscript.
+      parsed = JSON.parse(line) as JsonValue;
+    } catch {
+      continue;
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    const row: CodexRow = parsed;
+    if (row.type !== "turn_context") continue;
+    const payload = row.payload;
+    if (payload === null || payload === undefined || typeof payload !== "object" || Array.isArray(payload)) continue;
+    const p: JsonObject = payload;
+    const settings = collaborationSettings(p);
+    const facts: SessionFacts = {};
+    const model = typeof p.model === "string" ? p.model : settings?.model;
+    if (typeof model === "string" && model !== "") facts.model = model;
+    const effort = typeof p.effort === "string" ? p.effort : settings?.reasoning_effort;
+    if (typeof effort === "string" && effort !== "") facts.effort = effort;
+    if (facts.model === undefined && facts.effort === undefined) continue;
+    return facts;
+  }
+  return null;
+}
+
+/** `payload.collaboration_mode.settings`, when it is an object — the fallback copy of the pair. */
+function collaborationSettings(p: JsonObject): JsonObject | null {
+  const mode = p.collaboration_mode;
+  if (mode === null || mode === undefined || typeof mode !== "object" || Array.isArray(mode)) return null;
+  const settings = mode.settings;
+  if (settings === null || settings === undefined || typeof settings !== "object" || Array.isArray(settings))
+    return null;
+  return settings;
+}
+
 /** Codex's journal adapter. `agent` matches the Herdr snapshot's `agent` string. */
 export function codexJournal(roots: string | readonly string[]): JournalAdapter {
   return {
     agent: "codex",
     source: new CodexTranscriptSource(roots),
     parse: parseCodexTranscript,
+    facts: codexSessionFacts,
   };
 }

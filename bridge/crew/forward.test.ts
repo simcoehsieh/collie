@@ -154,6 +154,21 @@ describe("which routes cross a link", () => {
     expect(forwardPaneId(`blobs/${hash}`)).toBeUndefined();
   });
 
+  test("FORK: a previewed page crosses the link as a READ — the file lives on the member's disk", () => {
+    // Same argument as a blob, one layer up: the HTML the agent wrote is on the machine that runs
+    // the pane, and a lead answering it locally would frame ITS OWN `report.html` under the peer's
+    // name. The pane and the path ride the query, which `forwardParams` carries through untouched,
+    // so the grammar here is an exact path and admits nothing shaped like a sibling route.
+    expect(crewRouteFor("/api/preview/file")).toBe("preview/file");
+    expect(apiPathFor("preview/file")).toBe("/api/preview/file");
+    expect(forwardKind("preview/file")).toBe("read");
+    expect(forwardAuditAction("preview/file")).toBeNull();
+    expect(forwardPaneId("preview/file")).toBeUndefined();
+    expect(crewRouteFor("/api/preview")).toBeNull();
+    expect(crewRouteFor("/api/preview/file/x")).toBeNull();
+    expect(crewRouteFor("/api/preview/5173")).toBeNull();
+  });
+
   test("the routes §5 excludes are excluded — and stay that way by construction", () => {
     // Push subscriptions live on the lead, notification policy is one crew-wide setting the lead
     // owns, update checking is per-machine, `config` is consumed not proxied, `snapshot` is merged.
@@ -189,7 +204,21 @@ describe("which routes cross a link", () => {
     const tab = server.match(/^const TAB_ACTION_ROUTE = (.+);$/m)![1]!;
     const alternation = /\(([a-z]+(?:\|[a-z]+)+)\)/;
     const paneActions = pane.match(alternation)![1]!.split("|").toSorted();
-    expect(paneActions).toEqual(["close", "focus", "history", "keys", "rename", "reply", "upload"]);
+    // FORK: `handoff`, `probe` and `shot` are fork routes on the same literal.
+    expect(paneActions).toEqual([
+      "close",
+      "diff",
+      "file",
+      "focus",
+      "handoff",
+      "history",
+      "keys",
+      "probe",
+      "rename",
+      "reply",
+      "shot",
+      "upload",
+    ]);
     for (const action of paneActions) expect(crewRouteFor(`/api/pane/x/${action}`)).toBe(`pane/x/${action}`);
     const tabActions = tab.match(alternation)![1]!.split("|").toSorted();
     expect(tabActions).toEqual(["close", "rename"]);
@@ -206,6 +235,9 @@ describe("which routes cross a link", () => {
   test("read vs write is decided exactly as server.ts decides it — history is a READ", () => {
     expect(forwardKind("pane/w1:p1")).toBe("read");
     expect(forwardKind("pane/w1:p1/history")).toBe("read");
+    expect(forwardKind("pane/w1:p1/diff")).toBe("read");
+    // FORK: the file viewer reads the same work tree `diff` describes and writes nothing.
+    expect(forwardKind("pane/w1:p1/file")).toBe("read");
     for (const action of ["reply", "keys", "upload", "close", "rename"]) {
       expect(forwardKind(`pane/w1:p1/${action}`)).toBe("write");
     }
@@ -219,6 +251,10 @@ describe("which routes cross a link", () => {
     expect(forwardAuditAction("pane/w1:p1/upload")).toBe("upload");
     expect(forwardAuditAction("pane/w1:p1/close")).toBe("pane.close");
     expect(forwardAuditAction("pane/w1:p1/rename")).toBe("pane.rename");
+    // FORK: the three fork routes audit under the names server.ts writes for them.
+    expect(forwardAuditAction("pane/w1:p1/handoff")).toBe("pane.handoff");
+    expect(forwardAuditAction("pane/w1:p1/shot")).toBe("shot");
+    expect(forwardAuditAction("pane/w1:p1/probe")).toBe("probe");
     expect(forwardAuditAction("tab")).toBe("tab.create");
     expect(forwardAuditAction("tab/w1:t1/rename")).toBe("tab.rename");
     expect(forwardAuditAction("tab/w1:t1/close")).toBe("tab.close");
@@ -226,6 +262,7 @@ describe("which routes cross a link", () => {
     // Reads are not audited today and do not become audited by crossing a link.
     expect(forwardAuditAction("pane/w1:p1")).toBeNull();
     expect(forwardAuditAction("pane/w1:p1/history")).toBeNull();
+    expect(forwardAuditAction("pane/w1:p1/diff")).toBeNull();
   });
 });
 

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { Push, topicIsSendable } from "./push.ts";
+import { Push, topicIsSendable, isApplePushEndpoint } from "./push.ts";
 import type { PushSender, PushSubscription } from "./push.ts";
 import { loadConfig } from "./config.ts";
 
@@ -330,6 +330,88 @@ describe("Push — per-message collapse topic (update must not share the herd sl
     // Both dimensions at once still stamp independently.
     await push.send({ title: "t", body: "b", paneId: "w1:p1", session: "work", host: "laptop" });
     expect(JSON.parse(sends[2]!.payload).data).toEqual({ paneId: "w1:p1", session: "work", host: "laptop" });
+  });
+
+  test("`agent` lands in `data` and `actions` stays top-level, each only when the message names it", async () => {
+    const cfg = await tempCfg();
+    const { sender, sends } = capturing();
+    const push = new Push(cfg, sender);
+    enable(push, [sub("a")]);
+
+    await push.send({ title: "t", body: "b", tag: "collie:herd", paneId: "w1:p1" });
+    const plain = JSON.parse(sends[0]!.payload);
+    expect(plain.data).toEqual({ paneId: "w1:p1" });
+    expect("actions" in plain).toBe(false);
+    expect("agent" in plain).toBe(false);
+
+    const approve = { yes: ["1"], no: ["3"], region: "Proceed?\n❯ 1. Yes\n  3. No" };
+    await push.send({
+      title: "t",
+      body: "b",
+      tag: "collie:herd",
+      paneId: "w1:p1",
+      agent: "claude",
+      actions: [
+        { action: "yes", title: "Yes" },
+        { action: "no", title: "No" },
+      ],
+      approve,
+    });
+    const withButtons = JSON.parse(sends[1]!.payload);
+    expect(withButtons.data).toEqual({ paneId: "w1:p1", agent: "claude", approve });
+    expect("approve" in withButtons).toBe(false); // in `data`, not beside it
+    expect(withButtons.actions).toEqual([
+      { action: "yes", title: "Yes" },
+      { action: "no", title: "No" },
+    ]);
+    expect("agent" in withButtons).toBe(false); // in `data`, not beside it
+  });
+
+  test("FORK: `badge` stays top-level on the wire, and only when the message carries one", async () => {
+    const cfg = await tempCfg();
+    const { sender, sends } = capturing();
+    const push = new Push(cfg, sender);
+    enable(push, [sub("a")]);
+    await push.send({ title: "t", body: "b", tag: "collie:herd", paneId: "w1:p1", badge: 2 });
+    const withBadge = JSON.parse(sends[0]!.payload);
+    expect(withBadge.badge).toBe(2);
+    expect("badge" in withBadge.data).toBe(false);
+    await push.send({ title: "t", body: "b", tag: "collie:herd", paneId: "w1:p1" });
+    expect("badge" in JSON.parse(sends[1]!.payload)).toBe(false);
+  });
+
+  test("addSubscription says whether the endpoint was already on file", async () => {
+    const cfg = await tempCfg();
+    const push = new Push(cfg);
+    enable(push, []);
+    expect(await push.addSubscription(sub("fresh"))).toEqual({ known: false });
+    expect(await push.addSubscription(sub("fresh"))).toEqual({ known: true });
+    // Pruned (the push service disowned it) → the next registration of the same string is unknown
+    // again, which is what tells the device to mint a new one.
+    await push.forget("fresh");
+    expect(await push.addSubscription(sub("fresh"))).toEqual({ known: false });
+    // Disabled push has nothing on file.
+    push["_enabled"] = false;
+    expect(await push.addSubscription(sub("fresh"))).toEqual({ known: false });
+  });
+
+  // FORK: Apple revokes a subscription after three silent pushes, so the worker would have to draw
+  // "Nothing needs you" for every retraction — one per reply the operator sends. So Apple simply
+  // does not get retractions; the alert stays until the next one replaces it in the same slot.
+  test("a clear skips Apple's endpoints and reaches everyone else; a render reaches all", async () => {
+    const cfg = await tempCfg();
+    const seen: string[] = [];
+    const push = new Push(cfg, async (target) => {
+      seen.push(target.endpoint);
+    });
+    enable(push, [sub("https://web.push.apple.com/QPHp"), sub("https://fcm.googleapis.com/fcm/send/dCVu"), sub("a")]);
+    await push.send({ title: "claude needs you", body: "…", tag: "collie:herd", paneId: "w1:p1" });
+    expect(seen.length).toBe(3);
+    await push.send({ type: "clear", tag: "collie:herd" });
+    expect(seen.length).toBe(5);
+    expect(seen.slice(3).toSorted()).toEqual(["a", "https://fcm.googleapis.com/fcm/send/dCVu"]);
+    expect(isApplePushEndpoint("https://web.push.apple.com/x")).toBe(true);
+    expect(isApplePushEndpoint("not a url")).toBe(false);
   });
 
   test("a clear stays on the herd topic (it closes the herd slot)", async () => {

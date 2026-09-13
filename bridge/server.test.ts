@@ -8,11 +8,13 @@ import {
   sniffBlobType,
   bridgeConfigBody,
   muxConfigBody,
+  kbDocumentResponse,
   muxLogoResponse,
   BUILD_HEADER,
   cacheControlFor,
   checkAccess,
   launch,
+  handoffPane,
   marksPaneSeen,
   SEEN_HEADER,
   deviceAuth,
@@ -25,27 +27,33 @@ import {
   launchersRoute,
   normalizeTabLabel,
   paneReadResponse,
+  paneWaitMs,
+  PANE_WAIT_MAX_MS,
+  watchedPanes,
+  MAX_WATCHED_PANES,
+  isCompressibleAsset,
   parsePairRequest,
   parseSnoozeRequest,
   replyPane,
   requestBodyCap,
   requestDevice,
-  resetStaticGzipCache,
   resolveStaticPath,
   sendReplySteps,
   serveStatic,
-  staticGzipStats,
   startupWarnings,
   healthBody,
   withBuildHeader,
   type ReplySender,
 } from "./server.ts";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
+import { brotliDecompressSync } from "node:zlib";
 import { join } from "node:path";
 
+import { ArtifactStore } from "./artifacts.ts";
 import { AuditLog, type AuditEntry } from "./audit.ts";
+import type { HandoffResponse } from "./handoff.ts";
 import type { Config } from "./config.ts";
 import { declareCapabilities, MUX_CAPABILITIES } from "./mux/capabilities.ts";
 import { withAgentBeacons } from "./beacon/decorate.ts";
@@ -90,8 +98,8 @@ import type { StateEngine } from "./state-engine.ts";
 // A real Request, not a fake: checkAccess reads only headers, and Bun's Headers already does the
 // case-insensitive lookup (and keeps `host`, which a browser would strip) — so there is nothing left
 // for a hand-rolled stub to get subtly wrong.
-function req(headers: Record<string, string>): Request {
-  return new Request("http://collie.invalid/api/snapshot", { headers });
+function req(headers: Record<string, string>, method = "GET"): Request {
+  return new Request("http://collie.invalid/api/snapshot", { headers, method });
 }
 
 describe("requestBodyCap", () => {
@@ -118,6 +126,13 @@ function cfg(overrides: Partial<Config> = {}): Config {
     tmuxBin: "",
     zellijBin: "",
     socketPath: "/tmp/herdr.sock",
+    dirRoots: [],
+    kbOrigin: "",
+    kbToken: "",
+    docHosts: [],
+    quotaCommand: "",
+    shotCommand: "",
+    shotHosts: [],
     port: 8787,
     host: "127.0.0.1",
     pollMs: 1500,
@@ -140,6 +155,7 @@ function cfg(overrides: Partial<Config> = {}): Config {
     themeFile: "/nope/theme.toml",
     fontsDir: "/nope/fonts",
     launchersFile: "/nope/launchers.toml",
+    notifyFile: "/nope/notify.toml",
     trustedUser: "",
     trustedUserOptional: false,
     auditContent: "preview",
@@ -341,10 +357,50 @@ describe("checkAccess — Host-header validation (COLLIE_PUBLIC_HOSTS)", () => {
 
 describe("checkAccess — Origin required for writes", () => {
   test("write with no Origin from a non-loopback Host is rejected", () => {
-    expect(checkAccess(req({ host: "collie.example.ts.net" }), cfg(), "write")).toEqual({
+    // POST, because that is what a write IS on the wire. The method matters: the rule below exempts
+    // safe methods, and asserting this with a GET would have been asserting the opposite thing.
+    expect(checkAccess(req({ host: "collie.example.ts.net" }, "POST"), cfg(), "write")).toEqual({
       ok: false,
       reason: "origin required",
     });
+  });
+
+  // ── A WRITE-GATED GET IS NOT A CSRF VECTOR ──────────────────────────────────────────────────
+  // `GET /api/dirs` is gated on `write` deliberately (dirs.ts), and browsers OMIT Origin on
+  // same-origin GETs. Before this exemption the folder picker answered 403 "origin required" to
+  // every browser on a public host — while passing every loopback probe, because loopback is
+  // exempt from the rule. That asymmetry is why it survived: the failing path was the only one a
+  // real user could take.
+  test("a write-GATED GET with no Origin from a non-loopback Host is allowed", () => {
+    expect(checkAccess(req({ host: "collie.example.ts.net" }, "GET"), cfg(), "write")).toEqual({
+      ok: true,
+    });
+  });
+
+  test("HEAD is exempt for the same reason", () => {
+    expect(checkAccess(req({ host: "collie.example.ts.net" }, "HEAD"), cfg(), "write")).toEqual({
+      ok: true,
+    });
+  });
+
+  test("the exemption is by METHOD, so DELETE and PUT are still refused", () => {
+    for (const method of ["DELETE", "PUT", "PATCH"]) {
+      expect(checkAccess(req({ host: "collie.example.ts.net" }, method), cfg(), "write")).toEqual({
+        ok: false,
+        reason: "origin required",
+      });
+    }
+  });
+
+  test("a cross-origin GET is still rejected — the exemption is only for an ABSENT Origin", () => {
+    // The safe-method exemption must not become a hole for a request that names another site.
+    expect(
+      checkAccess(
+        req({ origin: "https://evil.example", host: "collie.example.ts.net" }, "GET"),
+        cfg(),
+        "write",
+      ),
+    ).toEqual({ ok: false, reason: "cross-origin rejected" });
   });
 
   test("write with no Origin from loopback is allowed (curl on the host)", () => {
@@ -814,6 +870,74 @@ describe("paneReadResponse — pane read → REST body", () => {
   });
 });
 
+describe("paneWaitMs — the long-poll's hold", () => {
+  const wait = (qs: string) => paneWaitMs(new URL(`http://x/api/pane/w1:p1${qs}`));
+  test("absent, empty, non-numeric and non-positive all read as answer now", () => {
+    expect(wait("")).toBe(0);
+    expect(wait("?wait=")).toBe(0);
+    expect(wait("?wait=abc")).toBe(0);
+    expect(wait("?wait=0")).toBe(0);
+    expect(wait("?wait=-5")).toBe(0);
+  });
+  test("a hold is clamped to PANE_WAIT_MAX_MS", () => {
+    expect(wait("?wait=1500")).toBe(1500);
+    expect(wait("?wait=99999")).toBe(PANE_WAIT_MAX_MS);
+  });
+});
+
+describe("watchedPanes — which panes one stream follows", () => {
+  const panes = (qs: string) => [...watchedPanes(new URL(`http://x/api/events${qs}`))];
+
+  test("no pane is the herd-only stream", () => {
+    expect(panes("")).toEqual([]);
+    expect(panes("?pane=")).toEqual([]);
+    expect(panes("?session=work")).toEqual([]);
+  });
+
+  test("one pane is the pane view, exactly as before", () => {
+    expect(panes("?pane=w1:p1&lines=200")).toEqual(["w1:p1"]);
+  });
+
+  test("repeated and comma-listed panes are both the Overview grid, de-duplicated", () => {
+    expect(panes("?pane=w1:p1&pane=w1:p2")).toEqual(["w1:p1", "w1:p2"]);
+    expect(panes("?pane=w1:p1,w1:p2")).toEqual(["w1:p1", "w1:p2"]);
+    expect(panes("?pane=w1:p1,w1:p2&pane=w1:p1")).toEqual(["w1:p1", "w1:p2"]);
+    expect(panes("?pane=%20w1:p1%20,,w1:p2")).toEqual(["w1:p1", "w1:p2"]);
+  });
+
+  test("over the cap the EXTRAS are dropped, never the stream", () => {
+    const many = Array.from({ length: MAX_WATCHED_PANES + 8 }, (_, i) => `w1:p${i}`);
+    expect(panes(`?pane=${many.join(",")}`)).toHaveLength(MAX_WATCHED_PANES);
+  });
+});
+
+describe("isCompressibleAsset — what is precompressed", () => {
+  test("text under assets/ is; images and fonts are not", () => {
+    expect(isCompressibleAsset("assets/index-abc.js", ".js")).toBe(true);
+    expect(isCompressibleAsset("assets/index-abc.css", ".css")).toBe(true);
+    expect(isCompressibleAsset("assets/logo.png", ".png")).toBe(false);
+    expect(isCompressibleAsset("assets/face.woff2", ".woff2")).toBe(false);
+  });
+
+  // FORK (2026-09-11): the four MUTABLE dist files now compress too. They are re-read per request —
+  // `compressedAsset`'s cache is keyed on the path, and these change under it — so they are excluded
+  // from that cache and compressed on the way out, which is why `isCompressibleAsset` answering true
+  // is only half the story (see `serveStatic`). `sw.js` alone is 25 KB fetched once a minute per open
+  // screen; as `br` it is 7.8 KB, and behind an ETag it is nothing at all.
+  test("the four non-hashed dist files compress", () => {
+    expect(isCompressibleAsset("index.html", ".html")).toBe(true);
+    expect(isCompressibleAsset("sw.js", ".js")).toBe(true);
+    expect(isCompressibleAsset("theme-init.js", ".js")).toBe(true);
+    expect(isCompressibleAsset("manifest.webmanifest", ".webmanifest")).toBe(true);
+  });
+
+  test("a binary outside assets/ still does not — a favicon is already packed", () => {
+    expect(isCompressibleAsset("favicon.ico", ".ico")).toBe(false);
+    expect(isCompressibleAsset("apple-touch-icon.png", ".png")).toBe(false);
+    expect(isCompressibleAsset("web-app-manifest-512x512.png", ".png")).toBe(false);
+  });
+});
+
 describe("historyParams — transcript paging params", () => {
   const params = (qs: string) => historyParams(new URL(`http://x/api/pane/w1:p1/history${qs}`));
 
@@ -1041,8 +1165,11 @@ describe("guard — the pairing gate composes with the header gate", () => {
   });
 
   test("the same-origin gate still runs first — a token is no substitute for an Origin", () => {
+    // POST: the Origin requirement applies to state-changing methods, so that is the only vehicle
+    // that can demonstrate the ordering this test is about. A GET would be exempt from the origin
+    // rule entirely and would prove nothing about which gate ran first.
     const denied = guard(
-      req({ host: "collie.ts.net", authorization: "Bearer tok-phone" }),
+      req({ host: "collie.ts.net", authorization: "Bearer tok-phone" }, "POST"),
       cfg(),
       "write",
       paired,
@@ -1343,12 +1470,13 @@ describe("cacheControlFor", () => {
   });
 });
 
-// serveStatic, against a real dist tree on disk. The bundle is the biggest thing a phone downloads
-// — 869 kB of JavaScript on a precache — and it used to go out raw, which took a phone 125 seconds
-// on a slow link with the app reading as offline for the whole minute. These pin that a text file
-// ships gzipped when the client offers it, that an image never does, and that the compressed bytes
-// are computed once per file rather than on every request.
-describe("serveStatic — a text file ships gzipped", () => {
+// serveStatic, against a real dist tree on disk. The bundle is the biggest thing a phone downloads,
+// and upstream 1.8.2 pinned that it ships gzipped when the client offers it, that an image never
+// does, and that index.html still revalidates on every load. FORK: this fork compresses static files
+// through http-cache.ts's `pickEncoding` / `compressStatic` instead (brotli when offered, gzip
+// otherwise, a strong ETag on the mutable files), so the cases below pin THAT contract on the same
+// dist-tree fixture upstream wrote — the shape is theirs, the expected codings are ours.
+describe("serveStatic — a text file ships compressed", () => {
   /** A dist tree with one hashed asset, one image and an index.html. */
   async function distTree(): Promise<{ dir: string; js: string }> {
     const dir = await mkdtemp(join(tmpdir(), "collie-static-gzip-"));
@@ -1362,30 +1490,37 @@ describe("serveStatic — a text file ships gzipped", () => {
     return { dir, js };
   }
 
-  test("with accept-encoding: gzip the asset arrives compressed and decompresses to the file", async () => {
-    resetStaticGzipCache();
+  test("a client that offers br gets the asset as brotli, and it decompresses to the file", async () => {
     const { dir, js } = await distTree();
-    const res = await serveStatic("/assets/index-B7cWgJ3M.js", "gzip, deflate, br", dir);
+    const res = await serveStatic("/assets/index-B7cWgJ3M.js", "gzip, deflate, br", null, dir);
 
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-encoding")).toBe("gzip");
+    expect(res.headers.get("content-encoding")).toBe("br");
     expect(res.headers.get("vary")).toBe("accept-encoding");
     expect(res.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
     expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
 
     const body = new Uint8Array(await res.arrayBuffer());
-    // The length a client reads is the COMPRESSED one, and it is smaller than the file on disk.
-    expect(res.headers.get("content-length")).toBe(String(body.byteLength));
     expect(body.byteLength).toBeLessThan(js.length / 2);
+    expect(new TextDecoder().decode(brotliDecompressSync(body))).toBe(js);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a client that offers only gzip gets gzip", async () => {
+    const { dir, js } = await distTree();
+    const res = await serveStatic("/assets/index-B7cWgJ3M.js", "gzip", null, dir);
+
+    expect(res.headers.get("content-encoding")).toBe("gzip");
+    const body = new Uint8Array(await res.arrayBuffer());
     expect(new TextDecoder().decode(Bun.gunzipSync(body))).toBe(js);
 
     await rm(dir, { recursive: true, force: true });
   });
 
   test("without the header the same asset arrives raw", async () => {
-    resetStaticGzipCache();
     const { dir, js } = await distTree();
-    const res = await serveStatic("/assets/index-B7cWgJ3M.js", null, dir);
+    const res = await serveStatic("/assets/index-B7cWgJ3M.js", null, null, dir);
 
     expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("vary")).toBeNull();
@@ -1395,37 +1530,27 @@ describe("serveStatic — a text file ships gzipped", () => {
   });
 
   test("a png is never compressed, however the client asks", async () => {
-    resetStaticGzipCache();
     const { dir } = await distTree();
-    const res = await serveStatic("/apple-touch-icon.png", "gzip", dir);
+    const res = await serveStatic("/apple-touch-icon.png", "gzip, br", null, dir);
 
     expect(res.headers.get("content-type")).toBe("image/png");
     expect(res.headers.get("content-encoding")).toBeNull();
-    expect(staticGzipStats().entries).toBe(0);
 
     await rm(dir, { recursive: true, force: true });
   });
 
-  test("a second request for the same asset reuses the compressed bytes", async () => {
-    resetStaticGzipCache();
+  test("index.html compresses, revalidates on every load, and answers 304 to its own tag", async () => {
     const { dir } = await distTree();
-    await serveStatic("/assets/index-B7cWgJ3M.js", "gzip", dir);
-    expect(staticGzipStats()).toMatchObject({ entries: 1, hits: 0, misses: 1 });
-
-    await serveStatic("/assets/index-B7cWgJ3M.js", "gzip", dir);
-    expect(staticGzipStats()).toMatchObject({ entries: 1, hits: 1, misses: 1 });
-
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  test("index.html compresses and still revalidates on every load", async () => {
-    resetStaticGzipCache();
-    const { dir } = await distTree();
-    const res = await serveStatic("/", "gzip", dir);
+    const res = await serveStatic("/", "gzip", null, dir);
 
     expect(res.headers.get("cache-control")).toBe("no-cache");
     expect(res.headers.get("content-encoding")).toBe("gzip");
     expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    const tag = res.headers.get("etag");
+    expect(tag).not.toBeNull();
+
+    const again = await serveStatic("/", "gzip", tag, dir);
+    expect(again.status).toBe(304);
 
     await rm(dir, { recursive: true, force: true });
   });
@@ -1467,6 +1592,11 @@ describe("marksPaneSeen — CSRF guard on marking a pane seen", () => {
   test("history is a read — it needs the header too", () => {
     expect(marksPaneSeen(withHeader(), "history")).toBe(false);
     expect(marksPaneSeen(withHeader({ [SEEN_HEADER]: "1" }), "history")).toBe(true);
+  });
+
+  test("diff is a read of the REPO, not the pane — it needs the header too", () => {
+    expect(marksPaneSeen(withHeader(), "diff")).toBe(false);
+    expect(marksPaneSeen(withHeader({ [SEEN_HEADER]: "1" }), "diff")).toBe(true);
   });
 
   test("write actions count without it — they already cleared the Origin-requiring write gate", () => {
@@ -1655,6 +1785,46 @@ describe("muxLogoResponse — serving an adapter's mark", () => {
 
   test("a stale validator re-sends the body", () => {
     expect(muxLogoResponse(svg, `"stale"`).status).toBe(200);
+  });
+});
+
+// GET /api/doc/<slug>. The bytes are an AGENT's, written out of pages on the open web, so the
+// headers are the containment — the same argument muxLogoResponse makes, one notch stronger,
+// because "this file could carry script" is not hypothetical here.
+describe("kbDocumentResponse — serving a knowledge-base document", () => {
+  const html = "<!doctype html><title>d</title><p>hi";
+  const etag = '"abc123"';
+
+  test("answers the HTML with the sandboxing policy that makes this safe at all", async () => {
+    const res = kbDocumentResponse(html, etag);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await res.text()).toBe(html);
+  });
+
+  test("the policy permits Collie to frame it — the app's own default would not", () => {
+    // THE CLAIM: this response must NOT inherit server.ts's `CSP`, whose `frame-ancestors 'none'`
+    // is right for every other HTML the bridge serves and fatal for this one. If it ever does, the
+    // panel renders blank, the document is fine, the bridge logs nothing, and the only evidence is
+    // a line in the browser console on a phone. `secure()` adds no CSP, which is what makes the
+    // mistake possible: the policy has to arrive from docs.ts or not at all.
+    const policy = kbDocumentResponse(html, etag).headers.get("content-security-policy") ?? "";
+    expect(policy).toContain("frame-ancestors 'self'");
+    expect(policy).not.toContain("frame-ancestors 'none'");
+  });
+
+  test("a client holding the current bytes gets a bodiless 304 — still contained", async () => {
+    // The 304 path never fetched the document at all: the ETag comes from the digest kb's metadata
+    // call already carried, so a warm phone re-opening a 2 MB document spends one ~1 KB JSON call.
+    // It still carries the policy, because a 304 is an instruction to reuse a stored response and a
+    // stored response with no containment is the thing being avoided.
+    const res = kbDocumentResponse(null, etag);
+    expect(res.status).toBe(304);
+    expect(await res.text()).toBe("");
+    expect(res.headers.get("etag")).toBe(etag);
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
   });
 });
 
@@ -1932,11 +2102,34 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // The load-bearing claim: `?h=laptop` + `w1:p1` must never be served the DESK's `w1:p1`, and
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
-    // All TEN session-scoped routes (tab create, workspace create, launch, this host's launcher
-    // rows, one journal blob, tab action, the pane family, "look now", the worktree listing and the
-    // worktree actions) reach their runtime through the caller's resolver and nothing else.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(10);
-    // Exactly six `registry.get(` calls remain, and each is a sanctioned one, named here rather
+    // All TWELVE session-scoped routes (tab create, workspace create, launch, this host's launcher
+    // rows, the folder listing, one journal blob, one previewed HTML file, tab action, the pane
+    // family — reply, keys, upload, close, rename, history, focus, diff, file, shot, probe — "look
+    // now", the worktree listing and the worktree actions) reach their runtime through the
+    // caller's resolver and nothing else.
+    //
+    // The twelfth is the fork's `/api/preview/file` (bridge/preview.ts). It is session-scoped for
+    // `/api/blobs/*`'s exact reason and not a weaker one: the file it serves sits on the disk of the
+    // machine that runs the pane it is jailed to, and the lead holds no copy — so a `?h=laptop`
+    // preview answered locally would show the LEAD's file under the laptop's name, which is the same
+    // class of fault as serving the desk's `w1:p1`.
+    //
+    // `/api/dirs` resolves for its FORWARD rather than for the runtime's value: a `?h=laptop` browse
+    // must list the LAPTOP's disk, and resolution is what sends it there. A route that answered
+    // locally without resolving would quietly show the lead's directories under a peer's name — the
+    // same class of fault as serving the desk's `w1:p1`.
+    //
+    // STILL TWELVE after the fork's annotate-and-ask landed, and that is the claim rather than an
+    // accident: `shot` and `probe` are ACTIONS IN THE PANE FAMILY (bridge/shot.ts, `PANE_ROUTE`),
+    // so they reach their runtime through the pane block's single resolve like `upload` does. Had
+    // they been given a route of their own, this number would have had to move — and a route of
+    // their own is exactly the shape that forgets to resolve and serves the lead's answer under a
+    // peer's name.
+    // FORK: 12 → 17 for the five artifact arms (list, save-from-preview, one record / its bytes, patch, delete —
+    // bridge/artifacts.ts), each resolving through the same gate so a `?host=` call is answered by
+    // the runtime whose agents carry the sessions the records name.
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(17);
+    // Exactly seven `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
     // collie's own multiplexer (M10/06) and is not session-scoped at all; `/api/mux/logo.svg`,
@@ -1945,8 +2138,11 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // THIS collie's own engine on a route that is already local-body-then-merge and has no `?h=`
     // branch to fall through; and the crew surface's own `mux` source, which answers an admitted
     // LEAD with this machine's block on `hello` and is the same local read `/api/config` makes
-    // (M22/03). A seventh would be a route reaching past the gate.
-    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(6);
+    // (M22/03); and the live feed `/api/events`, which is local by declaration — a member host is
+    // refused with a 404 on the line BEFORE the get, so there is no `?h=` value it could be served
+    // under. An eighth would be a route reaching past the gate.
+    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(7);
+    expect(src).toContain('if (host.kind !== "local") return text("no stream for a member host", 404);');
     // The mux read is a read of the LOCAL primary — never `?host=`, because a peer's capabilities
     // are its own business and reach the lead over the crew API, never out of this registry.
     expect(src).toContain("const activeMux = registry.get();");
@@ -2646,6 +2842,114 @@ describe("launch — an allowlisted space create, then the command and Enter", (
       expect(entries[0]?.action).toBe("workspace.launch");
     });
   });
+
+  // FORK: a handoff is a launch beside the pane with the handoff document as the opening prompt
+  // (bridge/handoff.ts). Pinned: the document is an artifact OF THE PANE before anything is typed,
+  // the line typed is the operator's row plus that one quoted path, and a row that cannot take a
+  // prompt is refused before any artifact is written.
+  describe("handoff — the pane's conversation, continued by another harness", () => {
+    function handoffRequest(body: { command?: string; instruction?: string; model?: string; effort?: string }): Request {
+      return new Request("http://localhost/api/pane/w3%3Ap1/handoff", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
+    const CODEX: Launcher = { command: "codex", label: "codex" };
+
+    test.each([undefined, { model: "codex-test", effort: "high" }])("writes the document and launches the selected settings: %j", async (options) => {
+      const dir = await mkdtemp(join(tmpdir(), "collie-handoff-"));
+      try {
+        const clock = fakeClock();
+        const mux = new FakeLaunchMux(clock.now);
+        const { audit, entries } = launchAudit();
+        const artifacts = new ArtifactStore(dir);
+        const pane = fakePane({ agent: "claude", status: "done" });
+        const res = await handoffPane(
+          {
+            herdr: asLaunchMux(mux),
+            engine: engineWithPanes([pane]),
+            cfg: cfg({ transcript: false }),
+            journals: null,
+            transcripts: null,
+            artifacts,
+            getLaunchers: rowsOf([PEEK, CODEX]),
+            getHandoffModels: () => Promise.resolve([{ id: "codex-test", label: "Test", efforts: ["low", "high"], defaultEffort: "low" }]),
+          },
+          "w3:p1",
+          handoffRequest({ command: "codex", instruction: "Finish the tests, then lint.", ...options }),
+          audit,
+          "phone@example.com",
+          "default",
+          clock,
+        );
+        expect(res.status).toBe(200);
+        // SAFETY: `handoffPane` answers 200 only with a body it built `satisfies HandoffResponse`.
+        const body = (await res.json()) as HandoffResponse;
+        if (!body.ok) throw new Error(body.error);
+        expect(body.pane.paneId).toBe("w2:p9");
+        expect(body.artifact.tags).toEqual(["handoff"]);
+        expect(body.artifact.kind).toBe("markdown");
+        expect(body.artifact.title).toBe("Handoff · claude → codex");
+        expect(body.artifact.pane?.paneId).toBe("w3:p1");
+        // A tab BESIDE the pane, in its directory, labelled by the row.
+        expect(mux.createTabArgs).toEqual({ spaceId: "w3", label: "codex", cwd: "/home/op/beside" });
+        // The operator's row, plus exactly one quoted argument: the path this bridge wrote.
+        const path = artifacts.filePath(body.artifact);
+        const flags = options ? ` --model 'codex-test' -c 'model_reasoning_effort="high"'` : "";
+        expect(mux.texts).toEqual([["w2:p9", `codex${flags} 'Read ${path} first. It is the handoff from the previous agent (claude) in this directory. Then continue with its section "What to do next".'`]]);
+        expect(mux.keys).toEqual([["w2:p9", ["Enter"]]]);
+        const written = await readFile(path, "utf8");
+        expect(written).toContain("# Handoff — claude → codex");
+        expect(written).toContain("Finish the tests, then lint.");
+        expect(entries.map((e) => e.action)).toEqual(["tab.launch", "pane.handoff"]);
+        expect(entries[1]?.detail).toEqual({ to: "w2:p9", artifact: body.artifact.id, command: "codex" });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("a row that cannot take a prompt, or an unlisted one, is refused with nothing written", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "collie-handoff-"));
+      try {
+        const clock = fakeClock();
+        const mux = new FakeLaunchMux(clock.now);
+        const { audit } = launchAudit();
+        const artifacts = new ArtifactStore(dir);
+        const deps = {
+          herdr: asLaunchMux(mux),
+          engine: engineWithPanes([fakePane({ agent: "claude" })]),
+          cfg: cfg({ transcript: false }),
+          journals: null,
+          transcripts: null,
+          artifacts,
+          getLaunchers: rowsOf([PEEK, CODEX]),
+            getHandoffModels: () => Promise.resolve([{ id: "codex-test", label: "Test", efforts: ["low", "high"], defaultEffort: "low" }]),
+        };
+        const peek = await handoffPane(deps, "w3:p1", handoffRequest({ command: "rumen-peek" }), audit, null, "default", clock);
+        expect(peek.status).toBe(400);
+        const unlisted = await handoffPane(deps, "w3:p1", handoffRequest({ command: "intruder" }), audit, null, "default", clock);
+        expect(unlisted.status).toBe(400);
+        expect(await unlisted.json()).toMatchObject({ ok: false, code: "launch.not_allowlisted" });
+        const gone = await handoffPane(deps, "w9:p9", handoffRequest({ command: "codex" }), audit, null, "default", clock);
+        expect(gone.status).toBe(404);
+        for (const selection of [
+          { model: "unknown", effort: "high" },
+          { model: "codex-test", effort: "ultra" },
+          { model: "codex-test" },
+          { effort: "high" },
+          { model: "$(touch /tmp/no)", effort: "high" },
+        ]) {
+          const refused = await handoffPane(deps, "w3:p1", handoffRequest({ command: "codex", ...selection }), audit, null, "default", clock);
+          expect(refused.status).toBe(400);
+        }
+        expect(await artifacts.list()).toEqual([]);
+        expect(mux.createTabArgs).toBeNull();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  });
 });
 
 describe("GET /api/launchers — this host's own rows, home included", () => {
@@ -2663,7 +2967,7 @@ describe("GET /api/launchers — this host's own rows, home included", () => {
   test("no launchers.toml answers an empty list, never an error", async () => {
     const res = await launchersRoute(() => Promise.resolve([]), null);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ launchers: [], home: homedir() });
+    expect(await res.json()).toMatchObject({ launchers: [], home: homedir(), handoffModels: expect.any(Array) });
   });
 });
 

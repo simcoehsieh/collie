@@ -1,9 +1,21 @@
 import { describe, expect, test } from "bun:test";
 
-import { parseBeacon } from "../bridge/beacon/parse.ts";
 import { beaconFileName, beaconKey } from "../bridge/beacon/paths.ts";
 import { BEACON_SCHEMA_VERSION } from "../bridge/beacon/types.ts";
-import { BEACON_HARNESS, BEACON_HOOKS, type BeaconEmitDeps, cmdBeaconEmit, readEnvMarkers, runBeaconEmit } from "./beacon.ts";
+import { parseBeacon, parseStatusLine } from "../bridge/beacon/parse.ts";
+import { statusLineFileName, statusLineKey, STATUS_LINE_SCHEMA_VERSION } from "../bridge/beacon/status-line.ts";
+import type { AgentSessionRef } from "../bridge/journal/types.ts";
+import {
+  BEACON_HARNESS,
+  BEACON_HOOKS,
+  type BeaconEmitDeps,
+  type BeaconStatusDeps,
+  cmdBeaconEmit,
+  cmdBeaconStatus,
+  readEnvMarkers,
+  readSessionFromEnv,
+  runBeaconEmit,
+} from "./beacon.ts";
 import { context, fakeFiles, STATE } from "./fakes.ts";
 import { EXIT } from "./io.ts";
 import type { Environment } from "./context.ts";
@@ -61,6 +73,12 @@ function beacons(files: ReturnType<typeof fakeFiles>): Map<string, string> {
 }
 
 describe("the environment gate", () => {
+  test("accepts Codex's thread identity and preserves the child-session gate", () => {
+    expect(readSessionFromEnv({ CODEX_THREAD_ID: SESSION })).toEqual({ harness: "codex", session: SESSION });
+    expect(readSessionFromEnv({ CODEX_THREAD_ID: "invalid/../id" })).toBeNull();
+    expect(readSessionFromEnv({ CODEX_THREAD_ID: SESSION, CLAUDE_CODE_CHILD_SESSION: "1" })).toBeNull();
+    expect(readSessionFromEnv({ CODEX_THREAD_ID: SESSION, CLAUDE_CODE_CHILD_SESSION: "1" }, { allowChild: true })).toEqual({ harness: "codex", session: SESSION });
+  });
   test("reads tmux's pane raw, and the SOCKET out of $TMUX — never the server pid with it", () => {
     expect(readEnvMarkers(TMUX)).toEqual([
       { namespace: "tmux", scope: "/tmp/tmux-1000/default", pane: "%7" },
@@ -253,5 +271,111 @@ describe("it never fails, and it never speaks", () => {
   test("stdin that never resolves as text is exit 0", async () => {
     const d = { ...deps(), readStdin: () => Promise.reject(new Error("EIO")) };
     expect(await cmdBeaconEmit(d)).toBe(EXIT.OK);
+  });
+});
+
+// ── FORK: `collie beacon status "<line>"` ────────────────────────────────────────────────────────
+//
+// The agent says what it is working on; Collie shows the sentence under the pane name. Unlike `emit`
+// this one is TYPED, so it may speak — and the two things it says are the two a human can act on.
+// Everything else pinned here is the boundary: the file is keyed by the SESSION (herdr reports no
+// pane marker, so env markers cannot key it), a subagent writes nothing, and the sentence is
+// flattened before it is ever stored.
+describe("collie beacon status", () => {
+  const CLAUDE_SESSION = "9c4a1b77-3e2f-4a10-9d55-0b2c3d4e5f60";
+  const AGENT_ENV: Environment = { CLAUDE_CODE_SESSION_ID: CLAUDE_SESSION };
+  const REF: AgentSessionRef = { kind: "id", value: CLAUDE_SESSION };
+  const FILE = `${STATE}/beacons/status/${statusLineFileName(statusLineKey(REF))}`;
+  const WRITTEN = 1_700_000_000_000;
+
+  function statusDeps(env: Environment = AGENT_ENV) {
+    const files = fakeFiles();
+    const err: string[] = [];
+    const out: string[] = [];
+    const statusVerbDeps: BeaconStatusDeps = {
+      ctx: context(env),
+      files,
+      io: { out: (l) => out.push(l), err: (l) => err.push(l) },
+      now: () => WRITTEN,
+    };
+    return { deps: statusVerbDeps, files, err, out };
+  }
+
+  test("writes one status-line file, keyed by the agent's own session", () => {
+    const { deps: verb, files, err, out } = statusDeps();
+    expect(cmdBeaconStatus(verb, ["rewriting", "the", "journal", "adapter"])).toBe(EXIT.OK);
+    // Quiet on the happy path — a status line is a side errand, not the task.
+    expect(out).toEqual([]);
+    expect(err).toEqual([]);
+    const written = files.entries.get(FILE);
+    expect(written).toBeDefined();
+    expect(JSON.parse(written!.text)).toEqual({
+      schemaVersion: STATUS_LINE_SCHEMA_VERSION,
+      session: REF,
+      line: "rewriting the journal adapter",
+      writtenMs: WRITTEN,
+    });
+    // Owner-only, like every other file Collie drops in a state dir.
+    expect(written!.mode).toBe(0o600);
+  });
+
+  test("what it wrote is what the bridge will read back", () => {
+    const { deps: verb, files } = statusDeps();
+    cmdBeaconStatus(verb, ["running the migration"]);
+    const parsed = parseStatusLine(files.entries.get(FILE)!.text);
+    expect(parsed?.line).toBe("running the migration");
+    expect(statusLineKey(parsed!.session)).toBe(statusLineKey(REF));
+  });
+
+  test("the sentence is flattened before it is stored, never on the way out of a phone", () => {
+    const { deps: verb, files } = statusDeps();
+    cmdBeaconStatus(verb, [`two\nlines${String.fromCodePoint(0x1b)}[31m and an escape`]);
+    expect(JSON.parse(files.entries.get(FILE)!.text).line).toBe("two lines [31m and an escape");
+  });
+
+  test("an empty line CLEARS it — saying nothing is a thing to say", () => {
+    const { deps: verb, files } = statusDeps();
+    cmdBeaconStatus(verb, ["something"]);
+    expect(files.entries.has(FILE)).toBe(true);
+    expect(cmdBeaconStatus(verb, [])).toBe(EXIT.OK);
+    expect(files.entries.has(FILE)).toBe(false);
+  });
+
+  test("no agent session in the environment says so, and writes nothing", () => {
+    const { deps: verb, files, err } = statusDeps({});
+    expect(cmdBeaconStatus(verb, ["working"])).toBe(EXIT.USAGE);
+    expect(files.entries.size).toBe(0);
+    expect(err.join(" ")).toMatch(/CLAUDE_CODE_SESSION_ID/);
+  });
+
+  // A SUBAGENT IS NOT THE PANE — the same rule `emit` applies to a payload's `agent_id`. A line
+  // written from inside a Task would replace the pane's own with a conversation nobody can see.
+  test("a subagent writes nothing at all", () => {
+    const { deps: verb, files } = statusDeps({ ...AGENT_ENV, CLAUDE_CODE_CHILD_SESSION: "1" });
+    expect(cmdBeaconStatus(verb, ["working"])).toBe(EXIT.USAGE);
+    expect(files.entries.size).toBe(0);
+  });
+
+  test("codex is read from its own variable", () => {
+    const codexSession = "1111aaaa-2222-bbbb-3333-cccc4444dddd";
+    const { deps: verb, files } = statusDeps({ CODEX_SESSION_ID: codexSession });
+    expect(cmdBeaconStatus(verb, ["planning"])).toBe(EXIT.OK);
+    const file = `${STATE}/beacons/status/${statusLineFileName(statusLineKey({ kind: "id", value: codexSession }))}`;
+    expect(files.entries.has(file)).toBe(true);
+  });
+
+  test("a session id of the wrong shape never reaches the filesystem", () => {
+    const { deps: verb, files } = statusDeps({ CLAUDE_CODE_SESSION_ID: "../../etc/passwd" });
+    expect(cmdBeaconStatus(verb, ["working"])).toBe(EXIT.USAGE);
+    expect(files.entries.size).toBe(0);
+  });
+
+  test("an unwritable state dir says so rather than failing silently", () => {
+    const { deps: verb, files, err } = statusDeps();
+    files.write = () => {
+      throw new Error("read-only file system");
+    };
+    expect(cmdBeaconStatus(verb, ["working"])).toBe(EXIT.FAIL);
+    expect(err.join(" ")).toMatch(/read-only file system/);
   });
 });

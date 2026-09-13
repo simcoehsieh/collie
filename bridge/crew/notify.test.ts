@@ -127,11 +127,14 @@ describe("PeerNotifier — a peer's alerts on the lead's phone", () => {
     expect(push.sent).toHaveLength(1);
     expect(push.sent[0]).toEqual({
       title: "claude needs you",
+      agent: "claude",
       body: "laptop · collie · /home/you/collie",
       tag: "collie:herd@laptop",
       paneId: "p1",
       renotify: true,
       host: "laptop",
+      // FORK: the app icon's badge rides every herd push (bridge/notifications.ts `count`).
+      badge: 1,
     });
     // `session` does NOT ride it — a peer's merged pane names no session, and the sweep reads that
     // peer's primary (§5's "absent → primary").
@@ -191,7 +194,7 @@ describe("PeerNotifier — a peer's alerts on the lead's phone", () => {
     peer.observe("laptop", body([pane("p1", "blocked")]));
     clock.fireAll();
     peer.observe("laptop", body([pane("p1", "working")]));
-    expect(push.sent.at(-1)).toEqual({ type: "clear", tag: "collie:herd@laptop" });
+    expect(push.sent.at(-1)).toEqual({ type: "clear", tag: "collie:herd@laptop", badge: 0 });
   });
 
   test("a pane closing on the peer retracts it too", () => {
@@ -200,7 +203,7 @@ describe("PeerNotifier — a peer's alerts on the lead's phone", () => {
     peer.observe("laptop", body([pane("p1", "blocked")]));
     clock.fireAll();
     peer.observe("laptop", body([]));
-    expect(push.sent.at(-1)).toEqual({ type: "clear", tag: "collie:herd@laptop" });
+    expect(push.sent.at(-1)).toEqual({ type: "clear", tag: "collie:herd@laptop", badge: 0 });
   });
 
   test("a host that leaves the crew has its outstanding alerts retracted and its slot dropped", () => {
@@ -211,7 +214,7 @@ describe("PeerNotifier — a peer's alerts on the lead's phone", () => {
     expect(peer.tags()).toEqual(["collie:herd@laptop"]);
 
     peer.forget("laptop");
-    expect(push.sent.at(-1)).toEqual({ type: "clear", tag: "collie:herd@laptop" });
+    expect(push.sent.at(-1)).toEqual({ type: "clear", tag: "collie:herd@laptop", badge: 0 });
     expect(peer.tags()).toEqual([]);
     expect(clock.armed).toBe(0);
   });
@@ -259,8 +262,8 @@ describe("PeerNotifier — the lead's snooze and prefs are crew-wide by construc
 
     const after = push.sent.slice(before);
     expect(after).toEqual([
-      { type: "clear", tag: "collie:herd@laptop" },
-      { type: "clear", tag: "collie:herd@desktop" },
+      { type: "clear", tag: "collie:herd@laptop", badge: 0 },
+      { type: "clear", tag: "collie:herd@desktop", badge: 0 },
     ]);
   });
 });

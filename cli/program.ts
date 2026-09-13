@@ -1,6 +1,14 @@
 import { Command as Program, CommanderError } from "commander";
 
-import { type BeaconEmitDeps, runBeaconEmit } from "./beacon.ts";
+import { cmdBeaconStatus, type BeaconEmitDeps, type BeaconStatusDeps, runBeaconEmit } from "./beacon.ts";
+import {
+  ARTIFACT_USAGE,
+  type ArtifactDeps,
+  cmdArtifactAdd,
+  cmdArtifactList,
+  cmdArtifactPromote,
+  realArtifactFiles,
+} from "./artifact.ts";
 import { cmdBuild } from "./build.ts";
 import { collieVersion, loadContext } from "./context.ts";
 import {
@@ -247,6 +255,24 @@ function beaconDeps(): BeaconEmitDeps {
     readStdin: () => Bun.stdin.text(),
     agentPid: process.ppid,
   };
+}
+
+/**
+ * FORK — `beacon status`: the state dir, the filesystem, and an Io.
+ *
+ * It DOES take an Io, unlike {@link beaconDeps}, and the difference is the caller: `beacon emit` is
+ * spelled by a hook whose stdout is injected into the conversation, while `beacon status` is typed by
+ * an agent that wants to know whether its line landed. See cli/beacon.ts for the rest of that split.
+ */
+function beaconStatusDeps(io: Io): BeaconStatusDeps {
+  return { ctx: loadContext(io.err), files: realFiles, io };
+}
+
+/** FORK — `artifact add` / `list` / `promote`: the state dir, the bytes of one file, an Io, and (for
+ *  promote) the real Exec the kb CLI runs under. */
+function artifactDeps(io: Io): ArtifactDeps {
+  const ctx = loadContext(io.err);
+  return { ctx, io, files: realArtifactFiles, exec: realExec(ctx.env, ctx.home) };
 }
 
 /** A verb whose body is a lifecycle function over {@link lifecycleDeps}. */
@@ -516,10 +542,46 @@ export const COMMANDS: readonly Command[] = [
         summary: "internal: write this pane's beacon from the hook payload on stdin",
         run: () => runBeaconEmit(beaconDeps),
       },
+      {
+        // FORK: the one sub-verb here that a human (or an agent) types. Not internal — it is meant
+        // to be discoverable, because an agent has to be TOLD to use it before it ever will.
+        name: "status",
+        summary: 'say what this agent is working on: `beacon status "rewriting the journal adapter"`',
+        run: (args, s) => cmdBeaconStatus(beaconStatusDeps(s.io), args),
+      },
     ],
     // A bare `collie beacon`, or a misspelt sub-verb, is still an invocation from a hook — so it gets
     // the same silence and the same exit 0 as every other path through the emitter.
     run: () => EXIT.OK,
+  },
+  // ── FORK: Artifacts (bridge/artifacts.ts) ──────────────────────────────────
+  // The agent's half of the library: register a file it made, so the phone can open it later, filed
+  // under this pane. Typed by an agent (or by a scheduler job with `--origin`), never by a hook — a
+  // registration leaves bytes behind, and that is a thing somebody says, not a thing inferred.
+  {
+    name: "artifact",
+    summary: 'keep something you made where the phone can find it: `artifact add report.html --title "…"`',
+    subcommands: [
+      {
+        name: "add",
+        summary: 'copy a file into the library, filed under this pane: `artifact add <file> [--title T] [--slug S] [--tag t]…`',
+        run: (args, s) => cmdArtifactAdd(artifactDeps(s.io), args),
+      },
+      {
+        name: "list",
+        summary: "the library, newest first: `artifact list [--limit N]`",
+        run: (args, s) => cmdArtifactList(artifactDeps(s.io), args),
+      },
+      {
+        name: "promote",
+        summary: "archive one artifact in the knowledge base: `artifact promote <id> --folder ai`",
+        run: (args, s) => cmdArtifactPromote(artifactDeps(s.io), args),
+      },
+    ],
+    run: (_args, s) => {
+      s.io.err(ARTIFACT_USAGE);
+      return EXIT.USAGE;
+    },
   },
   // ── Device pairing ─────────────────────────────────────────────────────────
   // The operator's terminal is the out-of-band channel enrolment bootstraps from — see the header of

@@ -106,6 +106,16 @@ const AGENT_VIEW_KEYS = {
   // present exactly when the snapshot was widened (`?sessions=all`, the "All sessions" view), absent
   // on every other read — which is every read the app made before that view existed.
   session: true,
+  // FORK, and not a crew dimension either: the agent's own sentence about what it is working on
+  // (`collie beacon status`), plus when it said it. Optional-and-absent unless an agent has
+  // published one, so a snapshot from a herd that has not is byte-identical to the baseline.
+  statusLine: true,
+  statusLineAt: true,
+  // FORK, and not a crew dimension either: which model and effort the agent is on, read bridge-side
+  // off its own session log. Optional-and-absent until the bridge has read one, so a snapshot from
+  // a herd it has not is byte-identical to the baseline.
+  model: true,
+  effort: true,
 } satisfies Record<keyof AgentView, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -190,6 +200,9 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
     expect(Object.keys(AGENT_VIEW_KEYS).toSorted()).toEqual([
       "agent",
       "cwd",
+      // FORK: which model and effort the agent is on — read off its log, never turned on by a
+      // REQUEST, so the claim this case makes about the two address dimensions is untouched.
+      "effort",
       "focused",
       "hasSession",
       "hint",
@@ -197,12 +210,18 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
       "kind",
       "lastActiveAt",
       "lastSeenAt",
+      "model",
       "paneId",
       "paneLabel",
       "readableLines",
       "session",
       "sessionName",
       "status",
+      // FORK, and not a third address field: the agent's own sentence and its stamp. Neither is
+      // turned on by a REQUEST — an agent publishes one with `collie beacon status` or no pane has
+      // one — so the claim this case makes about the two address dimensions is untouched.
+      "statusLine",
+      "statusLineAt",
       "tabId",
       "tabLabel",
       "terminalTitle",

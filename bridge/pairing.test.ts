@@ -621,10 +621,26 @@ describe("filePairingIo", () => {
     const store = new PairingStore(io);
     await io.writeRegistry({ devices: [{ label: "phone", tokenHash: sha256Hex("t"), createdAt: 1, lastSeenAt: 1 }] });
     expect(store.resolve("t")?.label).toBe("phone");
-    // `bin/collie devices revoke phone` — a different process, no restart.
+    // `bin/collie devices revoke phone` — a different process, no restart. The gate's stat runs at
+    // most once a second, and it is the directory watch that brings the clock forward — which is an
+    // event, so one turn of the loop is what "the next read" costs.
     await writeFile(join(stateDir, DEVICES_FILENAME), JSON.stringify({ devices: [] }));
+    // The kqueue event behind fs.watch lands in tens of milliseconds on macOS but is not bounded by
+    // any number a test can pick; poll for it, and let the one-second clock be the ceiling.
+    const deadline = Date.now() + 1500;
+    while (store.enforced() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
     expect(store.enforced()).toBe(false);
     expect(store.resolve("t")).toBeNull();
+  });
+
+  test("inside the stat window, with no change on disk, the cached parse is served without a stat", async () => {
+    const stateDir = await tempStateDir();
+    const io = filePairingIo(stateDir);
+    await io.writeRegistry({ devices: [{ label: "phone", tokenHash: sha256Hex("t"), createdAt: 1, lastSeenAt: 1 }] });
+    const a = io.readRegistrySync();
+    const b = io.readRegistrySync();
+    // Identity, not equality: the second read is the first read's parse, handed back as is.
+    expect(b).toBe(a);
   });
 });
 

@@ -149,6 +149,66 @@ export interface Config {
   /** Path to Herdr's control socket. A non-Herdr-launched daemon must discover this itself. */
   socketPath: string;
   /**
+   * The directory trees the folder picker may list, and the ONLY places a space may be created.
+   *
+   * Empty (the default) keeps upstream's behaviour: the operator's home is the single root. Setting
+   * it narrows the API — `GET /api/dirs` refuses anything outside, and so does `POST /api/workspace`,
+   * because a boundary only the browser respects is decoration: the create route takes a `cwd`
+   * straight from the client and would otherwise open a shell anywhere on the disk.
+   */
+  dirRoots: string[];
+  /**
+   * The loopback base URL of the operator's knowledge-base API, e.g. `http://127.0.0.1:8082`.
+   *
+   * Empty — the default — turns the document panel off completely: `/api/doc/<slug>` answers 404 and
+   * the bridge makes no outbound call at all. That is how CLAUDE.md's "the bridge makes no outbound
+   * call for content" survives this feature; it is declined by doing nothing, exactly as the STT
+   * seam is. A value that is not loopback is REFUSED at serve time (bridge/docs.ts
+   * `normaliseKbOrigin`) rather than merely discouraged — the difference between reading a container
+   * on this machine and proxying the open web into Collie's own origin is one typo.
+   */
+  kbOrigin: string;
+  /**
+   * The knowledge base's internal token, presented over loopback. Empty = the panel is off. It is
+   * never logged, never fingerprinted and never put in a response body (bridge/docs.ts).
+   */
+  kbToken: string;
+  /**
+   * The PUBLIC hostnames whose `/d/<slug>` links this bridge can serve itself — the operator-facing
+   * half of the same fact `kbOrigin` states in loopback terms, and not derivable from it: nothing
+   * about `http://127.0.0.1:8082` says which domain name the agents print.
+   *
+   * Published to the client in `/api/config` ONLY when the panel is actually on, so the frontend
+   * cannot classify a link as openable-in-app by a bridge that would answer it 404.
+   */
+  docHosts: string[];
+  /**
+   * FORK: the command that reports what the three agents have left — the operator's own
+   * `ai-quota --json` or anything that prints its JSON. Whitespace-split into an argv, never handed
+   * to a shell. Empty — the default — turns the usage card off: `/api/quota` answers 404 and the
+   * bridge spawns nothing, the same declined-by-doing-nothing shape the document panel has. It is
+   * the third seam that reaches outside the machine (the CLI calls the providers), and it is
+   * granted the same treatment: off unless named, run on a deadline, its output never echoed into
+   * a response body (the CLI reads credentials, and its errors may quote them).
+   */
+  quotaCommand: string;
+  /**
+   * FORK: the command that takes a picture of a local page and probes one element out of it —
+   * this deployment's `tools/collie_shot`, or anything with the same two verbs. Whitespace-split
+   * into an argv, never handed to a shell. Empty — the default — turns annotate-and-ask off:
+   * `/api/pane/:id/shot` and `/api/pane/:id/probe` answer 404, nothing is spawned, and `/api/config`
+   * advertises no capability, so the phone draws no button for it. The fourth seam of the
+   * `quotaCommand` shape and granted the same treatment (bridge/shot.ts): off unless named, run on
+   * a deadline, under a byte cap, and its stdout never echoed into a response body as text.
+   */
+  shotCommand: string;
+  /**
+   * FORK: hostnames {@link shotCommand} may be pointed at, beyond loopback (which is always
+   * allowed). This is the anti-egress list: with it empty — the default — a shot can only ever be
+   * a picture of something already running on this machine. `COLLIE_SHOT_HOSTS`, comma-separated.
+   */
+  shotHosts: string[];
+  /**
    * Which dialer opens that socket. `auto` (the default) is correct everywhere: `node:net` on
    * Windows, where herdr's socket is a named pipe, and Bun's native transport elsewhere. Forcing
    * `net` on Linux/macOS exercises the Windows dial path against the real socket — the only way to
@@ -256,6 +316,11 @@ export interface Config {
    * likewise never read here.
    */
   launchersFile: string;
+  /**
+   * FORK: where the operator's per-pane notification rules live — `notify.toml`, the sixth sibling
+   * in the same dir, read the same way (bridge/operator-notify.ts) and likewise never read here.
+   */
+  notifyFile: string;
   /**
    * Tailscale identity gate. If set under `tailscale serve`, the request must carry a matching
    * `Tailscale-User-Login` header. A mismatch is rejected. A missing header is also rejected —
@@ -529,6 +594,18 @@ export function loadConfig(): Config {
     tmuxBin: (process.env.COLLIE_TMUX_BIN ?? "").trim(),
     zellijBin: (process.env.COLLIE_ZELLIJ_BIN ?? "").trim(),
     socketPath,
+    // Comma-separated like every other list here. `~` is expanded by the consumer (dirs.ts), which
+    // is also where a root that does not resolve is dropped — one bad entry must not break the rest.
+    dirRoots: envList("COLLIE_DIR_ROOTS"),
+    kbOrigin: (process.env.COLLIE_KB_ORIGIN ?? "").trim(),
+    // Trimmed because this is nearly always pasted out of a 0600 file that ends in a newline
+    // (`COLLIE_KB_TOKEN="$(cat …/knowledge-system/secrets/internal_token)"`), and kb answers 401 to
+    // that trailing byte. docs.ts trims again — a credential is cheap to check on both sides.
+    kbToken: (process.env.COLLIE_KB_TOKEN ?? "").trim(),
+    docHosts: envList("COLLIE_DOC_HOSTS"),
+    quotaCommand: (process.env.COLLIE_QUOTA_COMMAND ?? "").trim(),
+    shotCommand: (process.env.COLLIE_SHOT_COMMAND ?? "").trim(),
+    shotHosts: envList("COLLIE_SHOT_HOSTS"),
     dialMode: envEnum("COLLIE_HERDR_DIAL", ["auto", "net", "bun"] as const, "auto"),
     port: envInt("COLLIE_PORT", DEFAULT_PORT, { min: 1, max: 65535 }),
     host,
@@ -551,6 +628,7 @@ export function loadConfig(): Config {
     themeFile: join(configDir, "theme.toml"),
     fontsDir: join(configDir, "fonts"),
     launchersFile: join(configDir, "launchers.toml"),
+    notifyFile: join(configDir, "notify.toml"),
     trustedUser: process.env.COLLIE_TRUSTED_USER ?? "",
     trustedUserOptional: envBool("COLLIE_TRUSTED_USER_OPTIONAL", false),
     auditContent: envEnum("COLLIE_AUDIT_CONTENT", ["preview", "none"] as const, "preview"),

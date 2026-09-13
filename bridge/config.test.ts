@@ -57,6 +57,15 @@ const KEYS = [
   "HERDR_PLUGIN_STATE_DIR",
   "HERDR_PLUGIN_CONFIG_DIR",
   "COLLIE_HERDR_DIAL",
+  // The folder picker's roots and the document panel's three keys. Same reason as the harness home
+  // vars above: a developer who exports these for their own bridge must not get different
+  // `loadConfig()` results than CI does.
+  "COLLIE_DIR_ROOTS",
+  "COLLIE_DOC_HOSTS",
+  "COLLIE_KB_ORIGIN",
+  "COLLIE_KB_TOKEN",
+  // FORK: the usage card's command, for the same reason.
+  "COLLIE_QUOTA_COMMAND",
 ];
 
 let saved: Record<string, string | undefined>;

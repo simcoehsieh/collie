@@ -1,3 +1,4 @@
+import { readHandoffModels } from "./handoff-models.ts";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, join, normalize, sep } from "node:path";
@@ -8,14 +9,52 @@ import { isLoopbackBindHost, type Config } from "./config.ts";
 import { apiError, type ApiErrorBody, type ApiErrorDetail, type ErrorCode } from "./error-codes.ts";
 import { MUX_CAPABILITIES, type MuxCapability, type MuxCapabilityDeclaration } from "./mux/capabilities.ts";
 import type { MuxAdapter, MuxAck, MuxGrid } from "./mux/types.ts";
-import { computeEtag, gzipJsonResponse, notModified, wantsGzip } from "./http-cache.ts";
+import {
+  compressStatic,
+  computeEtag,
+  gzipJsonResponse,
+  jsonBodyResponse,
+  notModified,
+  pickEncoding,
+  type Encoding,
+} from "./http-cache.ts";
+import { bootBody, snapshotEtagOf } from "./boot.ts";
+import { EventHub, IDLE_TIMEOUT_S, PaneReads, SSE_PING, SSE_PING_MS, sseFrame } from "./events.ts";
 import { pluginRoot } from "./root.ts";
-import type { NotifyPrefs, NotifyPrefsStore } from "./notify-prefs.ts";
+import { parseNotifyPrefsPatch as parsePrefsPatch, type NotifyPrefs, type NotifyPrefsStore } from "./notify-prefs.ts";
 import { createOperatorCommands } from "./operator-commands.ts";
 import { createOperatorKeys } from "./operator-keys.ts";
 import { createOperatorQuickReplies } from "./operator-quick-replies.ts";
 import { createOperatorFonts, resolveOperatorFont } from "./operator-fonts.ts";
 import { createOperatorLaunchers } from "./operator-launchers.ts";
+import { diffPatch, diffStat } from "./diff.ts";
+import { fileView } from "./file-view.ts";
+import { previewResponseHeaders, readPreview } from "./preview.ts";
+import { listDirs, resolveWithinRoots, type DirsBody } from "./dirs.ts";
+import { documentResponseHeaders, documentSlugFromPath, fetchDocument, type DocumentFailure, DOCUMENT_CSP } from "./docs.ts";
+import {
+  ARTIFACT_TAG,
+  type ArtifactInput,
+  type ArtifactPatch,
+  type ArtifactPatchDraft,
+  type ArtifactRecord,
+  type ArtifactStore,
+  slugify,
+} from "./artifacts.ts";
+import {
+  HANDOFF_INSTRUCTION_CHARS,
+  HANDOFF_RECENT_TURNS,
+  HANDOFF_TAG,
+  buildHandoffDocument,
+  handoffCommandLine,
+  handoffPrompt,
+  hasControlChar,
+  type HandoffResponse,
+} from "./handoff.ts";
+import { jsonRecord, jsonStringField } from "./stt/json.ts";
+import { listDocuments, listTags, normaliseDocumentQuery } from "./docs-list.ts";
+import { QuotaSource, parseQuotaCommand, type QuotaFailure } from "./quota.ts";
+import { ShotRunner, parseShotCommand, type ShotFailure } from "./shot.ts";
 import {
   DEFAULT_PROMPT_TAIL_LINES,
   verifyExpectedPrompt,
@@ -36,7 +75,11 @@ import {
 import type { StateEngine } from "./state-engine.ts";
 import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
 import { TranscriptStore } from "./journal/store.ts";
-import type { JournalAdapter } from "./journal/types.ts";
+// FORK: the agent-authored status line — one sentence per pane, read through a cache.
+import { fileStatusLineDirectory } from "./beacon-io.ts";
+import { SessionFactsStore } from "./session-facts.ts";
+import { StatusLineStore } from "./status-lines.ts";
+import type { JournalAdapter, TranscriptEntry } from "./journal/types.ts";
 import { isBlobHash, resolveBlobPath } from "./journal/pi.ts";
 import { statFile } from "./journal/files.ts";
 import {
@@ -77,6 +120,7 @@ import type {
   PaneHistoryResponse,
   PaneReadResponse,
   PaneWire,
+  ShotAsk,
   SnapshotResponse,
   SttCapability,
   UpdateStatus,
@@ -153,6 +197,16 @@ const SECURITY_HEADERS = {
 const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
 /**
+ * The HTTP methods that cannot change state, and therefore cannot be a CSRF vector.
+ *
+ * Load-bearing for the Origin rule below. CSRF is a claim about a request FORGED BY ANOTHER SITE
+ * causing a state change; a safe method causes none, and an attacker page that issues one still
+ * cannot read the answer, because this API sends no CORS headers. So the Origin requirement is a
+ * statement about the METHOD, not about the caller's permission level.
+ */
+const SAFE_METHOD = /^(GET|HEAD)$/i;
+
+/**
  * Whether a TCP peer address is loopback. Unlike the `Host` header — which the client writes —
  * this comes from the kernel and cannot be forged.
  *
@@ -168,7 +222,7 @@ export function isLoopbackPeer(address: string | null | undefined): boolean {
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
 }
 
-const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|focus))?$/;
+const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|focus|diff|file|shot|probe|handoff))?$/;
 
 /**
  * A pairing claim's refusal, as an error code.
@@ -212,6 +266,9 @@ const TAB_ACTION_ROUTE = /^\/api\/tab\/([^/]+)\/(rename|close)$/;
  * on the machine whose journal named it and is therefore a forwarded READ.
  */
 const BLOB_ROUTE = /^\/api\/blobs\/([^/]+)$/;
+// FORK: one artifact — its record, its bytes (`raw`), or a change to it (bridge/artifacts.ts). The
+// id grammar is in the route itself, so a string that is not an id never reaches the store.
+const ARTIFACT_ROUTE = /^\/api\/artifacts\/([a-z0-9]{1,12}-[a-f0-9]{8})(?:\/(raw))?$/;
 
 /**
  * Worktree routes, all hung off the SPACE that asked (ADR 0032).
@@ -250,7 +307,9 @@ export const SEEN_HEADER = "x-collie-seen";
  */
 export function marksPaneSeen(req: Request, action: string | undefined): boolean {
   if (req.headers.get(SEEN_HEADER) !== null) return true;
-  return action !== undefined && action !== "history";
+  // `diff` is a read of the pane's REPO, not of the pane: a phone reviewing a change is not thereby
+  // caught up on the terminal, and (like `history`) it must not clear an alert on its own.
+  return action !== undefined && action !== "history" && action !== "diff";
 }
 
 /**
@@ -401,6 +460,31 @@ export function operatorFontResponse(
 }
 
 /**
+ * `GET /api/doc/<slug>` — one of the operator's knowledge-base documents, served from Collie's own
+ * origin so a link an agent printed can open in a panel instead of throwing the operator out of the
+ * PWA.
+ *
+ * Pure + exported for the reason {@link muxLogoResponse} is: the handler lives inside `Bun.serve`,
+ * which `bun test` cannot stand up, so the headers are asserted against this instead.
+ *
+ * The policy itself is `DOCUMENT_CSP` in bridge/docs.ts and the argument lives there beside it. The
+ * short version is muxLogoResponse's, one notch stronger: an SVG *could* carry script, and these
+ * documents *do* — they are HTML an agent wrote, often out of pages on the open web — so `sandbox`
+ * is not a precaution here, it is the design. Note that {@link secure} adds no CSP of its own, so
+ * this response inherits none: reusing this file's {@link CSP} would end in `frame-ancestors 'none'`
+ * and block Collie's own panel, showing a blank frame with nothing in the log to explain it.
+ *
+ * `html === null` is the conditional-request answer — the bytes were never fetched from kb at all,
+ * because the ETag comes from a digest the metadata call already carried.
+ */
+export function kbDocumentResponse(html: string | null, etag: string): Response {
+  const headers = documentResponseHeaders(etag);
+  // RFC 9110 §15.4.5: a 304 echoes the validators and carries no body.
+  if (html === null) return secure(new Response(null, { status: 304, headers }));
+  return secure(new Response(html, { headers }));
+}
+
+/**
  * The ceiling on one blob the bridge will serve: 16 MiB.
  *
  * A blob is a screenshot an agent took, and a phone on a cellular link is the reader — so the number
@@ -526,6 +610,28 @@ export function bridgeConfigBody(opts: {
    * handler, so an absent key on the wire means an older bridge and nothing else.
    */
   upload?: UploadCapability;
+  /**
+   * The public hostnames whose `/d/<slug>` links this bridge can serve itself (`/api/doc/<slug>`).
+   * Same omit-when-empty rule as `operatorCommands`.
+   *
+   * Published ONLY when the bridge can actually answer — the caller passes these through solely if
+   * `kbOrigin` and `kbToken` are both set. The client classifies a link as openable-in-app purely
+   * from this list, so publishing a host a misconfigured bridge would 404 turns "the panel is off"
+   * into "the panel is broken", and the operator cannot tell those apart from the phone.
+   */
+  docHosts?: readonly string[];
+  /**
+   * FORK: whether `/api/quota` answers — the usage card's gate. Published only as `true`, and only
+   * when a command is configured (bridge/quota.ts); absent is the feature off, which is also what
+   * every bridge older than the field sends.
+   */
+  quota?: boolean;
+  /**
+   * FORK: whether `POST /api/pane/:id/shot` answers — annotate-and-ask's gate. Published only as
+   * `true`, and only when a command is configured (bridge/shot.ts); absent is the feature off,
+   * which is also what every bridge older than the field sends.
+   */
+  shot?: boolean;
 }): BridgeConfig {
   const mode = modeForWire(opts.mode);
   const mine = opts.operatorCommands ?? [];
@@ -556,6 +662,13 @@ export function bridgeConfigBody(opts: {
   // Same omit-when-absent rule, and the same reading on the other end: no key is an older bridge,
   // which the phone falls back to the pre-attachment contract for (images, 10 MB).
   if (opts.upload !== undefined) wire.upload = opts.upload;
+  // Omit-when-empty, like the operator rows above: a bridge with no knowledge base ships the body it
+  // shipped before this feature existed, and a client older than the field ignores it either way.
+  if (opts.docHosts !== undefined && opts.docHosts.length > 0) wire.docHosts = [...opts.docHosts];
+  // Omit-when-off, like `docHosts`: a `false` on the wire would be a key an older client never saw.
+  if (opts.quota === true) wire.quota = true;
+  // Same rule again: the pane menu's "Screenshot & annotate…" row is hidden entirely without it.
+  if (opts.shot === true) wire.shot = true;
   return wire;
 }
 
@@ -591,6 +704,8 @@ export function startServer(opts: {
   push: Push;
   snooze: Snooze;
   notifyPrefs: NotifyPrefsStore;
+  /** FORK: the artifacts library (bridge/artifacts.ts) — read by the routes, watched for pokes. */
+  artifacts: ArtifactStore;
   updateMonitor: UpdateMonitor;
   /**
    * The two effects `POST /api/update` needs and this file must not own: the cached preflight
@@ -730,11 +845,40 @@ export function startServer(opts: {
   const operatorLaunchers = createOperatorLaunchers(cfg.launchersFile);
   const journals = cfg.transcript ? buildJournalRegistry(cfg.journalRoots) : null;
   const transcripts = cfg.transcript ? new TranscriptStore() : null;
+  /**
+   * FORK: the agent-authored status lines, read through a cache so the SYNCHRONOUS snapshot builder
+   * below can carry one without doing I/O (bridge/status-lines.ts). Unconditional — a status line is
+   * not a transcript and does not ride `COLLIE_TRANSCRIPT`: it is one short sentence an agent chose
+   * to publish, not its conversation.
+   */
+  const statusLines = new StatusLineStore({ directory: fileStatusLineDirectory(cfg.stateDir) });
+  /**
+   * FORK: which model and effort each agent is on, read off the tail of its own session log through
+   * the same kind of cache (bridge/session-facts.ts). Rides `COLLIE_TRANSCRIPT` with the journals it
+   * reads — no registry, no facts — because it IS a read of the conversation's log.
+   */
+  const sessionFacts = new SessionFactsStore();
   /** Does this agent have a journal at all — the snapshot's History-affordance gate. */
   const hasJournal = (agent: string) => adapterFor(journals ?? {}, agent) !== undefined;
 
   /** One in-flight "look now" per session — see bridge/refresh.ts for why it coalesces. */
   const refreshes = new RefreshCoalescer();
+
+  /**
+   * FORK: the usage card's source (bridge/quota.ts) — the operator's `ai-quota --json`, cached and
+   * coalesced. Null is the feature off: no command, no spawn, `/api/quota` answers 404.
+   */
+  const quotaArgv = parseQuotaCommand(cfg.quotaCommand);
+  const quota = quotaArgv === null ? null : new QuotaSource(quotaArgv);
+
+  /**
+   * FORK: annotate-and-ask's two verbs (bridge/shot.ts) — the operator's own headless-Chrome
+   * command. Null is the feature off: no command, no spawn, both routes answer 404 and
+   * `/api/config` advertises nothing, so the phone never draws a button for it. No cache, unlike
+   * quota: a shot is the operator asking what the page looks like NOW.
+   */
+  const shotArgv = parseShotCommand(cfg.shotCommand);
+  const shot = shotArgv === null ? null : new ShotRunner(shotArgv, cfg.shotHosts);
 
   /**
    * Take a fresh look at one session's multiplexer, then make the bridge re-read it.
@@ -754,6 +898,68 @@ export function startServer(opts: {
       console.warn(`[refresh] ${rt.name}: ${errorText(err)}`);
     }
     rt.engine.pokeNow();
+  };
+
+  // ── The live feed's two per-session pieces (bridge/events.ts) ────────────
+  // Built on first use and kept for the runtime's life, keyed by the runtime object itself so a
+  // session that is discovered later gets its own pair and one that goes away takes them with it.
+  // Wired HERE rather than in index.ts because the runtime already carries everything they need —
+  // the adapter to read, the poker to hear the multiplexer's events, the engine to hear its polls —
+  // and a second wiring site would be a second place to forget one.
+  const paneReadsByRuntime = new WeakMap<SessionRuntime, PaneReads>();
+  const readsFor = (rt: SessionRuntime): PaneReads => {
+    let reads = paneReadsByRuntime.get(rt);
+    if (reads) return reads;
+    reads = new PaneReads(async (paneId, lines) => {
+      // "ansi" so the client can render a faithful, colored terminal mirror. It is also, as far as
+      // we have probed, why this read leaves the operator's terminal alone: a `recent` read only
+      // harvests an alt-screen pane — scrolling it up and back — in `text` format. `lines` here is
+      // whatever the web app asked for, well past any pane's height, so switching this to `strip`
+      // would move someone's screen on every revalidate — see the adapter's `readGrid`.
+      const read = await rt.herdr.readGrid(paneId, { scope: "recent", lines, styling: "preserve" });
+      if (!read.ok) return { ok: false, detail: read.detail };
+      const data = paneReadResponse(paneId, read.value);
+      const body = JSON.stringify(data);
+      return { ok: true, body, data, etag: computeEtag(body) };
+    });
+    paneReadsByRuntime.set(rt, reads);
+    // A multiplexer event is the one signal that a pane may have changed under a cached read that is
+    // still inside its window — a close, an exit, a status flip — so the next read after one goes to
+    // the socket. Cheap: the window is a quarter of a second anyway.
+    rt.poker.onPoke(() => reads!.invalidate());
+    return reads;
+  };
+  const hubByRuntime = new WeakMap<SessionRuntime, EventHub>();
+  const hubFor = (rt: SessionRuntime): EventHub => {
+    let hub = hubByRuntime.get(rt);
+    if (hub) return hub;
+    hub = new EventHub();
+    hubByRuntime.set(rt, hub);
+    // The snapshot poke rides the ENGINE's update, not the poker's: the poker fires as the engine
+    // starts re-reading the multiplexer, and a phone that fetched on that beat would read the state
+    // from before the change and 304 its way past it. The update fires once the engine holds the
+    // new state. It also fires on every quiet safety-net poll, so the body is fingerprinted and a
+    // poll that changed nothing sends nothing — the stream is for movement, not for heartbeats.
+    let fingerprint = "";
+    rt.engine.onUpdate(() => {
+      const body = localSnapshot(rt.name, null);
+      if (!body) return;
+      const next = snapshotEtagOf(body);
+      if (next === fingerprint) return;
+      fingerprint = next;
+      // FORK: the fingerprint rides the poke as its version stamp. It is computed the same way the
+      // `/api/snapshot` route computes its ETag, so on a bridge that serves the body unrewritten the
+      // two are the same string and a client holding it skips a fetch it knows would 304. Where the
+      // body IS rewritten on the way out (a device block, `?sessions=all`, a crew merge) they differ
+      // and the client fetches exactly as before — see `PokeEvent` in events.ts.
+      hub!.pokeSnapshot(next);
+    });
+    // FORK: the pane stamp is exact — this entry is the one the route answers from.
+    readsFor(rt).onChange((paneId, entry) => hub!.pokePane(paneId, entry.etag));
+    // FORK: the artifacts directory is global, so every runtime's hub hears it — a filter by pane is
+    // the phone's (bridge/artifacts.ts). The subscription lives as long as the hub, i.e. the process.
+    opts.artifacts.subscribe(() => hub!.pokeArtifacts());
+    return hub;
   };
 
   /**
@@ -779,7 +985,26 @@ export function startServer(opts: {
     // this takes the runtime rather than closing over the ambient one.
     const withActivity = (from: SessionRuntime, p: AgentView): AgentView => {
       const a = activity.get(from.name, p.paneId);
-      return a ? { ...p, lastActiveAt: a.activeAt, lastSeenAt: a.seenAt } : p;
+      const stamped = a ? { ...p, lastActiveAt: a.activeAt, lastSeenAt: a.seenAt } : p;
+      // FORK: and the agent's own sentence about what it is working on, joined by the SESSION ref
+      // this pane already carries (the journal's own key) rather than by anything new. Read at
+      // serialise time, from a cache, for the same reason the two timestamps above are: as fresh as
+      // the request, and never a filesystem call inside a synchronous builder. Assigned, never
+      // conditionally spread, so a pane with no line is byte-identical to one on an older bridge.
+      const ref = stamped.agentSession;
+      if (ref === undefined) return stamped;
+      const said = statusLines.get(ref);
+      const told = said === null ? stamped : { ...stamped, statusLine: said.line, statusLineAt: said.writtenMs };
+      // FORK: and which model and effort the agent is on, from the same session ref through the
+      // journal adapter that already knows where its log is. Same cache discipline, same absence
+      // rule: a pane the store has not read yet is byte-identical to one on an older bridge.
+      const adapter = journals === null ? undefined : adapterFor(journals, journalAgentOf(told));
+      const facts = adapter === undefined ? null : sessionFacts.get(adapter, ref);
+      if (facts === null) return told;
+      const known: AgentView = { ...told };
+      if (facts.model !== undefined) known.model = facts.model;
+      if (facts.effort !== undefined) known.effort = facts.effort;
+      return known;
     };
     // The one place a pane leaves the bridge: the session ref is stripped to a presence flag here,
     // so an agent-reported filesystem path never reaches a browser (see toPaneWire). The flag is
@@ -830,6 +1055,65 @@ export function startServer(opts: {
     // Only report device state when the feature is on, so an off deployment sends nothing new.
     if (device !== null) body.device = device;
     return body;
+  };
+
+  /**
+   * The `/api/config` body, as a closure — so `/api/config` and FORK's `/api/boot` bundle answer it
+   * by calling one expression rather than by agreeing.
+   *
+   * It sits beside {@link localSnapshot} for the same reason that one does: two spellings of "what
+   * this collie can do" would be two chances to drift, and a boot bundle that reported a slightly
+   * different config from the route the page polls is the worst possible place for a disagreement —
+   * the page acts on the first one it sees.
+   *
+   * `memberMux` is the only thing a `?host=<member>` read changes (M22/03); every other field is the
+   * lead's own, and the no-host call builds the byte-identical body it always did.
+   */
+  const configBody = async (memberMux?: MuxConfig): Promise<BridgeConfig> => {
+    // Re-read per request behind an mtime check, like buildId() — editing commands.toml is live,
+    // with no restart. The path is cfg's, never the request's.
+    const mine = await operatorCommands();
+    const myKeys = await operatorKeys();
+    const myReplies = await operatorQuickReplies();
+    // Same mtime-checked re-read, same reason: an operator who adds a face to theme.toml wants
+    // it in the picker on the next page load, not after a restart.
+    const myFonts = await operatorFonts();
+    // The PRIMARY session's adapter, because one collie drives one multiplexer: every session in
+    // the registry is built by the same factory off the same `cfg.mux`, so which runtime answers
+    // is not a choice. `?.` only because `get()` is total over a Map — the primary is created
+    // eagerly in the constructor and never disposed.
+    const activeMux = registry.get();
+    // Re-resolved per request for the same reason `commands.toml` is: `collie stt setup` is
+    // live, and this is where the phone learns whether to draw a microphone at all. `?? undefined`
+    // because "no provider" must OMIT the key, never send a null one (CREW_PROTOCOL.md §11).
+    const sttWire = (await sttCapability(await stt())) ?? undefined;
+    return bridgeConfigBody({
+      push: push.enabled,
+      vapidPublicKey: push.publicKey,
+      build: await buildId(),
+      mode: crew.mode,
+      operatorCommands: mine,
+      operatorKeys: myKeys,
+      operatorQuickReplies: myReplies,
+      operatorFonts: myFonts,
+      mux: activeMux?.herdr,
+      // Assigned through `?? undefined` rather than conditionally, so the no-`host=` request
+      // builds the byte-identical body it always did (CREW_PROTOCOL.md §11).
+      muxWire: memberMux ?? undefined,
+      stt: sttWire,
+      // This host's own limits, read from cfg on every request like everything else here.
+      // A crew member answers with ITS number, which is the number that will judge the bytes.
+      upload: {
+        maxBytes: cfg.maxUploadBytes,
+        imageTypes: [...IMAGE_EXTS],
+        textTypes: [...TEXT_EXTS, ...cfg.uploadExtraTypes],
+      },
+      // Gated on the bridge being ABLE to serve a document, not merely on the hostnames being
+      // named — see the field's own comment. Both halves of the credential must be present.
+      docHosts: cfg.kbOrigin !== "" && cfg.kbToken !== "" ? cfg.docHosts : undefined,
+      quota: quota !== null ? true : undefined,
+      shot: shot !== null ? true : undefined,
+    });
   };
 
   /**
@@ -897,7 +1181,7 @@ export function startServer(opts: {
       if (denied) return denied;
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
-      return createWorkspace(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name);
+      return createWorkspace(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name, cfg.dirRoots);
     }
     // A launch is a `/api/workspace` create the operator pre-declared: the client names a row in
     // `launchers.toml` and the bridge, never the client, supplies the command line. It sits here
@@ -921,6 +1205,176 @@ export function startServer(opts: {
       if (rt instanceof Response) return rt;
       return launchersRoute(operatorLaunchers, req.headers.get("accept-encoding"));
     }
+    // The folder picker's one read. GATED ON WRITE although it writes nothing: the list exists only
+    // to fill in a space create, so a device that may not create one has no use for it, and the
+    // narrower gate costs nothing. `bridge/dirs.ts` holds the rest of the contract — directory names
+    // only, rooted at the operator's home, enforced on the resolved path.
+    if (pathname === "/api/dirs" && req.method === "GET") {
+      const denied = caller.gate("write");
+      if (denied) return denied;
+      // Resolved for its FORWARD, not its value: a `?host=` browse has to list the peer's disk, and
+      // that is what resolution does with it. The listing itself is local to whoever answers.
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      return dirsRoute(req, cfg.dirRoots);
+    }
+
+    // ── FORK: one HTML file the agent wrote, framed beside the terminal (bridge/preview.ts) ──
+    //
+    // A READ, and gated as one: it hands back a page an agent already wrote into the pane's own
+    // working directory, which a read-only device may look at exactly as it may look at the diff of
+    // it. It is SESSION-SCOPED so `caller.resolve()` forwards a `?host=` call to the member whose
+    // disk holds the file — the lead has no copy of a peer's report, the same fact `/api/blobs`
+    // turns on. The pane is named in the query rather than in the path because the jail is that
+    // pane's `cwd` and nothing else: no pane, no directory to be inside, no answer.
+    //
+    // The policy the bytes go out under is bridge/preview.ts's, which IS bridge/docs.ts's; `secure()`
+    // adds no CSP of its own, so this response inherits none and the module's headers are the whole
+    // containment.
+    //
+    // The path is a LITERAL here and `PREVIEW_PATH` there, for bridge/docs.ts's reason: the route
+    // golden in solo-baseline.test.ts finds routes by reading this file for string literals, so a
+    // registration that imported the constant would silently escape the one test whose job is that a
+    // route arrives on purpose. bridge/preview.test.ts pins the two against each other.
+    // ── FORK: Artifacts — what an agent made, filed under the pane that made it ──────────────
+    // bridge/artifacts.ts has the argument. Session-routed like preview so `caller.resolve()` gives
+    // the runtime whose agents carry the sessions the records name; the library itself is one per
+    // bridge. Reads are reads (a read-only phone may look); PATCH / DELETE are writes.
+    if (pathname === "/api/artifacts" && req.method === "GET") {
+      const denied = caller.gate("read");
+      if (denied) return denied;
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      const all = await opts.artifacts.resolvePanes(await opts.artifacts.list(), rt.engine.current().agents);
+      const pane = url.searchParams.get("pane");
+      const workspace = url.searchParams.get("workspace");
+      const slug = url.searchParams.get("slug");
+      const rows = all.filter(
+        (r) =>
+          (pane === null || r.pane?.paneId === pane) &&
+          (workspace === null || r.pane?.workspaceId === workspace) &&
+          (slug === null || r.slug === slug),
+      );
+      return json({ ok: true, artifacts: rows } satisfies ArtifactsResponse, req.headers.get("accept-encoding"));
+    }
+    // A SAVE FROM THE PHONE: the page the preview panel is looking at, copied into the library. The
+    // bytes come off the pane's own cwd through `readPreview` — the same grammar, jail and cap the
+    // preview route applies — so the phone names a path it can already see and nothing else.
+    if (pathname === "/api/artifacts" && req.method === "POST") {
+      const denied = caller.gate("write");
+      if (denied) return denied;
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      const ask = await artifactSaveFrom(req);
+      if (ask === null) return text("expected a JSON object with pane and path", 400);
+      const { agents, shellPanes } = rt.engine.current();
+      const pane = [...agents, ...shellPanes].find((a) => a.paneId === ask.pane);
+      if (!pane) return text("no such pane", 404);
+      const preview = await readPreview(pane.cwd, ask.path, homedir());
+      if (!preview.ok) {
+        if (preview.reason === "too_large") return text("the page is too large to keep", 413);
+        if (preview.reason === "unreadable") return text("the page could not be read", 503);
+        return text("no such page", 404);
+      }
+      const fileName = ask.path.split("/").pop() ?? ask.path;
+      const input: ArtifactInput = {
+        bytes: new TextEncoder().encode(preview.body.html),
+        fileName,
+        title: ask.title ?? fileName.replace(/\.[^.]+$/, ""),
+        sourcePath: `${pane.cwd}/${ask.path}`,
+        origin: null,
+        pane: { paneId: pane.paneId, workspaceId: pane.workspaceId, workspaceLabel: pane.workspaceLabel, agent: pane.agent },
+      };
+      const added = await opts.artifacts.add(ask.slug === null ? input : { ...input, slug: ask.slug });
+      if (!added.ok) return text(`not kept: ${added.reason}`, added.reason === "too_large" ? 413 : 400);
+      caller.audit.record({
+        action: "artifact.save",
+        paneId: pane.paneId,
+        session: rt.name,
+        device: caller.device(),
+        detail: { id: added.record.id, path: ask.path },
+      });
+      return json({ ok: true, artifact: added.record } satisfies ArtifactResponse, req.headers.get("accept-encoding"));
+    }
+    const artifactMatch = pathname.match(ARTIFACT_ROUTE);
+    if (artifactMatch) {
+      const id = artifactMatch[1]!;
+      const sub = artifactMatch[2];
+      const ae = req.headers.get("accept-encoding");
+      if (req.method === "GET") {
+        const denied = caller.gate("read");
+        if (denied) return denied;
+        const rt = await caller.resolve();
+        if (rt instanceof Response) return rt;
+        const found = await opts.artifacts.get(id);
+        if (found === null) return text("no such artifact", 404);
+        const [record] = await opts.artifacts.resolvePanes([found], rt.engine.current().agents);
+        if (sub === undefined) return json({ ok: true, artifact: record! } satisfies ArtifactResponse, ae);
+        const bytes = await opts.artifacts.readBytes(record!);
+        if (bytes === null) return text("the artifact's bytes are gone", 410);
+        return artifactRawResponse(record!, bytes, req.headers.get("if-none-match"));
+      }
+      if (sub !== undefined) return text("method not allowed", 405);
+      if (req.method === "PATCH") {
+        const denied = caller.gate("write");
+        if (denied) return denied;
+        const rt = await caller.resolve();
+        if (rt instanceof Response) return rt;
+        const patch = await artifactPatchFrom(req);
+        if (patch === null) return text("expected a JSON object with title / tags / pinned / kbSlug", 400);
+        const updated = await opts.artifacts.patch(id, patch);
+        if (updated === null) return text("no such artifact", 404);
+        caller.audit.record({
+          action: "artifact.patch",
+          paneId: updated.pane?.paneId ?? "",
+          session: rt.name,
+          device: caller.device(),
+          detail: { id, fields: Object.keys(patch) },
+        });
+        return json({ ok: true, artifact: updated } satisfies ArtifactResponse, ae);
+      }
+      if (req.method === "DELETE") {
+        const denied = caller.gate("write");
+        if (denied) return denied;
+        const rt = await caller.resolve();
+        if (rt instanceof Response) return rt;
+        const removed = await opts.artifacts.remove(id);
+        if (!removed) return text("no such artifact", 404);
+        caller.audit.record({ action: "artifact.delete", session: rt.name, device: caller.device(), detail: { id } });
+        return secure(new Response(null, { status: 204 }));
+      }
+      return text("method not allowed", 405);
+    }
+
+    if (pathname === "/api/preview/file" && req.method === "GET") {
+      const denied = caller.gate("read");
+      if (denied) return denied;
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      const paneId = url.searchParams.get("pane") ?? "";
+      const { agents, shellPanes } = rt.engine.current();
+      const pane = [...agents, ...shellPanes].find((a) => a.paneId === paneId);
+      if (!pane) return text("no such pane", 404);
+      const preview = await readPreview(pane.cwd, url.searchParams.get("path") ?? "", homedir());
+      if (!preview.ok) {
+        // ONE answer for the three refusals a client could otherwise probe the disk with — a path
+        // that fails the grammar, a path that escaped the pane's cwd, and a path that is not there.
+        // Telling them apart is the oracle `/api/fonts` refuses to hand out, and here it would map
+        // the operator's filesystem one 404 at a time. The other two are about SIZE and about a file
+        // that is present but unreadable, neither of which says anything about a path nobody named.
+        if (preview.reason === "too_large") return text("the page is too large to preview", 413);
+        if (preview.reason === "unreadable") return text("the page could not be read", 503);
+        return text("no such page", 404);
+      }
+      const etag = computeEtag(preview.body.html);
+      const headers = previewResponseHeaders(etag);
+      // RFC 9110 §15.4.5: a 304 echoes the validators and carries no body.
+      if (notModified(req.headers.get("if-none-match"), etag)) {
+        return secure(new Response(null, { status: 304, headers }));
+      }
+      return secure(new Response(preview.body.html, { headers }));
+    }
+
     // ── Blobs: the bytes a pi/omp journal named (`resolveImageUrl` in journal/pi.ts) ──
     //
     // A READ, and gated as one: it hands back a picture an agent already put in its own log, so a
@@ -986,7 +1440,14 @@ export function startServer(opts: {
       // Reading a pane is allowed for any access-gated client; every action (reply/keys/upload/
       // close) types into or restructures a terminal, so it additionally needs an authorised device.
       // `history` is a READ despite being an action segment — it only ever reads a log off disk.
-      const isRead = !action || action === "history";
+      // `diff` likewise: three read-only git subcommands against the pane's cwd (bridge/diff.ts).
+      // FORK: `file` is the same shape one step further — one file of that same work tree, read off
+      // disk and never written (bridge/file-view.ts). A read-only device may look at the file it may
+      // already read the diff of.
+      // `shot` and `probe` are WRITES despite reading nothing of the pane: each one spawns a
+      // process (bridge/shot.ts). A read-only device may watch a terminal; it may not make this
+      // machine start a browser.
+      const isRead = !action || action === "history" || action === "diff" || action === "file";
       const denied = caller.gate(isRead ? "read" : "write");
       if (denied) return denied;
       const rt = await caller.resolve();
@@ -1019,12 +1480,33 @@ export function startServer(opts: {
       const device = isRead ? null : caller.device();
       const audit_ = caller.audit;
 
-      if (!action && req.method === "GET") return readPane(herdr, cfg, paneId, url, req);
+      if (!action && req.method === "GET") return readPane(rt, readsFor(rt), cfg, paneId, url, req);
       if (action === "history" && req.method === "GET")
         return paneHistory(cfg, journals, transcripts, rt.engine, paneId, url, req);
+      if (action === "diff" && req.method === "GET") return paneDiff(rt.engine, paneId, url, req);
+      // FORK: one file of the pane's work tree (bridge/file-view.ts).
+      if (action === "file" && req.method === "GET") return paneFile(rt.engine, paneId, url, req);
       if (action === "reply" && req.method === "POST") return replyPane(herdr, cfg, paneId, req, audit_, device, session);
+      // FORK: hand this pane's conversation to another harness (bridge/handoff.ts) — a launch
+      // beside it, with the handoff document as the new agent's opening prompt.
+      if (action === "handoff" && req.method === "POST") {
+        return handoffPane(
+          { herdr, engine: rt.engine, cfg, journals, transcripts, artifacts: opts.artifacts, getLaunchers: operatorLaunchers },
+          paneId,
+          req,
+          audit_,
+          device,
+          session,
+        );
+      }
       if (action === "keys" && req.method === "POST") return keysPane(herdr, cfg, paneId, req, audit_, device, session);
       if (action === "upload" && req.method === "POST") return uploadPane(cfg, paneId, req, audit_, device, session);
+      // FORK: annotate-and-ask (bridge/shot.ts). Session-scoped and write-gated like the upload
+      // beside it, and 404 when no command is configured — the same declined-by-doing-nothing
+      // shape `/api/quota` has. The image comes back inline as a `data:` URL, so this adds no
+      // file-serving route and no second jail to reason about.
+      if (action === "shot" && req.method === "POST") return shotPane(shot, paneId, req, audit_, device, session);
+      if (action === "probe" && req.method === "POST") return probePane(shot, paneId, req, audit_, device, session);
       if (action === "close" && req.method === "POST") return closePane(herdr, rt.engine, paneId, req, audit_, device, session);
       if (action === "rename" && req.method === "POST") return renamePane(herdr, rt.engine, paneId, req, audit_, device, session);
       if (action === "focus" && req.method === "POST") return focusPane(herdr, rt.engine, paneId, req, audit_, device, session);
@@ -1155,6 +1637,10 @@ export function startServer(opts: {
     // Runtime cap on any request body — a chunked/lying client is cut off here even if its
     // Content-Length is absent or false. The upload handler still does its own precise check.
     maxRequestBodySize: requestBodyCap(cfg),
+    // FORK: how long the RUNTIME will hold a connection on which nothing moves. Written down rather
+    // than inherited — Bun's default is 10 s, which silently killed the SSE feed for a day (the
+    // whole argument, and why 150, is on `IDLE_TIMEOUT_S` in bridge/events.ts).
+    idleTimeout: IDLE_TIMEOUT_S,
     // When TLS is present the handshake itself is the first factor: an unpinned or absent client
     // certificate never reaches `fetch` at all, so nothing below has to defend against it.
     tls: listenerTls,
@@ -1317,10 +1803,40 @@ export function startServer(opts: {
         // peer's ETag is never recomputed here, because no peer body is re-hashed on this path.
         // Tag every snapshot poll with the on-disk build id so an open client notices a live rebuild
         // between polls — the no-service-worker self-update path (web/src/lib/self-update.ts).
+        const wire = crewLead ? crewLead.merge(body, plan) : body;
+        // THE SNAPSHOT VALIDATES LIKE THE PANE READ DOES. Polled at up to 3 Hz, and until now
+        // re-serialised, re-compressed and re-sent on every beat whether or not the herd had moved.
+        // The tag is computed with `ts` zeroed (see `snapshotEtagOf`, which is the ONE expression
+        // this, the live feed's fingerprint and FORK's `/api/boot` bundle all use — three spellings
+        // of the same hash would be three chances to disagree about one body's version).
+        const etag = snapshotEtagOf(wire);
+        const build = await buildId();
+        if (notModified(req.headers.get("if-none-match"), etag)) {
+          return withBuildHeader(
+            secure(new Response(null, { status: 304, headers: { etag, "cache-control": "no-store" } })),
+            build,
+          );
+        }
         return withBuildHeader(
-          json(crewLead ? crewLead.merge(body, plan) : body, req.headers.get("accept-encoding")),
-          await buildId(),
+          secure(jsonBodyResponse(JSON.stringify(wire), req.headers.get("accept-encoding"), { etag })),
+          build,
         );
+      }
+
+      // ── The live feed (bridge/events.ts) ─────────────────────────────────
+      // One long-lived GET per open page. The bridge writes a poke on it whenever the herd or the
+      // followed pane moves, and the page fetches on the poke instead of on a timer. A READ, gated
+      // as one, served for THIS collie's own sessions only: a member's panes are read through the
+      // lead's forward, and a stream is not a thing that forwards — the phone falls back to polling
+      // for a member's scope, which is what it did before the stream existed.
+      if (pathname === "/api/events" && req.method === "GET") {
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        if (host.kind !== "local") return text("no stream for a member host", 404);
+        const rt = registry.get(sessionName);
+        if (!rt) return unknownSession();
+        rt.engine.noteAttention();
+        return eventStream(readsFor(rt), hubFor(rt), cfg, url, req);
       }
 
       // ── Session-scoped routes: the pane family, tabs, workspaces ─────────
@@ -1344,6 +1860,55 @@ export function startServer(opts: {
       });
       if (sessionRouted) return sessionRouted;
 
+      // ── The cold boot, as one round trip (bridge/boot.ts) ────────────────
+      // `GET /api/boot` answers the five bodies a page fetches before it can draw anything, in the
+      // order they used to arrive one after another. The assembly is bridge/boot.ts; this is the
+      // gate, the host rule and the response.
+      //
+      // READ-GATED THROUGH THE SAME `guard` THE FIVE ROUTES USE — not a looser gate that happens to
+      // agree today. Every field is a body a read client may already have, so the bundle discloses
+      // nothing new; what it must not do is disclose it under a weaker check than the route it came
+      // from, and `guard` is the strictest of the five (it contains `checkAccess`, which is all
+      // `/api/snapshot` asks).
+      //
+      // LOCAL ONLY, exactly like `/api/events` and for the same reason: `launchers` must come from
+      // the host that RUNS them (§5) and a bundle is not a thing that forwards. A `?host=` page
+      // falls back to fetching the five routes it always fetched, which is what it does today.
+      if (pathname === "/api/boot" && req.method === "GET") {
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        if (host.kind !== "local") return text("no boot bundle for a member host", 404);
+        const device = whois(req);
+        const view = selectView(url);
+        const snapshot = localSnapshot(view.session, device.enforced ? device : null, view.widen);
+        if (!snapshot) return unknownSession();
+        // The quota is asked for unconditionally and gated INSIDE `bootBody` on what the config
+        // says, so the two answers cannot disagree; a source that is off answers `not_configured`
+        // here and costs nothing. `false` is never a refresh — a boot reads the cache the card
+        // reads, and the refresh button is the only thing that may run the command.
+        const got = quota === null ? null : await quota.get(false);
+        return withBuildHeader(
+          secure(
+            jsonBodyResponse(
+              JSON.stringify(
+                bootBody({
+                  snapshot,
+                  config: await configBody(),
+                  launchers: await launchersBody(operatorLaunchers),
+                  notifyPrefs: notifyPrefs.current(),
+                  quota: got !== null && got.ok ? { body: got.body, etag: got.etag } : null,
+                }),
+              ),
+              req.headers.get("accept-encoding"),
+              // NO `etag` header: the bundle is four documents and a validator names one. The
+              // snapshot's tag rides in the body as `snapshotEtag` — see bridge/boot.ts.
+              { "cache-control": "no-store" },
+            ),
+          ),
+          await buildId(),
+        );
+      }
+
       // ── Misc API ─────────────────────────────────────────────────────────
       if (pathname === "/api/config") {
         // Read-level, like the other non-terminal endpoints. Nothing Collie puts here is a
@@ -1356,19 +1921,6 @@ export function startServer(opts: {
         // short-circuits to AuthErrorBanner before its red-state probe runs. Noted in #32.
         const denied = guard(req, cfg, "read", pairing);
         if (denied) return denied;
-        // Re-read per request behind an mtime check, like buildId() — editing commands.toml is live,
-        // with no restart. The path is cfg's, never the request's.
-        const mine = await operatorCommands();
-        const myKeys = await operatorKeys();
-        const myReplies = await operatorQuickReplies();
-        // Same mtime-checked re-read, same reason: an operator who adds a face to theme.toml wants
-        // it in the picker on the next page load, not after a restart.
-        const myFonts = await operatorFonts();
-        // The PRIMARY session's adapter, because one collie drives one multiplexer: every session in
-        // the registry is built by the same factory off the same `cfg.mux`, so which runtime answers
-        // is not a choice. `?.` only because `get()` is total over a Map — the primary is created
-        // eagerly in the constructor and never disposed.
-        const activeMux = registry.get();
         // ── `?host=<member>`: THIS MEMBER's capability declaration (M22/03) ──────────────────
         //
         // Answered from what the lead already holds, and never forwarded: `config` is on
@@ -1392,35 +1944,9 @@ export function startServer(opts: {
         // "use the lead's" — which is byte for byte the reading the phone gives every pane today.
         // The lead's own entry resolves `local`, so it takes its own branch and its own adapter.
         const memberMux = scoped?.kind === "peer" ? crewLead?.muxFor(scoped.link.memberId) : null;
-        // Re-resolved per request for the same reason `commands.toml` is: `collie stt setup` is
-        // live, and this is where the phone learns whether to draw a microphone at all. `?? undefined`
-        // because "no provider" must OMIT the key, never send a null one (CREW_PROTOCOL.md §11).
-        const sttWire = (await sttCapability(await stt())) ?? undefined;
-        return json(
-          bridgeConfigBody({
-            push: push.enabled,
-            vapidPublicKey: push.publicKey,
-            build: await buildId(),
-            mode: crew.mode,
-            operatorCommands: mine,
-            operatorKeys: myKeys,
-            operatorQuickReplies: myReplies,
-            operatorFonts: myFonts,
-            mux: activeMux?.herdr,
-            // Assigned through `?? undefined` rather than conditionally, so the no-`host=` request
-            // builds the byte-identical body it always did (CREW_PROTOCOL.md §11).
-            muxWire: memberMux ?? undefined,
-            stt: sttWire,
-            // This host's own limits, read from cfg on every request like everything else here.
-            // A crew member answers with ITS number, which is the number that will judge the bytes.
-            upload: {
-              maxBytes: cfg.maxUploadBytes,
-              imageTypes: [...IMAGE_EXTS],
-              textTypes: [...TEXT_EXTS, ...cfg.uploadExtraTypes],
-            },
-          }),
-          req.headers.get("accept-encoding"),
-        );
+        // The body itself is `configBody` above — ONE expression, shared with FORK's `/api/boot`
+        // bundle, so the route the page polls and the bundle it booted from cannot disagree.
+        return json(await configBody(memberMux ?? undefined), req.headers.get("accept-encoding"));
       }
       if (pathname === MUX_LOGO_PATH && req.method === "GET") {
         // Read-level, exactly like the `/api/config` block that publishes its URL — an image the
@@ -1478,11 +2004,14 @@ export function startServer(opts: {
           return text("bad subscription", 400);
         }
         if (!isPushSubscription(body)) return text("bad subscription", 400);
-        await push.addSubscription(body, {
+        // FORK: answers whether the endpoint was already on file. A device that believed itself
+        // registered and hears `known: false` was pruned (its endpoint 404/410'd a send) and must
+        // mint a fresh subscription instead of re-registering the dead one — web/src/lib/push.ts.
+        const ack = await push.addSubscription(body, {
           replaces: supersededEndpoint(body),
           userAgent: req.headers.get("user-agent") ?? undefined,
         });
-        return secure(new Response(null, { status: 204 }));
+        return json(ack, req.headers.get("accept-encoding"));
       }
       if (pathname === "/api/notifications/snooze" && req.method === "POST") {
         // Managing your own notification quiet-hours isn't terminal-driving — read-level, like subscribe.
@@ -1519,6 +2048,8 @@ export function startServer(opts: {
         if (req.method === "GET") {
           const denied = guard(req, cfg, "read", pairing);
           if (denied) return denied;
+          // FORK: a phone asking is the moment `notify.toml` should be fresh (a stat when unchanged).
+          await notifyPrefs.refreshOperatorRules();
           return json(notifyPrefs.current(), req.headers.get("accept-encoding"));
         }
         if (req.method === "POST") {
@@ -1872,6 +2403,75 @@ export function startServer(opts: {
         );
       }
 
+      // ── One knowledge-base document, on Collie's own origin ──────────────
+      // The panel behind a knowledge-base link an agent printed in the mirror. It is a PROXY rather
+      // than an iframe of the real page because every measured target refuses framing, and the
+      // operator's own services are worse: behind Cloudflare Access, with Safari blocking
+      // third-party cookies, a cross-origin frame is handed a login page that refuses framing too.
+      // Same-origin also keeps the Access cookie first-party, so the gate below is the same one
+      // every other route uses. bridge/docs.ts holds the grammar, the loopback fetch and the
+      // containment; this block is the gate, the status codes, and nothing else.
+      //
+      // Read-level, like the mux mark and the operator's fonts: opening a document from a link an
+      // agent printed is watching, which is what a read-only device exists to do.
+      // The document BROWSER (bridge/docs-list.ts): which documents kb has, so the panel can open
+      // one the agent never printed. Read-gated like the document itself; JSON, never HTML, so
+      // none of the document route's containment applies and the ordinary `json()` answers.
+      // FORK: what the three agents have left (bridge/quota.ts). Read-gated like the document
+      // browser — a read-only device watching the herd wants to know how much herd is left. The
+      // body is the CLI's JSON normalised, never its text; a failure is a reason, never its output.
+      if (pathname === "/api/quota" && req.method === "GET") {
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        if (quota === null) return text("no quota source", 404);
+        const got = await quota.get(url.searchParams.get("refresh") === "1");
+        if (!got.ok) return text(quotaRefusal(got.reason), 503);
+        if (notModified(req.headers.get("if-none-match"), got.etag)) {
+          return secure(new Response(null, { status: 304, headers: { etag: got.etag, "cache-control": "no-store" } }));
+        }
+        return jsonBodyResponse(got.body, req.headers.get("accept-encoding"), { etag: got.etag });
+      }
+
+      if ((pathname === "/api/docs" || pathname === "/api/docs/tags") && req.method === "GET") {
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        const kb = { origin: cfg.kbOrigin, token: cfg.kbToken };
+        const ae = req.headers.get("accept-encoding");
+        if (pathname === "/api/docs/tags") {
+          const tags = await listTags(kb);
+          return tags.ok ? json(tags.body, ae) : docsRefusal(tags.reason);
+        }
+        const query = normaliseDocumentQuery(url.searchParams);
+        if (query === null) return text("bad query", 400);
+        const list = await listDocuments(query, kb);
+        return list.ok ? json(list.body, ae) : docsRefusal(list.reason);
+      }
+
+      if (pathname.startsWith("/api/doc/") && req.method === "GET") {
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        const slug = documentSlugFromPath(pathname);
+        const doc =
+          slug === null
+            ? ({ ok: false, reason: "bad_slug" } as const)
+            : await fetchDocument(slug, { origin: cfg.kbOrigin, token: cfg.kbToken }, req.headers.get("if-none-match"));
+        if (!doc.ok) {
+          // ONE answer for the three refusals a client could otherwise probe the store with — a slug
+          // that fails the grammar, a document that is not there, and a bridge that serves no
+          // documents at all. The rest are 503 because they are THIS side's fault and the operator's
+          // next move differs: restart the containers, or fix the token. `unauthorised` is
+          // deliberately NOT a 403 — it is not the phone's authorisation that failed but the
+          // bridge's own, and a 403 would send the operator off to re-pair a device over a value in
+          // their own .env.
+          const missing =
+            doc.reason === "bad_slug" || doc.reason === "not_found" || doc.reason === "not_configured";
+          return missing
+            ? text("no such document", 404)
+            : text("the document store is not answering", 503);
+        }
+        return kbDocumentResponse(doc.unchanged ? null : doc.html, doc.metadata.etag);
+      }
+
       // ── Reserved for a fronting proxy's sign-in page ─────────────────────
       // `/auth/` is the one path the service worker always passes to the network (web/src/lib/
       // sw-routes.ts), so it is the only address an installed PWA can reach when a proxy in front of
@@ -1881,7 +2481,7 @@ export function startServer(opts: {
       if (isReservedAuthPath(pathname)) return reservedAuthPlaceholder();
 
       // ── Static PWA (with SPA fallback) ───────────────────────────────────
-      return serveStatic(pathname, req.headers.get("accept-encoding"));
+      return serveStatic(pathname, req.headers.get("accept-encoding"), req.headers.get("if-none-match"));
     },
   });
 
@@ -1950,13 +2550,59 @@ export function startupWarnings(cfg: Config): string[] {
   return warnings;
 }
 
+/** The longest a pane read may be held open waiting for a change (`?wait=`). Under Cloudflare's
+ *  100 s and the client's own 10 s GET timeout with room for the answer to travel. */
+export const PANE_WAIT_MAX_MS = 2000;
+
+/**
+ * FORK: how many panes one stream may follow at once.
+ *
+ * Each watched `(pane, lines)` costs one local `pane.read` every {@link PANE_WATCH_MS} — ~1 ms on
+ * the socket — so a stream naming a hundred panes would be 250 reads a second for one screen. The
+ * Overview grid is the only caller that names more than one and it draws the herd, which on this
+ * machine is single digits; 24 is generous for that and still bounded. Over the cap the EXTRAS are
+ * dropped rather than the request refused: a screen that shows more cards than the bridge will
+ * watch should fall back to its timer for the rest, not fail to open a stream at all.
+ */
+export const MAX_WATCHED_PANES = 24;
+
+/**
+ * The panes a stream asked to follow: every `?pane=` on the URL, each of which may itself be a comma
+ * list, de-duplicated and capped. Empty is the herd-only stream.
+ *
+ * Both spellings are accepted because both are natural to write and neither is ambiguous — a pane id
+ * is `wN:pN` (bridge/mux) and has never contained a comma. Pure + exported so the parsing is
+ * unit-tested without standing up Bun.serve.
+ */
+export function watchedPanes(url: URL): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const raw of url.searchParams.getAll("pane")) {
+    for (const part of raw.split(",")) {
+      const id = part.trim();
+      if (id === "") continue;
+      out.add(id);
+      if (out.size >= MAX_WATCHED_PANES) return out;
+    }
+  }
+  return out;
+}
+
+/** The `?wait=` a pane read asked for, clamped: absent, non-numeric or ≤ 0 reads as "answer now". */
+export function paneWaitMs(url: URL): number {
+  const raw = Number.parseInt(url.searchParams.get("wait") ?? "", 10);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.min(raw, PANE_WAIT_MAX_MS);
+}
+
 async function readPane(
-  herdr: MuxAdapter,
+  rt: SessionRuntime,
+  reads: PaneReads,
   cfg: Config,
   paneId: string,
   url: URL,
   req: Request,
 ): Promise<Response> {
+  const { herdr } = rt;
   const linesParam = Number.parseInt(url.searchParams.get("lines") ?? "", 10);
   // Clamp to a sane ceiling — don't trust the client (or Herdr) to bound an enormous read.
   const lines =
@@ -1964,40 +2610,120 @@ async function readPane(
       ? Math.min(linesParam, MAX_READ_LINES)
       : cfg.readLines;
   try {
-    // "ansi" so the client can render a faithful, colored terminal mirror. It is also, as far as we
-    // have probed, why this read leaves the operator's terminal alone: a `recent` read only harvests
-    // an alt-screen pane — scrolling it up and back — in `text` format. `lines` here is whatever the
-    // web app asked for (600 for the history view), well past any pane's height, so switching this
-    // to `strip` would move someone's screen on every revalidate — see the adapter's `readGrid`.
-    const read = await herdr.readGrid(paneId, { scope: "recent", lines, styling: "preserve" });
-    if (!read.ok) return text(`${herdr.mux} read failed: ${read.detail}`, 502);
-    const data = paneReadResponse(paneId, read.value);
-    // ETag is derived from the serialised body — if content hasn't changed the client gets a 304
-    // and skips the whole transfer (the big win on a cellular link).
-    const bodyStr = JSON.stringify(data);
-    const etag = computeEtag(bodyStr);
+    // THROUGH THE CACHE (bridge/events.ts). Two polls inside a quarter second — a second tab, a
+    // burst — share one multiplexer read, and a pane somebody follows on the live feed is answered
+    // from the watcher's own read with no socket call at all. The ETag is the cached entry's, so an
+    // unchanged poll costs neither the read nor the hash it used to.
+    let result = await reads.read(paneId, lines);
+    if (!result.ok) return text(`${herdr.mux} read failed: ${result.detail}`, 502);
+    const inm = req.headers.get("if-none-match");
+    // LONG-POLL. A client that holds the current bytes and asked to wait is held until they change
+    // or the deadline passes, then answered exactly as a plain read would be. This is the poll for
+    // a page whose stream is down: one request replaces several, and a change is answered the beat
+    // it happens rather than up to an interval later.
+    const wait = paneWaitMs(url);
+    if (wait > 0 && notModified(inm, result.entry.etag)) {
+      const changed = await reads.waitForChange(paneId, lines, result.entry.etag, wait);
+      if (changed) result = { ok: true, entry: changed };
+    }
+    const { entry } = result;
     // Tag pane polls too (both the 304 and the full body), so a client that only has a pane open —
     // not the home snapshot — still observes a live rebuild between polls.
     const build = await buildId();
-    if (notModified(req.headers.get("if-none-match"), etag)) {
+    if (notModified(inm, entry.etag)) {
       // RFC 7232 §4.1: 304 MUST echo the ETag; body MUST be empty.
       return withBuildHeader(
         secure(
           new Response(null, {
             status: 304,
-            headers: { etag, "cache-control": "no-store" },
+            headers: { etag: entry.etag, "cache-control": "no-store" },
           }),
         ),
         build,
       );
     }
     return withBuildHeader(
-      secure(gzipJsonResponse(data, req.headers.get("accept-encoding"), { etag })),
+      secure(jsonBodyResponse(entry.body, req.headers.get("accept-encoding"), { etag: entry.etag })),
       build,
     );
   } catch (err) {
     return text(`${herdr.mux} read failed: ${errorText(err)}`, 502);
   }
+}
+
+/**
+ * `GET /api/events` — the live feed, as a Server-Sent Events stream.
+ *
+ * `?pane=<id>&lines=<n>` follows one pane at the window the page polls it with: the bridge watches
+ * that pane locally and pokes the stream when its bytes move. With no pane the stream carries only
+ * herd pokes. A comment ping goes out every {@link SSE_PING_MS} so an idle proxy keeps the
+ * connection, and `retry:` tells the browser how soon to come back after a drop.
+ *
+ * FORK: `?pane=` MAY BE REPEATED, and may name several panes as one comma list. That is the
+ * Overview screen — a grid of cards, each a pane's last few lines — which until now ran its own 3 s
+ * timer entirely outside the poll loop: 20 requests a minute PER CARD through an identity proxy,
+ * from a screen that is a glance. One stream naming every visible card turns that into one
+ * connection and a poke per card that actually moved. The set is capped ({@link MAX_WATCHED_PANES})
+ * because each member costs a local re-read every {@link PANE_WATCH_MS}.
+ *
+ * The three headers are the ones a stream needs to survive an intermediary: `no-transform` so a
+ * proxy does not buffer-and-compress it into a body that arrives all at once at the end,
+ * `x-accel-buffering: no` for the nginx family, and `text/event-stream` which Cloudflare passes
+ * through unbuffered.
+ */
+function eventStream(reads: PaneReads, hub: EventHub, cfg: Config, url: URL, req: Request): Response {
+  const paneIds = watchedPanes(url);
+  const linesParam = Number.parseInt(url.searchParams.get("lines") ?? "", 10);
+  const lines =
+    Number.isFinite(linesParam) && linesParam > 0 ? Math.min(linesParam, MAX_READ_LINES) : cfg.readLines;
+  const enc = new TextEncoder();
+  let cleanup: (() => void) | null = null;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let open = true;
+      const send = (chunk: string) => {
+        if (!open) return;
+        try {
+          controller.enqueue(enc.encode(chunk));
+        } catch {
+          // The socket went away between the check and the write: close our side and let the
+          // subscription go. The client's own reconnect brings a fresh stream.
+          close();
+        }
+      };
+      const unsubscribe = hub.subscribe({ paneIds, send: (event) => send(sseFrame(event)) });
+      const release = paneIds.size > 0 ? reads.watch(paneIds, lines) : () => {};
+      const ping = setInterval(() => send(SSE_PING), SSE_PING_MS);
+      const close = () => {
+        if (!open) return;
+        open = false;
+        clearInterval(ping);
+        unsubscribe();
+        release();
+        req.signal.removeEventListener("abort", close);
+        try {
+          controller.close();
+        } catch {
+          /* already closed by the peer */
+        }
+      };
+      cleanup = close;
+      req.signal.addEventListener("abort", close, { once: true });
+      send("retry: 3000\n\n");
+    },
+    cancel() {
+      cleanup?.();
+    },
+  });
+  return secure(
+    new Response(stream, {
+      headers: {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache, no-transform",
+        "x-accel-buffering": "no",
+      },
+    }),
+  );
 }
 
 /**
@@ -2030,12 +2756,113 @@ export function historyParams(url: URL): HistoryParams {
 }
 
 /**
+ * A document-list refusal as a status. The same split the document route makes: an absent store is
+ * a 404 (the feature is off), and everything else is THIS side's fault and a 503.
+ */
+/** FORK: the usage card's refusal, as plain text the phone shows under the section label. */
+function quotaRefusal(reason: QuotaFailure): string {
+  switch (reason) {
+    case "not_configured":
+      return "no quota source";
+    case "timeout":
+      return "the quota command did not answer in time";
+    case "unparsable":
+      return "the quota command printed something that is not its JSON";
+    default:
+      return "the quota command failed";
+  }
+}
+
+function docsRefusal(reason: DocumentFailure): Response {
+  return reason === "not_configured" || reason === "not_found" || reason === "bad_slug"
+    ? text("no document store", 404)
+    : text("the document store is not answering", 503);
+}
+
+/**
+ * GET /api/pane/:id/diff — what the agent changed in the pane's working tree, read-only.
+ *
+ * `?mode=stat` (the default) is the file list with counts; `?mode=patch&path=<repo-relative>` is
+ * one file's unified diff. The pane's `cwd` comes off the engine's own snapshot, so nothing here
+ * takes a directory from the client — only a path INSIDE the repo that cwd resolves to, and
+ * bridge/diff.ts refuses one that is not. Validates on the body's hash: a re-open of an unchanged
+ * tree is a 304, which on a phone is the difference between a tap and a download.
+ *
+ * Refusals are plain text, the folder picker's convention: the sheet's move is the same for each
+ * (say why, offer Refresh), so a coded body would buy it nothing.
+ */
+async function paneDiff(engine: StateEngine, paneId: string, url: URL, req: Request): Promise<Response> {
+  const { agents, shellPanes } = engine.current();
+  const pane = [...agents, ...shellPanes].find((a) => a.paneId === paneId);
+  if (!pane) return text("no such pane", 404);
+  const mode = url.searchParams.get("mode") === "patch" ? "patch" : "stat";
+  const result =
+    mode === "patch"
+      ? await diffPatch(pane.cwd, url.searchParams.get("path") ?? "", homedir())
+      : await diffStat(pane.cwd, homedir());
+  if (!result.ok) {
+    if (result.reason === "outside_root") return text("outside the allowed directories", 403);
+    if (result.reason === "not_a_repo") return text("not a git work tree", 404);
+    if (result.reason === "bad_path") return text("not a path in this repo", 400);
+    if (result.reason === "timeout") return text("git did not answer in time", 504);
+    return text("no such file", 404);
+  }
+  const body = JSON.stringify(result.body);
+  const etag = computeEtag(body);
+  if (notModified(req.headers.get("if-none-match"), etag)) {
+    return secure(new Response(null, { status: 304, headers: { etag, "cache-control": "no-store" } }));
+  }
+  return secure(jsonBodyResponse(body, req.headers.get("accept-encoding"), { etag }));
+}
+
+/**
+ * FORK: GET /api/pane/:id/file?path=<repo-relative> — one file of the pane's work tree, as text.
+ *
+ * The sibling of {@link paneDiff} and shaped like it deliberately: the pane's `cwd` comes off the
+ * engine's own snapshot so nothing here takes a directory from the client, only a path INSIDE the
+ * repo that cwd resolves to, and bridge/file-view.ts refuses one that is not. Validates on the
+ * body's hash, so re-opening a file nobody has touched is a 304 and no download.
+ *
+ * `binary` is a 415 rather than a 404, and it is the one refusal here worth distinguishing: the file
+ * IS there and the operator asked for the right thing — what this route cannot do is show it. A 404
+ * would send them looking for a path that exists. Everything else is the diff route's own mapping,
+ * because it is the same jail answering the same questions.
+ */
+async function paneFile(engine: StateEngine, paneId: string, url: URL, req: Request): Promise<Response> {
+  const { agents, shellPanes } = engine.current();
+  const pane = [...agents, ...shellPanes].find((a) => a.paneId === paneId);
+  if (!pane) return text("no such pane", 404);
+  const result = await fileView(pane.cwd, url.searchParams.get("path") ?? "", homedir());
+  if (!result.ok) {
+    if (result.reason === "binary") return text("not a text file", 415);
+    if (result.reason === "outside_root") return text("outside the allowed directories", 403);
+    if (result.reason === "not_a_repo") return text("not a git work tree", 404);
+    if (result.reason === "bad_path") return text("not a path in this repo", 400);
+    if (result.reason === "timeout") return text("git did not answer in time", 504);
+    return text("no such file", 404);
+  }
+  const body = JSON.stringify(result.body);
+  const etag = computeEtag(body);
+  if (notModified(req.headers.get("if-none-match"), etag)) {
+    return secure(new Response(null, { status: 304, headers: { etag, "cache-control": "no-store" } }));
+  }
+  return secure(jsonBodyResponse(body, req.headers.get("accept-encoding"), { etag }));
+}
+
+/**
  * GET /api/pane/:id/history — the conversation history the pane's terminal cannot provide.
  *
  * The session ref is resolved HERE, from the live snapshot, keyed by pane id — the client never sends
  * one. That is the whole safety story for a route that reads files: the only client-controlled inputs
  * are a pane id (a Map lookup) and an opaque cursor (an array lookup). Which harness knows how to
  * read the log is the registry's decision, so this route stays agent-agnostic.
+ *
+ * FORK: it validates on the body's hash, exactly as {@link paneDiff} beside it does. History stopped
+ * being a navigation-only read the day `use-latest-reply` started fetching it on every settle of the
+ * mirror — a pane the operator is watching re-reads the same newest turns each time the screen stops
+ * moving, and on a phone that is a full round trip to re-download what it already holds. The
+ * transcript store caches its own parse on the log's size+mtime, so the 304 costs a re-serialise and
+ * a hash of a page that was already in memory.
  */
 async function paneHistory(
   cfg: Config,
@@ -2068,7 +2895,15 @@ async function paneHistory(
   try {
     const page = await transcripts.page(adapter, pane.agentSession, historyParams(url));
     if (page === null) return unavailable("no-log");
-    return json({ paneId, available: true, ...page } satisfies PaneHistoryResponse, accept);
+    // The three `unavailable` answers above are deliberately NOT validated: each is a two-field
+    // constant, smaller than the headers a 304 would carry, and a client that holds one is not
+    // holding a page that can go stale under it.
+    const body = JSON.stringify({ paneId, available: true, ...page } satisfies PaneHistoryResponse);
+    const etag = computeEtag(body);
+    if (notModified(req.headers.get("if-none-match"), etag)) {
+      return secure(new Response(null, { status: 304, headers: { etag, "cache-control": "no-store" } }));
+    }
+    return secure(jsonBodyResponse(body, accept, { etag }));
   } catch (err) {
     return text(`transcript read failed: ${errorText(err)}`, 502);
   }
@@ -2756,6 +3591,7 @@ async function createWorkspace(
   audit: AuditLog,
   device: string | null,
   session: string,
+  roots: readonly string[] = [],
 ): Promise<Response> {
   let body: JsonValue;
   try {
@@ -2768,7 +3604,13 @@ async function createWorkspace(
   }
   const fields = asJsonRecord(body) ?? {};
   // Checked, not declared — see createTab.
-  const cwd = (typeof fields.cwd === "string" ? fields.cwd.trim() : "") || homedir();
+  // THE SAME BOUNDARY THE FOLDER PICKER DRAWS, enforced here because this is where it actually
+  // matters: the picker is a UI and this route is the door. A `cwd` the operator's roots do not
+  // contain is refused rather than silently redirected — opening a shell somewhere other than where
+  // the client asked would be a worse answer than saying no.
+  const askedCwd = typeof fields.cwd === "string" ? fields.cwd.trim() : "";
+  const cwd = await resolveWithinRoots(askedCwd, homedir(), roots);
+  if (cwd === null) return text("outside the allowed directories", 403);
   const label = typeof fields.label === "string" ? fields.label : undefined;
   const ae = req.headers.get("accept-encoding");
   const outcome = await herdr.createSpace({ cwd, label });
@@ -3016,12 +3858,41 @@ async function openWorktree(
 // `launch` below: the route registration (gate, `?host=` forward) stays pinned by
 // server.test.ts's "every session-scoped route resolves through the gate" source read, and this
 // function is what answers once that has already happened.
+/**
+ * `GET /api/dirs?path=…` — the folders under one directory.
+ *
+ * Refusals are PLAIN TEXT rather than coded error bodies, which is the catalogue's own rule for
+ * this shape (error-codes.ts: "plain-text refusals … are not JSON, so there is no field to add one
+ * to"). The picker's move is the same for all three anyway — stay where you are, say the listing
+ * failed — so a code would buy the client nothing it does not already have from the status.
+ */
+export async function dirsRoute(req: Request, roots: readonly string[] = []): Promise<Response> {
+  const want = new URL(req.url).searchParams.get("path") ?? "";
+  const result = await listDirs(want, homedir(), undefined, roots);
+  if (!result.ok) {
+    // "allowed directories", not "home": with COLLIE_DIR_ROOTS set, home is no longer the boundary
+    // and naming it would send the operator looking in the wrong place.
+    if (result.reason === "outside_root") return text("outside the allowed directories", 403);
+    if (result.reason === "not_a_directory") return text("not a directory", 400);
+    return text("no such directory", 404);
+  }
+  return json(result.body satisfies DirsBody, req.headers.get("accept-encoding"));
+}
+
 export async function launchersRoute(
   getLaunchers: () => Promise<Launcher[]>,
   acceptEncoding: string | null,
 ): Promise<Response> {
+  return json(await launchersBody(getLaunchers), acceptEncoding);
+}
+
+/** The same body without the Response around it — what FORK's `/api/boot` bundle embeds, so the
+ *  bundle and the route cannot answer different rows. */
+export async function launchersBody(
+  getLaunchers: () => Promise<Launcher[]>,
+): Promise<LaunchersResponse> {
   const rows = await getLaunchers();
-  return json({ launchers: rows, home: homedir() } satisfies LaunchersResponse, acceptEncoding);
+  return { launchers: rows, home: homedir(), handoffModels: await readHandoffModels() } satisfies LaunchersResponse;
 }
 
 // Launch one allowlisted command, either in a new throwaway Space (from the dashboard, no pane
@@ -3175,6 +4046,152 @@ export async function launch(
   );
 }
 
+// ── FORK: handoff — this pane's conversation, continued by another harness ──────────────────────
+// A session cannot move between harnesses (bridge/handoff.ts says why), so what moves is a
+// document: the previous agent's own summary and recent turns, the pane's artifacts, and what the
+// operator wants next, kept as an artifact OF THIS PANE and handed to the new agent as the path in
+// its opening prompt. The launch itself is `launch` above, unchanged: the route derives one shell
+// line from the operator's own row (`<row.command> '<prompt>'`, or `-i` for agy) and hands `launch`
+// a one-row allowlist holding exactly that line, so the allowlist argument still holds — the phone
+// named a row; optional model flags must match the local Codex catalog before anything is written.
+
+/** What the route reads and starts with — the same objects the history and launch routes hold. */
+interface HandoffDeps {
+  herdr: MuxAdapter;
+  engine: StateEngine;
+  cfg: Config;
+  journals: Record<string, JournalAdapter> | null;
+  transcripts: TranscriptStore | null;
+  artifacts: ArtifactStore;
+  getLaunchers: () => Promise<Launcher[]>;
+  getHandoffModels?: typeof readHandoffModels;
+}
+
+export async function handoffPane(
+  deps: HandoffDeps,
+  paneId: string,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+  wait: PaneReadyOptions = {},
+): Promise<Response> {
+  const ae = req.headers.get("accept-encoding");
+  let body: JsonValue;
+  try {
+    // SAFETY: as createWorkspace — every field is checked below, none trusted as declared.
+    body = (await req.json()) as JsonValue;
+  } catch {
+    return text("bad body", 400);
+  }
+  const fields = asJsonRecord(body) ?? {};
+  const command = typeof fields.command === "string" ? fields.command.trim() : "";
+  if (command === "") return text("bad body", 400);
+  const instruction =
+    typeof fields.instruction === "string" ? fields.instruction.slice(0, HANDOFF_INSTRUCTION_CHARS) : "";
+
+  const { agents, shellPanes } = deps.engine.current();
+  const pane = [...agents, ...shellPanes].find((p) => p.paneId === paneId);
+  if (!pane) return text("no such pane", 404);
+  const rows = await deps.getLaunchers();
+  const row = rows.find((r) => r.command === command);
+  if (!row) return json({ ok: false, ...apiError("launch.not_allowlisted") } satisfies HandoffResponse, ae, 400);
+  const model = jsonStringField(fields.model);
+  const effort = jsonStringField(fields.effort);
+  let modelOptions: { model: string; effort: string } | undefined;
+  if (fields.model !== undefined || fields.effort !== undefined) {
+    const models = await (deps.getHandoffModels ?? readHandoffModels)();
+    const selected = models.find((m) => m.id === model);
+    if (!model || !effort || !selected?.efforts.includes(effort)) return text("model or effort is not in this host's Codex catalog", 400);
+    modelOptions = { model, effort };
+  }
+  // The line is derived BEFORE anything is written, so a row this cannot start costs no artifact.
+  const probe = handoffCommandLine(row.command, "", modelOptions);
+  if (probe === null) return text("the launcher is not a harness a handoff can start (claude, codex or agy)", 400);
+
+  // The pane's newest turns, resolved exactly as the history route resolves them: the ref off the
+  // live snapshot, the harness that wrote it keying the adapter, the store doing the containment.
+  // A pane with no journal hands off what it has — the facts and the operator's instruction.
+  let entries: TranscriptEntry[] = [];
+  if (deps.cfg.transcript && deps.journals !== null && deps.transcripts !== null && pane.agentSession) {
+    const adapter = adapterFor(deps.journals, journalAgentOf(pane));
+    if (adapter !== undefined) {
+      try {
+        const page = await deps.transcripts.page(adapter, pane.agentSession, { limit: HANDOFF_RECENT_TURNS + 4 });
+        if (page !== null) entries = page.entries;
+      } catch {
+        // The document says "nothing on record"; an unreadable log is not a reason to refuse the handoff.
+      }
+    }
+  }
+  const library = await deps.artifacts.resolvePanes(await deps.artifacts.list(), agents);
+  const made = library
+    .filter((a) => a.pane?.paneId === pane.paneId && !a.tags.includes(HANDOFF_TAG))
+    .map((a) => ({ title: a.title, path: deps.artifacts.filePath(a), id: a.id }));
+  const document = buildHandoffDocument(
+    {
+      fromAgent: pane.agent,
+      toLabel: row.label,
+      workspaceLabel: pane.workspaceLabel,
+      cwd: pane.cwd,
+      paneId: pane.paneId,
+      whenMs: Date.now(),
+      instruction: modelOptions ? `${instruction}\n\nRequested Codex model: ${modelOptions.model}; reasoning effort: ${modelOptions.effort}.` : instruction,
+      artifacts: made,
+    },
+    entries,
+  );
+  const input: ArtifactInput = {
+    bytes: new TextEncoder().encode(document),
+    fileName: "handoff.md",
+    title: `Handoff · ${pane.agent} → ${row.label}`,
+    tags: [HANDOFF_TAG],
+    sourcePath: null,
+    harness: pane.agent,
+    session: pane.agentSession ?? null,
+    origin: null,
+    pane: { paneId: pane.paneId, workspaceId: pane.workspaceId, workspaceLabel: pane.workspaceLabel, agent: pane.agent },
+  };
+  // One slug per (space, agent), so a second handoff from the same pane is a new VERSION of the
+  // first — the library shows one card, the viewer offers both.
+  const slug = slugify(`handoff ${pane.workspaceLabel} ${pane.agent}`);
+  const added = await deps.artifacts.add(slug === "" ? input : { ...input, slug });
+  if (!added.ok) return text(`handoff not kept: ${added.reason}`, 500);
+
+  const line = handoffCommandLine(row.command, handoffPrompt(deps.artifacts.filePath(added.record), pane.agent), modelOptions);
+  // `probe` above already proved the row starts a known harness; only the path could have changed the answer.
+  if (line === null || hasControlChar(line)) return text("the launch line carries a control character", 400);
+  const synthetic: Launcher = { command: line, label: row.label };
+  if (row.cwd !== undefined) synthetic.cwd = row.cwd;
+  // `launch` reads what a phone would have posted; no accept-encoding, so its answer is plain JSON.
+  const launched = await launch(
+    deps.herdr,
+    deps.engine,
+    new Request("http://collie/api/launch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: line, paneId: pane.paneId }),
+    }),
+    audit,
+    device,
+    session,
+    () => Promise.resolve([synthetic]),
+    wait,
+  );
+  if (launched.status !== 200) return launched;
+  // SAFETY: `launch` answers 200 only with a body it built `satisfies CreateResponse` (above).
+  const created = (await launched.json()) as CreateResponse;
+  if (!created.ok) return json(created satisfies HandoffResponse, ae);
+  audit.record({
+    action: "pane.handoff",
+    paneId: pane.paneId,
+    session,
+    device,
+    detail: { to: created.pane.paneId, artifact: added.record.id, command: row.command },
+  });
+  return json({ ok: true, pane: created.pane, artifact: added.record } satisfies HandoffResponse, ae);
+}
+
 /**
  * The two numbers an oversize refusal carries: the exact byte cap for a client that computes, and
  * the whole megabytes the sentence itself is written in. Both come off THIS host's config, so a
@@ -3266,6 +4283,131 @@ async function uploadPane(
   }
 }
 
+// ── FORK: annotate-and-ask (bridge/shot.ts) ──────────────────────────────────────────────────
+//
+// Two handlers, one command. Both are route lines and nothing else: the policy — which URLs, which
+// caps, which fields — lives in `bridge/shot.ts`, so this file names a seam rather than owning one.
+//
+// THE AUDIT LINE RECORDS THE URL AND NOT THE ANSWER. A shot is a write-level act (it starts a
+// browser on this machine), so it is recorded like every other one; what is recorded is the request
+// — the URL asked for and the viewport — because the answer is an image, and an image in a JSONL
+// log is a log nobody can read. The probe's line names the selector for the same reason it is the
+// field the operator's question will quote.
+
+/** A finite number field, or the caller's default. The client's numbers are its claim, not a fact. */
+function shotNumber(value: JsonValue | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** The viewport and URL a shot request carries, or null when the body is not one. */
+function shotRequest(fields: JsonObject): ShotAsk | null {
+  const url = fields.url;
+  if (typeof url !== "string" || url === "") return null;
+  // 390×844 is the phone this deployment is read on; a body that names neither gets it. Every one
+  // of these is clamped again inside `ShotRunner` before it can reach an argv.
+  return {
+    url,
+    width: shotNumber(fields.width, 390),
+    height: shotNumber(fields.height, 844),
+    dpr: shotNumber(fields.dpr, 3),
+  };
+}
+
+async function shotPane(
+  shot: ShotRunner | null,
+  paneId: string,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+): Promise<Response> {
+  if (shot === null) return text("no shot command", 404);
+  let body: JsonValue;
+  try {
+    // SAFETY: `Request.json()` output IS a JsonValue by construction; every field is checked below.
+    body = (await req.json()) as JsonValue;
+  } catch {
+    return text("bad body", 400);
+  }
+  const asked = shotRequest(asJsonRecord(body) ?? {});
+  if (asked === null) return text("bad url", 400);
+  const got = await shot.shot(asked.url, asked.width, asked.height, asked.dpr);
+  if (!got.ok) return text(shotRefusal(got.reason), shotStatus(got.reason));
+  audit.record({
+    action: "shot",
+    paneId,
+    session,
+    device,
+    detail: { url: got.body.url, width: got.body.width, height: got.body.height, bytes: got.body.image.length },
+  });
+  return json(got.body, req.headers.get("accept-encoding"));
+}
+
+async function probePane(
+  shot: ShotRunner | null,
+  paneId: string,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+): Promise<Response> {
+  if (shot === null) return text("no shot command", 404);
+  let body: JsonValue;
+  try {
+    // SAFETY: as above — a JsonValue by construction, narrowed field by field.
+    body = (await req.json()) as JsonValue;
+  } catch {
+    return text("bad body", 400);
+  }
+  const fields = asJsonRecord(body) ?? {};
+  const asked = shotRequest(fields);
+  if (asked === null) return text("bad url", 400);
+  const x = fields.x;
+  const y = fields.y;
+  if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) {
+    return text("bad point", 400);
+  }
+  const got = await shot.probe(asked.url, asked.width, asked.height, x, y, asked.dpr);
+  if (!got.ok) return text(shotRefusal(got.reason), shotStatus(got.reason));
+  audit.record({
+    action: "probe",
+    paneId,
+    session,
+    device,
+    detail: { url: got.body.url, selector: got.body.selector, tag: got.body.tag },
+  });
+  return json(got.body, req.headers.get("accept-encoding"));
+}
+
+/**
+ * FORK: a shot's refusal as a status. The split the document route makes: the feature being off or
+ * the URL being one this bridge will not open is the CLIENT's side (404 / 400), and everything else
+ * is THIS side's fault (503).
+ */
+function shotStatus(reason: ShotFailure): number {
+  if (reason === "not_configured") return 404;
+  if (reason === "bad_url") return 400;
+  return 503;
+}
+
+/** FORK: the sentence the phone shows under a failed shot. Never a slice of the command's output. */
+function shotRefusal(reason: ShotFailure): string {
+  switch (reason) {
+    case "not_configured":
+      return "no shot command";
+    case "bad_url":
+      return "that URL is not one this bridge will open";
+    case "timeout":
+      return "the shot command did not answer in time";
+    case "too_large":
+      return "the shot came back too big to send";
+    case "unparsable":
+      return "the shot command printed something unexpected";
+    default:
+      return "the shot command failed";
+  }
+}
+
 /**
  * Access gate for the API:
  *  - Host allowlist (fail-closed): the request's Host header must be a loopback form, an explicit
@@ -3275,9 +4417,11 @@ async function uploadPane(
  *  - Same-origin only (Origin host must equal Host) — defeats cross-site requests/CSRF. Browsers
  *    omit Origin on same-origin GETs (so the snapshot poll passes); they send it on POSTs.
  *    localhost and explicitly-configured origins are also allowed.
- *  - Origin required for writes: a state-changing (`level === "write"`) request with no Origin is
- *    trusted only from loopback (curl on the host). Browsers always send Origin on fetch/SW POSTs,
- *    so a missing Origin on a remote write is a non-browser or Origin-stripped request — reject it.
+ *  - Origin required for UNSAFE writes: a `level === "write"` request whose METHOD can change state
+ *    (i.e. not GET/HEAD) and which carries no Origin is trusted only from loopback (curl on the
+ *    host). Browsers always send Origin on fetch/SW POSTs, so a missing Origin there is a
+ *    non-browser or Origin-stripped request — reject it. A write-GATED GET (`/api/dirs`) is exempt,
+ *    because browsers omit Origin on same-origin GETs and a safe method is not a CSRF vector.
  *  - Tailscale identity: when a trusted user is configured under `tailscale serve`, the request
  *    must carry a matching `Tailscale-User-Login`. A missing header is rejected too — serve injects
  *    none for tagged nodes. Under COLLIE_SKIP_SERVE=1 or COLLIE_TRUSTED_USER_OPTIONAL=1, only a
@@ -3309,8 +4453,17 @@ export function checkAccess(
       LOOPBACK_HOST.test(originHost) ||
       cfg.allowedOrigins.includes(origin);
     if (!allowed) return { ok: false, reason: "cross-origin rejected" };
-  } else if (level === "write" && !LOOPBACK_HOST.test(host)) {
-    // A write with no Origin header from a non-loopback Host isn't a real browser request — refuse.
+  } else if (level === "write" && !SAFE_METHOD.test(req.method) && !LOOPBACK_HOST.test(host)) {
+    // A state-changing request with no Origin from a non-loopback Host isn't a real browser
+    // request — refuse.
+    //
+    // THE METHOD CHECK IS NOT REDUNDANT WITH THE LEVEL. `GET /api/dirs` is gated on `write` on
+    // purpose (dirs.ts: a device that may not create a space has no use for the folder list), and
+    // browsers OMIT Origin on same-origin GETs — the same fact this function's own doc comment
+    // relies on to let the snapshot poll through. Without this clause the folder picker answered
+    // 403 "origin required" to every browser on a public host while passing every loopback test,
+    // because loopback is exempt. Permission level says WHO may ask; the method says whether a
+    // forged cross-site request could do damage. They are different questions.
     return { ok: false, reason: "origin required" };
   }
 
@@ -3449,6 +4602,105 @@ export function deviceAuth(req: Request, cfg: Config): DeviceAuth {
 // Apply the shared hardening headers (nosniff / no-referrer) to any response. Every response the
 // bridge emits funnels through json(), text(), serveStatic(), or a handful of inline responses —
 // all of which pass through here — so the headers are set exactly once, consistently.
+// ── FORK: artifact route helpers (bridge/artifacts.ts) ─────────────────────────────────────────
+
+/** The list the phone reads. `ok` for the same reason every other read body carries it. */
+interface ArtifactsResponse {
+  ok: true;
+  artifacts: ArtifactRecord[];
+}
+
+interface ArtifactResponse {
+  ok: true;
+  artifact: ArtifactRecord;
+}
+
+/**
+ * The bytes, under the policy their kind earns. HTML is a DOCUMENT: bridge/docs.ts's headers, the
+ * same object preview and the kb panel serve under, so a report built from things read on the web
+ * cannot reach the app's origin. Markdown and text are served as `text/plain` — never as HTML, no
+ * matter what the file says about itself — and still carry the policy, because a browser asked to
+ * render text/plain will. An image is inline under its own mime. Anything else is an attachment:
+ * bytes nobody classified are offered to the share sheet, never to the renderer.
+ */
+function artifactRawResponse(
+  record: ArtifactRecord,
+  bytes: Uint8Array<ArrayBuffer>,
+  ifNoneMatch: string | null,
+): Response {
+  const etag = `"${record.sha256.slice(0, 32)}"`;
+  const headers: Record<string, string> =
+    record.kind === "html"
+      ? documentResponseHeaders(etag)
+      : {
+          "content-type": record.kind === "markdown" || record.kind === "text" ? "text/plain; charset=utf-8" : record.mime,
+          "cache-control": "no-cache",
+          "content-security-policy": DOCUMENT_CSP,
+          etag,
+        };
+  if (record.kind === "file") {
+    headers["content-disposition"] = `attachment; filename="${record.slug}-v${String(record.version)}.${record.ext}"`;
+  }
+  if (notModified(ifNoneMatch, etag)) return secure(new Response(null, { status: 304, headers }));
+  return secure(new Response(bytes, { headers }));
+}
+
+/** A phone-side save: which pane's page, and what to call it. */
+interface ArtifactSaveAsk {
+  pane: string;
+  path: string;
+  title: string | null;
+  slug: string | null;
+}
+
+async function artifactSaveFrom(req: Request): Promise<ArtifactSaveAsk | null> {
+  let raw: JsonValue;
+  try {
+    // SAFETY: `req.json()` is the untyped body; each field is narrowed through the stt/json.ts readers.
+    raw = (await req.json()) as JsonValue;
+  } catch {
+    return null;
+  }
+  const rec = jsonRecord(raw);
+  if (rec === null) return null;
+  const pane = jsonStringField(rec.pane);
+  const path = jsonStringField(rec.path);
+  if (pane === null || pane === "" || path === null || path === "") return null;
+  const slug = jsonStringField(rec.slug);
+  return { pane, path, title: jsonStringField(rec.title), slug: slug === "" ? null : slug };
+}
+
+/** The PATCH body, narrowed: only the four fields a client may change, each only in its own shape. */
+async function artifactPatchFrom(req: Request): Promise<ArtifactPatch | null> {
+  let raw: JsonValue;
+  try {
+    // SAFETY: `req.json()` is the untyped body; every field is narrowed below through the stt/json.ts
+    // readers, and an unrecognised shape answers null.
+    raw = (await req.json()) as JsonValue;
+  } catch {
+    return null;
+  }
+  const rec = jsonRecord(raw);
+  if (rec === null) return null;
+  const patch: ArtifactPatchDraft = {};
+  const title = jsonStringField(rec.title);
+  if (title !== null) patch.title = title;
+  if (Array.isArray(rec.tags)) {
+    patch.tags = rec.tags.flatMap((v) => {
+      const s = jsonStringField(v);
+      return s !== null && ARTIFACT_TAG.test(s) ? [s] : [];
+    });
+  }
+  if (rec.pinned === true || rec.pinned === false) patch.pinned = rec.pinned;
+  if (rec.kbSlug === null) patch.kbSlug = null;
+  else {
+    const kb = jsonStringField(rec.kbSlug);
+    if (kb !== null) patch.kbSlug = kb === "" ? null : kb;
+  }
+  if (Object.keys(patch).length === 0) return null;
+  return patch;
+}
+
 function secure(res: Response): Response {
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.headers.set(k, v);
   return res;
@@ -3557,16 +4809,9 @@ export function parsePairRequest(v: JsonValue | undefined): PairRequest | null {
  * Pure + exported so the validation is unit-testable without Bun.serve.
  */
 export function parseNotifyPrefsPatch(v: JsonValue | undefined): Partial<NotifyPrefs> | null {
-  const o = asJsonRecord(v);
-  if (o === null) return null;
-  const patch: Partial<NotifyPrefs> = {};
-  for (const key of ["blocked", "done", "updates"] as const) {
-    if (!(key in o)) continue;
-    const value = o[key];
-    if (typeof value !== "boolean") return null;
-    patch[key] = value;
-  }
-  return patch;
+  // FORK: the patch grew a per-pane rule list, and its validation lives with the store that owns
+  // the shape (bridge/notify-prefs.ts) rather than beside the route.
+  return parsePrefsPatch(v);
 }
 
 // Shape-check an untrusted /api/subscribe body before persisting it (a malformed sub would be
@@ -3604,8 +4849,17 @@ function supersededEndpoint(body: JsonValue | undefined): string | undefined {
 // (`bridge/crew/standby.ts`) — one answer to "which bundle is on disk", never a second reader that
 // caches it differently.
 let buildCache: { id: string; mtime: number } | null = null;
+// The mtime check is a `stat`, and it ran on EVERY snapshot, pane read and static file — two or
+// three syscalls per request at up to 7 req/s per open page, to notice a rebuild that happens a few
+// times a week. A rebuild is now noticed within a second instead of instantly, which no client can
+// tell apart: the header is read off a poll, and no poll is faster than that.
+const BUILD_STAT_INTERVAL_MS = 1000;
+let buildStatAt = 0;
 export async function buildId(): Promise<string> {
   try {
+    const now = Date.now();
+    if (buildCache && now - buildStatAt < BUILD_STAT_INTERVAL_MS) return buildCache.id;
+    buildStatAt = now;
     const f = Bun.file(join(WEB_DIR, "build-info.json"));
     const mtime = f.lastModified;
     if (!buildCache || buildCache.mtime !== mtime) {
@@ -3728,7 +4982,8 @@ behind your own reverse proxy</em> in the README.</p>
 
 export async function serveStatic(
   pathname: string,
-  acceptEncoding: string | null,
+  acceptEncoding: string | null = null,
+  ifNoneMatch: string | null = null,
   webDir: string = WEB_DIR,
 ): Promise<Response> {
   const resolved = resolveStaticPath(pathname, webDir);
@@ -3751,114 +5006,137 @@ export async function serveStatic(
   }
 
   const ext = extname(full);
+  const cacheControl = cacheControlFor(rel);
   const headers: StaticHeaders = {
     "content-type": CONTENT_TYPES.get(ext) ?? "application/octet-stream",
     [BUILD_HEADER]: await buildId(), // which bundle the server is serving (vs the client's stamp)
-    "cache-control": cacheControlFor(rel),
+    "cache-control": cacheControl,
   };
   if (ext === ".html") headers["content-security-policy"] = CSP;
   if (rel === "sw.js") headers["service-worker-allowed"] = "/";
 
-  const gz = await gzippedStatic(file, full, ext, acceptEncoding);
-  if (gz === null) return secure(new Response(file, { headers }));
-  headers["content-encoding"] = "gzip";
-  headers["vary"] = "accept-encoding";
-  // Stated rather than left to the runtime, because the length a client must read is the
-  // COMPRESSED one; a length copied from the file on disk would hang the download.
-  headers["content-length"] = String(gz.byteLength);
-  return secure(new Response(gz, { headers }));
+  // ── FORK: `no-cache` WITHOUT A VALIDATOR CAN ONLY EVER RE-SEND THE WHOLE FILE ────────────────
+  // Every non-hashed dist file ships `no-cache`, which is correct (a rebuild must never be pinned)
+  // and, until now, was also pointless: with no ETag a revalidation has nothing to compare, so the
+  // browser re-downloads the body it already holds. `sw.js` is the expensive one — `reg.update()`
+  // fetches it every 60 s on every open screen (web/src/lib/pwa.ts), 25 KB a time, forever.
+  //
+  // The tag is a strong hash of the BYTES (`computeEtag`, the same one `muxLogoResponse` and
+  // `operatorFontResponse` already use), cached on the file's size + mtime so a request does not
+  // re-hash it and a rebuild invalidates it. Hashed assets get none: `immutable` already means the
+  // browser never asks, so a tag there would be a hash computed for nobody.
+  //
+  // `no-cache` STAYS on sw.js. The comment on `cacheControlFor` explains why and is correct — a
+  // proxy that pins it wedges the whole SW update pipeline. An ETag does not weaken it: `no-cache`
+  // means "revalidate before use", and this is what finally lets that revalidation succeed cheaply.
+  const validated = cacheControl === "no-cache" ? await staticEtag(full) : null;
+  if (validated !== null) {
+    headers["etag"] = validated;
+    if (notModified(ifNoneMatch, validated)) {
+      return secure(new Response(null, { status: 304, headers }));
+    }
+  }
+
+  // A hashed asset is immutable, so its compressed form is too: compressed ONCE, at the top of
+  // brotli's dial, and held for the process's life. The bundle is 880 KB on disk and ~210 KB as
+  // `br`; a cold install downloads the latter.
+  //
+  // FORK: the four mutable text files compress too, but NOT through that cache — they change under
+  // their own path, which is the one thing `assetCache` cannot notice. They are keyed on size+mtime
+  // like the tag above, and at 25 KB the compression itself is well under a millisecond.
+  const encoding = isCompressibleAsset(rel, ext) ? pickEncoding(acceptEncoding) : null;
+  if (encoding !== null) {
+    const compressed = validated === null
+      ? await compressedAsset(full, encoding)
+      : await compressedMutable(full, encoding);
+    if (compressed) {
+      headers["content-encoding"] = encoding;
+      headers["vary"] = "accept-encoding";
+      return secure(new Response(compressed, { headers }));
+    }
+  }
+  return secure(new Response(file, { headers }));
+}
+
+/** The file types worth compressing: text. Images and fonts are already packed. */
+const COMPRESSIBLE_EXTS = new Set([".js", ".css", ".svg", ".json", ".map", ".txt", ".html", ".webmanifest"]);
+
+/**
+ * The non-hashed dist files that are text, and therefore worth compressing on the way out.
+ *
+ * Named one by one rather than derived from the extension, because "not under `assets/`" is also
+ * every favicon, every PWA tile and `build-info.json` — and the point of the list is that it is
+ * short, known, and changes only when the build's output does. At the sizes measured on 2026-09-11:
+ * sw.js 25,307 → 7,758 B as `br`, index.html 12,581 → 3,739 B.
+ */
+const COMPRESSIBLE_MUTABLE = new Set(["index.html", "sw.js", "theme-init.js", "manifest.webmanifest"]);
+
+export function isCompressibleAsset(rel: string, ext: string): boolean {
+  if (!COMPRESSIBLE_EXTS.has(ext)) return false;
+  return rel.startsWith("assets/") || COMPRESSIBLE_MUTABLE.has(rel);
 }
 
 /**
- * Extensions whose bytes are text and therefore worth gzipping. Images, fonts and anything unlisted
- * are already compressed, so a second pass spends CPU to grow the body by its gzip framing.
+ * A strong ETag for a MUTABLE dist file, cached on the bytes' identity rather than recomputed.
+ *
+ * `size:mtimeMs` is the cache key, never the tag itself: an mtime is a guess about content and two
+ * writes inside one filesystem tick would collide, which on a service worker is a client pinned to a
+ * build that no longer exists. So the key decides whether to re-hash, and the HASH is what goes on
+ * the wire. Null when the file cannot be stat'd — the caller then serves it unvalidated, exactly as
+ * it always did.
  */
-const COMPRESSIBLE_EXT = new Set([
-  ".js",
-  ".mjs",
-  ".css",
-  ".html",
-  ".svg",
-  ".json",
-  ".webmanifest",
-  ".txt",
-  ".map",
-]);
+const staticEtagCache = new Map<string, { key: string; etag: string }>();
 
-/**
- * Below this many bytes a static file goes out raw: gzip's own header and trailer, plus the extra
- * response headers, eat the saving. Higher than the JSON floor in http-cache.ts because a static
- * file is usually served once per release and cached, while a JSON body is served every poll.
- */
-const STATIC_GZIP_MIN_BYTES = 1024;
-
-/** At most this many compressed bodies are held, and at most this many bytes across all of them. */
-const GZIP_CACHE_MAX_ENTRIES = 64;
-const GZIP_CACHE_MAX_BYTES = 16 * 1024 * 1024;
-
-/**
- * The compressed bodies of the static files served so far, keyed by absolute path + mtime + size —
- * so a rebuild never serves the old bytes under the new file's name, and nothing has to be
- * invalidated by hand. A `Map` iterates in insertion order, which makes "evict the oldest" the
- * first key it yields. Every served extension is cached the same way, hashed asset or not: an
- * `index.html` is small, and one code path is worth more here than a second policy.
- */
-const gzipCache = new Map<string, Uint8Array<ArrayBuffer>>();
-let gzipCacheBytes = 0;
-let gzipCacheHits = 0;
-let gzipCacheMisses = 0;
-
-/** What the cache has done so far. Exported so a test can observe a hit without a spy. */
-export function staticGzipStats() {
-  return {
-    entries: gzipCache.size,
-    bytes: gzipCacheBytes,
-    hits: gzipCacheHits,
-    misses: gzipCacheMisses,
-  };
+async function staticEtag(full: string): Promise<string | null> {
+  try {
+    const stat = await Bun.file(full).stat();
+    const key = `${stat.size}:${stat.mtimeMs}`;
+    const held = staticEtagCache.get(full);
+    if (held?.key === key) return held.etag;
+    const etag = computeEtag(await Bun.file(full).bytes());
+    staticEtagCache.set(full, { key, etag });
+    return etag;
+  } catch {
+    return null;
+  }
 }
 
-/** Empty the cache and its counters. For tests; the server never needs it. */
-export function resetStaticGzipCache(): void {
-  gzipCache.clear();
-  gzipCacheBytes = 0;
-  gzipCacheHits = 0;
-  gzipCacheMisses = 0;
-}
+/** The compressed form of a mutable file, cached on the same size+mtime identity as its tag. */
+const mutableAssetCache = new Map<string, { key: string; bytes: Uint8Array<ArrayBuffer> }>();
 
-/**
- * The gzipped bytes of a static file, or null when this file must go out raw. Asks the three cheap
- * questions — did the client offer gzip, is the type text, is it big enough — before reading
- * anything off disk, so an image or a favicon costs exactly what it costs today.
- */
-async function gzippedStatic(
-  file: ReturnType<typeof Bun.file>,
+async function compressedMutable(
   full: string,
-  ext: string,
-  acceptEncoding: string | null,
+  encoding: Encoding,
 ): Promise<Uint8Array<ArrayBuffer> | null> {
-  if (!COMPRESSIBLE_EXT.has(ext)) return null;
-  const size = file.size;
-  if (!wantsGzip(acceptEncoding, size, STATIC_GZIP_MIN_BYTES)) return null;
-
-  const key = `${full} ${file.lastModified} ${size}`;
-  const cached = gzipCache.get(key);
-  if (cached !== undefined) {
-    gzipCacheHits += 1;
-    return cached;
+  try {
+    const stat = await Bun.file(full).stat();
+    const key = `${stat.size}:${stat.mtimeMs}:${encoding}`;
+    const held = mutableAssetCache.get(`${full}\0${encoding}`);
+    if (held?.key === key) return held.bytes;
+    const bytes = compressStatic(await Bun.file(full).bytes(), encoding);
+    mutableAssetCache.set(`${full}\0${encoding}`, { key, bytes });
+    return bytes;
+  } catch {
+    return null;
   }
+}
 
-  gzipCacheMisses += 1;
-  const compressed = Bun.gzipSync(new Uint8Array(await file.arrayBuffer()));
-  gzipCache.set(key, compressed);
-  gzipCacheBytes += compressed.byteLength;
-  while (gzipCache.size > GZIP_CACHE_MAX_ENTRIES || gzipCacheBytes > GZIP_CACHE_MAX_BYTES) {
-    const oldest = gzipCache.keys().next();
-    if (oldest.done === true) break;
-    gzipCacheBytes -= gzipCache.get(oldest.value)?.byteLength ?? 0;
-    gzipCache.delete(oldest.value);
+// `path\0encoding` → the bytes. Bounded by the size of one build's asset set (a few MB), and a
+// rebuild writes NEW hashed names, so a stale entry is one nothing asks for again — not a
+// correctness problem, and the process restarts on a bridge update anyway.
+const assetCache = new Map<string, Promise<Uint8Array<ArrayBuffer> | null>>();
+
+async function compressedAsset(full: string, encoding: Encoding): Promise<Uint8Array<ArrayBuffer> | null> {
+  const key = `${full}\0${encoding}`;
+  let pending = assetCache.get(key);
+  if (!pending) {
+    pending = Bun.file(full)
+      .bytes()
+      .then((bytes) => compressStatic(bytes, encoding))
+      .catch(() => null);
+    assetCache.set(key, pending);
   }
-  return compressed;
+  return pending;
 }
 
 /**

@@ -301,6 +301,16 @@ const PANE_WIRE_KEYS = {
   // and then on every pane in the body. Nothing in this baseline asks, so it is absent on every
   // pane here and no golden byte moved — which is the claim, not an aside.
   session: true,
+  // FORK, and not a crew dimension either: the agent's own sentence about what it is working on
+  // (`collie beacon status`), plus when it said it. Both are optional-and-absent unless an agent has
+  // published one, and no pane in this baseline has, so no golden byte moved.
+  statusLine: true,
+  statusLineAt: true,
+  // FORK, and not a crew dimension either: which model and effort the agent is on, read off its own
+  // session log. Optional-and-absent until the cache has read a log, and this baseline's fake
+  // journal roots hold none, so no golden byte moved.
+  model: true,
+  effort: true,
 } satisfies Record<keyof PaneWire, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -408,6 +418,9 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
     expect(Object.keys(PANE_WIRE_KEYS).toSorted()).toEqual([
       "agent",
       "cwd",
+      // FORK: which model and effort the agent is on, read off its own log — not written by a
+      // REQUEST, so the claim this test makes about the two address dimensions is untouched.
+      "effort",
       "focused",
       "hasSession",
       "hint",
@@ -415,12 +428,19 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
       "kind",
       "lastActiveAt",
       "lastSeenAt",
+      "model",
       "paneId",
       "paneLabel",
       "readableLines",
       "session",
       "sessionName",
       "status",
+      // FORK: the agent's own sentence and its stamp. Neither is written by a REQUEST — an agent
+      // publishes one with `collie beacon status` or no pane has one — so the claim this test makes
+      // about the two address dimensions is untouched, and the golden bodies below still carry
+      // neither field.
+      "statusLine",
+      "statusLineAt",
       "tabId",
       "tabLabel",
       "terminalTitle",
@@ -571,6 +591,9 @@ describe("solo zero-tax — routes", () => {
   test("server.ts registers exactly today's routes", () => {
     expect(declaredRoutes()).toEqual([
       "/",
+      // FORK: one artifact — its record, its bytes (`raw`), a patch or a delete (bridge/artifacts.ts).
+      // Session-scoped and gated like preview: a read for a read-only phone, writes behind the device.
+      "/^\\/api\\/artifacts\\/([a-z0-9]{1,12}-[a-f0-9]{8})(?:\\/(raw))?$/",
       // `focus` is the pane action that moves the OPERATOR's own terminal, and it is named here for
       // the reason every other one is: a route arrives on purpose or it does not arrive.
       // One content-addressed image out of a pi/omp journal's blob store — a SOLO route that
@@ -578,10 +601,34 @@ describe("solo zero-tax — routes", () => {
       // read-gated like the pane read beside it, so a `?host=` call forwards to the member whose
       // journal named the file (CREW_PROTOCOL.md §9.1).
       "/^\\/api\\/blobs\\/([^/]+)$/",
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|focus))?$/",
+      // `diff` is the fork's read-only "what did the agent change" view (bridge/diff.ts): three
+      // read-only git subcommands against the pane's own cwd, read-gated like `history`, and it
+      // is named here for the reason every other action is — a route arrives on purpose.
+      // `file` is that same read one step further in (bridge/file-view.ts): the text of ONE file in
+      // that work tree, capped, refused when it is not UTF-8, and written never. It answers the
+      // question a patch cannot — an unchanged file has no diff, and a hunk's context is three
+      // lines — and it is read-gated beside `diff` because it reads the tree `diff` describes.
+      // `shot` and `probe` are the fork's annotate-and-ask verbs (bridge/shot.ts): the pane family
+      // grows two actions rather than the app growing a route, because a shot is taken FOR a pane
+      // and its answer is drafted INTO that pane's composer. Being in this regex is also what keeps
+      // them session-scoped and write-gated through the block every other pane action rides — see
+      // the `caller.resolve()` count in server.test.ts, which did not move.
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|focus|diff|file|shot|probe|handoff))?$/",
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktree(?:\\/(open))?$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktrees$/",
+      // The cold boot as one round trip (bridge/boot.ts) — a SOLO route that legitimately extends
+      // this list, named here rather than exempted. It REPLACES no endpoint and adds no capability:
+      // it answers the five bodies a page fetches before it can draw anything — the snapshot, the
+      // config, the launcher rows, the notification prefs and (only when the config says the card is
+      // on) the quota — in one response, and the page then polls exactly the routes it always
+      // polled. Read-gated through the same `guard` all five use, which is the strictest of them,
+      // and served for this collie's own sessions only: `launchers` must come from the host that
+      // runs them (§5) and a bundle is not a thing that forwards, so a `?host=` page falls back to
+      // fetching the five separately, which is what it does today.
+      // FORK: the artifacts library, listed (bridge/artifacts.ts).
+      "/api/artifacts",
+      "/api/boot",
       "/api/config",
       // The Crew overview (bridge/crew/status-wire.ts) — a FRONT-DOOR route, and it legitimately
       // extends this list rather than being exempted, exactly as pairing and STT do. It is not a
@@ -593,6 +640,34 @@ describe("solo zero-tax — routes", () => {
       // It is named here, not exempted: the guard's job is that a route arrives on purpose.
       "/api/devices",
       "/api/devices/revoke",
+      // The new-space folder picker's listing (bridge/dirs.ts) — a SOLO route that legitimately
+      // extends this list, named here rather than exempted. It answers DIRECTORY NAMES only, rooted
+      // at the operator's home and enforced on the RESOLVED path, and it is session-scoped and
+      // WRITE-gated through the same closure `/api/launch` rides: it writes nothing, but a device
+      // that may not create a space has no use for the list, and the narrower gate is free.
+      "/api/dirs",
+      // One of the operator's knowledge-base documents, served from Collie's own origin over
+      // loopback (bridge/docs.ts) — a SOLO route that legitimately extends this list, named here
+      // rather than exempted. It exists because every measured target refuses framing and the
+      // operator's own services answer a Cloudflare Access login page that refuses it too, so the
+      // only way a document opens beside the terminal is for the bridge to serve it itself. Read-
+      // gated like the mux mark; the bytes go out sandboxed into an opaque origin.
+      //
+      // It lives under `/api/` rather than at a prettier `/d/` because an iframe's document load is
+      // a NAVIGATION, and the service worker answers navigations from the precached app shell unless
+      // the path is on `NAVIGATION_NETWORK_ONLY` — where `/^\/api\//` already is.
+      "/api/doc/*",
+      // The document BROWSER (bridge/docs-list.ts) — the fork's list, search and tag rows for the
+      // same store, so the panel can open a document the agent never printed. Read-gated like the
+      // document, JSON only, loopback only; named here for the reason `/api/doc/*` is.
+      "/api/docs",
+      "/api/docs/tags",
+      // The live feed (bridge/events.ts) — a SOLO route that legitimately extends this list, named
+      // here rather than exempted. One long-lived GET per open page on which the bridge writes a
+      // POKE when the herd or the followed pane moves; the page then runs the loaders it always
+      // ran. Read-gated like the snapshot, served for this collie's own sessions only — a member's
+      // scope falls back to polling, so nothing here forwards.
+      "/api/events",
       // The detached updater's probe (M15/04) — a solo feature that legitimately extends this list,
       // named here rather than exempted. It is the one ungated `/api/*` route: the prober is a local
       // updater holding no credential, and what it answers is `{ ok, version, deposed, mode }`.
@@ -619,6 +694,25 @@ describe("solo zero-tax — routes", () => {
       // for the same reason every other route is: it arrives on purpose, and it leaves on purpose.
       "/api/pack",
       "/api/pair",
+      // One HTML file the agent WROTE, framed beside the terminal (bridge/preview.ts) — a SOLO route
+      // that legitimately extends this list, named here rather than exempted. It exists because on a
+      // phone "I wrote the report to ~/work/report.html" is otherwise a dead end: an installed PWA
+      // has no file manager, `file://` is unreachable from a web origin, and the bytes are on the
+      // other side of a tunnel. Read-gated and session-scoped like `/api/blobs/*`, so a `?host=`
+      // call reaches the member whose disk holds the file; jailed to the PANE's own cwd, which is
+      // narrower than the repo `diff` uses and narrower again than the home `dirs` uses.
+      //
+      // It goes out under bridge/docs.ts's policy — the same constant, not a copy — so the page
+      // lands in an opaque origin and can reach neither Collie's storage nor its API. That is also
+      // why a LIVE dev server is not served here: `default-src 'none'` refuses `/@vite/client`, and
+      // relaxing it is a different feature with its own argument.
+      "/api/preview/file",
+      // The usage card (bridge/quota.ts) — a SOLO route that legitimately extends this list, named
+      // here rather than exempted. It runs the command the operator named in COLLIE_QUOTA_COMMAND
+      // and answers its JSON normalised; read-gated like the document browser, 404 when no command
+      // is configured, and never forwarded — a quota belongs to the machine whose credentials the
+      // command reads.
+      "/api/quota",
       // "Look now" (ADR 0031) — a SOLO route that legitimately extends this list, named here rather
       // than exempted. It is session-scoped and read-gated, and it registers no crew route of its
       // own: a lead reaches a peer's through the peer's existing `/crew/v1/*` dispatch.
@@ -682,6 +776,7 @@ const CONFIG_KEYS = {
   themeFile: true,
   fontsDir: true,
   launchersFile: true,
+  notifyFile: true,
   maxUploadBytes: true,
   port: true,
   host: true,
@@ -708,6 +803,13 @@ const CONFIG_KEYS = {
   multiSession: true,
   skipServe: true,
   uploadExtraTypes: true,
+  dirRoots: true,
+  kbOrigin: true,
+  kbToken: true,
+  docHosts: true,
+  quotaCommand: true,
+  shotCommand: true,
+  shotHosts: true,
 } satisfies Record<keyof Config, true>;
 
 describe("solo zero-tax — config", () => {
@@ -722,9 +824,13 @@ describe("solo zero-tax — config", () => {
       "deviceAllowlist",
       "deviceHeader",
       "dialMode",
+      "dirRoots",
+      "docHosts",
       "fontsDir",
       "host",
       "journalRoots",
+      "kbOrigin",
+      "kbToken",
       "keysFile",
       "launchersFile",
       "maxUploadBytes",
@@ -732,12 +838,16 @@ describe("solo zero-tax — config", () => {
       "mux",
       "muxEndpoint",
       "notifyDelayMs",
+      "notifyFile",
       "pollIdleMs",
       "pollMs",
       "port",
       "publicHosts",
       "quickRepliesFile",
+      "quotaCommand",
       "readLines",
+      "shotCommand",
+      "shotHosts",
       "skipServe",
       "socketPath",
       "stateDir",
@@ -784,10 +894,14 @@ describe("solo zero-tax — config", () => {
       "COLLIE_CODEX_ROOT",
       "COLLIE_DEVICE_ALLOWLIST",
       "COLLIE_DEVICE_HEADER",
+      "COLLIE_DIR_ROOTS",
+      "COLLIE_DOC_HOSTS",
       "COLLIE_GROK_ROOT",
       "COLLIE_HERDR_DIAL",
       "COLLIE_HERMES_ROOT",
       "COLLIE_HOST",
+      "COLLIE_KB_ORIGIN",
+      "COLLIE_KB_TOKEN",
       "COLLIE_MAX_UPLOAD_MB",
       "COLLIE_MULTI_SESSION",
       "COLLIE_MUX",
@@ -799,7 +913,13 @@ describe("solo zero-tax — config", () => {
       "COLLIE_POLL_MS",
       "COLLIE_PORT",
       "COLLIE_PUBLIC_HOSTS",
+      "COLLIE_QUOTA_COMMAND",
       "COLLIE_READ_LINES",
+      // FORK: annotate-and-ask's two keys (bridge/shot.ts), named here rather than exempted for the
+      // reason every other key is. Both are off by default and a solo instance with neither set
+      // spawns nothing and registers no capability — the `COLLIE_QUOTA_COMMAND` shape exactly.
+      "COLLIE_SHOT_COMMAND",
+      "COLLIE_SHOT_HOSTS",
       "COLLIE_SKIP_SERVE",
       "COLLIE_STATE_DIR",
       "COLLIE_SUBMIT_KEYS",
@@ -826,6 +946,9 @@ describe("solo zero-tax — config", () => {
 /** Every `<stateDir>/…` path any bridge module names. `uploads` is a directory, the rest are files. */
 const STATE_DIR_ENTRIES = [
   "activity.json",
+  // FORK: the artifacts library (bridge/artifacts.ts) — a directory the CLI writes into and the
+  // bridge reads; absent until an agent registers its first file.
+  "artifacts",
   "audit.log",
   // Agent beacons (M11/01) — a directory, and one no bridge module ever writes: the bridge only ever
   // READS it, and the emitter that fills it is a CLI verb the operator installs a hook for. An
@@ -994,7 +1117,8 @@ describe("solo zero-tax — notifications", () => {
     sink.clear();
     expect(sent).toEqual([
       { title: "claude needs you", body: "demo · /home/you", tag: "collie:herd", paneId: "p1", renotify: true },
-      { type: "clear", tag: "collie:herd" },
+      // FORK: `badge: 0` on a clear — the icon's dot goes with the notification (app-badge).
+      { type: "clear", tag: "collie:herd", badge: 0 },
     ]);
     expect(sent.every((m) => !("host" in m))).toBe(true);
   });

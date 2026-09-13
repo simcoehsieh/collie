@@ -2,6 +2,7 @@ import type { JsonObject, JsonValue } from "./json.ts";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import type { BinaryPromptPeek } from "./prompt-peek.ts";
 
 // Optional Web Push (VAPID). Zero hard dependency: if `web-push` isn't installed or VAPID keys
 // aren't configured, push is silently disabled and the rest of the bridge works unchanged.
@@ -59,7 +60,34 @@ export type PushDeliveryResult = { statusCode?: number; body?: string; headers?:
 export type SubscriptionRow = { endpoint: string; createdAt?: string; userAgent?: string };
 
 /** The deep-link fields the service worker reads off a push payload (see web/src/sw.ts). */
-type PushPayloadData = { paneId?: string; session?: string; host?: string; target?: "settings" };
+type PushPayloadData = {
+  paneId?: string;
+  session?: string;
+  host?: string;
+  target?: "settings";
+  /** The pane's agent ("claude"). Omitted when unknown. */
+  agent?: string;
+  /** What a Yes/No button sends, bound to the dialog it answers (bridge/prompt-peek.ts). Present
+   *  exactly when `actions` is; the service worker posts it verbatim (web/src/sw.ts). */
+  approve?: BinaryPromptPeek;
+};
+
+/**
+ * One button on the notification itself. Exactly the shape `showNotification` takes, restated here
+ * because the bridge is the one that writes it; the phone passes it through. At most two — that is
+ * the ceiling the smallest supported platform draws, and Yes/No is the whole vocabulary anyway.
+ */
+export interface PushAction {
+  action: "yes" | "no";
+  title: string;
+}
+
+/** The two buttons a yes/no dialog earns. Titles are not localised: the bridge has no locale, and a
+ *  one-word Yes/No reads on every phone this deployment has. */
+export const YES_NO_ACTIONS: readonly PushAction[] = [
+  { action: "yes", title: "Yes" },
+  { action: "no", title: "No" },
+];
 
 /** The HTTP status a `web-push` rejection carries, or undefined when it carries none. */
 function sendErrorStatus<T>(err: T): number | undefined {
@@ -137,6 +165,32 @@ const EVICT_AFTER = 5;
 /** The push service an endpoint belongs to, used to tell "this device is dead" from "this service
  *  is rejecting us". Falls back to the raw endpoint if it won't parse — an unparseable endpoint is
  *  then its own origin, which can never witness a sibling's success, so it is never evicted. */
+/**
+ * FORK: whether an endpoint is Apple's. WebKit enforces `userVisibleOnly` literally — three pushes
+ * that show no notification and the subscription is revoked — so the service worker turns a silent
+ * retraction into a "Nothing needs you" line on the lock screen (web/src/lib/push-decision.ts). The
+ * operator reads that line after every reply they send, because their reply is what settles the
+ * `done` alert. The bridge therefore does not send retractions to Apple at all: the alert simply
+ * stays until the next one replaces it in the same slot, which is what a lock screen does anyway.
+ * Same rule as the worker's `enforcesUserVisible`, restated because the two trees are type-checked
+ * apart.
+ */
+export function isApplePushEndpoint(endpoint: string): boolean {
+  try {
+    const { hostname } = new URL(endpoint);
+    return hostname === "push.apple.com" || hostname.endsWith(".push.apple.com");
+  } catch {
+    return false;
+  }
+}
+
+/** The kind of a payload about to fan out, for the log line — read back off the JSON we just built. */
+function payloadKind(payload: string): string {
+  if (payload.includes('"type":"clear"')) return "clear";
+  if (payload.includes('"type":"update"')) return "update";
+  return "render";
+}
+
 function pushServiceOrigin(endpoint: string): string {
   try {
     return new URL(endpoint).origin;
@@ -205,6 +259,23 @@ export interface PushMessage {
    *  away from the page it wanted, which renaming the field would have turned into `/`. */
   target?: "settings";
   renotify?: boolean;
+  /** The alerting pane's agent, stamped into `data` so a notification action knows which harness
+   *  grammar answers it. Absent on digests, clears and update alerts. */
+  agent?: string;
+  /** Buttons on the notification. Present only when the bridge has seen a yes/no dialog at the tail
+   *  of the alerting pane (bridge/prompt-peek.ts) — a button on any other dialog would be a lie. */
+  actions?: readonly PushAction[];
+  /** The keys and binding those buttons send — travels in `data`, beside `agent`. */
+  approve?: BinaryPromptPeek;
+  /**
+   * FORK: what the app icon's badge should say after this push — the number of alerts outstanding
+   * (0 on a retraction). Top-level on the wire, beside `title`, because it is about the app and not
+   * about the pane a tap opens. iOS badges a web app only when its service worker asks
+   * (`navigator.setAppBadge`), so without this the icon never shows a dot. Absent on a message
+   * that has no view of the herd (a test push, an update alert), and the worker then leaves the
+   * badge alone.
+   */
+  badge?: number;
 }
 
 export class Push {
@@ -256,8 +327,14 @@ export class Push {
     console.log(`[push] enabled (${this.subs.size} saved subscription(s))`);
   }
 
-  async addSubscription(sub: PushSubscription, meta: SubscriptionMeta = {}): Promise<void> {
-    if (!this.enabled) return;
+  /**
+   * Store (or refresh) a subscription. Answers whether this endpoint was ALREADY on file: a device
+   * that believed itself registered and hears `known: false` has been pruned — its endpoint answered
+   * 404/410 to a send — and must mint a fresh subscription rather than re-register the dead one
+   * (web/src/lib/push.ts). Push disabled is `known: false` too: nothing is on file when nothing is.
+   */
+  async addSubscription(sub: PushSubscription, meta: SubscriptionMeta = {}): Promise<{ known: boolean }> {
+    if (!this.enabled) return { known: false };
     // The row this one supersedes (SubscriptionMeta.replaces). Dropped BEFORE the new one is stored,
     // and only when it is a different endpoint — a device re-registering the endpoint it already
     // holds is naming itself, not a predecessor.
@@ -278,6 +355,7 @@ export class Push {
     // told us it wants pushes, so it doesn't inherit the failure history of its predecessor.
     this.failures.delete(sub.endpoint);
     await this.save();
+    return { known: previous !== undefined };
   }
 
   /**
@@ -321,9 +399,16 @@ export class Push {
     if (msg.session !== undefined) data.session = msg.session;
     if (msg.host !== undefined) data.host = msg.host;
     if (msg.target !== undefined) data.target = msg.target;
+    if (msg.agent !== undefined) data.agent = msg.agent;
+    if (msg.approve !== undefined) data.approve = msg.approve;
+    // `agent` and `approve` ride in `data` only; `actions` stays top-level, where `showNotification`
+    // reads it.
+    const { agent: _agent, approve: _approve, ...wire } = msg;
     // Per-message collapse topic — update alerts must not share the herd slot (see UPDATE_SEND_OPTIONS).
     const options = msg.type === "update" ? UPDATE_SEND_OPTIONS : SEND_OPTIONS;
-    await this.broadcast(JSON.stringify({ ...msg, data }), options);
+    // FORK: a retraction skips Apple's endpoints — see `isApplePushEndpoint`.
+    const to = msg.type === "clear" ? (endpoint: string) => !isApplePushEndpoint(endpoint) : undefined;
+    await this.broadcast(JSON.stringify({ ...wire, data }), options, to);
   }
 
   /** Convenience for a one-off render (used by the manual push-test script). */
@@ -331,13 +416,21 @@ export class Push {
     await this.send({ title, body, paneId: data.paneId });
   }
 
-  private async broadcast(payload: string, options: SendOptions): Promise<void> {
+  private async broadcast(
+    payload: string,
+    options: SendOptions,
+    to: ((endpoint: string) => boolean) | undefined = undefined,
+  ): Promise<void> {
     if (!this.enabled) return;
     const dead: string[] = [];
+    // FORK: `to` narrows the fan-out (a retraction, to everyone but Apple); absent means everyone.
+    const targets = [...this.subs.values()].filter((sub) => to === undefined || to(sub.endpoint));
+    // FORK: one line per fan-out, so "did the phone get a retraction" is answerable from the log.
+    console.log(`[push] ${payloadKind(payload)} → ${String(targets.length)} of ${String(this.subs.size)} endpoint(s)`);
     // One entry per subscription attempted this round, so the eviction pass below can ask which
     // push services proved themselves healthy before it holds a failure against any one device.
     const results = await Promise.all(
-      [...this.subs.values()].map(async (sub) => {
+      targets.map(async (sub) => {
         try {
           // `{ endpoint, keys }` and nothing else: the stored row also carries operator metadata,
           // and web-push serialises what it is handed.

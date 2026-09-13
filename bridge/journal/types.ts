@@ -23,6 +23,20 @@ export interface AgentSessionRef {
   value: string;
 }
 
+/**
+ * FORK — one item of a harness's own checklist. See journal/todo.ts for who writes them.
+ *
+ * The three statuses are the two harnesses' shared vocabulary, spelled identically by both, so the
+ * card that renders a plan never learns which agent produced it.
+ */
+export type TodoStatus = "pending" | "in_progress" | "completed";
+
+/** FORK — one line of a plan: what it says, and where it has got to. */
+export interface TodoItem {
+  text: string;
+  status: TodoStatus;
+}
+
 /** One renderable piece of a turn. Deliberately small — the phone renders these as text nodes. */
 export type TranscriptPart =
   | { kind: "text"; text: string; truncated?: boolean }
@@ -41,7 +55,19 @@ export type TranscriptPart =
       /** One-line gist of the call's input (the file read, the command run) — never the whole input. */
       summary: string;
       result?: { text: string; truncated?: boolean; isError?: boolean; imageUrl?: string };
-    };
+    }
+  /**
+   * FORK — the agent's own checklist, kept WHOLE instead of reduced to a one-line gist.
+   *
+   * Emitted in place of the `tool` part for the one call that carries a plan (Claude Code's
+   * `TodoWrite`, Codex's `update_plan`), because that call's input IS the renderable thing — the
+   * ordinary summary would pick its first string and drop the rest. The adapter also swallows the
+   * result row that answers such a call: "Todos have been modified successfully" is bookkeeping, and
+   * an orphaned result part is noise in a view whose whole job is the thread.
+   *
+   * A harness with no such tool never produces one, which is what makes the card's absence graceful.
+   */
+  | { kind: "todo"; items: TodoItem[] };
 
 /**
  * One turn of the conversation.
@@ -111,4 +137,24 @@ export interface JournalAdapter {
   readonly agent: string;
   readonly source: TranscriptSource;
   parse(text: string): TranscriptEntry[];
+  /**
+   * FORK — what the harness says it is running on, read off the TAIL of its own log (see
+   * bridge/session-facts.ts for the read). PURE like `parse`, and optional: a harness whose log
+   * never names a model simply has no facts, and the pane renders exactly as it did without them.
+   *
+   * `null` means "this window says nothing" — a tail that happened to hold only tool traffic —
+   * which the store treats as "keep the last answer", never as "the model went away".
+   */
+  facts?(text: string): SessionFacts | null;
+}
+
+/**
+ * FORK — the two facts an operator asks of a running agent that no status carries: which model it
+ * is on, and at what reasoning effort. Both are the harness's OWN spelling (`claude-fable-5-1`,
+ * `xhigh`; `gpt-6-astra`, `medium`), not normalised, because a label the phone has to map is a label
+ * that goes stale the day a new model ships. Either may be absent when the log names only one.
+ */
+export interface SessionFacts {
+  model?: string;
+  effort?: string;
 }

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 
 import {
   codexCursor,
+  codexSessionFacts,
   codexToolOutput,
   CodexTranscriptSource,
   isCodexSessionId,
@@ -284,5 +285,112 @@ describe("CodexTranscriptSource — several sessions roots", () => {
       `${b}/2026/08/11/rollout-2026-08-11T10-00-00-${B}.jsonl`,
     );
     await rm(base, { recursive: true, force: true });
+  });
+});
+
+// ── FORK: `update_plan` IS THE PLAN, NOT A ONE-LINE GIST ────────────────────────────────────────
+// Codex's plan tool carries the whole checklist in its arguments, which arrive as a JSON STRING —
+// so the ordinary summary keeps its first step and drops the rest. Kept whole as a `todo` part, and
+// its acknowledgement swallowed, exactly as Claude's TodoWrite is (bridge/journal/todo.ts).
+describe("parseCodexTranscript — update_plan", () => {
+  const planCall = (args: JsonValue) =>
+    JSON.stringify({
+      timestamp: "2026-09-11T09:00:00.000Z",
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "update_plan",
+        call_id: "c1",
+        arguments: typeof args === "string" ? args : JSON.stringify(args),
+      },
+    });
+  const ack = JSON.stringify({
+    timestamp: "2026-09-11T09:00:01.000Z",
+    type: "response_item",
+    payload: { type: "function_call_output", call_id: "c1", output: JSON.stringify({ output: "Plan updated" }) },
+  });
+
+  test("keeps the whole plan, in the same three states Claude's uses", () => {
+    const entries = parseCodexTranscript(
+      planCall({
+        explanation: "narrowing the search",
+        plan: [
+          { step: "Reproduce the failure", status: "completed" },
+          { step: "Patch the adapter", status: "in_progress" },
+          { step: "Add a regression test", status: "pending" },
+        ],
+      }),
+    );
+    expect(entries[0]?.parts).toEqual([
+      {
+        kind: "todo",
+        items: [
+          { text: "Reproduce the failure", status: "completed" },
+          { text: "Patch the adapter", status: "in_progress" },
+          { text: "Add a regression test", status: "pending" },
+        ],
+      },
+    ]);
+  });
+
+  test("swallows the tool's own output rather than leaving an orphan row", () => {
+    const entries = parseCodexTranscript(`${planCall({ plan: [{ step: "x", status: "pending" }] })}\n${ack}`);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.parts[0]?.kind).toBe("todo");
+  });
+
+  test("malformed arguments fall through to the ordinary tool part", () => {
+    const entries = parseCodexTranscript(planCall("{not json"));
+    expect(entries[0]?.parts[0]).toMatchObject({ kind: "tool", name: "update_plan" });
+  });
+
+  test("every other function call is untouched", () => {
+    const shell = JSON.stringify({
+      timestamp: "2026-09-11T09:00:00.000Z",
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "shell",
+        call_id: "s1",
+        arguments: JSON.stringify({ command: ["bash", "-lc", "ls -la"] }),
+      },
+    });
+    expect(parseCodexTranscript(shell)[0]?.parts[0]).toEqual({
+      kind: "tool",
+      name: "shell",
+      summary: "bash -lc ls -la",
+    });
+  });
+});
+
+// ── FORK: WHICH MODEL AND EFFORT (journal/codex.ts `codexSessionFacts`) ──────────────────────────
+// Read off the newest `turn_context` row — the row the transcript parser ignores. Verified shape
+// (codex-cli 0.153.4): `payload.model` + `payload.effort`, repeated under
+// `payload.collaboration_mode.settings` as `model` + `reasoning_effort`.
+describe("codexSessionFacts", () => {
+  const turnContext = (payload: Record<string, JsonValue>) =>
+    JSON.stringify({ timestamp: "2026-09-12T01:00:00.000Z", type: "turn_context", payload });
+
+  test("reads the pair off the newest turn_context row", () => {
+    const log = [
+      meta(),
+      turnContext({ model: "gpt-5-codex", effort: "high" }),
+      message("user", "go"),
+      turnContext({ model: "gpt-6-astra", effort: "medium" }),
+      message("assistant", "done"),
+    ].join("\n");
+    expect(codexSessionFacts(log)).toEqual({ model: "gpt-6-astra", effort: "medium" });
+  });
+
+  test("falls back to collaboration_mode.settings when the top-level copy is missing", () => {
+    const log = turnContext({
+      collaboration_mode: { mode: "default", settings: { model: "gpt-6-astra", reasoning_effort: "xhigh" } },
+    });
+    expect(codexSessionFacts(log)).toEqual({ model: "gpt-6-astra", effort: "xhigh" });
+  });
+
+  test("answers null when no turn_context is in the window", () => {
+    expect(codexSessionFacts([meta(), message("user", "hi"), message("assistant", "yo")].join("\n"))).toBeNull();
+    expect(codexSessionFacts("not json\n")).toBeNull();
   });
 });

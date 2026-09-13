@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { computeEtag, gzipJsonResponse, notModified } from "./http-cache.ts";
+import { computeEtag, gzipJsonResponse, jsonBodyResponse, notModified, pickEncoding } from "./http-cache.ts";
+import { brotliDecompressSync } from "node:zlib";
 
 // All three helpers are pure (no I/O), so we drive them directly.
 
@@ -108,9 +109,9 @@ describe("computeEtag — the host dimension", () => {
 });
 
 describe("gzipJsonResponse", () => {
-  test("returns plain JSON when Accept-Encoding does not include gzip", async () => {
+  test("returns plain JSON when Accept-Encoding names neither gzip nor br", async () => {
     const data = { ok: true, value: "x".repeat(300) };
-    const res = gzipJsonResponse(data, "br, identity");
+    const res = gzipJsonResponse(data, "deflate, identity");
     expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("content-type")).toContain("application/json");
     expect(res.headers.get("cache-control")).toBe("no-store");
@@ -162,5 +163,48 @@ describe("gzipJsonResponse", () => {
     const res = gzipJsonResponse(data, "gzip", { etag });
     expect(res.headers.get("content-encoding")).toBe("gzip");
     expect(res.headers.get("etag")).toBe(etag);
+  });
+});
+
+describe("pickEncoding — content negotiation", () => {
+  test("prefers br when the client accepts it, whatever the order", () => {
+    expect(pickEncoding("gzip, deflate, br")).toBe("br");
+    expect(pickEncoding("br, gzip")).toBe("br");
+  });
+
+  test("falls back to gzip, and to identity when neither is accepted", () => {
+    expect(pickEncoding("gzip, deflate")).toBe("gzip");
+    expect(pickEncoding("deflate")).toBeNull();
+    expect(pickEncoding(null)).toBeNull();
+    expect(pickEncoding("")).toBeNull();
+  });
+
+  test("a q=0 refuses the coding rather than naming it", () => {
+    expect(pickEncoding("br;q=0, gzip")).toBe("gzip");
+    expect(pickEncoding("br;q=0, gzip;q=0")).toBeNull();
+    expect(pickEncoding("gzip;q=0.5, br;q=0.9")).toBe("br");
+  });
+
+  test("a wildcard is read as gzip", () => {
+    expect(pickEncoding("*")).toBe("gzip");
+  });
+});
+
+describe("brotli bodies", () => {
+  test("a br-accepting client gets a brotli body that round-trips", async () => {
+    const data = { text: "x".repeat(300) };
+    const res = gzipJsonResponse(data, "gzip, br");
+    expect(res.headers.get("content-encoding")).toBe("br");
+    expect(res.headers.get("vary")).toBe("accept-encoding");
+    const buf = new Uint8Array(await res.arrayBuffer());
+    expect(JSON.parse(new TextDecoder().decode(brotliDecompressSync(buf)))).toEqual(data);
+  });
+
+  test("jsonBodyResponse sends a pre-serialised body without re-serialising it", async () => {
+    const body = JSON.stringify({ text: "y".repeat(300) });
+    const res = jsonBodyResponse(body, null, { etag: '"e1"' });
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("etag")).toBe('"e1"');
+    expect(await res.text()).toBe(body);
   });
 });

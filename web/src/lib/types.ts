@@ -92,6 +92,34 @@ export interface AgentView {
    */
   lastSeenAt?: number;
   /**
+   * FORK — the agent's OWN sentence about what it is working on, written through
+   * `collie beacon status "<line>"`. Mirrors `AgentView.statusLine` in bridge/types.ts.
+   *
+   * TEXT AND NOTHING ELSE, the same standing {@link hint} has: nothing branches on it, it implies
+   * nothing about `agent` or `status`, and it changes no sort and no affordance. Already sanitised
+   * and clamped bridge-side, so it is rendered as-is. Absent on almost every pane.
+   */
+  statusLine?: string;
+  /** Epoch ms the line was written. A line older than fifteen minutes renders dimmed — never hidden.
+   *  Mirrors `AgentView.statusLineAt` in bridge/types.ts. */
+  statusLineAt?: number;
+  /**
+   * FORK — which model the agent is running on, in the harness's own spelling (`claude-fable-5-1`,
+   * `gpt-6-astra`), read bridge-side off the newest turn of its session log. Mirrors
+   * `AgentView.model` in bridge/types.ts.
+   *
+   * TEXT AND NOTHING ELSE, on the standing {@link statusLine} has: nothing branches on it, it
+   * implies nothing about `agent` or `status`, and it changes no sort and no affordance. Rendered
+   * through `lib/model-label.ts` and nowhere else. Absent on most panes most of the time — a
+   * harness with no journal, a log not yet read, an older bridge.
+   */
+  model?: string;
+  /**
+   * FORK — the reasoning effort the newest turn ran at (`xhigh`, `medium`), the harness's own word.
+   * Same standing and same absences as {@link model}; either may be present without the other.
+   */
+  effort?: string;
+  /**
    * Which member of the crew this pane lives on — the `?h=` value (CREW_PROTOCOL.md §4). Mirrors
    * `PaneWire.host` in bridge/types.ts.
    *
@@ -704,7 +732,19 @@ export type TranscriptPart =
       name: string;
       summary: string;
       result?: { text: string; truncated?: boolean; isError?: boolean; imageUrl?: string };
-    };
+    }
+  /** FORK: the agent's own checklist, kept whole (bridge/journal/todo.ts). Emitted in place of the
+   *  tool part for the one call that writes a plan, so the pane can pin the latest state as a card. */
+  | { kind: "todo"; items: TodoItem[] };
+
+/** FORK: one line of a plan. Mirrors `TodoStatus` in bridge/journal/types.ts. */
+export type TodoStatus = "pending" | "in_progress" | "completed";
+
+/** FORK: one item of a harness's checklist. Mirrors `TodoItem` in bridge/journal/types.ts. */
+export interface TodoItem {
+  text: string;
+  status: TodoStatus;
+}
 
 /**
  * One turn. `user`/`assistant` are speech; the other two are not, and render set apart so they can't
@@ -963,7 +1003,15 @@ export interface Launcher {
  * client knowing which machine answered (a peer's home is not this browser's, and is not even
  * necessarily the same string as the lead's).
  */
+export interface CodexHandoffModel {
+  id: string;
+  label: string;
+  efforts: string[];
+  defaultEffort: string;
+}
+
 export interface LaunchersResponse {
+  handoffModels?: CodexHandoffModel[];
   launchers: Launcher[];
   home: string;
 }
@@ -1010,6 +1058,28 @@ export interface BridgeConfig {
    * mid-upgrade operator sees the old picker rather than an empty one.
    */
   upload?: UploadCapability;
+  /**
+   * The hostnames whose `/d/<slug>` documents this bridge will serve itself, from its own origin,
+   * over loopback (lib/doc-links.ts, bridge/docs.ts).
+   *
+   * **Absent or empty is the feature being off** — every link in the mirror stays an ordinary
+   * external one, which is also exactly what a bridge older than this field sends. The bridge only
+   * publishes a host it can actually answer for, so this list means "these open in the panel", not
+   * "these are interesting".
+   */
+  docHosts?: string[];
+  /**
+   * FORK: `true` when the bridge can answer `/api/quota` (a `COLLIE_QUOTA_COMMAND` is configured).
+   * Absent is the feature off — also what every bridge older than the field sends — and the
+   * dashboard draws no usage section at all.
+   */
+  quota?: boolean;
+  /**
+   * FORK: `true` when the bridge can take a screenshot of a local page and probe an element out of
+   * it (a `COLLIE_SHOT_COMMAND` is configured). Absent is the feature off — also what every bridge
+   * older than the field sends — and the pane menu draws no "Screenshot & annotate…" row.
+   */
+  shot?: boolean;
 }
 
 /**
@@ -1049,6 +1119,13 @@ export interface NotifyPrefs {
   done: boolean;
   /** Push when a new Collie version is available (a restart or upgrade is waiting). Default on. */
   updates: boolean;
+  /** FORK: per-pane overrides. Absent from an older bridge's answer; the phone treats that as none. */
+  panes?: PaneNotifyRule[];
+  /**
+   * FORK: the operator's rules from `notify.toml`, matched after `panes` (a phone-set rule wins for
+   * the same pane). Read-only here — the file is their home. Absent when the file has none.
+   */
+  operatorPanes?: PaneNotifyRule[];
 }
 
 /** Lower sorts first — "needs you" at the top. Mirrors STATUS_RANK on the server. */
@@ -1082,8 +1159,298 @@ export type WorktreeListResponse =
   | { ok: true; worktrees: WorktreeView[] }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
 
+/** One folder in the picker: what to draw, and what to ask for next. */
+export interface DirEntry {
+  name: string;
+  path: string;
+}
+
+/**
+ * GET /api/dirs — the folders under one directory, for the space picker.
+ *
+ * The refusals are PLAIN TEXT on the wire (bridge/dirs.ts says why), so there is no `ok: false`
+ * shape here: `req` turns a non-2xx into a thrown ApiError, and the picker's answer to all three is
+ * the same one — stay where you are.
+ */
+export interface DirsResponse {
+  ok: true;
+  /** The RESOLVED directory, never the string that was asked for. */
+  path: string;
+  parent: string | null;
+  home: string;
+  entries: DirEntry[];
+  truncated: boolean;
+}
+
 /** POST /api/workspace/:id/worktree[/open] — `alreadyOpen` is an answer, never a failure. */
 export type WorktreeOpenResponse =
   | { ok: true; pane: CreatedPane; alreadyOpen: boolean }
+  | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
+
+
+// ── FORK: per-pane notification rules ────────────────────────────────────────
+// Mirrors `PaneNotifyMode` / `PaneNotifyRule` in bridge/notify-prefs.ts (hand-mirrored wire types,
+// like everything else in this file).
+
+/** How a rule changes the bridge-wide notify switches for the panes it names. */
+export type PaneNotifyMode = "default" | "all" | "blocked" | "mute";
+
+/** One pane's override. At least one of `paneId` / `label` names it; the id wins when both match. */
+export interface PaneNotifyRule {
+  /** Exact pane id — dies with the multiplexer restart that renumbers panes. */
+  paneId?: string;
+  /** Case-insensitive substring of the pane's label, tab, space or terminal title — survives it. */
+  label?: string;
+  mode: PaneNotifyMode;
+  /** A quiet deadline for this pane alone (epoch ms); elapsed means not snoozed. */
+  snoozedUntil?: number;
+}
+
+// ── FORK: what the agent changed (bridge/diff.ts) ──────────────────────────────────────────────
+
+/** One changed file in the pane's work tree, as the Changes sheet lists it. */
+export interface DiffFileView {
+  path: string;
+  /** The old path, when the change is a rename. */
+  from?: string;
+  /** One porcelain letter: M, A, D, R, ?, U, T, C. */
+  status: string;
+  staged: boolean;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+/** GET /api/pane/:id/diff — the file list. */
+export interface PaneDiffStatResponse {
+  ok: true;
+  mode: "stat";
+  cwd: string;
+  repoRoot: string;
+  branch: string;
+  files: DiffFileView[];
+  truncated: boolean;
+}
+
+/** GET /api/pane/:id/diff?mode=patch&path=… — one file's unified diff. */
+export interface PaneDiffPatchResponse {
+  ok: true;
+  mode: "patch";
+  path: string;
+  patch: string;
+  truncated: boolean;
+}
+
+export type PaneDiffResponse = PaneDiffStatResponse | PaneDiffPatchResponse;
+
+// ── FORK: one file of that same work tree (bridge/file-view.ts) ────────────────────────────────
+
+/** GET /api/pane/:id/file?path=… — one file, as text. A binary is a 415, never a body. */
+export interface PaneFileResponse {
+  ok: true;
+  mode: "file";
+  /** The repo-relative path that was asked for, echoed so a body cannot be mismatched to a request. */
+  path: string;
+  text: string;
+  /** The file's real size on disk — larger than `text` exactly when `truncated`. */
+  bytes: number;
+  truncated: boolean;
+}
+
+// ── FORK: the document browser (bridge/docs-list.ts) ───────────────────────────────────────────
+
+/** A knowledge-base document as the browser lists it. */
+export interface DocSummaryView {
+  slug: string;
+  title: string;
+  summary?: string;
+  /** ISO-8601; absent on a search hit. */
+  updatedAt?: string;
+}
+
+/** GET /api/docs */
+export interface DocsResponse {
+  ok: true;
+  documents: DocSummaryView[];
+  /** Present when there may be another page. */
+  nextCursor?: string;
+}
+
+export interface DocTagView {
+  path: string;
+  count: number;
+}
+
+/** GET /api/docs/tags */
+export interface DocTagsResponse {
+  ok: true;
+  tags: DocTagView[];
+}
+
+// ── FORK: what the three agents have left (bridge/quota.ts) ────────────────────────────────────
+// Hand-mirrored from bridge/types.ts, like everything else in this file.
+
+export type QuotaAgentKey = "claude" | "codex" | "agy";
+export type QuotaWindowKind = "5h" | "weekly" | "other";
+
+export interface QuotaWindow {
+  kind: QuotaWindowKind;
+  label: string;
+  /** 0–100. */
+  usedPercent: number;
+  /** ISO-8601; the card counts down from it. Null when the provider did not say. */
+  resetAt: string | null;
+  resetAfterSeconds: number | null;
+  status: string;
+}
+
+export interface QuotaModel {
+  label: string;
+  usedPercent: number;
+  resetAfterSeconds: number | null;
+}
+
+export interface QuotaAgent {
+  key: QuotaAgentKey;
+  name: string;
+  status: "ok" | "error" | "missing";
+  plan?: string;
+  /** The five-hour and weekly windows first, then the rest. */
+  windows: QuotaWindow[];
+  models?: QuotaModel[];
+  credits?: string;
+  error?: string;
+}
+
+/** GET /api/quota */
+export interface QuotaResponse {
+  ok: true;
+  fetchedAt: string;
+  /** Always all three, in the order claude, codex, agy. */
+  agents: QuotaAgent[];
+}
+
+/**
+ * FORK: `GET /api/boot` — the five bodies a cold boot used to fetch one after another, as one
+ * response. Mirrors `BootBody` in bridge/boot.ts.
+ *
+ * It REPLACES nothing: every field is exactly the body of the route that owns it, the page polls
+ * those same routes afterwards, and a bridge too old to serve this answers 404 — which is why every
+ * field but the snapshot is read defensively by `primeBoot` (lib/api.ts) and why `quota` is absent
+ * rather than null when the usage card is off.
+ */
+export interface BootResponse {
+  snapshot: SnapshotResponse;
+  /** The tag `/api/snapshot` would answer for `snapshot`, so the first poll can be a 304. */
+  snapshotEtag: string;
+  config: BridgeConfig;
+  launchers: LaunchersResponse;
+  notifyPrefs: NotifyPrefs;
+  quota?: QuotaResponse;
+  quotaEtag?: string;
+}
+
+// ── FORK: a picture of a local page, and one element out of it (bridge/shot.ts) ────────────────
+// Hand-mirrored from bridge/types.ts, like everything else in this file.
+
+/** The element's computed CSS, by property name. An interface for the reason ADR 0019 gives. */
+export interface ProbeStyles {
+  readonly [property: string]: string;
+}
+
+export interface ProbeBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** POST /api/pane/:id/shot */
+export interface ShotResponse {
+  ok: true;
+  /** `data:image/webp;base64,…` — inline, so there is no second file-serving route to reason about. */
+  image: string;
+  mime: "image/webp" | "image/png";
+  /** The viewport the page was laid out at, after the bridge clamped it. */
+  width: number;
+  height: number;
+  dpr: number;
+  url: string;
+}
+
+/** POST /api/pane/:id/probe */
+export interface ProbeResponse {
+  ok: true;
+  tag: string;
+  id: string | null;
+  classes: string;
+  selector: string;
+  elementPath: string;
+  text: string;
+  box: ProbeBox;
+  role: string;
+  accessibleName: string;
+  computedStyles: ProbeStyles;
+  htmlSnippet: string;
+  nearbyText: string[];
+  nearbyElements: string[];
+  url: string;
+  reactComponents?: string;
+  /** Present only when the page itself resolved it — never guessed. */
+  sourceFile?: string;
+}
+
+// ── FORK: Artifacts — what an agent made, filed under the pane that made it (bridge/artifacts.ts) ──
+
+export type ArtifactKind = "html" | "markdown" | "image" | "text" | "file";
+
+/** The pane an artifact was stamped with once its session met a live agent; null until then. */
+export interface ArtifactPaneRef {
+  paneId: string;
+  workspaceId: string;
+  workspaceLabel: string;
+  agent: string;
+}
+
+export interface ArtifactView {
+  id: string;
+  /** Groups versions: the same slug registered again is a new version of the same artifact. */
+  slug: string;
+  version: number;
+  title: string;
+  kind: ArtifactKind;
+  ext: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  sourcePath: string | null;
+  createdMs: number;
+  tags: string[];
+  pinned: boolean;
+  /** The kb slug once promoted, else null. */
+  kbSlug: string | null;
+  harness: string | null;
+  /** A source that has no pane by design ("scheduler"), else null. */
+  origin: string | null;
+  pane: ArtifactPaneRef | null;
+}
+
+export interface ArtifactsResponse {
+  ok: true;
+  artifacts: ArtifactView[];
+}
+
+export interface ArtifactResponse {
+  ok: true;
+  artifact: ArtifactView;
+}
+
+/**
+ * FORK: POST /api/pane/:id/handoff — the pane the next agent now runs in (navigate straight into
+ * it) and the handoff document, kept as this pane's artifact. Mirrors HandoffResponse in
+ * bridge/handoff.ts; the failure arm is a launch's own.
+ */
+export type HandoffResponse =
+  | { ok: true; pane: CreatedPane; artifact: ArtifactView }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
 
