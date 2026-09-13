@@ -60,6 +60,18 @@ let currentStt: SttCapability | null = null;
 // on purpose: both mean "nothing said otherwise", and lib/attachments.ts answers both with the
 // contract that shipped before attachments existed — 10 MB, images only.
 let currentUpload: UploadCapability | null = null;
+// The hostnames whose knowledge-base links open in the document panel instead of leaving the PWA.
+// Empty until a read succeeds, on a bridge that serves no documents, and on one older than the
+// field — all three mean the same thing (every link stays external), so nothing distinguishes them.
+let currentDocHosts: readonly string[] = [];
+/** FORK: whether the bridge answers `/api/quota` — the dashboard's usage section gate. */
+let currentQuota = false;
+/**
+ * FORK: whether the bridge can take a screenshot of a local page (bridge/shot.ts) — annotate-and-
+ * ask's gate. `false` until the config has loaded, and on every bridge with no command configured;
+ * the two are the same value on purpose, because both mean "no button for this here".
+ */
+let currentShot = false;
 let inflight: Promise<void> | null = null;
 let loaded = false;
 const listeners = new Set<() => void>();
@@ -87,6 +99,9 @@ export function loadOperatorCommands(): Promise<void> {
       currentMux = cfg.mux ?? null;
       currentStt = cfg.stt ?? null;
       currentUpload = cfg.upload ?? null;
+      currentDocHosts = cfg.docHosts ?? [];
+      currentQuota = cfg.quota === true;
+      currentShot = cfg.shot === true;
       loaded = true;
       emit();
     } catch {
@@ -266,6 +281,51 @@ export function useUploadCapability(): UploadCapability | null {
   return useSyncExternalStore(subscribeOperatorConfig, getUploadCapability, getUploadCapability);
 }
 
+/**
+ * The hostnames whose documents this bridge serves itself. Empty is the feature off.
+ *
+ * Returns the CACHED array, never a fresh one — `useSyncExternalStore` compares snapshots by
+ * identity, and a getter spelled `() => cfg?.docHosts ?? []` allocates on every call and makes React
+ * throw "getSnapshot should be cached". Every getter above avoids it the same way.
+ */
+export function getDocHosts(): readonly string[] {
+  return currentDocHosts;
+}
+
+/** Reactive read of the document hosts. Same one-shot fetch, same contract. */
+export function useDocHosts(): readonly string[] {
+  useEffect(() => {
+    void loadOperatorCommands();
+  }, []);
+  return useSyncExternalStore(subscribeOperatorConfig, getDocHosts, getDocHosts);
+}
+
+/** FORK: whether the usage section can be drawn. `false` until the config has loaded. */
+export function getQuotaEnabled(): boolean {
+  return currentQuota;
+}
+
+/** Reactive read of the usage gate. Same one-shot fetch, same contract. */
+export function useQuotaEnabled(): boolean {
+  useEffect(() => {
+    void loadOperatorCommands();
+  }, []);
+  return useSyncExternalStore(subscribeOperatorConfig, getQuotaEnabled, getQuotaEnabled);
+}
+
+/** FORK: whether "Screenshot & annotate…" can be offered. `false` until the config has loaded. */
+export function getShotEnabled(): boolean {
+  return currentShot;
+}
+
+/** Reactive read of the annotate gate. Same one-shot fetch, same contract. */
+export function useShotEnabled(): boolean {
+  useEffect(() => {
+    void loadOperatorCommands();
+  }, []);
+  return useSyncExternalStore(subscribeOperatorConfig, getShotEnabled, getShotEnabled);
+}
+
 /** Reactive read of the Quick-dock groups. Same one-shot fetch, same contract. */
 export function useOperatorQuickReplies(): readonly OperatorQuickReplyRow[] {
   useEffect(() => {
@@ -289,6 +349,9 @@ export function __resetOperatorCommands(): void {
   currentMux = null;
   currentStt = null;
   currentUpload = null;
+  currentDocHosts = [];
+  currentQuota = false;
+  currentShot = false;
   inflight = null;
   loaded = false;
   listeners.clear();

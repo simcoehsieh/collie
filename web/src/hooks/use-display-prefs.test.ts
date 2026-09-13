@@ -2,6 +2,7 @@ import { renderHook, act } from "@testing-library/react";
 import {
   applyDraftFontSize,
   DRAFT_FONT_MAX,
+  FONT_MAX,
   DRAFT_FONT_MIN,
   FONT_STACKS,
   fontStack,
@@ -19,7 +20,7 @@ describe("useDisplayPrefs", () => {
 
   it("returns defaults when localStorage is empty", () => {
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true });
+    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false, paneView: {} });
   });
 
   it("persists wrap=true and reloads it on mount", () => {
@@ -42,7 +43,7 @@ describe("useDisplayPrefs", () => {
       JSON.stringify({ wrap: false, fontSize: 14, rawTerminal: true, tapToFocus: false, expandClippedReply: false }),
     );
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: false, fontSize: 14, draftFontSize: 14, fontFamily: "system", rawTerminal: true, tapToFocus: false, expandClippedReply: false });
+    expect(result.current.prefs).toEqual({ wrap: false, fontSize: 14, draftFontSize: 14, fontFamily: "system", rawTerminal: true, tapToFocus: false, expandClippedReply: false, controlsOpen: false, paneView: {} });
   });
 
   it("persists rawTerminal and reloads it on mount (the escape hatch survives a reload)", () => {
@@ -69,7 +70,7 @@ describe("useDisplayPrefs", () => {
   it("reads a pre-tapToFocus payload without discarding the prefs it does have", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ wrap: false, fontSize: 15, rawTerminal: true }));
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: false, fontSize: 15, draftFontSize: 14, fontFamily: "system", rawTerminal: true, tapToFocus: true, expandClippedReply: true });
+    expect(result.current.prefs).toEqual({ wrap: false, fontSize: 15, draftFontSize: 14, fontFamily: "system", rawTerminal: true, tapToFocus: true, expandClippedReply: true, controlsOpen: false, paneView: {} });
   });
 
   it("persists fontFamily and reloads it on mount", () => {
@@ -127,22 +128,26 @@ describe("useDisplayPrefs", () => {
     expect(result.current.prefs.fontSize).toBe(9);
   });
 
-  it("setFontSize clamps above maximum to 16", () => {
+  it("setFontSize clamps above maximum", () => {
     const { result } = renderHook(() => useDisplayPrefs());
     act(() => result.current.setFontSize(99));
-    expect(result.current.prefs.fontSize).toBe(16);
+    // Against the CONSTANT, not a copy of its value: the ceiling moved once (16 → 24, for desktop)
+    // and a literal here would either move with it or start asserting the old design in its name.
+    expect(result.current.prefs.fontSize).toBe(FONT_MAX);
   });
 
   it("stepFontSize increments within range", () => {
     const { result } = renderHook(() => useDisplayPrefs());
-    act(() => result.current.stepFontSize(2)); // 10 + 2 = 12
-    expect(result.current.prefs.fontSize).toBe(12);
+    act(() => result.current.stepFontSize(2)); // 11 + 2 = 13
+    expect(result.current.prefs.fontSize).toBe(13);
   });
 
   it("stepFontSize does not exceed max", () => {
     const { result } = renderHook(() => useDisplayPrefs());
-    act(() => result.current.stepFontSize(10)); // 12 + 10 = 22 → clamp to 16
-    expect(result.current.prefs.fontSize).toBe(16);
+    act(() => result.current.stepFontSize(10)); // 11 + 10 = 21, still under the ceiling
+    expect(result.current.prefs.fontSize).toBe(21);
+    act(() => result.current.stepFontSize(10)); // …and the next one clamps
+    expect(result.current.prefs.fontSize).toBe(FONT_MAX);
   });
 
   it("stepFontSize does not go below min", () => {
@@ -185,7 +190,7 @@ describe("useDisplayPrefs", () => {
     const { result } = renderHook(() => useDisplayPrefs());
     act(() => result.current.stepDraftFontSize(1));
     expect(result.current.prefs.draftFontSize).toBe(15);
-    expect(result.current.prefs.fontSize).toBe(10); // the two knobs are two settings
+    expect(result.current.prefs.fontSize).toBe(11); // the two knobs are two settings
   });
 
   it("clamps the draft size to its own 13–16, not the mirror's 9–16", () => {
@@ -256,12 +261,43 @@ describe("useDisplayPrefs — the rest", () => {
   it("falls back to defaults on malformed JSON", () => {
     localStorage.setItem(STORAGE_KEY, "not-json{{{");
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true });
+    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false, paneView: {} });
   });
 
   it("falls back to defaults when stored value is not an object", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(42));
     const { result } = renderHook(() => useDisplayPrefs());
-    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 10, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true });
+    expect(result.current.prefs).toEqual({ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: false, paneView: {} });
+  });
+});
+
+// FORK: the Controls row is closed by default, and the stored `controlsOpen` is honoured only once
+// it is a known CHOICE. The whole prefs object is written back on every change, so an install that
+// merely changed the font once under the old default carries `controlsOpen: true` without ever
+// having chosen it — and the new default would never reach it.
+describe("useDisplayPrefs — controlsOpen is a choice, not a leftover", () => {
+  const CHOSEN_KEY = "collie:display-prefs:controls-chosen";
+  beforeEach(() => localStorage.clear());
+
+  it("ignores a stored controlsOpen:true that was never chosen", () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ wrap: true, fontSize: 10, controlsOpen: true }));
+    const { result } = renderHook(() => useDisplayPrefs());
+    expect(result.current.prefs.controlsOpen).toBe(false);
+  });
+
+  it("honours a stored controlsOpen once the device has chosen it", () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ wrap: true, fontSize: 10, controlsOpen: true }));
+    localStorage.setItem(CHOSEN_KEY, "1");
+    const { result } = renderHook(() => useDisplayPrefs());
+    expect(result.current.prefs.controlsOpen).toBe(true);
+  });
+
+  it("marks the choice when the operator toggles the row, and reloads it", () => {
+    const { result } = renderHook(() => useDisplayPrefs());
+    act(() => result.current.setControlsOpen(true));
+    expect(localStorage.getItem(CHOSEN_KEY)).toBe("1");
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).controlsOpen).toBe(true);
+    const { result: again } = renderHook(() => useDisplayPrefs());
+    expect(again.current.prefs.controlsOpen).toBe(true);
   });
 });

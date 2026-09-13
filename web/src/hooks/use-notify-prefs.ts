@@ -2,11 +2,19 @@ import { useCallback, useEffect, useState } from "react";
 
 import { getNotifyPrefs, setNotifyPrefs, type NotifyPrefs } from "@/lib/api";
 import { mutate } from "@/lib/mutate";
+import type { PaneNotifyRule } from "@/lib/types";
 
 // Settings-page controller for the bridge-wide notification-type prefs (which agent statuses push).
 // Loads once on mount; a toggle is optimistic — flip the switch immediately, POST the single-key
 // partial, and revert on failure — so it feels instant. These prefs live on the bridge and fan out
 // to every device (like the snooze), so there's nothing per-device to persist locally.
+//
+// FORK: the same controller carries the per-pane rule list (`panes`). A rule edit posts the WHOLE
+// list — the bridge replaces it rather than merging, because the phone edits the list it was shown.
+
+/** The three switches — the keys a `toggle` may name. */
+export type NotifySwitch = "blocked" | "done" | "updates";
+
 export function useNotifyPrefs() {
   const [prefs, setPrefs] = useState<NotifyPrefs | null>(null);
   const [busy, setBusy] = useState(false);
@@ -30,7 +38,7 @@ export function useNotifyPrefs() {
   // phone, put it in a pocket. What they carry away is the state they saw first, which is the one
   // that did not happen. So the revert and an error status land together; the status channel is the
   // only surface that survives the operator leaving this screen.
-  const toggle = useCallback(async (key: keyof NotifyPrefs, next: boolean) => {
+  const toggle = useCallback(async (key: NotifySwitch, next: boolean) => {
     setPrefs((prev) => (prev ? { ...prev, [key]: next } : prev)); // optimistic
     setBusy(true);
     const res = await mutate(() => setNotifyPrefs({ [key]: next }));
@@ -39,5 +47,21 @@ export function useNotifyPrefs() {
     setBusy(false);
   }, []);
 
-  return { prefs, busy, toggle };
+  /** FORK: replace the per-pane rule list. Optimistic like `toggle`, reverting to the list that was
+   *  shown when the bridge refuses. */
+  const setPanes = useCallback(async (panes: PaneNotifyRule[]) => {
+    let before: PaneNotifyRule[] | undefined;
+    setPrefs((prev) => {
+      if (!prev) return prev;
+      before = prev.panes ?? [];
+      return { ...prev, panes };
+    });
+    setBusy(true);
+    const res = await mutate(() => setNotifyPrefs({ panes }));
+    if (res.ok) setPrefs(res.value);
+    else setPrefs((prev) => (prev ? { ...prev, panes: before ?? [] } : prev));
+    setBusy(false);
+  }, []);
+
+  return { prefs, busy, toggle, setPanes };
 }

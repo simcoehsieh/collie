@@ -1,9 +1,12 @@
-import { ArrowDown, ArrowUp, Check, Inbox, WifiOff } from "lucide-react";
+import { memo } from "react";
+import { ArrowDown, ArrowUp, Check, WifiOff } from "lucide-react";
 
 import { clockTime } from "@/lib/format";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { SectionHeader } from "@/components/section-header";
 import { ListGroup } from "@/components/ui/list-group";
+import { PaneRowsSkeleton } from "@/components/route-skeleton";
+import { EmptyState } from "@/components/empty-state";
 import { flipDir, sectionHeaderProps, triage, type RecentDir, type TriageKey } from "@/lib/triage";
 import type { AgentView, BridgeStatus } from "@/lib/types";
 import { paneRowKey } from "@/lib/hosts";
@@ -35,6 +38,11 @@ interface AgentListProps {
   error?: boolean;
   /** When the stale data was fetched, for the "last seen HH:MM" half of the disconnected placeholder. */
   lastSeenAt?: number;
+  /** FORK: pane ids pinned to the top, in the operator's order (hooks/use-dash-prefs.ts). Omit to
+   *  render the plain triage — the sidebar and the palette never pin. */
+  pinned?: readonly string[];
+  /** FORK: a long press on a row — the dashboard opens its pin sheet. Omitted elsewhere. */
+  onLongPress?: (pane: AgentView) => void;
 }
 
 /** Which timestamp a section's rows date themselves by. Attention rows show none — a blocked
@@ -53,7 +61,7 @@ const ATTENTION: ReadonlySet<TriageKey> = new Set<TriageKey>(["needs", "ready"])
 // The herd in the one order the app agrees on: Needs you → Ready · unseen → Working → Recent
 // (lib/triage.ts). Only Recent folds, and only Recent takes the direction toggle; the three
 // attention sections are pinned open and never invert.
-export function AgentList({
+export const AgentList = memo(function AgentList({
   agents,
   bridge,
   onOpen,
@@ -64,6 +72,8 @@ export function AgentList({
   emptyState = true,
   error = false,
   lastSeenAt,
+  pinned,
+  onLongPress,
 }: AgentListProps) {
   useLocale();
   // Whether the multiplexer can say which agent a pane holds. Read unconditionally — a hook cannot
@@ -77,38 +87,46 @@ export function AgentList({
     // `bridge` is no help on its own: a cached snapshot still says "connected".
     if (error) {
       return (
-        <div className="flex flex-col items-center justify-center gap-3 px-4 py-24 text-muted-foreground">
-          <WifiOff className="size-7" />
-          <span className="text-sm">
-            {lastSeenAt === undefined
+        // FORK: the app's one empty-state shape. The mark is a glyph and NOT the cat here — a lost
+        // connection is a narrower fact than "the app has nothing to show", and the brand has no
+        // business presiding over an outage.
+        <EmptyState
+          mark={<WifiOff className="size-7" />}
+          heading={
+            lastSeenAt === undefined
               ? t("home.empty.disconnected")
-              : t("home.empty.disconnectedAt", { time: clockTime(lastSeenAt) })}
-          </span>
-        </div>
+              : t("home.empty.disconnectedAt", { time: clockTime(lastSeenAt) })
+          }
+          body={t("home.empty.disconnectedBody")}
+        />
       );
     }
+    // FORK: "waiting for the multiplexer" is not an empty herd, it is an UNKNOWN one — and the
+    // shape of what is about to arrive is a list of pane rows. So it gets the list, drawn empty,
+    // rather than a sentence that reads like a verdict and a disc that reads like a stall. Three
+    // rows because three is the count at which a run reads as a list; the skeleton holds its paint
+    // for 120ms (ui/skeleton.tsx), so a bridge that answers immediately never flashes it.
+    if (bridge !== "connected") return <PaneRowsSkeleton />;
+    // PRESENTATION, not a gate (M10/06). Without `agentDetection` every pane arrives as a shell
+    // with an unknown status, so this list is empty on a machine that may be running plenty — and
+    // "No agents running." is then a claim the bridge cannot actually make. The adapter's own
+    // sentence says why, and the rest says where the panes went, so the dashboard reads as one
+    // coherent screen instead of an empty one. On a multiplexer that reports agents (i.e. on Herdr)
+    // the body is the plain one.
+    const undetected = !agentDetection.capable && agentDetection.note !== "";
     return (
-      <div className="flex flex-col items-center justify-center gap-3 px-4 py-24 text-muted-foreground">
-        <Inbox className="size-7" />
-        <span className="text-sm">
-          {bridge === "connected" ? t("home.empty.noAgents") : t("home.empty.waiting")}
-        </span>
-        {/* PRESENTATION, not a gate (M10/06). Without `agentDetection` every pane arrives as a
-            shell with an unknown status, so this list is empty on a machine that may be running
-            plenty — and "No agents running." is then a claim the bridge cannot actually make. The
-            adapter's own sentence says why, and the second line says where the panes went, so the
-            dashboard reads as one coherent screen instead of an empty one. Renders nothing on a
-            multiplexer that reports agents, i.e. nothing on Herdr. */}
-        {bridge === "connected" && !agentDetection.capable && agentDetection.note !== "" && (
-          <p className="max-w-xs text-center text-xs leading-snug">
-            {agentDetection.note} {t("home.empty.panesHint")}
-          </p>
-        )}
-      </div>
+      <EmptyState
+        heading={t("home.empty.noAgents")}
+        body={
+          undetected
+            ? `${agentDetection.note} ${t("home.empty.panesHint")}`
+            : t("home.empty.body")
+        }
+      />
     );
   }
 
-  const all = triage(agents, recentDir);
+  const all = triage(agents, recentDir, pinned);
   const sections = all.filter((s) => s.agents.length > 0);
   if (sections.length === 0) return null;
   // "What needs me right now?" deserves an answer even when the answer is "nothing". Without this
@@ -146,6 +164,10 @@ export function AgentList({
             statusStyle="dot"
             density={ATTENTION.has(s.key) ? "card" : "row"}
             {...(age ? { age } : {})}
+            // FORK: a pinned row wears its glyph in every section it could sit in — which is only
+            // this one, since triage lifts it out of the others.
+            pinned={s.key === "pinned"}
+            {...(onLongPress ? { onLongPress: () => onLongPress(a) } : {})}
           />
         ));
 
@@ -184,7 +206,7 @@ export function AgentList({
       })}
     </div>
   );
-}
+});
 
 // One tap flips the Recent order. Deliberately not a menu — the design offers a direction, not a
 // choice of sort keys. min-h-9 keeps it on the 36px touch floor.
@@ -201,7 +223,7 @@ function SortToggle({ dir, onChange }: { dir: RecentDir; onChange: (dir: RecentD
       // than something you can press. Fixed width so flipping it doesn't shift the header. No fill —
       // filled, it outweighed the heading it sits beside, which is backwards for a control that
       // reorders the section you care least about.
-      className="flex min-h-9 items-center justify-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95"
+      className="flex min-h-9 items-center justify-center gap-1 rounded-full border border-transparent bg-muted px-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-95"
     >
       <Icon className="size-3.5" aria-hidden />
       <span className="w-[3.25rem] text-left">{newest ? t("home.sort.newest") : t("home.sort.oldest")}</span>

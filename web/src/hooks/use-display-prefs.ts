@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import type { CSSProperties } from "react";
-import { asJsonBoolean, asJsonNumber, asJsonString, parseJsonObject } from "@/lib/json";
+import { asJsonBoolean, asJsonNumber, asJsonObject, asJsonString, parseJsonObject } from "@/lib/json";
+import type { JsonValue } from "@/lib/json";
 
 // Terminal mirror display preferences, persisted in localStorage.
 // Safe to call in SSR contexts (localStorage guarded throughout).
@@ -12,7 +13,14 @@ export interface DisplayPrefs {
    *  INSIDE the wrap (lib/table-run.ts), so no-wrap is now only for output whose columns matter
    *  everywhere, such as a full-screen TUI. */
   wrap: boolean;
-  /** Font size in px for the mirror pre (default: 10, range: 9–16). */
+  /** Font size in px for the mirror pre (default: 11, range: 9–24).
+   *
+   *  FORK: 11, not upstream's 10, and the extra pixel is paid for out of a loss that was already
+   *  happening. At 10px a 390px phone is ~62 columns against the 80-100 an agent emits, so nearly
+   *  every line wrapped anyway — the columns were not being preserved, they were being broken
+   *  silently. 11px costs ~6 of those columns and buys a size that can be read at arm's length,
+   *  and skin.css's hanging indent makes the wraps that remain legible AS wraps. A device that has
+   *  ever touched the stepper keeps its own number; this is only what a fresh install gets. */
   fontSize: number;
   /**
    * Font size in px for the COMPOSER's draft field (default: 14, range: 13–16).
@@ -67,6 +75,89 @@ export interface DisplayPrefs {
    * is why it is a pref at all rather than unconditional.
    */
   expandClippedReply: boolean;
+  /**
+   * Whether the composer's Controls row — Keys / Type / Quick / Agent / ⚙ — stands open
+   * (default: true, i.e. exactly what every install rendered before this setting existed).
+   *
+   * Closed, the row and its margins leave through `Collapse` and the terminal mirror above grows by
+   * their height; the status band below them becomes the way back, and grows itself to a real tap
+   * target while it is the only one. This is a DISPLAY preference and not composer state for the
+   * same reason wrap and font size are: it is a standing choice about how much of the screen the
+   * mirror gets, so it has to survive a pane switch, a navigation and the app being closed.
+   */
+  controlsOpen: boolean;
+  /**
+   * FORK — WHICH VIEW EACH PANE OPENS IN: its conversation, or its terminal mirror.
+   *
+   * PER PANE **and** per device, which is why it is a map and not a boolean. The two questions are
+   * genuinely different: a Claude pane is a conversation you read (chat mode is its default), while
+   * a pane running a TUI installer is a screen you watch — and the same operator wants opposite
+   * answers for the two on the same phone. A single switch would make every pane pay for the one
+   * you last looked at.
+   *
+   * Keyed by the pane's ADDRESS (`paneScopeKey`), never the bare id: the same pane id on another
+   * host or another herdr session is a different pane, and a shared key would let one machine's
+   * choice decide another's.
+   *
+   * ABSENT IS NOT "terminal" — it is "no choice made", which `paneViewFor` resolves to the default
+   * for the pane's kind. That is what lets the default change without rewriting everyone's stored
+   * map (it did: transcript-first shipped on 2026-09-11 and was flipped back to terminal-first the
+   * same day — Simcoe wants a new tab to open on the screen the agent is actually drawing, with the
+   * thread one tap away rather than the other way round), and what keeps a shell pane out of a view
+   * it has no journal for.
+   */
+  paneView: Record<string, PaneView>;
+}
+
+/** FORK: which of the pane's two representations is on screen. */
+export type PaneView = "transcript" | "terminal";
+
+/**
+ * How many panes' choices are remembered. Panes come and go (a multiplexer restart renumbers them),
+ * so an unbounded map is a localStorage entry that only ever grows; 80 is far more than any herd
+ * anyone has, and the oldest entry is the one nobody is looking at.
+ */
+export const PANE_VIEW_MAX = 80;
+
+/**
+ * The view a pane opens in: the operator's own choice for THIS pane, or the default — the TERMINAL,
+ * for every kind. The transcript is offered, remembered per pane, and one tap away; it is not what
+ * a pane opens on (see the `paneView` field for the history of that default).
+ *
+ * `isAgent` is the caller's answer, not a guess made here — the pane view already knows whether it
+ * is looking at an agent or a bare shell, and a shell has no transcript to show, so a stored
+ * "transcript" for one is ignored rather than honoured.
+ */
+export function paneViewFor(
+  prefs: DisplayPrefs,
+  paneKey: string,
+  isAgent: boolean,
+): PaneView {
+  const chosen = Object.hasOwn(prefs.paneView, paneKey) ? prefs.paneView[paneKey] : undefined;
+  if (chosen === "transcript") return isAgent ? "transcript" : "terminal";
+  return "terminal";
+}
+
+/**
+ * FORK: write ONE pane's view into the stored prefs from outside the hook.
+ *
+ * For a surface that mounts a pane with no live bridge behind it — the states playground, whose
+ * whole subject is captured TERMINAL screens and whose own docstring promises "no fetch anywhere".
+ * Chat mode would otherwise make every card there open on a transcript it would have to go and
+ * fetch, which is both the wrong picture and a broken promise.
+ *
+ * Written through the real store rather than pushed in as a prop, on the same argument
+ * `playground/harness.tsx` already makes for seeding a composer draft: the app restores this on
+ * mount, so writing the store IS how a choice arrives. Call it BEFORE the pane mounts.
+ */
+export function seedPaneView(paneKey: string, view: PaneView): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    const current = loadPrefs();
+    savePrefs({ ...current, paneView: { ...current.paneView, [paneKey]: view } });
+  } catch {
+    // Ignore quota / SSR write errors — the pane simply opens on its default view.
+  }
 }
 
 /** The terminal font families offered in Settings. A closed list, not a free-text box: an
@@ -176,21 +267,67 @@ export function mirrorFont(family: FontFamily): MirrorFont {
 // before it existed simply reads the default. Bumping would silently reset everyone's wrap, size and
 // raw-terminal choice to buy nothing.
 const STORAGE_KEY = "collie:display-prefs:v4";
+// FORK: set the first time the operator TOGGLES the Controls row on this device. The whole prefs
+// object is written back on every change, so a device carries `controlsOpen: true` whether the
+// operator chose it or merely changed the font once while the old default was `true`. Without this
+// marker the fork's new default (closed) would never reach an existing install; with it, the stored
+// value is honoured only once it is known to be a choice.
+const CONTROLS_CHOSEN_KEY = "collie:display-prefs:controls-chosen";
 export const FONT_MIN = 9;
-export const FONT_MAX = 16;
+// 24, not 16, and the extra eight are for the DESKTOP. 16 was a phone's ceiling — on a 393pt screen
+// nothing above it fits a useful number of columns — and it silently became the ceiling everywhere.
+// MEASURED on the operator's 1908px browser window: the pane view's content column is 1400px, the
+// reply field 1320px, and the mirror <pre> is full-bleed at 1384px — but a herdr pane is 84 columns
+// (read off the pane's own visible screen), so at the default 10px the terminal draws 504px of that
+// and the rest is empty. The mirror is not narrow; the terminal is. The only lever that fills the
+// width without touching the source pane is the glyph, and 84 columns reach the field's width at
+// about 26px. 24 gets to ~1210px, which is where the stepper stops.
+//
+// A wider herdr pane would fill it at 10px and is the other half of the same trade — and it is the
+// worse one HERE: this app's primary client is a phone, where 200-column lines wrap three ways.
+export const FONT_MAX = 24;
 /** The draft field's own range — see `draftFontSize` on {@link DisplayPrefs} for why it is narrower
  *  than the mirror's at both ends. */
 export const DRAFT_FONT_MIN = 13;
 export const DRAFT_FONT_MAX = 16;
 const DEFAULTS: DisplayPrefs = {
   wrap: true,
-  fontSize: 10,
+  fontSize: 11,
   draftFontSize: 14,
   fontFamily: "system",
   rawTerminal: false,
   tapToFocus: true,
   expandClippedReply: true,
+  // FORK: closed by default — the phone keeps its rows; the status band opens it in one tap.
+  controlsOpen: false,
+  // FORK: empty is "nobody has chosen for any pane yet" — see `paneViewFor` for what that resolves to.
+  paneView: {},
 };
+
+/** A stored view word, or undefined — the one place the two spellings are checked. */
+function asPaneView(value: JsonValue | undefined): PaneView | undefined {
+  return value === "transcript" || value === "terminal" ? value : undefined;
+}
+
+/**
+ * One stored map off a parsed document: unknown views dropped, the whole thing capped.
+ *
+ * Takes a {@link JsonValue} rather than `unknown` for the reason lib/json.ts states — everything
+ * reachable inside a parsed payload IS one, so this can narrow without re-asserting per field.
+ * Insertion order is preserved for string keys, which is what makes the cap drop the OLDEST entry.
+ */
+function readPaneView(raw: JsonValue | undefined): DisplayPrefs["paneView"] {
+  const stored = asJsonObject(raw);
+  if (stored === undefined) return {};
+  const out: DisplayPrefs["paneView"] = {};
+  const entries: [string, PaneView][] = [];
+  for (const [key, value] of Object.entries(stored)) {
+    const view = asPaneView(value);
+    if (view !== undefined) entries.push([key, view]);
+  }
+  for (const [key, view] of entries.slice(-PANE_VIEW_MAX)) out[key] = view;
+  return out;
+}
 
 function readFontFamily(value: string | undefined): FontFamily {
   return value !== undefined && isFontFamily(value) ? value : DEFAULTS.fontFamily;
@@ -279,9 +416,34 @@ function loadPrefs(): DisplayPrefs {
       rawTerminal: asJsonBoolean(p.rawTerminal) ?? DEFAULTS.rawTerminal,
       tapToFocus: asJsonBoolean(p.tapToFocus) ?? DEFAULTS.tapToFocus,
       expandClippedReply: asJsonBoolean(p.expandClippedReply) ?? DEFAULTS.expandClippedReply,
+      // Same independent-default rule again: a payload written before the Controls row could be put
+      // away reads `true`, so nobody's composer changes shape on the upgrade.
+      controlsOpen: controlsChosen()
+        ? (asJsonBoolean(p.controlsOpen) ?? DEFAULTS.controlsOpen)
+        : DEFAULTS.controlsOpen,
+      // FORK: same independent-default rule as every field above — a payload written before chat
+      // mode existed carries no map, which reads as "no pane has been chosen for" and lets
+      // `paneViewFor` answer per kind.
+      paneView: readPaneView(p.paneView),
     };
   } catch {
     return DEFAULTS;
+  }
+}
+
+function controlsChosen(): boolean {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem(CONTROLS_CHOSEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markControlsChosen(): void {
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem(CONTROLS_CHOSEN_KEY, "1");
+  } catch {
+    // Ignore quota / SSR write errors.
   }
 }
 
@@ -313,6 +475,10 @@ export interface UseDisplayPrefsReturn {
   setTapToFocus: (tapToFocus: boolean) => void;
   /** Toggle or explicitly set whether a clipped reply is re-shown in full above the mirror. */
   setExpandClippedReply: (expandClippedReply: boolean) => void;
+  /** Open or put away the composer's Controls row. */
+  setControlsOpen: (controlsOpen: boolean) => void;
+  /** FORK: remember which view ONE pane opens in. `paneKey` is `paneScopeKey(scope, paneId)`. */
+  setPaneView: (paneKey: string, view: PaneView) => void;
 }
 
 export function useDisplayPrefs(): UseDisplayPrefsReturn {
@@ -382,8 +548,35 @@ export function useDisplayPrefs(): UseDisplayPrefsReturn {
     });
   }, []);
 
+  const setControlsOpen = useCallback((controlsOpen: boolean) => {
+    markControlsChosen();
+    setPrefs((p) => {
+      const next: DisplayPrefs = { ...p, controlsOpen };
+      savePrefs(next);
+      return next;
+    });
+  }, []);
+
+  const setPaneView = useCallback((paneKey: string, view: PaneView) => {
+    setPrefs((p) => {
+      // Re-inserted at the END even when it is already there, so "most recently chosen" is the
+      // order the cap trims from — the same touch-on-hit rule the bridge's journal cache uses.
+      const { [paneKey]: _dropped, ...rest } = p.paneView;
+      const merged = { ...rest, [paneKey]: view };
+      const entries = Object.entries(merged);
+      const paneView: DisplayPrefs["paneView"] =
+        entries.length <= PANE_VIEW_MAX
+          ? merged
+          : Object.fromEntries(entries.slice(entries.length - PANE_VIEW_MAX));
+      const next: DisplayPrefs = { ...p, paneView };
+      savePrefs(next);
+      return next;
+    });
+  }, []);
+
   return {
     prefs,
+    setPaneView,
     setWrap,
     setFontSize,
     setFontFamily,
@@ -392,5 +585,6 @@ export function useDisplayPrefs(): UseDisplayPrefsReturn {
     setRawTerminal,
     setTapToFocus,
     setExpandClippedReply,
+    setControlsOpen,
   };
 }

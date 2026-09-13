@@ -191,10 +191,15 @@ describe("requested-lines bookkeeping (Load older)", () => {
   // 1001 lines against a 6895-line buffer). With a 600-line base window that means exactly ONE
   // useful tap — which is the honest ceiling, not a shortfall in the stepping.
   it("defaults to the base window and grows to Herdr's real ceiling in one tap", async () => {
-    const { getRequestedLines, growRequestedLines, canGrowRequestedLines, DETAIL_HISTORY_MAX } =
+    const { getRequestedLines, growRequestedLines, canGrowRequestedLines, DETAIL_HISTORY_MAX, FOLLOW_LINES } =
       await import("./loaders");
+    const { setFollowing } = await import("./poll-intent");
     expect(DETAIL_HISTORY_MAX).toBe(1000);
+    // FORK: on the live tail only the tail window is asked for; scrolled back, the base window.
+    expect(getRequestedLines("w1:p1")).toBe(FOLLOW_LINES);
+    setFollowing(false);
     expect(getRequestedLines("w1:p1")).toBe(600);
+    setFollowing(true);
     expect(canGrowRequestedLines("w1:p1")).toBe(true);
 
     // A 600 step would overshoot the cap, so the first tap lands exactly on it.
@@ -207,10 +212,10 @@ describe("requested-lines bookkeeping (Load older)", () => {
   });
 
   it("tracks each pane independently", async () => {
-    const { getRequestedLines, growRequestedLines } = await import("./loaders");
+    const { getRequestedLines, growRequestedLines, FOLLOW_LINES } = await import("./loaders");
     growRequestedLines("w1:p1");
     expect(getRequestedLines("w1:p1")).toBe(1000);
-    expect(getRequestedLines("w2:p1")).toBe(600); // untouched
+    expect(getRequestedLines("w2:p1")).toBe(FOLLOW_LINES); // untouched, and on the tail
   });
 
   it("the loader fetches with (and reports) the pane's requested window", async () => {
@@ -221,10 +226,29 @@ describe("requested-lines bookkeeping (Load older)", () => {
   });
 
   it("resetRequestedLines clears back to the base window", async () => {
-    const { getRequestedLines, growRequestedLines, resetRequestedLines } = await import("./loaders");
+    const { getRequestedLines, growRequestedLines, resetRequestedLines, FOLLOW_LINES } =
+      await import("./loaders");
     growRequestedLines("w1:p1");
     resetRequestedLines("w1:p1");
-    expect(getRequestedLines("w1:p1")).toBe(600);
+    expect(getRequestedLines("w1:p1")).toBe(FOLLOW_LINES);
+  });
+
+  it("the loader asks for the tail window while following and the base window once scrolled back", async () => {
+    let seen: string[] = [];
+    server.use(
+      http.get(/\/api\/pane\/[^/]+$/, ({ request }) => {
+        seen.push(new URL(request.url).searchParams.get("lines") ?? "");
+        return HttpResponse.json({ paneId: "w1:p1", text: "x", truncated: false, revision: 1 });
+      }),
+    );
+    const { paneLoader, FOLLOW_LINES } = await import("./loaders");
+    const { setFollowing } = await import("./poll-intent");
+    await paneLoader({ params: { paneId: "w1:p1" } });
+    setFollowing(false);
+    await paneLoader({ params: { paneId: "w1:p1" } });
+    setFollowing(true);
+    expect(seen).toEqual([String(FOLLOW_LINES), "600"]);
+    seen = [];
   });
 });
 
@@ -292,14 +316,14 @@ describe("loaders — session scoping", () => {
   });
 
   it("tracks requested scrollback per (host, session, pane) so ids can't collide", async () => {
-    const { getRequestedLines, growRequestedLines } = await import("./loaders");
+    const { getRequestedLines, growRequestedLines, FOLLOW_LINES } = await import("./loaders");
     growRequestedLines("w1:p1", { session: "collie-demo" });
     expect(getRequestedLines("w1:p1", { session: "collie-demo" })).toBe(1000);
-    expect(getRequestedLines("w1:p1")).toBe(600); // the lead's primary session, same id, untouched
+    expect(getRequestedLines("w1:p1")).toBe(FOLLOW_LINES); // the lead's primary session, same id, untouched
     growRequestedLines("w1:p1", { host: "badger" });
     expect(getRequestedLines("w1:p1", { host: "badger" })).toBe(1000);
-    expect(getRequestedLines("w1:p1")).toBe(600); // still untouched — a different machine entirely
-    expect(getRequestedLines("w1:p1", { host: "badger", session: "collie-demo" })).toBe(600);
+    expect(getRequestedLines("w1:p1")).toBe(FOLLOW_LINES); // still untouched — a different machine entirely
+    expect(getRequestedLines("w1:p1", { host: "badger", session: "collie-demo" })).toBe(FOLLOW_LINES);
   });
 
   // The host dimension, end to end through a loader: the wire param, the per-scope stale cache, and
@@ -562,13 +586,62 @@ describe("loaders — offline navigation fast path", () => {
     expect(fetchSpy).toHaveBeenCalled();
   });
 
-  it("does NOT fast-path when the connection is not latched (a brief blip still fetches)", async () => {
+  // FORK — show first, fetch second. Upstream's rule here was "a navigation that is not latched
+  // really fetches"; this fork hands back the last GOOD snapshot on the tap, flagged `pending`, and
+  // RootLayout revalidates at once (routes/root.tsx). The three facts that make that honest:
+  it("answers a navigation from the last good snapshot, flagged pending and NOT as an error", async () => {
     const { rootLoader } = await import("./loaders");
-    // No latchLost(): a transient blip must keep really fetching on navigation, not serve stale.
     await rootLoader({ request: new Request("http://localhost/") });
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    await rootLoader({ request: new Request("http://localhost/space/w1") }); // navigation, but not latched
+    const data = await rootLoader({ request: new Request("http://localhost/space/w1") });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(data.pending).toBe(true);
+    expect(data.error).toBe(false);
+    expect(data.agents.length).toBeGreaterThan(0);
+  });
+
+  it("really fetches on the revalidation that follows (same url), and that body is not pending", async () => {
+    const { rootLoader } = await import("./loaders");
+    await rootLoader({ request: new Request("http://localhost/") });
+    await rootLoader({ request: new Request("http://localhost/space/w1") }); // the tap
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const data = await rootLoader({ request: new Request("http://localhost/space/w1") }); // revalidate
     expect(fetchSpy).toHaveBeenCalled();
+    expect(data.pending).toBeUndefined();
+  });
+
+  it("still fetches a navigation it has never cached (cold path unchanged)", async () => {
+    const { rootLoader } = await import("./loaders");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const data = await rootLoader({ request: new Request("http://localhost/") });
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(data.pending).toBeUndefined();
+  });
+
+  it("answers a pane re-open from its in-memory mirror, flagged pending, then fetches on revalidate", async () => {
+    const { paneLoader, rootLoader } = await import("./loaders");
+    await paneLoader({
+      params: { paneId: "w1:p1" },
+      request: new Request("http://localhost/pane/w1:p1"),
+    });
+    await rootLoader({ request: new Request("http://localhost/") }); // leave ⇒ a return is a nav
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const tap = await paneLoader({
+      params: { paneId: "w1:p1" },
+      request: new Request("http://localhost/pane/w1:p1"),
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(tap.pending).toBe(true);
+    expect(tap.error).toBe(false);
+    expect(tap.text.length).toBeGreaterThan(0);
+
+    const poll = await paneLoader({
+      params: { paneId: "w1:p1" },
+      request: new Request("http://localhost/pane/w1:p1"),
+    });
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(poll.pending).toBeUndefined();
   });
 });
 
@@ -633,9 +706,10 @@ describe("historyLoader", () => {
         });
       }),
     );
-    const { historyLoader, HISTORY_PAGE_SIZE } = await import("./loaders");
+    const { historyLoader, HISTORY_FIRST_PAGE } = await import("./loaders");
     await historyLoader({ params: { paneId: "w1:p1" } });
-    expect(seen).toBe(String(HISTORY_PAGE_SIZE));
+    // FORK: a few screens before the paint; the view extends to HISTORY_PAGE_SIZE in the background.
+    expect(seen).toBe(String(HISTORY_FIRST_PAGE));
   });
 
   it.each([["disabled"], ["no-session"], ["no-log"]])(
@@ -1000,3 +1074,175 @@ describe("the two cache-key families stay apart", () => {
     expect(snapshotKey({})).toBe(scopeKey({}));
   });
 });
+
+// FORK — the snapshot validates. On a 304 `fetchSnapshot` hands back the SAME body it cached, and
+// `toHomeData` hands back the SAME HomeData it built from it: a quiet herd polled at 1 Hz must not
+// become a new object graph every beat, because every consumer under the root keys its work on it.
+describe("rootLoader — identity across an unchanged snapshot", () => {
+  it("returns the same HomeData object when the bridge answers 304", async () => {
+    let calls = 0;
+    server.use(
+      http.get("/api/snapshot", ({ request }) => {
+        calls += 1;
+        if (request.headers.get("if-none-match") === '"snap-1"') {
+          return new HttpResponse(null, { status: 304, headers: { etag: '"snap-1"' } });
+        }
+        return HttpResponse.json(fixtureSnapshot, { headers: { etag: '"snap-1"' } });
+      }),
+    );
+    const { rootLoader } = await import("./loaders");
+    const a = await rootLoader({ request: new Request("http://localhost/") });
+    const b = await rootLoader({ request: new Request("http://localhost/") });
+    expect(calls).toBe(2);
+    expect(b).toBe(a);
+    expect(b.error).toBe(false);
+  });
+
+  it("builds a new HomeData when the body changes", async () => {
+    let tag = 1;
+    server.use(
+      http.get("/api/snapshot", () =>
+        HttpResponse.json({ ...fixtureSnapshot, ts: tag }, { headers: { etag: `"snap-${tag++}"` } }),
+      ),
+    );
+    const { rootLoader } = await import("./loaders");
+    const a = await rootLoader({ request: new Request("http://localhost/") });
+    const b = await rootLoader({ request: new Request("http://localhost/") });
+    expect(b).not.toBe(a);
+    expect(b.ts).toBe(2);
+  });
+});
+
+// FORK — show first, fetch second, on the three loaders that used to block a tap on the network.
+describe("devicesLoader / crewLoader — a navigation paints the last answer, flagged pending", () => {
+  it("devices: the second navigation returns the cached registry at once; a revalidation fetches", async () => {
+    const { devicesLoader } = await import("./loaders");
+    const first = await devicesLoader({ request: new Request("http://localhost/settings") });
+    expect(first.pending).toBeUndefined();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const again = await devicesLoader({ request: new Request("http://localhost/settings?x=1") });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(again.pending).toBe(true);
+    expect(again.devices).toEqual(first.devices);
+    fetchSpy.mockRestore();
+    const poll = await devicesLoader({ request: new Request("http://localhost/settings?x=1") });
+    expect(poll.pending).toBeUndefined();
+  });
+
+  it("devices: a first open with nothing cached fetches, and a failed answer is never cached", async () => {
+    server.use(http.get("/api/devices", () => new HttpResponse(null, { status: 500 })));
+    const { devicesLoader } = await import("./loaders");
+    const failed = await devicesLoader({ request: new Request("http://localhost/settings") });
+    expect(failed.error).toBe(true);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await devicesLoader({ request: new Request("http://localhost/settings?y=1") });
+    expect(fetchSpy).toHaveBeenCalled(); // nothing good to paint, so it fetched
+  });
+
+  it("crew: the solo 'no crew' answer is cached and painted at once on the next open", async () => {
+    server.use(http.get("/api/crew", () => new HttpResponse(null, { status: 404 })));
+    const { crewLoader } = await import("./loaders");
+    const first = await crewLoader({ request: new Request("http://localhost/crew") });
+    expect(first).toEqual({ status: null, error: false });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const again = await crewLoader({ request: new Request("http://localhost/crew?x=1") });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(again.pending).toBe(true);
+    expect(again.status).toBeNull();
+  });
+});
+
+describe("historyLoader — a re-open paints what the view last held", () => {
+  it("returns the remembered transcript flagged pending, without fetching", async () => {
+    const { historyLoader, rememberHistory, historyKey } = await import("./loaders");
+    const first = await historyLoader({ params: { paneId: "w1:p1" } });
+    expect(first.pending).toBeUndefined();
+    // The view writes back what it holds (the first page plus the background extension).
+    rememberHistory(historyKey("w1:p1", first.scope), { ...first, total: 99 });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const again = await historyLoader({ params: { paneId: "w1:p1" } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(again.pending).toBe(true);
+    expect(again.total).toBe(99);
+    expect(again.entries.map((e) => e.uuid)).toEqual(["t1", "t2"]);
+  });
+
+  it("an unavailable transcript is never remembered", async () => {
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/history/, () =>
+        HttpResponse.json({ paneId: "w1:p1", available: false, reason: "no-log" }),
+      ),
+    );
+    const { historyLoader } = await import("./loaders");
+    await historyLoader({ params: { paneId: "w1:p1" } });
+    const again = await historyLoader({ params: { paneId: "w1:p1" } });
+    expect(again.pending).toBeUndefined();
+    expect(again.unavailable).toBe("no-log");
+  });
+});
+
+// FORK — the poll for a page whose live feed is down: a followed pane read carries `?wait=`.
+describe("paneLoader — long-poll when the live feed is down", () => {
+  const seenWait = () => {
+    const seen: (string | null)[] = [];
+    server.use(
+      http.get(/\/api\/pane\/[^/]+$/, ({ request }) => {
+        seen.push(new URL(request.url).searchParams.get("wait"));
+        return HttpResponse.json({ paneId: "w1:p1", text: "x", truncated: false, revision: 1 });
+      }),
+    );
+    return seen;
+  };
+
+  it("a revalidation while following asks the bridge to wait; a navigation does not", async () => {
+    const seen = seenWait();
+    const { paneLoader, PANE_WAIT_MS } = await import("./loaders");
+    const url = "http://localhost/pane/w1:p1";
+    await paneLoader({ params: { paneId: "w1:p1" }, request: new Request(url) }); // navigation
+    await paneLoader({ params: { paneId: "w1:p1" }, request: new Request(url) }); // revalidation
+    expect(seen).toEqual([null, String(PANE_WAIT_MS)]);
+  });
+
+  it("no wait once scrolled back, and none while the live feed is up", async () => {
+    const seen = seenWait();
+    const { paneLoader } = await import("./loaders");
+    const { setFollowing } = await import("./poll-intent");
+    const url = "http://localhost/pane/w1:p1";
+    await paneLoader({ params: { paneId: "w1:p1" }, request: new Request(url) });
+    setFollowing(false);
+    await paneLoader({ params: { paneId: "w1:p1" }, request: new Request(url) });
+    setFollowing(true);
+    const feed = await import("./live-feed");
+    // The stream reports itself up through the same path the hook uses.
+    const source = feed.openLiveFeed("/api/events", { onPoke: () => {}, onHealth: () => {} });
+    FakeEventSource.last?.emit("open");
+    await paneLoader({ params: { paneId: "w1:p1" }, request: new Request(url) });
+    source.close();
+    expect(seen).toEqual([null, null, null]);
+  });
+});
+
+// jsdom has no EventSource; the shape below is the four members the client touches.
+class FakeEventSource {
+  static CLOSED = 2;
+  readyState = 0;
+  private handlers = new Map<string, Set<(e: Event) => void>>();
+  static last: FakeEventSource | null = null;
+  readonly url: string;
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.last = this;
+  }
+  addEventListener(type: string, fn: (e: Event) => void): void {
+    if (!this.handlers.has(type)) this.handlers.set(type, new Set());
+    this.handlers.get(type)!.add(fn);
+  }
+  emit(type: string, data?: string): void {
+    const event = data === undefined ? new Event(type) : new MessageEvent(type, { data });
+    for (const fn of this.handlers.get(type) ?? []) fn(event);
+  }
+  close(): void {
+    this.readyState = FakeEventSource.CLOSED;
+  }
+}
+Object.assign(globalThis, { EventSource: FakeEventSource });

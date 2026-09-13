@@ -1,9 +1,17 @@
 import { useEffect, useRef } from "react";
 import { useRevalidator } from "react-router";
 
-import { refreshNow } from "@/lib/api";
+import { holdsPaneEtag, holdsSnapshotEtag, refreshNow } from "@/lib/api";
 import { isLongUpload } from "@/lib/connection-health";
 import { beginCatchUp, endCatchUp, isLocked, useLocked } from "@/lib/idle";
+import {
+  liveFeedAvailable,
+  liveFeedUrl,
+  openLiveFeed,
+  useLiveFeedHealthy,
+  type LiveFeed,
+  type Poke,
+} from "@/lib/live-feed";
 import {
   burstAppliesTo,
   consumeTopologyPoll,
@@ -13,7 +21,10 @@ import {
   useSendCount,
   useTopologyBursting,
 } from "@/lib/poll-intent";
-import type { HomeData } from "@/lib/loaders";
+import { getRequestedLines, type HomeData } from "@/lib/loaders";
+import { deliverTailPoke, TAIL_LINES, useWatchedTailPanes } from "@/lib/overview";
+import { deliverArtifactPoke } from "@/lib/artifacts";
+import { useLowPower } from "@/hooks/use-dash-prefs";
 import { crewMoving, runInFlight } from "@/lib/update-ribbon";
 import type { Scope } from "@/lib/scope";
 
@@ -42,7 +53,7 @@ import type { Scope } from "@/lib/scope";
 export const BURST_MS = 300;
 /** The gap while the operator follows a pane that has something to show — its agent is working, or
  *  its mirror moved on the last poll. */
-export const HOT_MS = 1500;
+export const HOT_MS = 1000; // FORK: was 1500 — a followed, moving mirror at 1 Hz reads as live
 /** The home screen while an agent somewhere is working or blocked. Nobody is on a mirror, so there
  *  is nothing to keep smooth; the herd's row still has to reflect a status change without feeling
  *  stuck. */
@@ -51,6 +62,48 @@ export const HOME_BUSY_MS = 4000;
  *  back into history, a pane whose agent is idle and whose mirror has stopped moving. SLOWER than
  *  the old resting gap on purpose — that is the half of the trade that pays for the burst. */
 export const IDLE_MS = 6000;
+/**
+ * The gap while the LIVE FEED is up (lib/live-feed.ts). The bridge pokes the page the moment the
+ * herd or the followed pane moves, so the timer is no longer how a change is noticed — it is the
+ * safety net under a stream that may have missed one (poll-as-truth, ARCHITECTURE.md). Thirty
+ * seconds keeps the worst case of a silent miss bounded; the bursts above it still apply, because a
+ * keystroke you just sent is worth a fast read whether or not a poke is coming.
+ */
+export const LIVE_FEED_MS = 30_000;
+/**
+ * FORK: the same two gaps under Low power (Settings, or the phone's own Data Saver). Three times
+ * the hot gap and a third of the burst rate; the idle gaps are already slow and the live feed is
+ * left alone, because one open stream is cheaper than the polls it spares.
+ */
+export const LOW_POWER_HOT_MS = 3000;
+export const LOW_POWER_BURST_MS = 1000;
+
+/** Whether the browser reports the operator asked for less data (`navigator.connection.saveData`). */
+export function saveDataRequested(): boolean {
+  // SAFETY: `connection` is the Network Information API, absent on Safari and typed nowhere in
+  // lib.dom; reading an optional field off an optional object is defined either way.
+  const nav = globalThis.navigator as (Navigator & { connection?: { saveData?: boolean } }) | undefined;
+  return nav?.connection?.saveData === true;
+}
+
+/** The least time between two poke-driven reads — the watcher behind the stream re-reads a moving
+ *  pane every 400 ms and a stream of pokes at that rate is coalesced onto this one. */
+export const POKE_GAP_MS = 400;
+
+/**
+ * FORK: whether a poke names a version this page already holds, and can therefore be skipped.
+ *
+ * Pure + exported so the rule is testable without a stream: the ONLY thing that may suppress a fetch
+ * is an exact tag match against the map that fetch would have validated against.
+ */
+export function alreadyHeld(poke: Poke, scope?: Scope, viewAll = false): boolean {
+  // FORK: an artifacts poke carries no stamp by design (lib/live-feed.ts) — never held.
+  if (poke.kind === "artifacts") return false;
+  if (!poke.etag) return false;
+  return poke.kind === "snapshot"
+    ? holdsSnapshotEtag(poke.etag, scope, viewAll)
+    : holdsPaneEtag(poke.paneId, poke.etag, scope);
+}
 
 /**
  * Everything the cadence needs that the snapshot cannot tell us, as plain values.
@@ -70,6 +123,10 @@ export interface PollIntent {
    *  `lib/poll-intent.ts` → `stampTopology`. Unlike `bursting`, this applies wherever the operator
    *  is looking, not only on the pane a send went to. */
   topologyBursting?: boolean;
+  /** The live feed is open (lib/live-feed.ts): a change will be poked, so the timer is a safety net. */
+  liveFeed?: boolean;
+  /** FORK: Low power is on — the burst and hot gaps stretch (see LOW_POWER_HOT_MS). */
+  lowPower?: boolean;
 }
 
 // Self-heal a wedged revalidation. Normally a tick no-ops while one is already in flight (see the
@@ -102,18 +159,28 @@ export function intervalFor(
   paneId?: string | null,
   intent?: PollIntent,
 ): number {
+  // FORK: the two fast gaps, or their Low power stand-ins.
+  const burst = intent?.lowPower ? LOW_POWER_BURST_MS : BURST_MS;
+  const hot = intent?.lowPower ? LOW_POWER_HOT_MS : HOT_MS;
+
   // 0. A create or a close just went through, wherever you're looking: catch the list up.
-  if (intent?.topologyBursting) return BURST_MS;
+  if (intent?.topologyBursting) return burst;
 
   // 1. A send just happened on the pane you are looking at: watch it land.
-  if (intent?.bursting) return BURST_MS;
+  if (intent?.bursting) return burst;
+
+  // 1b. THE STREAM IS UP. Every rule below this line is a guess about when the herd might have
+  // moved; with the feed open the bridge SAYS when it moved, and the timer only has to catch what
+  // a dropped line would have missed. The two bursts above stay: they are about the operator's own
+  // action, not about noticing a change.
+  if (intent?.liveFeed) return LIVE_FEED_MS;
 
   // 2 and 3. You are on a pane, pinned to its tail, and it has something to show — either its agent
   // says so, or the mirror itself moved on the last poll. The second half is what covers a plain
   // shell and any harness that publishes no status: "the screen is still changing" needs no adapter.
   if (paneId && intent?.following && paneIsOpen(data, paneId)) {
-    if (openPaneWorking(data, paneId)) return HOT_MS;
-    if (intent.changed) return HOT_MS;
+    if (openPaneWorking(data, paneId)) return hot;
+    if (intent.changed) return hot;
   }
 
   // 3b. AN UPDATE IS RUNNING ON THIS MACHINE (M20/08). Measured on 2026-09-08: `/settings/updates`
@@ -125,7 +192,7 @@ export function intervalFor(
   // Above the herd rule, because a herd that happens to be busy is not the reason to be fast here,
   // and below the pane rules, because a pane the operator is looking at still outranks a page they
   // may have left open. The state set comes from `lib/update-ribbon.ts`, never a copy.
-  if (runInFlight(data?.update?.run) || crewMoving(data?.update)) return HOT_MS;
+  if (runInFlight(data?.update?.run) || crewMoving(data?.update)) return hot;
 
   // 4. Nobody is on a mirror, but the herd is not resting. The dashboard row is the thing being
   // watched now, and a status that flips there should not sit a full IDLE_MS behind.
@@ -189,6 +256,10 @@ export function usePolling(
   // every time the viewed host or session changes identity.
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
+  // FORK: the breadth, held the same way — a snapshot poke's stamp names the body for THIS view, and
+  // the ETag map is keyed by (host, session, breadth) exactly as the fetch is.
+  const viewAllRef = useRef(data?.viewAll ?? false);
+  viewAllRef.current = data?.viewAll ?? false;
   // Hold the revalidator in a ref so the effect only re-subscribes when the cadence changes,
   // not on every revalidation (its identity flips each cycle).
   const ref = useRef(revalidator);
@@ -210,20 +281,124 @@ export function usePolling(
   const changed = useLastPollChanged();
   const sendKick = useSendCount();
   const topoBursting = useTopologyBursting();
+  const liveFeed = useLiveFeedHealthy();
+  // FORK: the operator's Low power switch, or the phone's own Data Saver.
+  const lowPower = useLowPower() || saveDataRequested();
+  const isFollowingNow = following ?? storeFollowing;
   const ms = intervalFor(data, paneId, {
     bursting: burstAppliesTo(burstPane, paneId),
     // The caller may own the flag directly (the tests do); otherwise the pane view's own follow
     // intent, published to lib/poll-intent, answers — and it is true whenever no pane is open.
-    following: following ?? storeFollowing,
+    following: isFollowingNow,
     changed,
     topologyBursting: topoBursting,
+    liveFeed,
+    lowPower,
   });
+
+  // ── The live feed ──────────────────────────────────────────────────────────
+  // One stream for the page, re-opened when what it should follow changes: the scope (which
+  // session's herd), the open pane, and — only while following — the window that pane is read at,
+  // so the bridge's watcher reads the same bytes the poll does and a poke's fetch is a cache hit.
+  // Closed while the tab is hidden, exactly as the tick is skipped there, and while idle-locked.
+  const scopeKeyForFeed = `${scope?.host ?? ""}\u0000${scope?.session ?? ""}`;
+  // Only a FOLLOWED pane is named on the stream: scrolled back, the display is frozen and a poke for
+  // new text would only make the page fetch bytes it will not show. The herd pokes still arrive.
+  const feedPane = paneId && isFollowingNow ? paneId : null;
+  // FORK: with no pane open, the Overview grid may have declared the cards it is showing
+  // (lib/overview.ts). They ride THIS stream rather than a second connection — `openLiveFeed` writes
+  // one shared health flag, and two streams would make it flap between two connections' fortunes.
+  const tailPanes = useWatchedTailPanes();
+  const feedPanes = feedPane ? [feedPane] : paneId ? [] : tailPanes;
+  const feedLines = feedPane ? getRequestedLines(feedPane, scope) : feedPanes.length > 0 ? TAIL_LINES : 0;
+  // The set as one string, so the effect below re-opens on a CHANGE of cards and not on a fresh
+  // array carrying the same ones.
+  const feedPaneKey = feedPanes.join(" ");
+  const pokeAt = useRef(0);
+  const pokePending = useRef(false);
+  const locked = useLocked();
+  useEffect(() => {
+    if (locked) return;
+    if (!liveFeedAvailable(scopeRef.current)) return;
+    let feed: LiveFeed | null = null;
+    let gapTimer: ReturnType<typeof setTimeout> | null = null;
+    // A poke is a reason to run the loaders NOW, coalesced: never more often than POKE_GAP_MS, and
+    // never while a revalidation is in flight — one is queued behind it instead, because the poke
+    // may describe a change that read had already passed (the same rule the bridge's engine keeps).
+    const runPoke = (poke?: Poke) => {
+      // FORK: the poke names the version it is about. When that is a version this page already
+      // holds, the fetch it would cause is one we can PROVE answers 304 — so it does not happen.
+      // This stays inside poll-as-truth: skipping a poke costs at most one safety-net interval,
+      // which is the same promise a dropped poke has always carried. A poke with no stamp (an older
+      // bridge, or a snapshot body the bridge rewrites on the way out) falls straight through.
+      if (poke !== undefined && alreadyHeld(poke, scopeRef.current, viewAllRef.current)) return;
+      // FORK: a pane poke for a card the Overview is showing is answered by re-reading THAT card,
+      // not by revalidating every loader on the page for a pane no route is rendering.
+      if (poke?.kind === "pane" && deliverTailPoke(poke.paneId, poke.etag)) return;
+      // FORK: the library changed — every mounted artifact list refetches itself (lib/artifacts.ts).
+      // When nothing is showing one, there is nothing to refetch and no loader that would learn
+      // anything from a revalidation either, so the poke is simply consumed.
+      if (poke?.kind === "artifacts") {
+        deliverArtifactPoke();
+        return;
+      }
+      const r = ref.current;
+      if (r.state !== "idle") {
+        pokePending.current = true;
+        return;
+      }
+      const since = Date.now() - pokeAt.current;
+      if (since < POKE_GAP_MS) {
+        if (gapTimer) return;
+        gapTimer = setTimeout(() => {
+          gapTimer = null;
+          runPoke();
+        }, POKE_GAP_MS - since);
+        return;
+      }
+      pokeAt.current = Date.now();
+      pokePending.current = false;
+      consumeTopologyPoll();
+      r.revalidate();
+    };
+    const open = () => {
+      if (feed || document.hidden) return;
+      feed = openLiveFeed(liveFeedUrl(scopeRef.current, feedPanes, feedLines || undefined), {
+        onPoke: (poke) => runPoke(poke),
+        // Coming up is worth one read: whatever moved while the stream was down produced no poke.
+        onHealth: (healthy) => {
+          if (healthy) runPoke();
+        },
+      });
+    };
+    const close = () => {
+      feed?.close();
+      feed = null;
+    };
+    const onVisibility = () => (document.hidden ? close() : open());
+    document.addEventListener("visibilitychange", onVisibility);
+    open();
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      if (gapTimer) clearTimeout(gapTimer);
+      close();
+    };
+    // `feedPanes` is derived from `feedPaneKey` — the string is the dependency, the array is not,
+    // because a new array with the same ids must not tear a working connection down.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locked, feedPaneKey, feedLines, scopeKeyForFeed]);
+  // The read a poke queued behind an in-flight revalidation runs the moment that one settles.
+  useEffect(() => {
+    if (revalidator.state !== "idle" || !pokePending.current) return;
+    pokePending.current = false;
+    pokeAt.current = Date.now();
+    revalidator.revalidate();
+  }, [revalidator.state, revalidator]);
 
   // Resuming from the idle lock must refetch AT ONCE. The route tree stays mounted through a pause
   // (see App), so unlocking re-runs no loaders by itself — without this the first thing you'd see on
   // resume is however stale the snapshot got while paused, for up to one full interval. Fires on the
   // falling edge only; `wasLocked` seeds from the current value so mounting never counts as a release.
-  const locked = useLocked();
   const wasLocked = useRef(locked);
   useEffect(() => {
     const released = wasLocked.current && !locked;

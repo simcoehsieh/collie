@@ -36,6 +36,11 @@ export function hasResizeObserver(): boolean {
   return globalThis.ResizeObserver !== undefined;
 }
 
+/** True where the runtime paints frames (`requestAnimationFrame`). A worker has none. */
+export function hasAnimationFrame(): boolean {
+  return globalThis.requestAnimationFrame !== undefined;
+}
+
 /**
  * A grapheme segmenter, or `null` on an engine without `Intl.Segmenter` (Firefox <125, Safari
  * <14.1). Callers in the main chunk must fall back to per-code-point iteration rather than

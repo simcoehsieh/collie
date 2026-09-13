@@ -168,6 +168,23 @@ export const ACK_MANIFEST = {
     channel: "inline",
     why: "A failed revoke leaves the row it was aimed at still on screen, and that row is the only place the message is unambiguous about WHICH device is still paired.",
   },
+  // FORK: the artifacts library (bridge/artifacts.ts).
+  patchArtifact: {
+    channel: "silent",
+    why: "The one field the phone changes is the pin, and the pin icon flips in place on the same tap after the bridge answers (routes/artifact.tsx); a toast would announce a fact already on screen.",
+  },
+  deleteArtifact: {
+    channel: "silent",
+    why: "The acknowledgement is the viewer leaving for the library without the row it was showing — the absence IS the confirmation, and it needs a second tap to happen at all.",
+  },
+  handoffPane: {
+    channel: "inline",
+    why: "Success closes the sheet and the app navigates straight into the new agent's pane, where the terminal shows it starting from the handoff — the new screen IS the acknowledgement, as a launch's is; a refusal (an unlisted row, a harness a handoff cannot start, a failed send) stays in the sheet as an alert beside the button that asked (components/handoff-sheet.tsx).",
+  },
+  saveArtifactFromPane: {
+    channel: "inline",
+    why: "The Keep button becomes Kept (or Couldn't keep) on the same row the operator tapped (components/preview-panel.tsx); the fact belongs where the intent was expressed.",
+  },
   uploadFile: {
     channel: "status",
     why: "Success appends a host path to the draft, which is easy to miss in a box the operator was already typing in, so the status line names what just went into it (components/composer.tsx).",
@@ -175,6 +192,16 @@ export const ACK_MANIFEST = {
   transcribeAudio: {
     channel: "echo",
     why: "The mic strip's `transcribing` phase holds while the clip is in flight and the transcript landing in the composer is the outcome; every refusal comes back as a VALUE and is spoken by the composer's onError on the status channel (hooks/use-stt-recorder.ts).",
+  },
+  // FORK: annotate-and-ask's two verbs (lib/api.ts, bridge/shot.ts). Both POST because each one
+  // starts a browser on the Mac, and neither changes anything a phone can see afterwards.
+  requestShot: {
+    channel: "inline",
+    why: "The sheet is the outcome: the picture appearing IS the acknowledgement, and a failure is a sentence in the sheet beside the button that asked for it — a status pill would name a refusal on a surface the operator has covered with a full-height panel (components/annotate-sheet.tsx).",
+  },
+  requestProbe: {
+    channel: "inline",
+    why: "Same surface, same reason, and the wait is the load-bearing part: a probe is one to two seconds of headless Chrome, so the sheet holds a spinner on the line that asked and lands the numbered pin in place — an echo elsewhere would be an answer to a question whose surface is not on screen.",
   },
 // `satisfies`, not an annotation: the KEYS stay known to the compiler (so a typo'd name is a type
 // error at any reader, rather than a silent `undefined`), while every entry is still checked against

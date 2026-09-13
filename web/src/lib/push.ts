@@ -1,5 +1,12 @@
 import { fetchConfig, registerPushSubscription } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import {
+  RESUBSCRIBED_MESSAGE,
+  VAPID_KEY_MESSAGE,
+  shouldMintFresh,
+  urlB64ToUint8Array,
+  type SubscribeAck,
+} from "@/lib/push-heal";
 import type { BridgeConfig } from "@/lib/types";
 
 // Client-side control of Web Push: the browser subscription plus a per-device preference. We persist
@@ -127,15 +134,6 @@ export function pushSupported(): boolean {
   return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 }
 
-function urlB64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(b64);
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-  return out;
-}
-
 // Does an existing subscription's applicationServerKey match the server's current VAPID key? A
 // subscription is permanently bound to the key it was created with, so when the bridge rotates its
 // VAPID keypair every push to the old subscription silently fails — we must detect the mismatch and
@@ -146,6 +144,18 @@ export function keysMatch(existing: ArrayBuffer | null | undefined, serverKey: U
   if (a.length !== serverKey.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== serverKey[i]) return false;
   return true;
+}
+
+/**
+ * What `/api/subscribe` answered, read off the transport's untyped result. The fork's bridge
+ * answers `{ known }` (bridge/server.ts); an upstream bridge answers 204, which the transport hands
+ * back as `undefined`. `registerPushSubscription` is typed `void` for that older contract, so the
+ * value is parsed here rather than asserted: an object with a `known` field is the ack, anything
+ * else is "no verdict" — and `shouldMintFresh` treats no verdict as the pre-fork behaviour.
+ */
+function subscribeAck(answer: SubscribeAck | void): SubscribeAck | undefined {
+  if (!answer || !("known" in answer)) return undefined;
+  return { known: answer.known === true };
 }
 
 // Subscribe this device to push and register it with the bridge; clears the user's "disabled"
@@ -172,19 +182,61 @@ export async function enablePush(): Promise<EnableResult> {
     await pushOperation(sub.unsubscribe());
     sub = null;
   }
+  const subscribe = () =>
+    pushOperation(reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: serverKey }));
+  let justSubscribed = false;
   if (!sub) {
-    sub = await pushOperation(reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: serverKey,
-    }));
+    sub = await subscribe();
+    justSubscribed = true;
   }
+  // FORK: whether THIS endpoint is the one the bridge last acknowledged — read before the register
+  // below moves it, because that is the belief the prune check is about.
+  const believedRegistered = rememberedEndpoint() === sub.endpoint;
   const body = subscribeBody(sub.toJSON(), rememberedEndpoint());
-  await registerPushSubscription(body);
+  const ack = subscribeAck(await registerPushSubscription(body));
+  // ── FORK: a subscription the bridge had dropped is dead, not merely forgotten ──
+  // The bridge prunes a row only when the push service disowned the endpoint (404/410 on a send).
+  // The page cannot see that: `getSubscription()` keeps handing back the same dead object, and
+  // before this check it was re-registered on every open — forever silent. The bridge's "I did not
+  // have that" for an endpoint this device remembers as acknowledged is the prune, so the dead one
+  // is dropped and a fresh one minted, naming its predecessor so the bridge keeps one row per phone.
+  if (shouldMintFresh(ack, believedRegistered, justSubscribed)) {
+    const dead = sub.endpoint;
+    await pushOperation(sub.unsubscribe());
+    sub = await subscribe();
+    await registerPushSubscription(subscribeBody(sub.toJSON(), dead));
+  }
   // `registerPushSubscription` throws on any non-2xx reply, so this line runs only after the bridge
   // took the registration; a failed attempt keeps the remembered endpoint that is on the server.
-  rememberEndpoint(body.endpoint);
+  rememberEndpoint(sub.endpoint);
   setUserDisabled(false);
+  // FORK: hand the worker the key, so a `pushsubscriptionchange` with no old subscription to read
+  // it off can still re-subscribe against the right one (sw.ts healSubscription). Fire-and-forget:
+  // an inactive worker simply misses it and falls back to the event's own key.
+  try {
+    reg.active?.postMessage({ type: VAPID_KEY_MESSAGE, key: cfg.vapidPublicKey });
+  } catch {
+    /* a worker that cannot take messages heals from the event alone */
+  }
   return { ok: true };
+}
+
+/**
+ * FORK: keep this page's remembered endpoint in step with a re-subscribe the SERVICE WORKER did
+ * (sw.ts healSubscription posts it). Without this an open page would show push as off until the
+ * next reload — and worse, its next `enablePush` would name the wrong predecessor. Returns the
+ * unsubscribe; a no-op where there is no service worker.
+ */
+export function installResubscribeListener(): () => void {
+  if (!("serviceWorker" in navigator) || !navigator.serviceWorker) return () => {};
+  const onMessage = (event: MessageEvent) => {
+    // SAFETY: `MessageEvent.data` is `any` — a structured clone from our own worker, which posts
+    // exactly `{ type, endpoint }`; anything else fails the comparisons and is ignored.
+    const data = event.data as { type?: string; endpoint?: string } | null;
+    if (data?.type === RESUBSCRIBED_MESSAGE && data.endpoint) rememberEndpoint(String(data.endpoint));
+  };
+  navigator.serviceWorker.addEventListener("message", onMessage);
+  return () => navigator.serviceWorker.removeEventListener("message", onMessage);
 }
 
 // Unsubscribe this device and remember the choice. This is the case the server-side prune DOES

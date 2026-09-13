@@ -1,7 +1,9 @@
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Volume2, VolumeX } from "lucide-react";
 
 import { TranscriptView } from "@/components/transcript-view";
 import { useLocale } from "@/hooks/use-locale";
+import { speak, stop, ttsSupported, useSpeaking } from "@/hooks/use-tts";
+import { replyProse } from "@/lib/latest-reply";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { Scope } from "@/lib/scope";
@@ -37,13 +39,18 @@ export function LatestReply({
   scope?: Scope;
 }) {
   useLocale();
+  // FORK: read this reply aloud (hooks/use-tts.ts). A sibling of the header button, never inside
+  // it — a button in a button is not HTML. Hidden where the browser cannot speak.
+  const speaking = useSpeaking();
+  const canSpeak = ttsSupported();
   return (
     <div className="mb-2 rounded-lg border bg-muted/30">
+      <div className="flex items-stretch">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="flex w-full items-center gap-1.5 px-2.5 py-2 text-left transition-colors active:bg-muted/60"
+        className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-2 text-left transition-colors active:bg-muted/60"
       >
         <ChevronRight
           className={cn(
@@ -60,6 +67,19 @@ export function LatestReply({
           {open ? t("chat.fullReply.fromTranscript") : t("chat.fullReply.showingTerminal")}
         </span>
       </button>
+      {canSpeak && (
+        <button
+          type="button"
+          data-slot="reply-speak"
+          onClick={() => (speaking ? stop() : speak(replyProse(entry)))}
+          aria-pressed={speaking}
+          aria-label={speaking ? t("chat.fullReply.stopSpeaking") : t("chat.fullReply.speak")}
+          className="grid w-10 shrink-0 place-items-center text-muted-foreground transition-colors hover:text-foreground active:bg-muted/60"
+        >
+          {speaking ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+        </button>
+      )}
+      </div>
       {open && (
         <div className="border-t px-2.5 py-2">
           <TranscriptView entries={[entry]} agent={agent} scope={scope} />

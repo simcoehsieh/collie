@@ -128,9 +128,15 @@ describe("AgentList — sections", () => {
     expect(screen.queryByText(/no agents running/i)).not.toBeInTheDocument();
   });
 
-  it("says it's waiting when the bridge is down, rather than 'no agents'", () => {
-    render(<AgentList agents={[]} bridge="disconnected" onOpen={vi.fn()} />);
-    expect(screen.getByText(/waiting for herdr/i)).toBeInTheDocument();
+  // FORK: a bridge that has not answered yet leaves the herd UNKNOWN, not empty — and the shape of
+  // what is arriving is a list of pane rows, so the list is drawn empty rather than replaced by a
+  // sentence. What is pinned is the claim, not the copy: it must not say "no agents", and it must
+  // mark the region busy so a screen reader is told a wait is on. (The app-wide ConnectionBanner
+  // owns the words for a bridge that stays down; this branch owns the first few hundred ms.)
+  it("draws the list empty when the bridge is down, rather than claiming 'no agents'", () => {
+    const { container } = render(<AgentList agents={[]} bridge="disconnected" onOpen={vi.fn()} />);
+    expect(screen.queryByText(/no agents running/i)).not.toBeInTheDocument();
+    expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument();
   });
 
   // The cold-boot-offline bug: the herd is empty because the fetch failed, not because nothing is

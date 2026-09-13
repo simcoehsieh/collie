@@ -2,9 +2,12 @@ import { http, HttpResponse } from "msw";
 
 import { server } from "@/test/setup";
 import { fixtureCrewSnapshot, fixtureSnapshot } from "@/test/handlers";
-import { __resetConnectionHealth, isLostLatched, lastHealthyAt } from "./connection-health";
+import { waitFor } from "@testing-library/react";
+import { __resetConnectionHealth, isLongUpload, isLostLatched, lastHealthyAt } from "./connection-health";
 import { isConnecting } from "./connection";
+import { __resetSnapshotCache } from "./api";
 import {
+  handoffPane,
   checkForUpdates,
   createTab,
   fetchConfig,
@@ -105,6 +108,30 @@ describe("api client", () => {
     );
     const file = new File(["x"], "x.png", { type: "image/png" });
     await expect(uploadFile("w1:p1", file)).resolves.toEqual({ ok: true, path: "/tmp/x.png" });
+  });
+
+  // FORK: a picture is a long upload — the poll and the escalation stand down while it is in flight,
+  // and stand back up on every exit path (lib/connection-health.ts).
+  it("uploadFile is a long upload for as long as it is in flight, and not a moment longer", async () => {
+    let release: (() => void) | null = null;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, async () => {
+        await new Promise<void>((r) => {
+          release = r;
+        });
+        return HttpResponse.json({ ok: true, path: "/tmp/x.png" });
+      }),
+    );
+    expect(isLongUpload()).toBe(false);
+    const pending = uploadFile("w1:p1", new File(["x"], "x.png", { type: "image/png" }));
+    await waitFor(() => expect(release).not.toBeNull());
+    expect(isLongUpload()).toBe(true);
+    release!();
+    await pending;
+    expect(isLongUpload()).toBe(false);
+    server.use(http.post(/\/api\/pane\/[^/]+\/upload$/, () => new HttpResponse("nope", { status: 413 })));
+    await expect(uploadFile("w1:p1", new File(["x"], "x.png", { type: "image/png" }))).rejects.toThrow(/413/);
+    expect(isLongUpload()).toBe(false);
   });
 
   it("uploadFile throws on a non-2xx via its own (non-JSON) error path", async () => {
@@ -561,5 +588,143 @@ describe("refreshNow", () => {
   it("swallows a refusal: the revalidation that follows is the one that reports", async () => {
     server.use(http.post("/api/refresh", () => new HttpResponse("nope", { status: 503 })));
     await expect(refreshNow()).resolves.toBeUndefined();
+  });
+});
+
+// FORK — the snapshot validates. The same (etag, body) discipline fetchPane has, and on a 304 the
+// SAME object comes back, which is what lets the loader keep HomeData's identity on a quiet herd.
+describe("api client — the snapshot's ETag cache", () => {
+  beforeEach(() => __resetSnapshotCache());
+  afterEach(() => vi.restoreAllMocks());
+
+  it("sends If-None-Match on the second poll and hands back the cached body on a 304", async () => {
+    const seen: (string | null)[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const inm = new Headers(init?.headers).get("if-none-match");
+      seen.push(inm);
+      if (inm === '"s1"') return new Response(null, { status: 304, headers: { etag: '"s1"' } });
+      return new Response(JSON.stringify(fixtureSnapshot), {
+        status: 200,
+        headers: { "content-type": "application/json", etag: '"s1"' },
+      });
+    });
+    const a = await fetchSnapshot();
+    const b = await fetchSnapshot();
+    expect(seen).toEqual([null, '"s1"']);
+    expect(b).toBe(a);
+  });
+
+  it("keys the cache by (host, session, breadth), so one scope's tag never validates another's", async () => {
+    const seen: { url: string; inm: string | null }[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      seen.push({ url, inm: new Headers(init?.headers).get("if-none-match") });
+      return new Response(JSON.stringify(fixtureSnapshot), {
+        status: 200,
+        headers: { "content-type": "application/json", etag: `"${url}"` },
+      });
+    });
+    await fetchSnapshot();
+    await fetchSnapshot({ session: "demo" });
+    await fetchSnapshot(undefined, undefined, true);
+    await fetchSnapshot();
+    expect(seen.map((x) => x.inm)).toEqual([null, null, null, '"/api/snapshot"']);
+  });
+
+  it("a 304 on a cached body still stamps liveness", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const inm = new Headers(init?.headers).get("if-none-match");
+      if (inm) return new Response(null, { status: 304, headers: { etag: '"s1"' } });
+      return new Response(JSON.stringify(fixtureSnapshot), {
+        status: 200,
+        headers: { "content-type": "application/json", etag: '"s1"' },
+      });
+    });
+    await fetchSnapshot();
+    __resetConnectionHealth(1);
+    await fetchSnapshot();
+    expect(lastHealthyAt()).toBeGreaterThan(1);
+  });
+});
+
+describe("api client — the pane read's wait", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("carries ?wait= only when asked, before the scope params", async () => {
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ paneId: "w1:p1", text: "", truncated: false, revision: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    await fetchPane("w1:p1", 200, { session: "demo" }, undefined, { wait: 1500 });
+    await fetchPane("w1:p1", 200, { session: "demo" }, undefined, { wait: 0 });
+    await fetchPane("w1:p1", 200, { session: "demo" });
+    expect(urls).toEqual([
+      "/api/pane/w1%3Ap1?lines=200&wait=1500&session=demo",
+      "/api/pane/w1%3Ap1?lines=200&session=demo",
+      "/api/pane/w1%3Ap1?lines=200&session=demo",
+    ]);
+  });
+});
+
+// ── FORK: the diff read validates, and the probe names where the outage is ──────────────────────
+describe("fetchPaneDiff", () => {
+  it("sends the tag back and hands back the SAME body on a 304", async () => {
+    const { fetchPaneDiff, __resetDiffCache } = await import("./api");
+    __resetDiffCache();
+    let sawTag: string | null = null;
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/diff/, ({ request }) => {
+        sawTag = request.headers.get("if-none-match");
+        if (sawTag === '"d1"') return new HttpResponse(null, { status: 304 });
+        return HttpResponse.json(
+          { ok: true, mode: "stat", cwd: "/h", repoRoot: "/h", branch: "main", files: [], truncated: false },
+          { headers: { etag: '"d1"' } },
+        );
+      }),
+    );
+    const first = await fetchPaneDiff("w1:p1", { mode: "stat" });
+    const second = await fetchPaneDiff("w1:p1", { mode: "stat" });
+    expect(sawTag).toBe('"d1"');
+    expect(second).toBe(first);
+  });
+});
+
+describe("probeBridge", () => {
+  it("ok / auth / gateway / down, by what the health route answered", async () => {
+    const { probeBridge } = await import("./api");
+    server.use(http.get("/api/health", () => HttpResponse.json({ ok: true })));
+    expect(await probeBridge()).toBe("ok");
+    server.use(http.get("/api/health", () => new HttpResponse(null, { status: 401 })));
+    expect(await probeBridge()).toBe("auth");
+    server.use(http.get("/api/health", () => new HttpResponse(null, { status: 502 })));
+    expect(await probeBridge()).toBe("gateway");
+    server.use(http.get("/api/health", () => new HttpResponse(null, { status: 524 })));
+    expect(await probeBridge()).toBe("gateway");
+    server.use(http.get("/api/health", () => HttpResponse.error()));
+    expect(await probeBridge()).toBe("down");
+  });
+});
+
+// FORK: a handoff names a launcher row and carries the instruction verbatim (bridge/handoff.ts).
+describe("handoffPane", () => {
+  it("posts the row's command and the instruction, and returns the new pane with the document", async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      http.post("/api/pane/w1%3Ap1/handoff", async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json({
+          ok: true,
+          pane: { paneId: "w1:p7", workspaceId: "w1", workspaceLabel: "webapp", tabId: "w1:t7", cwd: "/home" },
+          artifact: { id: "h1-00000001" },
+        });
+      }),
+    );
+    const res = await handoffPane("w1:p1", "codex", "Finish the tests");
+    expect(bodies).toEqual([{ command: "codex", instruction: "Finish the tests" }]);
+    expect(res).toMatchObject({ ok: true, pane: { paneId: "w1:p7" }, artifact: { id: "h1-00000001" } });
   });
 });

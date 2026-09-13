@@ -18,7 +18,7 @@ import {
   fetchHistory,
   fetchCrew,
   fetchPane,
-  fetchSnapshot,
+  fetchBootSnapshot,
   isApiErrorStatus,
 } from "@/lib/api";
 import { parseAnsi } from "@/lib/ansi";
@@ -33,8 +33,9 @@ import {
   saveLastPaneText,
   saveLastSnapshot,
 } from "@/lib/last-seen";
+import { isLiveFeedHealthy } from "@/lib/live-feed";
 import { detectNoEchoPrompt } from "@/lib/no-echo";
-import { markPollResult } from "@/lib/poll-intent";
+import { isFollowing, markPollResult } from "@/lib/poll-intent";
 import { clearNotPaired, markNotPaired } from "@/lib/pairing";
 import {
   internScope,
@@ -97,6 +98,14 @@ function scopeFromRequest(request?: Request): Scope {
 }
 
 export interface HomeData {
+  /**
+   * FORK: this body is the LAST GOOD snapshot handed back instantly on a navigation, and the real
+   * read has not run yet. `RootLayout` revalidates the moment it sees the flag, so the screen
+   * arrives on the tap and catches up one round-trip later instead of waiting for it blank.
+   * Never set on a revalidation, and never set with `error` — a cached body flagged pending is
+   * live data that happens to be a few seconds old, not a degraded one.
+   */
+  pending?: boolean;
   bridge: BridgeStatus | undefined;
   /** Per-device authorisation; undefined when the feature is off or not yet known. */
   device: DeviceAuth | undefined;
@@ -149,6 +158,9 @@ export interface HomeData {
 }
 
 export interface PaneData {
+  /** FORK: same as {@link HomeData.pending} — the last mirror this page saw, shown while the tap's
+   * own read is in flight. Revision is 0 on this path, as on the degraded one. */
+  pending?: boolean;
   paneId: string;
   /** The scope this pane was fetched in (host + session) — threaded into every read and write, so
    * a reply can never land on the right pane name on the wrong machine. */
@@ -209,6 +221,20 @@ function isPaneUrl(url: string | undefined): boolean {
   }
 }
 
+// The last HomeData built, with the inputs it was built from. `fetchSnapshot` hands back THE SAME
+// snapshot object on a 304, and a snapshot that has not changed must not become a new HomeData: every
+// consumer under the root keys its work on that identity, and a fresh object on a quiet 1 Hz poll is
+// a full-tree reconcile for nothing. One entry is enough — the root loader runs for one scope at a
+// time, and a scope switch is a navigation that rightly rebuilds.
+let lastHome: {
+  snap: SnapshotResponse;
+  scope: Scope;
+  viewAll: boolean;
+  error: boolean;
+  lastSeenAt: number | undefined;
+  data: HomeData;
+} | null = null;
+
 function toHomeData(
   snap: SnapshotResponse,
   scope: Scope,
@@ -220,6 +246,29 @@ function toHomeData(
   // out from under a running update, and it must reload once that run is done (M15/05). Stamped here
   // rather than in the card so the hold applies on every route, not only where the card is mounted.
   noteUpdateRun(snap.update?.run?.state);
+  const memo = lastHome;
+  if (
+    memo &&
+    memo.snap === snap &&
+    memo.scope === scope &&
+    memo.viewAll === viewAll &&
+    memo.error === error &&
+    memo.lastSeenAt === lastSeenAt
+  ) {
+    return memo.data;
+  }
+  const data = buildHomeData(snap, scope, viewAll, error, lastSeenAt);
+  lastHome = { snap, scope, viewAll, error, lastSeenAt, data };
+  return data;
+}
+
+function buildHomeData(
+  snap: SnapshotResponse,
+  scope: Scope,
+  viewAll: boolean,
+  error: boolean,
+  lastSeenAt?: number,
+): HomeData {
   return {
     lastSeenAt,
     bridge: snap.bridge,
@@ -304,8 +353,19 @@ export async function rootLoader({ request }: { request?: Request } = {}): Promi
   // markLive clears the latch → the next run fetches live and replaces the stale herd).
   if (isNavigation && isLostLatched()) return staleHome(scope, viewAll);
 
+  // FORK — SHOW FIRST, FETCH SECOND. A navigation with a known-good snapshot in hand paints it NOW
+  // and lets RootLayout's pending-revalidate fetch the fresh one; without this every tap waited
+  // on a round trip (two, via Cloudflare) before anything changed on screen. The COLD path is
+  // untouched: no cache means the fetch below, BootSplash and all.
+  const cached = isNavigation ? lastSnapshot.get(snapshotKey(scope, viewAll)) : undefined;
+  if (cached) return { ...toHomeData(cached, scope, viewAll, false), pending: true };
+
   try {
-    const snap = await fetchSnapshot(scope, request?.signal, viewAll);
+    // FORK: the FIRST fetch of a page's life takes `GET /api/boot`, which answers the snapshot
+    // together with the four bodies that used to be fetched one after another once this resolved
+    // (bridge/boot.ts). It is signature-identical to `fetchSnapshot` and falls back to it on
+    // anything — an older bridge, a member scope, a widened view — so this line is the whole hunk.
+    const snap = await fetchBootSnapshot(scope, request?.signal, viewAll);
     lastSnapshot.set(snapshotKey(scope, viewAll), snap);
     // Write-through: the same body, dated, in a store that outlives this page (lib/last-seen.ts).
     saveLastSnapshot(scope, snap, undefined, viewAll);
@@ -344,6 +404,13 @@ function rememberPaneText(key: string, text: string): void {
 // back through a long exchange. The live tail still follows; scrolling up freezes it (see
 // AgentChat). Larger = more scrollback but more bytes per poll — 600 holds several exchanges.
 const DETAIL_HISTORY_LINES = 600;
+// The window while the operator is ON the live tail. Only the bottom of the buffer is on screen
+// then — the display is frozen the moment they scroll up, and "Load older" is what widens it — so
+// the 600 lines the poll used to pull every second were mostly bytes nobody could see. 200 is
+// past any phone's or desktop's viewport at the smallest mirror size, so the tail itself is whole;
+// a shell pane with more history behind it still offers "Load older" (`readableLines`), and a tap
+// there widens the window exactly as it always did.
+export const FOLLOW_LINES = 200;
 // "Load older" raises the requested window by a step per tap, up to a cap.
 //
 // The cap is 1000 because HERDR clamps `pane.read` there — silently, and without setting `truncated`.
@@ -359,9 +426,13 @@ export const DETAIL_HISTORY_MAX = 1000;
 // the same way so a long session of opening many panes can't grow it without bound.
 const requestedLines = new Map<string, number>();
 
-/** The scrollback window currently requested for a pane (defaults to the base window). */
+/**
+ * The scrollback window currently requested for a pane. A "Load older" tap pins an explicit one;
+ * otherwise it is the tail window while the pane is followed and the base window once the operator
+ * has scrolled back (lib/poll-intent.ts publishes which). Following is true whenever no pane is open.
+ */
 export function getRequestedLines(paneId: string, scope?: Scope): number {
-  return requestedLines.get(paneKey(paneId, scope)) ?? DETAIL_HISTORY_LINES;
+  return requestedLines.get(paneKey(paneId, scope)) ?? (isFollowing() ? FOLLOW_LINES : DETAIL_HISTORY_LINES);
 }
 
 /** True while more scrollback can still be requested (below the cap). */
@@ -369,9 +440,12 @@ export function canGrowRequestedLines(paneId: string, scope?: Scope): boolean {
   return getRequestedLines(paneId, scope) < DETAIL_HISTORY_MAX;
 }
 
-/** Raise the requested scrollback by one step (capped) and return the new value. */
+/** Raise the requested scrollback by one step (capped) and return the new value. The step is
+ *  taken from the BASE window, never from the follow window: "Load older" is one tap to Herdr's
+ *  ceiling whether it was tapped from the tail or from scrollback. */
 export function growRequestedLines(paneId: string, scope?: Scope): number {
-  const next = Math.min(getRequestedLines(paneId, scope) + DETAIL_HISTORY_STEP, DETAIL_HISTORY_MAX);
+  const from = Math.max(getRequestedLines(paneId, scope), DETAIL_HISTORY_LINES);
+  const next = Math.min(from + DETAIL_HISTORY_STEP, DETAIL_HISTORY_MAX);
   requestedLines.set(paneKey(paneId, scope), next);
   if (requestedLines.size > PANE_TEXT_MAX) {
     const oldest = requestedLines.keys().next().value;
@@ -415,6 +489,10 @@ function stalePane(paneId: string, scope: Scope, lines: number): PaneData {
 // 38 blank lines under it is not a terminal blocked waiting for a password.
 const NO_ECHO_TAIL_LINES = 40;
 
+/** How long a followed pane read may be held open when the live feed is down — under the bridge's
+ *  own cap (2 s) and well under the 10 s GET timeout, so a held read is never mistaken for a hang. */
+export const PANE_WAIT_MS = 1500;
+
 /**
  * Whether this mirror is a pane sitting at a password prompt — the ADR 0017 exclusion.
  *
@@ -455,11 +533,36 @@ export async function paneLoader({
   // empty degraded pane if never visited) INSTANTLY — never a 10s hang on a fetch that can't land.
   if (isNavigation && isLostLatched()) return stalePane(paneId, scope, lines);
 
+  // FORK — the mirror this page last saw of the pane, on the tap, then the real read (see HomeData
+  // .pending). Only the in-memory cache qualifies: the sessionStorage tier is for a cold boot and
+  // may be hours old, and a mirror that old flagged live would be the dishonesty routes/root.tsx's
+  // "last seen" note is about.
+  const cachedText = isNavigation ? lastPaneText.get(key) : undefined;
+  if (cachedText !== undefined) {
+    return {
+      pending: true,
+      paneId,
+      scope,
+      text: cachedText,
+      truncated: false,
+      requestedLines: lines,
+      revision: 0,
+      error: false,
+      authError: false,
+    };
+  }
+
   try {
     // On a 304 fetchPane returns the cached body, so `read.text` is populated either way; the
     // `?? lastPaneText` is just belt-and-suspenders. Both paths are a success (not the error
     // branch) so the connection bar doesn't flicker on an unchanged poll.
-    const read: PaneReadResponse = await fetchPane(paneId, lines, scope, request?.signal);
+    // THE POLL FOR A PAGE WHOSE LIVE FEED IS DOWN. With the stream up, a change is poked and this
+    // read answers from what the bridge already holds; without it, the read is asked to WAIT for a
+    // change (`?wait=`) so one request stands in for several and a change is answered as it lands.
+    // Only while following: a frozen, scrolled-back display has nothing to gain from a faster
+    // answer, and a burst (a send just happened) wants its reads back at once.
+    const wait = !isLiveFeedHealthy() && isFollowing() && isNavigation === false ? PANE_WAIT_MS : 0;
+    const read: PaneReadResponse = await fetchPane(paneId, lines, scope, request?.signal, { wait });
     const text = read.text || lastPaneText.get(key) || "";
     // THE "IS THE SCREEN STILL MOVING" SIGNAL, taken at the one place that can honestly answer it.
     //
@@ -503,6 +606,9 @@ export async function paneLoader({
 // list here.
 
 export interface DevicesData {
+  /** FORK: same as {@link HomeData.pending} — the last registry this page saw, shown while the
+   * tap's own read is in flight. */
+  pending?: boolean;
   /** Whether writes require a bearer token — i.e. whether anything at all is paired. */
   enforced: boolean;
   /** The label THIS device's token authenticated as, or null (unpaired, or its token was revoked). */
@@ -512,7 +618,22 @@ export interface DevicesData {
   error: boolean;
 }
 
+// The nav-vs-revalidate discriminator for the settings and crew loaders — the same shape the root
+// loader's is (see the header comment): a revalidation re-runs at the SAME url, a navigation at a
+// different one, and the first run has no previous url and reads as a navigation.
+let lastDevicesUrl: string | undefined;
+let lastDevices: DevicesData | undefined;
+let lastCrewUrl: string | undefined;
+let lastCrew: CrewData | undefined;
+
 export async function devicesLoader({ request }: { request?: Request } = {}): Promise<DevicesData> {
+  const url = request?.url;
+  const isNavigation = lastDevicesUrl !== url;
+  lastDevicesUrl = url;
+  // FORK — SHOW FIRST, FETCH SECOND (see rootLoader). The settings screen opened on a blank list and
+  // a busy bar until the registry came back through the tunnel; the list it showed last time is the
+  // right thing to paint while the read is in flight, and RootLayout revalidates on the flag.
+  if (isNavigation && lastDevices && !lastDevices.error) return { ...lastDevices, pending: true };
   try {
     const res = await fetchDevices(request?.signal);
     // This read is the ONLY thing that can positively clear (or set) the refusal latch without a
@@ -520,7 +641,9 @@ export async function devicesLoader({ request }: { request?: Request } = {}): Pr
     // off means there is nothing to be unpaired from.
     if (!res.enforced || res.current !== null) clearNotPaired();
     else markNotPaired();
-    return { enforced: res.enforced, current: res.current, devices: res.devices, error: false };
+    const data: DevicesData = { enforced: res.enforced, current: res.current, devices: res.devices, error: false };
+    lastDevices = data;
+    return data;
   } catch (e) {
     if (isAbortError(e)) throw e; // superseded revalidation — let React Router drop it
     // A failed read says nothing about pairing, so the latch is left exactly as it was.
@@ -542,6 +665,9 @@ export async function devicesLoader({ request }: { request?: Request } = {}): Pr
 // and "there is nothing to ask about" are different sentences and the operator's next move differs.
 
 export interface CrewData {
+  /** FORK: same as {@link HomeData.pending} — the last census this page saw, shown while the tap's
+   * own read is in flight. */
+  pending?: boolean;
   /** The census, or `null` when this collie leads no crew (404) or the fetch failed. */
   status: CrewStatusResponse | null;
   /** True only for a fetch that FAILED — a 404 is an answer, not an error. */
@@ -549,12 +675,24 @@ export interface CrewData {
 }
 
 export async function crewLoader({ request }: { request?: Request } = {}): Promise<CrewData> {
+  const url = request?.url;
+  const isNavigation = lastCrewUrl !== url;
+  lastCrewUrl = url;
+  // FORK — show first, fetch second, as devicesLoader. A solo instance's "no crew" answer is cached
+  // too: it is a complete answer (see below), and painting it at once is what stops the crew screen
+  // from opening on a busy bar every single time on a machine that will never have a crew.
+  if (isNavigation && lastCrew && !lastCrew.error) return { ...lastCrew, pending: true };
   try {
-    return { status: await fetchCrew(request?.signal), error: false };
+    const data: CrewData = { status: await fetchCrew(request?.signal), error: false };
+    lastCrew = data;
+    return data;
   } catch (e) {
     if (isAbortError(e)) throw e; // superseded revalidation — let React Router drop it
     // Solo or peer: there is no crew to report, and that is a complete answer.
-    if (isApiErrorStatus(e, 404)) return { status: null, error: false };
+    if (isApiErrorStatus(e, 404)) {
+      lastCrew = { status: null, error: false };
+      return lastCrew;
+    }
     return { status: null, error: true };
   }
 }
@@ -579,7 +717,20 @@ export async function crewLoader({ request }: { request?: Request } = {}): Promi
  */
 export const HISTORY_PAGE_SIZE = 5000;
 
+/**
+ * Turns fetched BEFORE the view paints. The whole-history read above is right about what the view
+ * should end up holding and wrong about what a tap should wait for: through the tunnel a 1500-turn
+ * transcript is a dead screen for the whole transfer. So the loader asks for a few screens' worth,
+ * the view paints them, and the view itself extends to {@link HISTORY_PAGE_SIZE} in the background
+ * (routes/history.tsx) — the reader sees the newest turns at once and the rest arrives under them.
+ */
+export const HISTORY_FIRST_PAGE = 200;
+
 export interface HistoryData {
+  /** FORK: same as {@link HomeData.pending} — the last transcript this page saw for the pane,
+   * shown while the tap's own read is in flight. The view re-reads on the flag, because this route
+   * opts out of the poll loop (router.tsx) and nothing else would. */
+  pending?: boolean;
   paneId: string;
   scope: Scope;
   /** Oldest-first. Empty when unavailable or on a failed fetch. */
@@ -604,16 +755,23 @@ export async function historyLoader({
   if (!paneId) throw new Error("historyLoader: missing :paneId route param");
   const scope = scopeFromRequest(request);
   const base = { paneId, scope, entries: [], hasMore: false, total: 0, fileTruncated: false };
+  const key = paneKey(paneId, scope);
+
+  // FORK — show first, fetch second. Every run of this loader is a navigation (the route never
+  // revalidates), so the cache check needs no url discriminator: a transcript this page already
+  // holds for the pane is painted now and re-read by the view.
+  const cached = lastHistory.get(key);
+  if (cached) return { ...cached, pending: true };
 
   try {
     const res: PaneHistoryResponse = await fetchHistory(
       paneId,
-      { limit: HISTORY_PAGE_SIZE },
+      { limit: HISTORY_FIRST_PAGE },
       scope,
       request?.signal,
     );
     if (!res.available) return { ...base, unavailable: res.reason };
-    return {
+    const data: HistoryData = {
       paneId,
       scope,
       entries: res.entries,
@@ -621,8 +779,32 @@ export async function historyLoader({
       total: res.total,
       fileTruncated: res.fileTruncated,
     };
+    rememberHistory(key, data);
+    return data;
   } catch (e) {
     if (isAbortError(e)) throw e; // superseded — let React Router drop it
     return { ...base, unavailable: "error" };
   }
+}
+
+// The last transcript seen per pane — what a re-opened history view paints before its own read.
+// Bounded like the pane-text cache: a phone that reads many panes' histories must not hold every
+// transcript it ever saw. The VIEW writes back here as it extends and re-reads, so the next open
+// paints the whole thing it had last time rather than the first page.
+const lastHistory = new Map<string, HistoryData>();
+const HISTORY_CACHE_MAX = 6;
+
+/** Record the transcript the history view is showing for a pane, so the next open paints it at once. */
+export function rememberHistory(key: string, data: HistoryData): void {
+  if (data.unavailable) return;
+  lastHistory.set(key, { ...data, pending: undefined });
+  if (lastHistory.size > HISTORY_CACHE_MAX) {
+    const oldest = lastHistory.keys().next().value;
+    if (oldest !== undefined) lastHistory.delete(oldest);
+  }
+}
+
+/** The cache key the history view writes back under — the same triple every per-pane cache uses. */
+export function historyKey(paneId: string, scope?: Scope): string {
+  return paneKey(paneId, scope);
 }

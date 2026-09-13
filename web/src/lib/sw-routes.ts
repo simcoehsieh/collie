@@ -100,11 +100,9 @@ export const NAVIGATION_NETWORK_ONLY = [
  * offline on a device that has never loaded the app is not a font problem.
  */
 /**
- * The UI face a device gets when it has never touched the Typeface setting — Aldrich.
- *
- * Named separately because it is the one URL that is on the CRITICAL PATH: index.html preloads it,
- * the boot splash re-declares it, and `fonts.test.ts` holds it to the ~60 KB budget. The other
- * shipped faces are opt-in, so they are fetched when a reader picks one and never before.
+ * Upstream's default UI face — Aldrich. FORK: the default is the system face now, so this is an
+ * opt-in like Space Grotesk and index.html preloads nothing; the name is kept so the service worker
+ * and `fonts.test.ts` keep one spelling of the URL.
  */
 export const DEFAULT_UI_FONT_URL = "/fonts/ui-aldrich-1.002-latin.woff2";
 

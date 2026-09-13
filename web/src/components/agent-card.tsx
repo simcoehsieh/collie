@@ -1,6 +1,8 @@
-import { TerminalSquare } from "lucide-react";
+import { memo, useState } from "react";
+import { Check, Pin, TerminalSquare } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ShellBadge, StatusBadge, StatusDot } from "@/components/status-badge";
 import { AgentIcon } from "@/components/agent-icon";
@@ -8,11 +10,17 @@ import { HostChip } from "@/components/host-chip";
 import { SessionChip } from "@/components/session-chip";
 import { PaneHint } from "@/components/pane-hint";
 import { timeAgoShort } from "@/lib/format";
+import { modelLabel } from "@/lib/model-label";
 import { paneParts, paneTitleInTab } from "@/lib/pane-name";
 import type { PaneParts } from "@/lib/pane-name";
 import { statusLabel } from "@/lib/types";
 import type { AgentView } from "@/lib/types";
 import { useLocale } from "@/hooks/use-locale";
+import { useActionEcho } from "@/hooks/use-action-echo";
+import { useLongPress } from "@/hooks/use-long-press";
+import { usePromptPeek } from "@/hooks/use-prompt-peek";
+import { buzz } from "@/lib/haptics";
+import { t } from "@/lib/i18n";
 
 interface AgentCardProps {
   agent: AgentView;
@@ -45,6 +53,10 @@ interface AgentCardProps {
    * signal — see a card, something wants you; all flat, nothing does.
    */
   density?: "card" | "row";
+  /** FORK: the row is one the operator pinned — draws the pin glyph in the trailing column. */
+  pinned?: boolean;
+  /** FORK: a long press on the row (the dashboard's pin sheet). Absent = the row has no hold. */
+  onLongPress?: () => void;
 }
 
 /** The row's text: line 1's name, and line 2's two runs. */
@@ -75,6 +87,59 @@ function Age({ at }: { at: number }) {
   return <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{timeAgoShort(at)}</span>;
 }
 
+// ── FORK: WHAT THE AGENT SAYS IT IS DOING ────────────────────────────────────
+//
+// One sentence the agent wrote about itself (`collie beacon status "<line>"`, bridge/beacon/
+// status-line.ts). It is CONTENT, not chrome — the words are the agent's — so it wears
+// `font-content` (DESIGN.md § "Chrome wears the app face"), and it is text the row does not
+// interpret: nothing branches on it, and a pane that has one sorts, badges and opens exactly as it
+// did before.
+//
+// STALE IS DIMMED AND NEVER HIDDEN, which is the whole of the freshness rule. An agent that said
+// "running the migration" forty minutes ago is still telling you the most useful thing anyone knows
+// about that pane; a row that emptied itself would only make you wonder whether the feature broke.
+// So the row keeps the sentence and adds its age, and the pair reads as "this was true, then".
+
+/** How old a line may be before the row says so. Mirrors `STATUS_LINE_FRESH_MS` bridge-side. */
+const STATUS_LINE_FRESH_MS = 15 * 60 * 1000;
+
+function StatusLine({ line, at }: { line?: string; at?: number }) {
+  if (!line) return null;
+  const stale = at !== undefined && Date.now() - at > STATUS_LINE_FRESH_MS;
+  return (
+    <p
+      data-slot="agent-status-line"
+      className={cn(
+        "mt-1 flex items-baseline gap-1.5 overflow-hidden text-xs leading-snug",
+        stale ? "text-muted-foreground/60" : "text-muted-foreground",
+      )}
+    >
+      {/* Truncated, not wrapped, for the reason PaneHint states: a list holds one row pitch, and a
+          sentence that wrapped would make its row taller than every other for no visible reason.
+          `title` keeps the whole of it a hover away on a desktop. */}
+      <span className="min-w-0 truncate font-content" title={line}>
+        {line}
+      </span>
+      {stale && at !== undefined && (
+        <span className="shrink-0 tabular-nums">{t("agentCard.statusLine.stale", { age: timeAgoShort(at) })}</span>
+      )}
+    </p>
+  );
+}
+
+// FORK — which model and effort the agent is on, as one small monospace run under the address line.
+// The same standing as the status line above it in the source: text, never a branch. It sits in the
+// row's muted register because it is a fact about the pane, not the pane's subject — the name is.
+function ModelLine({ model, effort }: { model?: string; effort?: string }) {
+  const label = modelLabel({ model, effort });
+  if (label === null) return null;
+  return (
+    <p data-slot="agent-model-line" className="mt-0.5 truncate font-mono text-[10px] leading-4 text-muted-foreground/80">
+      {label}
+    </p>
+  );
+}
+
 // A pane row, used by the triage home and the space view. Usually an agent; for a bare shell pane
 // (kind:"shell") it shows a terminal glyph and a muted "shell" tag instead of a status badge.
 //
@@ -95,15 +160,37 @@ function Age({ at }: { at: number }) {
 // The two parts of line 2 render as separate spans on purpose: at 390px a joined string truncates
 // from the right, which would eat the tab and leave every row of a project reading the same nine
 // characters of its space. The space gives up width first and the tab takes what is left.
-export function AgentCard({
+// FORK: memoised. The dashboard re-renders every poll tick; a row whose `agent` object is the same
+// reference as last tick has nothing new to paint. `onClick` is deliberately left OUT of the
+// comparison — every caller passes an inline `() => onOpen(a)`, a new function each render that
+// does the same thing for the same `a`, and comparing it would defeat the memo on every tick. The
+// bargain: a caller that changes what "open this row" MEANS without changing any other prop is not
+// re-rendered; no caller does that (the scope a row opens into is fixed by the list it is in).
+export const AgentCard = memo(AgentCardImpl, (a, b) =>
+  a.agent === b.agent &&
+  a.age === b.age &&
+  a.scope === b.scope &&
+  a.statusStyle === b.statusStyle &&
+  a.density === b.density &&
+  a.pinned === b.pinned &&
+  // Presence only, like `onClick`: the dashboard's hold handler is an inline arrow too.
+  (a.onLongPress === undefined) === (b.onLongPress === undefined),
+);
+
+function AgentCardImpl({
   agent,
   onClick,
   age,
   scope = "herd",
   statusStyle = "badge",
   density = "card",
+  pinned = false,
+  onLongPress,
 }: AgentCardProps) {
   useLocale();
+  // FORK: the hold that opens the dashboard's pin sheet. Inert when no handler is passed (the
+  // hook's own contract), so the space view and the sidebar rows are byte-for-byte what they were.
+  const hold = useLongPress(onLongPress);
   const isShell = agent.kind === "shell";
   const blocked = agent.status === "blocked";
   const inTab = scope === "tab";
@@ -126,40 +213,56 @@ export function AgentCard({
   const cornerDot = statusStyle === "dot" && !isShell;
 
   const Shell = flat ? "div" : Card;
+  // FORK: the yes/no dialog waiting in a blocked pane, when there is one to answer from here.
+  const { peek, answered, answer } = usePromptPeek(agent);
 
+  // ── FORK: THE SHELL IS OUTSIDE THE BUTTON, NOT INSIDE IT ─────────────────
+  // Upstream nests the card chrome inside one full-width <button>. A blocked row now carries two
+  // buttons of its own beneath the title (Approve / Deny), and a button inside a button is not
+  // HTML — iOS in particular delivers the tap to whichever it likes. So the chrome moved out to a
+  // wrapper and the row's own tap target is a <button> INSIDE it, followed by the approve strip as
+  // a sibling. Same classes, same padding, same anatomy (`data-slot`s unchanged); the press scale
+  // rides on the wrapper via `:has()` so the whole card still dips under the thumb.
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <Shell
       className={cn(
-        "w-full text-left transition-transform active:scale-[0.99]",
+        "w-full transition-transform [&:has(>button:active)]:scale-[0.99]",
+        // 14px, the same as the card's own padding. A flat row now sits inside a 1px-bordered
+        // ListGroup, so its content lands on the same x as a card row's content BY CONSTRUCTION
+        // (14 + 1 on both sides) — the hand-computed 15px this replaced was faking exactly that
+        // alignment against a group that had no border to supply the 1px. The rail below is a
+        // box-shadow, which takes no room, so the number still holds.
+        //
         // No radius on a flat row, in ANY state. These sit in a `divide-y` list, and a rounded fill
         // under a full-width straight hairline reads as a rendering fault — the corners pull away
         // from a line that doesn't follow them. Corners belong to where the row sits, never to what
         // it is doing, so a blocked flat row stays square too and takes a left rail instead.
-        flat && "transition-colors hover:bg-muted/50",
+        flat
+          ? "shadow-[inset_2px_0_0_0_transparent] transition-colors hover:bg-muted/50"
+          : "gap-0 rounded-xl py-0 shadow-card",
+        // The blocked tint survives both treatments — it's the one cue that reads at a glance.
+        // The EDGE cannot: one class string, two containers. A card sits in a gap list and already
+        // carries a border in every state, so it only recolours. A flat row sits in a divide-y
+        // list, where a four-sided edge would double the hairline — and where a bare colour
+        // utility paints nothing at all, because preflight leaves the width at 0. So the flat row
+        // takes a 2px left rail, reserved transparent above so the box never changes.
+        blocked &&
+          (flat
+            ? "bg-status-blocked/5 shadow-[inset_2px_0_0_0_var(--color-status-blocked)]"
+            : "border-status-blocked/40 bg-status-blocked/5"),
       )}
     >
-      <Shell
+      <button
+        type="button"
+        onClick={onClick}
+        // FORK: the hook needs the iOS callout and selection off the element it times (see its
+        // note); `data-pane-row` is what the desktop hotkeys walk with j/k (hooks/use-hotkeys.ts).
+        {...hold}
+        data-pane-row={agent.paneId}
         className={cn(
-          // 14px, the same as the card's own padding. A flat row now sits inside a 1px-bordered
-          // ListGroup, so its content lands on the same x as a card row's content BY CONSTRUCTION
-          // (14 + 1 on both sides) — the hand-computed 15px this replaced was faking exactly that
-          // alignment against a group that had no border to supply the 1px. The rail below is a
-          // box-shadow, which takes no room, so the number still holds.
-          flat
-            ? "flex flex-row items-center gap-3 px-3.5 py-2.5 shadow-[inset_2px_0_0_0_transparent]"
-            : "flex-row items-center gap-3 rounded-xl px-3.5 py-3 shadow-sm",
-          // The blocked tint survives both treatments — it's the one cue that reads at a glance.
-          // The EDGE cannot: one class string, two containers. A card sits in a gap list and already
-          // carries a border in every state, so it only recolours. A flat row sits in a divide-y
-          // list, where a four-sided edge would double the hairline — and where a bare colour
-          // utility paints nothing at all, because preflight leaves the width at 0. So the flat row
-          // takes a 2px left rail, reserved transparent above so the box never changes.
-          blocked &&
-            (flat
-              ? "bg-status-blocked/5 shadow-[inset_2px_0_0_0_var(--color-status-blocked)]"
-              : "border-status-blocked/40 bg-status-blocked/5"),
+          "flex w-full flex-row items-center gap-3 text-left",
+          onLongPress !== undefined && "select-none [-webkit-touch-callout:none]",
+          flat ? "px-3.5 py-2.5" : "px-4 py-3.5",
         )}
       >
         <div className="min-w-0 flex-1">
@@ -211,6 +314,16 @@ export function AgentCard({
             </div>
           )}
 
+          {/* FORK: the AGENT's own sentence about what it is working on (`collie beacon status`),
+              under the name it belongs to. Same standing as the bridge's hint below it — text, never
+              a branch — and it is placed above because it is the more specific of the two: the hint
+              describes a pane Collie is guessing at, this one is the pane telling you itself. */}
+          <StatusLine line={agent.statusLine} at={agent.statusLineAt} />
+
+          {/* FORK: which model and effort the agent is on (bridge/session-facts.ts), when the bridge
+              has read it. Below the agent's own sentence because it is the drier fact of the two. */}
+          <ModelLine model={agent.model} effort={agent.effort} />
+
           {/* The bridge's own sentence about this pane, when it sent one — text, never a branch
               (components/pane-hint.tsx). It changes nothing about the row: a hinted pane is still a
               shell, still sorts where an unknown status sorts, and still opens the same view. */}
@@ -232,6 +345,10 @@ export function AgentCard({
           <HostChip host={agent.host} />
           <SessionChip session={agent.session} />
           {stamp !== undefined && <Age at={stamp} />}
+          {/* FORK: the pin, muted and small — a mark that the row's place is chosen, not earned. */}
+          {pinned && (
+            <Pin className="size-3.5 shrink-0 text-muted-foreground" aria-label={t("home.pin.pinned")} />
+          )}
         </div>
 
         {isShell ? (
@@ -242,7 +359,92 @@ export function AgentCard({
         ) : (
           <StatusBadge status={agent.status} />
         )}
-      </Shell>
-    </button>
+      </button>
+
+      {peek !== null && (
+        <ApproveStrip
+          question={peek.prompt.question}
+          yesLabel={peek.choice.yes.label}
+          noLabel={peek.choice.no.label}
+          flat={flat}
+          answered={answered}
+          onAnswer={answer}
+        />
+      )}
+    </Shell>
+  );
+}
+
+// ── FORK: Approve / Deny beneath a blocked row ──────────────────────────────
+// Two small buttons and the dialog's own question, so the operator knows WHAT they are saying yes
+// to before they say it. The keystrokes are the option's own (lib/prompt-approve.ts picks the plain
+// Yes and the No off the pane's grammar; hooks/use-prompt-peek.ts sends them through the same
+// guarded path the pane view uses). Press echo + haptic on the way out; the outcome lands as one
+// short word beside the buttons, because a row has no status channel of its own.
+function ApproveStrip({
+  question,
+  yesLabel,
+  noLabel,
+  flat,
+  answered,
+  onAnswer,
+}: {
+  question: string;
+  yesLabel: string;
+  noLabel: string;
+  flat: boolean;
+  /** Which button already went out for this dialog; both are disabled once one has. */
+  answered: "yes" | "no" | null;
+  onAnswer: (which: "yes" | "no") => Promise<{ status: "sent" | "changed" | "error"; error?: string }>;
+}) {
+  const echo = useActionEcho();
+  const [note, setNote] = useState<"sent" | "changed" | "failed" | null>(null);
+  const locked = echo.pending || answered !== null;
+
+  const run = (which: "yes" | "no") =>
+    echo.run(which, async () => {
+      buzz();
+      const result = await onAnswer(which);
+      setNote(result.status === "sent" ? "sent" : result.status === "changed" ? "changed" : "failed");
+      return result.status === "sent";
+    });
+
+  return (
+    <div
+      data-slot="agent-row-approve"
+      className={cn("flex flex-col gap-2", flat ? "px-3.5 pb-2.5" : "px-4 pb-3.5")}
+    >
+      {question !== "" && (
+        <p className="line-clamp-2 text-xs text-muted-foreground" title={question}>
+          {question}
+        </p>
+      )}
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          disabled={locked}
+          onClick={() => void run("yes")}
+          aria-label={`${t("agentCard.approve.yes")}: ${yesLabel}`}
+          title={yesLabel}
+        >
+          {echo.phaseOf("yes") === "done" || answered === "yes" ? <Check /> : t("agentCard.approve.yes")}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={locked}
+          onClick={() => void run("no")}
+          aria-label={`${t("agentCard.approve.no")}: ${noLabel}`}
+          title={noLabel}
+        >
+          {echo.phaseOf("no") === "done" || answered === "no" ? <Check /> : t("agentCard.approve.no")}
+        </Button>
+        {note !== null && (
+          <span className="text-xs text-muted-foreground" role="status">
+            {t(`agentCard.approve.${note}`)}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }

@@ -60,7 +60,12 @@ export function BuildStamp({ className }: { className?: string }) {
       {/* Monospaced because the label carries the git hash — the operator reads it character by
           character against a `git log`, which is the one thing a proportional face makes harder.
           The bare semver in alpha-bar.tsx is chrome and wears the UI face; this is not. */}
-      <span className="font-mono">{buildLabel()}</span>
+      {/* `data-selectable` because this line is CONTENT in a chrome-shaped box: the operator
+          reads the hash against a `git log`, and on a touch device index.css makes everything
+          else in the chrome unselectable. */}
+      <span data-selectable className="font-mono">
+        {buildLabel()}
+      </span>
       {stale && (
         <>
           {" · "}

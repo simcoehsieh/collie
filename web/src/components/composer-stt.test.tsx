@@ -86,12 +86,13 @@ function baseProps(
     text: "pane output",
     terminalDraft: null,
     rawTerminalDraft: null,
-    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
+    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
     setWrap: vi.fn(),
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
     setTapToFocus: vi.fn(),
     setExpandClippedReply: vi.fn(),
+    setControlsOpen: vi.fn(),
     onSent: vi.fn(),
     ...overrides,
   };
@@ -191,23 +192,24 @@ describe("Composer — the record button is drawn only when there is a microphon
   });
 });
 
-// The primary button is the microphone while the box is empty and Send once there is anything to
-// send. It used to be a permanent second control inside the field; the v1 beta reported that as
-// width spent on a control only ever wanted on an empty box.
-describe("Composer — the microphone IS the primary button, until you type", () => {
-  it("is the only round button on an empty box, and the field keeps its full width", async () => {
+// FORK: the microphone is its own control inside the field, beside the attach clip, and the round
+// button at the end of the row is always Send. Upstream shares one round button between the two
+// (microphone on an empty box, Send once there is text), which read as the send key turning into a
+// microphone. Here the glyphs never swap; Send is simply off while there is nothing to send.
+describe("Composer — the microphone sits beside the clip, and Send is always Send", () => {
+  it("draws both on an empty box: an enabled microphone and a disabled Send", async () => {
     let reads = 0;
     server.use(configHandler(CONFIG_WITH_STT, () => (reads += 1)));
     renderComposer();
     await waitFor(() => expect(reads).toBe(1));
 
     expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: /^send$/i })).toBeNull();
-    // Same padding as a collie with no microphone at all — the field pays nothing for the feature.
-    expect(screen.getByPlaceholderText(/type a reply/i).className).toContain("pr-11");
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeDisabled();
+    // The field reserves room for the microphone beside the clip.
+    expect(screen.getByPlaceholderText(/type a reply/i).className).toContain("pr-20");
   });
 
-  it("becomes Send on the first character, and the microphone on the last one deleted", async () => {
+  it("lights Send on the first character, and keeps the microphone where it was", async () => {
     const user = userEvent.setup();
     server.use(configHandler(CONFIG_WITH_STT));
     renderComposer();
@@ -215,16 +217,14 @@ describe("Composer — the microphone IS the primary button, until you type", ()
     await screen.findByRole("button", { name: /record a voice message/i });
 
     await user.type(box, "x");
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /record a voice message/i })).toBeNull(),
-    );
-    expect(screen.getByRole("button", { name: /send/i })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: /^send$/i })).toBeEnabled());
+    expect(screen.getByRole("button", { name: /record a voice message/i })).toBeEnabled();
 
     await user.clear(box);
-    expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: /^send$/i })).toBeDisabled());
   });
 
-  it("whitespace alone is not text — a box holding only spaces still offers the microphone", async () => {
+  it("whitespace alone is not text — Send stays off over a box holding only spaces", async () => {
     const user = userEvent.setup();
     server.use(configHandler(CONFIG_WITH_STT));
     renderComposer();
@@ -232,11 +232,10 @@ describe("Composer — the microphone IS the primary button, until you type", ()
     await screen.findByRole("button", { name: /record a voice message/i });
 
     await user.type(box, "   ");
-    // `send` refuses a blank value, so Send here could do nothing anyway.
-    expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeDisabled();
   });
 
-  it("stays the microphone for the whole clip, so one button starts and stops it", async () => {
+  it("is one button that starts and stops the clip, and hands back to idle with the text landed", async () => {
     const user = userEvent.setup();
     server.use(configHandler(CONFIG_WITH_STT), sttHandler("done"));
     renderComposer();
@@ -244,9 +243,9 @@ describe("Composer — the microphone IS the primary button, until you type", ()
     expect(await screen.findByRole("button", { name: /stop recording/i })).toBeInTheDocument();
 
     act(() => recorder.finish());
-    // The transcript arrives, the box is no longer empty, and the button hands itself back to Send.
     await waitFor(() => expect(screen.getByPlaceholderText(/type a reply/i)).toHaveValue("done"));
-    expect(screen.getByRole("button", { name: /send/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
   });
 });
 

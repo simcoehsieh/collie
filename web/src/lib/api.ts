@@ -11,6 +11,7 @@ import { isLead, normalizeScope, paneScopeKey, type Scope } from "./scope";
 import { observeServerBuild, SERVER_BUILD_HEADER } from "./server-build";
 import type {
   ActionResponse,
+  BootResponse,
   BridgeConfig,
   CreateResponse,
   DismissScope,
@@ -27,8 +28,19 @@ import type {
   UpdateRun,
   UpdateStartResponse,
   UploadResponse,
+  DirsResponse,
+  DocsResponse,
+  DocTagsResponse,
+  PaneDiffResponse,
+  PaneFileResponse,
+  ProbeResponse,
+  QuotaResponse,
+  ShotResponse,
   WorktreeListResponse,
   WorktreeOpenResponse,
+  ArtifactResponse,
+  ArtifactsResponse,
+  HandoffResponse,
 } from "./types";
 import type { SubscribeBody } from "./push";
 
@@ -87,6 +99,11 @@ class ApiError extends Error {
 /** True when an API request failed with the given HTTP status. */
 export function isApiErrorStatus<TThrown>(error: TThrown, status: number): boolean {
   return error instanceof ApiError && error.status === status;
+}
+
+/** The HTTP status a thrown API failure carried, or `undefined` when the throw was not one. */
+export function apiErrorStatus<TThrown>(error: TThrown): number | undefined {
+  return error instanceof ApiError ? error.status : undefined;
 }
 
 /**
@@ -342,10 +359,40 @@ export async function fetchSnapshot(
   all = false,
 ): Promise<SnapshotResponse> {
   const path = withScope("/api/snapshot", scope);
-  const snap = await req<SnapshotResponse>(
-    all ? `${path}${path.includes("?") ? "&" : "?"}sessions=all` : path,
-    { signal },
-  );
+  const url = all ? `${path}${path.includes("?") ? "&" : "?"}sessions=all` : path;
+  // THE SNAPSHOT VALIDATES LIKE THE PANE READ DOES. Polled at up to 3 Hz and, until now, transferred
+  // whole and re-parsed into a brand-new object on every beat whether or not the herd had moved —
+  // and every consumer under the root re-rendered on the new identity. The bridge answers 304 to a
+  // matching tag; this hands back THE SAME object it cached, so a loader that memoises on identity
+  // (lib/loaders.ts → toHomeData) can keep the whole tree still on a quiet herd.
+  //
+  // Keyed by the URL, which is exactly (host, session, breadth): the same three things that decide
+  // which body the bridge assembles. The invariants are fetchPane's: an ETag is recorded only
+  // together with the body it names, and only after that body parsed.
+  const cached = snapshotCache.get(url);
+  const headers = new Headers({
+    "content-type": "application/json",
+    [XHR_HEADER]: XHR_HEADER_VALUE,
+    ...authHeader(),
+  });
+  if (cached) headers.set("if-none-match", cached.etag);
+  const res = await apiFetch(url, { signal: withTimeout(signal, GET_TIMEOUT_MS), headers });
+  captureBuild(res);
+  if (res.status === 304 && cached) {
+    if (cached.response.bridge !== "disconnected") markLive();
+    return cached.response;
+  }
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    notePairing("GET", res.status, detail);
+    throw new ApiError(`${url} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  notePairing("GET", res.status);
+  // SAFETY: a 200 on `/api/snapshot` is the bridge's own `SnapshotResponse` by contract.
+  const snap = (await res.json()) as SnapshotResponse;
+  const etag = res.headers.get("etag");
+  if (etag) snapshotCache.set(url, { etag, response: snap });
+  else snapshotCache.delete(url);
   // A snapshot whose herd link is UP is a provably-live moment — stamp the shared connection-health
   // anchor so escalation is measured from here. A snapshot that 200s but reports `bridge:
   // "disconnected"` is NOT live (the pill/banner still escalate on it), so it must NOT reset the
@@ -353,6 +400,123 @@ export async function fetchSnapshot(
   if (snap.bridge !== "disconnected") markLive();
   return snap;
 }
+
+/** The last snapshot body per URL, with the ETag that names it — see fetchSnapshot. */
+const snapshotCache = new Map<string, { etag: string; response: SnapshotResponse }>();
+
+/** Tests only: forget every cached snapshot tag. */
+export function __resetSnapshotCache(): void {
+  snapshotCache.clear();
+}
+
+/**
+ * FORK: does this page already hold the exact bytes a poke names?
+ *
+ * The live feed's pokes carry a version stamp (lib/live-feed.ts). When it matches what is in the
+ * ETag map, the fetch the poke would have caused is one this page can prove would answer 304 — so it
+ * is skipped, and the round trip through the tunnel never happens. Anything else — no stamp, a stamp
+ * that does not match, nothing cached — falls through to the fetch, which is what always happened.
+ *
+ * Read off the SAME maps the fetches write to, and keyed the same way, because a second opinion
+ * about "what do I hold" is exactly the thing that would strand a mirror on stale text.
+ */
+export function holdsSnapshotEtag(etag: string, scope?: Scope, all = false): boolean {
+  const path = withScope("/api/snapshot", scope);
+  const url = all ? `${path}${path.includes("?") ? "&" : "?"}sessions=all` : path;
+  return snapshotCache.get(url)?.etag === etag;
+}
+
+/** The pane half of {@link holdsSnapshotEtag}. */
+export function holdsPaneEtag(paneId: string, etag: string, scope?: Scope): boolean {
+  return paneCache.get(paneScopeKey(scope, paneId))?.etag === etag;
+}
+
+// ── FORK: the cold boot, as one round trip (bridge/boot.ts) ───────────────────────────────────
+//
+// `rootLoader` used to open the app with `GET /api/snapshot`, alone, behind the boot splash — and
+// only once THAT resolved did the page mount and fire `/api/config` (three times), `/api/launchers`,
+// `/api/subscribe` and then `/api/quota`. Serial, and every step a ~175 ms round trip through
+// Cloudflare. `GET /api/boot` answers all of them at once.
+//
+// WHAT THIS IS NOT: a new source of truth. Every field is the body of the route that owns it; the
+// page polls those same routes from the next tick onward; and this is used ONCE, for the first fetch
+// of a page's life. Everything after it is exactly what shipped before.
+//
+// THE FALLBACK IS THE WHOLE SAFETY STORY. An older bridge 404s, a member scope has no bundle, a
+// widened view is not what the bundle carries — each of those simply fetches the snapshot the way it
+// always did, and each costs one wasted request at most, once per page load.
+
+/** Whether the bundle has already been tried. A page gets one attempt, whatever the outcome. */
+let bootAttempted = false;
+
+/** Tests only: let the next root load try the bundle again. */
+export function __resetBoot(): void {
+  bootAttempted = false;
+  seededLaunchers = null;
+  seededNotifyPrefs = null;
+  seededQuota = null;
+}
+
+/**
+ * The snapshot for the FIRST root load of a page, taken out of `/api/boot` when that route is
+ * available and out of `/api/snapshot` otherwise. Every later load calls `fetchSnapshot` directly.
+ *
+ * Signature-identical to {@link fetchSnapshot} on purpose: `lib/loaders.ts`'s hunk is one identifier,
+ * which is the smallest a contested file can be asked to carry (FORK.md).
+ */
+export async function fetchBootSnapshot(
+  scope?: Scope,
+  signal?: AbortSignal,
+  all = false,
+): Promise<SnapshotResponse> {
+  // A widened view and a member host are both fetched the old way: the bundle answers this
+  // machine's narrow snapshot, and answering a DIFFERENT body than the one asked for would be worse
+  // than an extra round trip. `all` is rare (a switch on the home screen) and `host` never reaches
+  // the bundle at all — the bridge 404s it.
+  if (bootAttempted || all || scope?.host !== undefined) return fetchSnapshot(scope, signal, all);
+  bootAttempted = true;
+  try {
+    const boot = await req<BootResponse>(withScope("/api/boot", scope), { signal });
+    primeBoot(boot, scope);
+    if (boot.snapshot.bridge !== "disconnected") markLive();
+    return boot.snapshot;
+  } catch (e) {
+    // An abort is the loader being superseded and must propagate — everything else (a 404 from a
+    // bridge without the route, a refusal, a transport failure) falls back to the fetch that has
+    // always worked, so a bundle that cannot be had costs one request and nothing else.
+    // An AbortError is a DOMException, which is an Error subclass in every engine Collie runs in.
+    if (e instanceof Error && e.name === "AbortError") throw e;
+    return fetchSnapshot(scope, signal, all);
+  }
+}
+
+/**
+ * Hand each part of the bundle to the cache the route that owns it already reads from.
+ *
+ * The snapshot and the quota go into ETag maps, so the first POLL of each is a 304 rather than a
+ * second full body. The config goes into the memo all three of its callers share. The launcher rows
+ * and the notification prefs have no cache of their own — by design, both are read live on every
+ * mount — so they are held as ONE-SHOT seeds: the next call takes the value and the seed is gone,
+ * which leaves "fresh on every later mount" exactly as it was.
+ *
+ * Every field but the snapshot is read defensively: a bridge that grows this route before it grows
+ * one of the bodies must not be able to seed `undefined` into a cache the page then trusts.
+ */
+function primeBoot(boot: BootResponse, scope?: Scope): void {
+  const snapshotUrl = withScope("/api/snapshot", scope);
+  if (boot.snapshotEtag) snapshotCache.set(snapshotUrl, { etag: boot.snapshotEtag, response: boot.snapshot });
+  if (boot.config) {
+    configMemo.set(withScope("/api/config", scope), { at: Date.now(), promise: Promise.resolve(boot.config) });
+  }
+  if (boot.launchers) seededLaunchers = { path: withScope("/api/launchers", scope), value: boot.launchers };
+  if (boot.notifyPrefs) seededNotifyPrefs = boot.notifyPrefs;
+  if (boot.quota && boot.quotaEtag) seededQuota = { etag: boot.quotaEtag, response: boot.quota };
+}
+
+/** The one-shot seeds `primeBoot` leaves for the first caller of each. */
+let seededLaunchers: { path: string; value: LaunchersResponse } | null = null;
+let seededNotifyPrefs: NotifyPrefs | null = null;
+let seededQuota: { etag: string; response: QuotaResponse } | null = null;
 
 // Per-pane cache of the last ETag AND the body it belongs to, kept together on purpose. We send
 // If-None-Match on the next poll to skip re-transferring unchanged scrollback; on a 304 we return
@@ -373,13 +537,27 @@ const paneCache = new Map<string, PaneCacheEntry>();
 // pane's last body). 20 comfortably covers any panes in flight on a phone.
 const PANE_CACHE_MAX = 20;
 
+export interface FetchPaneOptions {
+  /**
+   * Ask the bridge to HOLD the read for up to this many ms when the mirror has not changed, and to
+   * answer the moment it does (`?wait=`). The poll for a page whose live feed is down: one request
+   * in place of several, and a change answered as it lands rather than up to an interval later.
+   * Omitted or 0 is the plain read.
+   */
+  wait?: number;
+}
+
 export async function fetchPane(
   paneId: string,
   lines?: number,
   scope?: Scope,
   signal?: AbortSignal,
+  opts: FetchPaneOptions = {},
 ): Promise<PaneReadResponse> {
-  const q = lines ? `?lines=${lines}` : "";
+  const params: string[] = [];
+  if (lines) params.push(`lines=${lines}`);
+  if (opts.wait && opts.wait > 0) params.push(`wait=${Math.round(opts.wait)}`);
+  const q = params.length ? `?${params.join("&")}` : "";
   const url = withScope(`/api/pane/${encodeURIComponent(paneId)}${q}`, scope);
   // Pane ids are unique only within one session on one machine (each session is its own Herdr
   // server; each crew member is its own machine again), so the ETag/body cache is keyed by the full
@@ -439,10 +617,36 @@ export async function fetchPane(
  * pane runs on the alternate screen, which has no scrollback ring). Newest-anchored: no cursor gives
  * the most recent turns; `before` walks backwards from a turn already on screen.
  *
- * Deliberately NOT ETag-cached like fetchPane: history is fetched on navigation and on an explicit
- * "load older" tap, never on the poll loop, so there's no repeat-fetch to save.
+ * FORK — IT IS ETag-CACHED NOW, and the comment that said otherwise was true only until
+ * `use-latest-reply` shipped. That hook re-reads the newest turns every time the mirror SETTLES, so
+ * a pane the operator is watching asks this route once per finished message — and the answer is
+ * usually the same page it already holds, because the newest spoken turn does not change while the
+ * agent runs tools. The bridge validates on the body's hash (`paneHistory`); this sends the tag and,
+ * on a 304, hands back THE SAME OBJECT, so `newestReply` compares identical references and the
+ * reply card re-renders nothing.
+ *
+ * Keyed by the full URL — (host, session, paneId, limit, cursor) — for `fetchPane`'s reason: the
+ * same pane id on another host is another pane, and a different page of the same log is a different
+ * body. And on `fetchPane`'s two invariants: a tag is recorded only together with the body it names,
+ * and only after that body parsed.
  */
-export function fetchHistory(
+interface HistoryCacheEntry {
+  etag: string;
+  response: PaneHistoryResponse;
+}
+const historyCache = new Map<string, HistoryCacheEntry>();
+// A page is the largest body this module caches (up to 5000 turns on "show entire history"), so the
+// cap is tight: the pane being watched, the one before it, and the "load older" pages in hand. Named
+// apart from `lib/loaders.ts`'s `HISTORY_CACHE_MAX`, which bounds a different thing — the transcript
+// the history VIEW repaints from, keyed per pane rather than per page.
+const HISTORY_BODY_CACHE_MAX = 8;
+
+/** Tests only: forget every cached history page. */
+export function __resetHistoryCache(): void {
+  historyCache.clear();
+}
+
+export async function fetchHistory(
   paneId: string,
   opts: { limit?: number; before?: string } = {},
   scope?: Scope,
@@ -453,12 +657,39 @@ export function fetchHistory(
   if (opts.before) q.set("before", opts.before);
   const qs = q.toString();
   const path = `/api/pane/${encodeURIComponent(paneId)}/history${qs ? `?${qs}` : ""}`;
+  const url = withScope(path, scope);
+
+  const cached = historyCache.get(url);
   // Reading the transcript is looking at the pane — and history is a READ, so like fetchPane it
   // carries the header that lets the bridge count it (bridge/server.ts → marksPaneSeen).
-  return req<PaneHistoryResponse>(withScope(path, scope), {
-    signal,
-    headers: { "x-collie-seen": "1" },
+  const headers = new Headers({
+    "content-type": "application/json",
+    "x-collie-seen": "1",
+    [XHR_HEADER]: XHR_HEADER_VALUE,
+    ...authHeader(),
   });
+  if (cached) headers.set("if-none-match", cached.etag);
+
+  const res = await apiFetch(url, { signal: withTimeout(signal, GET_TIMEOUT_MS), headers });
+  captureBuild(res);
+  if (res.status === 304 && cached) return cached.response;
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    notePairing("GET", res.status, detail);
+    throw new ApiError(`${url} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  notePairing("GET", res.status);
+  // SAFETY: a 200 on `/api/pane/:id/history` is the bridge's own `PaneHistoryResponse` by contract.
+  const data = (await res.json()) as PaneHistoryResponse;
+  const etag = res.headers.get("etag");
+  if (etag) {
+    historyCache.set(url, { etag, response: data });
+    if (historyCache.size > HISTORY_BODY_CACHE_MAX) {
+      const oldest = historyCache.keys().next().value;
+      if (oldest !== undefined) historyCache.delete(oldest);
+    }
+  }
+  return data;
 }
 
 export function sendReply(
@@ -628,7 +859,15 @@ export function launch(command: string, besidePaneId?: string, scope?: Scope): P
  * scope changes (lib/operator-config.ts's `useLaunchers`).
  */
 export function fetchLaunchers(scope?: Scope): Promise<LaunchersResponse> {
-  return req<LaunchersResponse>(withScope("/api/launchers", scope));
+  const path = withScope("/api/launchers", scope);
+  // FORK: the boot bundle already carried this scope's rows — take them ONCE, then go back to
+  // reading them live on every mount, which is what the comment above promises.
+  if (seededLaunchers?.path === path) {
+    const seeded = seededLaunchers.value;
+    seededLaunchers = null;
+    return Promise.resolve(seeded);
+  }
+  return req<LaunchersResponse>(path);
 }
 
 /** The worktrees of the repo a space sits in. Empty-handed when the space is not in one. */
@@ -636,6 +875,18 @@ export function listWorktrees(workspaceId: string, scope?: Scope): Promise<Workt
   return req<WorktreeListResponse>(
     withScope(`/api/workspace/${encodeURIComponent(workspaceId)}/worktrees`, scope),
   );
+}
+
+/**
+ * The folders under one directory, for the new-space picker.
+ *
+ * `path` is what the operator is browsing; omit it for their home directory. The bridge resolves it
+ * and refuses anything outside home, so this never has to be sanitised here — and must not be,
+ * since a client-side check would be the weaker of two rules and the one that runs first.
+ */
+export function listDirs(path: string | undefined, scope?: Scope): Promise<DirsResponse> {
+  const q = path === undefined || path === "" ? "" : `?path=${encodeURIComponent(path)}`;
+  return req<DirsResponse>(withScope(`/api/dirs${q}`, scope));
 }
 
 /** Create a worktree on a new branch and open it as its own space. */
@@ -679,7 +930,38 @@ export function openWorktree(
  * nothing on the wire and gets the byte-identical body it always did.
  */
 export function fetchConfig(scope?: Scope): Promise<BridgeConfig> {
-  return req<BridgeConfig>(withScope("/api/config", scope));
+  const path = withScope("/api/config", scope);
+  const held = configMemo.get(path);
+  if (held && Date.now() - held.at < CONFIG_MEMO_MS) return held.promise;
+  const promise = req<BridgeConfig>(path);
+  // A rejection is dropped from the memo the moment it settles, so a bridge that was briefly down is
+  // retried by the next caller rather than remembered as broken for the rest of the window. The
+  // handler is attached to a DERIVED promise and discarded, so the caller still sees the rejection
+  // (and the original is not left looking unhandled).
+  void promise.catch(() => configMemo.delete(path));
+  configMemo.set(path, { at: Date.now(), promise });
+  return promise;
+}
+
+// FORK — ONE `/api/config` PER BOOT, NOT THREE.
+//
+// Three independent callers read it on every cold boot of home: push setup (lib/push.ts), the
+// operator's rows (lib/operator-config.ts) and the footer's build stamp (components/build-stamp.tsx).
+// Only the middle one had an in-flight guard, and it guarded only itself — so the phone paid two
+// extra ~175 ms round trips behind the boot splash, plus one more on every BuildStamp remount.
+//
+// The guard belongs here rather than in any one of them: this is the single place all three pass
+// through, and a memo per caller is three memos that can disagree about what the bridge said.
+// Keyed by the PATH, because `?host=` names a different machine's block and must not be served
+// another's. Ten seconds covers a boot, a remount, and a home↔pane↔home hop; past it the operator's
+// live-edited `commands.toml` reaches the next screen, which is what "read live on the bridge" is
+// supposed to buy them.
+const CONFIG_MEMO_MS = 10_000;
+const configMemo = new Map<string, { at: number; promise: Promise<BridgeConfig> }>();
+
+/** Tests only: forget the memoised config. */
+export function __resetConfigMemo(): void {
+  configMemo.clear();
 }
 
 /** Register push through the same timeout, authentication and error handling as the other APIs. */
@@ -700,6 +982,13 @@ export function setSnooze(snoozedUntil: number | null): Promise<{ snoozedUntil: 
 
 /** Fetch the bridge-wide notification-type preferences (which agent statuses push). */
 export function getNotifyPrefs(): Promise<NotifyPrefs> {
+  // FORK: the boot bundle already carried them — taken ONCE, so the first open of Settings paints
+  // its switches with no round trip and every later open reads the bridge as it always did.
+  if (seededNotifyPrefs !== null) {
+    const seeded = seededNotifyPrefs;
+    seededNotifyPrefs = null;
+    return Promise.resolve(seeded);
+  }
   return req<NotifyPrefs>("/api/notifications/prefs");
 }
 
@@ -891,6 +1180,13 @@ export function revokeDevice(label: string): Promise<DevicesResponse> {
  * lib/attachments.ts is where the phone reads it.
  */
 export function uploadFile(paneId: string, file: File, scope?: Scope): Promise<UploadResponse> {
+  // FORK: a picture is a LONG UPLOAD for the same reason a voice clip is (lib/connection-health.ts
+  // § beginLongUpload): megabytes going up the narrow half of a mobile link, behind which the
+  // snapshot poll queues and looks stalled. Without this the amber "Reconnecting…" bar faded in
+  // four seconds after picking a photo, went red at fifteen and offered Reload — which killed the
+  // upload it was blaming (observed 2026-09-11: no picture attached from the phone ever reached the
+  // bridge, because the operator did what the banner said).
+  beginLongUpload();
   // Multipart, so it bypasses `req` (the browser sets the boundary) — track it explicitly instead.
   return trackBusy(
     (async () => {
@@ -913,7 +1209,7 @@ export function uploadFile(paneId: string, file: File, scope?: Scope): Promise<U
       // SAFETY: a 200 on `/api/pane/:id/upload` is the bridge's own `UploadResponse` by contract;
       // every non-ok answer threw above.
       return (await res.json()) as UploadResponse;
-    })(),
+    })().finally(endLongUpload),
   );
 }
 
@@ -987,3 +1283,328 @@ export function transcribeAudio(audio: Blob, signal?: AbortSignal): Promise<SttR
     })().finally(endLongUpload),
   );
 }
+
+// ── FORK: what the agent changed ──────────────────────────────────────────────────────────────
+
+/** Which answer to ask `/api/pane/:id/diff` for. */
+export type PaneDiffQuery = { mode: "stat" } | { mode: "patch"; path: string };
+
+/** The last diff body per (pane, query), with the ETag that names it — see fetchPaneDiff. */
+const diffCache = new Map<string, { etag: string; response: PaneDiffResponse }>();
+const DIFF_CACHE_MAX = 40;
+
+/** Tests only. */
+export function __resetDiffCache(): void {
+  diffCache.clear();
+}
+
+/**
+ * The pane's work-tree changes: the file list, or one file's patch.
+ *
+ * Validates the way the pane read does — the bridge hashes the body, this sends the tag back and
+ * keeps the body it names, so re-opening the sheet on an unchanged tree is a 304 and no download.
+ */
+export async function fetchPaneDiff(
+  paneId: string,
+  query: PaneDiffQuery,
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<PaneDiffResponse> {
+  const params = new URLSearchParams();
+  params.set("mode", query.mode);
+  if (query.mode === "patch") params.set("path", query.path);
+  const url = withScope(`/api/pane/${encodeURIComponent(paneId)}/diff?${params.toString()}`, scope);
+  const cacheKey = `${paneScopeKey(scope, paneId)}|${params.toString()}`;
+  const cached = diffCache.get(cacheKey);
+  const headers = new Headers({ [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() });
+  if (cached) headers.set("if-none-match", cached.etag);
+  const res = await apiFetch(url, { signal: withTimeout(signal, GET_TIMEOUT_MS), headers });
+  captureBuild(res);
+  if (res.status === 304 && cached) return cached.response;
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    throw new ApiError(`${url} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  // SAFETY: a 200 on `/api/pane/:id/diff` is the bridge's own `PaneDiffResponse` by contract.
+  const data = (await res.json()) as PaneDiffResponse;
+  const etag = res.headers.get("etag");
+  if (etag) {
+    diffCache.set(cacheKey, { etag, response: data });
+    if (diffCache.size > DIFF_CACHE_MAX) {
+      const oldest = diffCache.keys().next().value;
+      if (oldest !== undefined) diffCache.delete(oldest);
+    }
+  }
+  return data;
+}
+
+// ── FORK: one file of the pane's work tree (bridge/file-view.ts) ──────────────────────────────
+
+/** The last file body per (pane, path), with the ETag that names it — see {@link fetchPaneFile}. */
+const fileCache = new Map<string, { etag: string; response: PaneFileResponse }>();
+const FILE_CACHE_MAX = 20;
+
+/** Tests only. */
+export function __resetFileCache(): void {
+  fileCache.clear();
+}
+
+/**
+ * One file of the pane's work tree, as text.
+ *
+ * Validates exactly as {@link fetchPaneDiff} does and for the same reason: re-opening a file nobody
+ * has touched is a 304 and no download, which on a mobile link is the difference between a tap and
+ * half a megabyte. The cache is smaller than the diff's because a file body is an order of magnitude
+ * larger than a file list and a phone holds one at a time.
+ */
+export async function fetchPaneFile(
+  paneId: string,
+  path: string,
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<PaneFileResponse> {
+  const params = new URLSearchParams({ path });
+  const url = withScope(`/api/pane/${encodeURIComponent(paneId)}/file?${params.toString()}`, scope);
+  const cacheKey = `${paneScopeKey(scope, paneId)}|${path}`;
+  const cached = fileCache.get(cacheKey);
+  const headers = new Headers({ [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() });
+  if (cached) headers.set("if-none-match", cached.etag);
+  const res = await apiFetch(url, { signal: withTimeout(signal, GET_TIMEOUT_MS), headers });
+  captureBuild(res);
+  if (res.status === 304 && cached) return cached.response;
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    throw new ApiError(`${url} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  // SAFETY: a 200 on `/api/pane/:id/file` is the bridge's own `PaneFileResponse` by contract.
+  const data = (await res.json()) as PaneFileResponse;
+  const etag = res.headers.get("etag");
+  if (etag) {
+    fileCache.set(cacheKey, { etag, response: data });
+    if (fileCache.size > FILE_CACHE_MAX) {
+      const oldest = fileCache.keys().next().value;
+      if (oldest !== undefined) fileCache.delete(oldest);
+    }
+  }
+  return data;
+}
+
+// ── FORK: the document browser ────────────────────────────────────────────────────────────────
+
+export interface DocsQuery {
+  q?: string;
+  tag?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+/** The knowledge base's documents — recent, searched, or by tag. */
+export function fetchDocs(query: DocsQuery = {}, signal?: AbortSignal): Promise<DocsResponse> {
+  const params = new URLSearchParams();
+  if (query.q) params.set("q", query.q);
+  if (query.tag) params.set("tag", query.tag);
+  if (query.cursor) params.set("cursor", query.cursor);
+  if (query.limit) params.set("limit", String(query.limit));
+  const q = params.toString();
+  return req<DocsResponse>(q ? `/api/docs?${q}` : "/api/docs", { signal });
+}
+
+/** Every tag the knowledge base knows, most-used first. */
+export function fetchDocTags(signal?: AbortSignal): Promise<DocTagsResponse> {
+  return req<DocTagsResponse>("/api/docs/tags", { signal });
+}
+
+// ── FORK: annotate-and-ask ───────────────────────────────────────────────────────────────────
+//
+// Two POSTs and no cache. A shot is the operator asking what the page looks like NOW, and a probe
+// is a fresh question about a fresh tap — a cached answer to either would be an answer to the
+// question they asked a minute ago.
+//
+// The bridge's own deadline is 30 s (a cold Chrome launch plus a page load), so the client's has to
+// be longer or the phone gives up on a run that was going to succeed.
+
+/** Longer than the bridge's own 30 s deadline, so a slow first launch is a picture and not a stall. */
+const SHOT_TIMEOUT_MS = 40_000;
+
+/** What to point the headless browser at, and at what size. */
+export interface ShotRequest {
+  url: string;
+  width: number;
+  height: number;
+  dpr: number;
+}
+
+/** A screenshot of a local page, inline as a `data:` URL (bridge/shot.ts). */
+export function requestShot(paneId: string, body: ShotRequest, scope?: Scope, signal?: AbortSignal): Promise<ShotResponse> {
+  return req<ShotResponse>(withScope(`/api/pane/${encodeURIComponent(paneId)}/shot`, scope), {
+    method: "POST",
+    body: JSON.stringify(body),
+    signal: withTimeout(signal, SHOT_TIMEOUT_MS),
+  });
+}
+
+/** The element under a point of that same shot — same viewport, so the coordinates mean something. */
+export function requestProbe(
+  paneId: string,
+  body: ShotRequest & { x: number; y: number },
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<ProbeResponse> {
+  return req<ProbeResponse>(withScope(`/api/pane/${encodeURIComponent(paneId)}/probe`, scope), {
+    method: "POST",
+    body: JSON.stringify(body),
+    signal: withTimeout(signal, SHOT_TIMEOUT_MS),
+  });
+}
+
+// ── FORK: what the three agents have left ────────────────────────────────────────────────────
+
+let quotaCache: { etag: string; response: QuotaResponse } | null = null;
+
+/** A forced rerun waits for three providers; the bridge's own deadline is 20 s. */
+const QUOTA_REFRESH_TIMEOUT_MS = 25_000;
+
+/**
+ * The three agents' quotas (bridge/quota.ts). Its own ETag cache, one entry: the bridge serves
+ * a body up to a minute old and answers 304 to its tag, and on a 304 THE SAME object comes back so
+ * a memoised row stays still. `refresh` asks the bridge to rerun its command and wait for it.
+ */
+export async function fetchQuota(refresh = false, signal?: AbortSignal): Promise<QuotaResponse> {
+  // FORK: the boot bundle already carried this, with its tag. Taken ONCE and promoted into the
+  // cache, so the card paints with no round trip and the next poll validates against the same tag
+  // the bridge holds. A `refresh` is the operator asking for the command to be RERUN and never
+  // takes the seed — that would answer a rerun with the body it was meant to replace.
+  if (!refresh && seededQuota !== null) {
+    quotaCache = seededQuota;
+    seededQuota = null;
+    return quotaCache.response;
+  }
+  const url = refresh ? "/api/quota?refresh=1" : "/api/quota";
+  const headers = new Headers({ [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() });
+  if (quotaCache) headers.set("if-none-match", quotaCache.etag);
+  const res = await apiFetch(url, {
+    signal: withTimeout(signal, refresh ? QUOTA_REFRESH_TIMEOUT_MS : GET_TIMEOUT_MS),
+    headers,
+  });
+  captureBuild(res);
+  if (res.status === 304 && quotaCache) return quotaCache.response;
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    throw new ApiError(`${url} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  // SAFETY: a 200 on `/api/quota` is the bridge's own `QuotaResponse` by contract (bridge/quota.ts
+  // serialises exactly that shape and nothing else answers the path).
+  const body = (await res.json()) as QuotaResponse;
+  const etag = res.headers.get("etag");
+  quotaCache = etag ? { etag, response: body } : null;
+  return body;
+}
+
+/** Test seam. */
+export function __resetQuotaCache(): void {
+  quotaCache = null;
+}
+
+// ── FORK: naming the outage ───────────────────────────────────────────────────────────────────
+
+/**
+ * What one probe of the ungated `/api/health` says about WHERE the connection is broken.
+ *
+ *  - `ok`      — the bridge answered: whatever is failing is behind it (Herdr, a session route).
+ *  - `auth`    — the front door wants a sign-in (a 401/403, or a redirect normalised to one).
+ *  - `gateway` — the tunnel answered FOR the bridge: 502/503/504 and Cloudflare's 52x are an edge
+ *                that reached the origin's door and found nobody home — the bridge is down or
+ *                restarting, the network is fine.
+ *  - `down`    — nothing answered at all: no route to the edge, DNS, TLS, a timeout.
+ */
+export type BridgeProbe = "ok" | "auth" | "gateway" | "down";
+
+const PROBE_TIMEOUT_MS = 6_000;
+
+export async function probeBridge(): Promise<BridgeProbe> {
+  try {
+    const res = await apiFetch("/api/health", {
+      signal: withTimeout(undefined, PROBE_TIMEOUT_MS),
+      headers: { [XHR_HEADER]: XHR_HEADER_VALUE },
+    });
+    captureBuild(res);
+    if (res.ok) return "ok";
+    if (res.status === 401 || res.status === 403) return "auth";
+    if (res.status === 502 || res.status === 503 || res.status === 504) return "gateway";
+    if (res.status >= 520 && res.status <= 530) return "gateway";
+    return "down";
+  } catch {
+    return "down";
+  }
+}
+
+// ── FORK: Artifacts — the library the agents fill (bridge/artifacts.ts) ────────────────────────
+
+export interface ArtifactsQuery {
+  pane?: string;
+  workspace?: string;
+  slug?: string;
+}
+
+/** The library, newest first — the whole of it, or one pane's, one space's, one slug's versions. */
+export function fetchArtifacts(query: ArtifactsQuery = {}, scope?: Scope, signal?: AbortSignal): Promise<ArtifactsResponse> {
+  const params = new URLSearchParams();
+  if (query.pane) params.set("pane", query.pane);
+  if (query.workspace) params.set("workspace", query.workspace);
+  if (query.slug) params.set("slug", query.slug);
+  const q = params.toString();
+  return req<ArtifactsResponse>(withScope(q ? `/api/artifacts?${q}` : "/api/artifacts", scope), { signal });
+}
+
+export function fetchArtifact(id: string, scope?: Scope, signal?: AbortSignal): Promise<ArtifactResponse> {
+  return req<ArtifactResponse>(withScope(`/api/artifacts/${encodeURIComponent(id)}`, scope), { signal });
+}
+
+export interface ArtifactPatchBody {
+  title?: string;
+  tags?: string[];
+  pinned?: boolean;
+  kbSlug?: string | null;
+}
+
+export function patchArtifact(id: string, patch: ArtifactPatchBody, scope?: Scope): Promise<ArtifactResponse> {
+  return req<ArtifactResponse>(withScope(`/api/artifacts/${encodeURIComponent(id)}`, scope), {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+/** Keep the page the preview panel is looking at: the bridge copies it off the pane's cwd. */
+export function saveArtifactFromPane(paneId: string, path: string, title: string | null, scope?: Scope): Promise<ArtifactResponse> {
+  return req<ArtifactResponse>(withScope("/api/artifacts", scope), {
+    method: "POST",
+    body: JSON.stringify(title === null ? { pane: paneId, path } : { pane: paneId, path, title }),
+  });
+}
+
+export function deleteArtifact(id: string, scope?: Scope): Promise<void> {
+  return req<void>(withScope(`/api/artifacts/${encodeURIComponent(id)}`, scope), { method: "DELETE" });
+}
+
+/**
+ * FORK: hand this pane's conversation to another harness (bridge/handoff.ts). `command` names a
+ * launcher row exactly as `launch` does — the bridge derives the whole line; the phone never sends
+ * one. `instruction` is what the next agent should do, verbatim into the handoff document.
+ */
+export function handoffPane(paneId: string, command: string, instruction: string, scope?: Scope, options?: { model: string; effort: string }): Promise<HandoffResponse> {
+  return req<HandoffResponse>(withScope(`/api/pane/${encodeURIComponent(paneId)}/handoff`, scope), {
+    method: "POST",
+    body: JSON.stringify({ command, instruction, ...options }),
+  });
+}
+
+/**
+ * The bytes, for a frame (`sandbox=""`) or an `<img>`. An `/api/` path for preview's two reasons
+ * (lib/doc-links.ts): the service worker hands every `/api/` request to the network, and the path
+ * is already behind the device guard. The scope rides along so a peer's artifact is fetched from
+ * the machine holding it.
+ */
+export function artifactRawSrc(id: string, scope?: Scope): string {
+  return withScope(`/api/artifacts/${encodeURIComponent(id)}/raw`, scope);
+}
+
