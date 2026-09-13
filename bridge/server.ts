@@ -4980,12 +4980,13 @@ behind your own reverse proxy</em> in the README.</p>
   );
 }
 
-async function serveStatic(
+export async function serveStatic(
   pathname: string,
   acceptEncoding: string | null = null,
   ifNoneMatch: string | null = null,
+  webDir: string = WEB_DIR,
 ): Promise<Response> {
-  const resolved = resolveStaticPath(pathname);
+  const resolved = resolveStaticPath(pathname, webDir);
   if (!resolved) return text("forbidden", 403);
   let { rel, full } = resolved;
 
@@ -4994,7 +4995,7 @@ async function serveStatic(
     // SPA fallback: extension-less paths fall back to index.html; missing assets 404.
     if (extname(rel) === "") {
       rel = "index.html";
-      full = join(WEB_DIR, "index.html");
+      full = join(webDir, "index.html");
       file = Bun.file(full);
       if (!(await file.exists())) {
         return text("frontend not built — run `bun run build` in web/", 503);

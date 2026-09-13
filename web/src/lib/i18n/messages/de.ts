@@ -376,9 +376,6 @@ export const de: Dictionary = {
   "paneActions.status.closeFailed": "Schließen fehlgeschlagen",
 
   // --- keys (the inline Keys tray + its staging strip) ---
-  "keys.tab.keys": "Tasten",
-  // FORK: the pad's own name, so "Keys" stops naming three different things on one screen.
-  "keys.tab.keyboard": "Tastatur",
   "keys.presets.label": "Voreinstellungen",
   "keys.fkeys.label": "F-Tasten",
   "keys.confirm.label": "Bestätigen",
@@ -638,6 +635,7 @@ export const de: Dictionary = {
 
   // --- pwa (self-update banner) ---
   "pwa.updateAvailable": "Neue Version verfügbar. Zum Aktualisieren tippen.",
+  "pwa.updateInstalling": "Downloading the new version…",
 
   // --- history (pane transcript route) ---
   "history.unavailable.disabled": "Transkriptverlauf ist auf dieser Bridge deaktiviert (COLLIE_TRANSCRIPT).",
@@ -960,9 +958,10 @@ export const de: Dictionary = {
   "updateRibbon.peerFailed": "Fehler bei {name}: {reason}.",
   "updateRibbon.seeUpdates": "Siehe Updates.",
   "updateRibbon.linkChangeShort": "Ändert die Crew-Verbindung.",
-  "updateRibbon.available": "Collie {version} da. Zum Update tippen.",
+  "updateRibbon.available": "Collie {version} verfügbar.",
   "updateRibbon.availablePackaged": "Collie {version} über {manager} verfügbar.",
   "updateRibbon.availablePackagedUnnamed": "Collie {version} verfügbar.",
+  "updateRibbon.view": "Ansehen",
   "updateRibbon.dismiss": "Diese Version ausblenden",
   "updateRibbon.hideNotice": "Hinweis ausblenden",
   // --- FORK: the Changes sheet, the document browser, the send queue, the outage's name ---

@@ -11,6 +11,48 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.8.2
+
+Merged upstream v1.8.1 and v1.8.2 (2026-09-13). What the merge decided, so the next one need not
+re-litigate it:
+
+- **Kept the fork's route entrance; dropped upstream's `ScreenTransition`.** Upstream 1.8.1 added a
+  pane-in / pane-out slide (`components/screen-transition.tsx`); the fork's `routeEnter` already
+  answers push, pop and modal for every route kind, with reduced motion restated. The two files are
+  deleted from the tree rather than carried unmounted; upstream's "the shell survives a navigation"
+  test now looks for `[data-route-enter]`.
+- **Keys tray: upstream's seven-column layout, the fork's key caps.** Both sides rewrote
+  `nav-tray.tsx` whole. Upstream's pad is 119 px tall at 390 px wide (was 275) and folds 123 /
+  Presets / F keys behind one row of chips; that layout is taken. The fork's cap painting (`--card`
+  fill, `--rule` edge, 1 px bottom shadow — shape and fill as separate constants so the press echo
+  still wins), tonal armed modifiers and the `--card` dock ground are re-applied on it. The fork's
+  four-column grid and its "Keyboard" segment string are gone with the segment itself.
+- **Static files: kept the fork's brotli, dropped upstream's gzip cache.** Upstream 1.8.2 gzips
+  static text with an in-memory cache (`staticGzipStats`, `resetStaticGzipCache`). The fork has
+  compressed static assets since the performance pass — `br` when offered, gzip otherwise, hashed
+  assets once at top quality, the four mutable files with a strong ETag and 304 — which covers every
+  case upstream's does. `serveStatic` takes upstream's `webDir` parameter and is exported so
+  upstream's dist-tree tests run; they assert the fork's codings (`bridge/server.test.ts`).
+- **A branded machine never builds as "Collie (dev)".** Upstream 1.8.1 paints any checkout not on
+  its release tag with orange `-dev` tiles and renames the install. This fork's HEAD is never on an
+  upstream tag, so the icon channel follows `~/.config/collie/branding/`: branded → the release icon
+  set (which the overlay supplies), unbranded → upstream's rule. The build-info channel still says
+  dev. (`iconChannel` in web/vite.config.ts)
+- **The connection bar and the update band are `ui/notice.tsx` strips now** (upstream's
+  notch-once fix). The fork's four-cause red row — Herdr down, bridge restarting with a spinner and
+  no Retry, sign-in link, tunnel down — is re-applied inside the `Notice`; the header identity stays
+  mounted across routes (upstream) and still carries the machine's own name and `hideMux` (fork).
+- **Tab strip: both hooks on one element.** Upstream's `useRevealActive` (scroll the active tab
+  into view) reads a RefObject; the fork's overflow fade wants a callback ref. One callback feeds
+  both.
+- The fork's `docs/meow-phone-guide.md` is registered in `cli/docs-embed.ts` — the drift-guard test
+  had been red since the page landed.
+- Taken from upstream as-is, and relevant here: the update band no longer reloads before the new
+  worker is in control and can be dismissed; the top of the app reserves the notch once; the iOS
+  status bar is opaque (re-add to the Home Screen for it to show); a long tab row reveals its active
+  tab. Not relevant to this install: the playground's tabbed page, the omp fixes, a peer's Space in
+  a crew.
+
 ## On top of 1.8.0
 
 - **Choose the Codex model and effort when handing off.** The host's Codex catalog supplies supported pairs; omitted settings preserve launcher defaults. Configured launchers with existing arguments keep their own settings. Closing during the summary request cancels the pending handoff. Artifacts stay reachable even on an empty Codex pane, and Codex thread identities are recognized by artifact registration. Screenshot setup explains URL → viewport → capture → annotate → draft, excludes API/health probes from suggestions, and preserves a typed URL across terminal updates.

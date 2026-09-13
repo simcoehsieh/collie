@@ -8,6 +8,7 @@ declare const __BUILD_INFO__: {
   sha: string;
   time: string;
   id: string;
+  channel: "release" | "dev";
 };
 
 // FORK: per-machine branding baked in at build time (see vite.config.ts → `brand`, web/branding.ts).

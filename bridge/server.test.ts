@@ -39,6 +39,7 @@ import {
   requestDevice,
   resolveStaticPath,
   sendReplySteps,
+  serveStatic,
   startupWarnings,
   healthBody,
   withBuildHeader,
@@ -47,6 +48,7 @@ import {
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
+import { brotliDecompressSync } from "node:zlib";
 import { join } from "node:path";
 
 import { ArtifactStore } from "./artifacts.ts";
@@ -1465,6 +1467,92 @@ describe("cacheControlFor", () => {
     ]) {
       expect(cacheControlFor(rel)).toBe("no-cache");
     }
+  });
+});
+
+// serveStatic, against a real dist tree on disk. The bundle is the biggest thing a phone downloads,
+// and upstream 1.8.2 pinned that it ships gzipped when the client offers it, that an image never
+// does, and that index.html still revalidates on every load. FORK: this fork compresses static files
+// through http-cache.ts's `pickEncoding` / `compressStatic` instead (brotli when offered, gzip
+// otherwise, a strong ETag on the mutable files), so the cases below pin THAT contract on the same
+// dist-tree fixture upstream wrote — the shape is theirs, the expected codings are ours.
+describe("serveStatic — a text file ships compressed", () => {
+  /** A dist tree with one hashed asset, one image and an index.html. */
+  async function distTree(): Promise<{ dir: string; js: string }> {
+    const dir = await mkdtemp(join(tmpdir(), "collie-static-gzip-"));
+    await mkdir(join(dir, "assets"), { recursive: true });
+    // Repetitive on purpose: real bundle text compresses about 3.5x, and the point of the case is
+    // the headers, not the ratio.
+    const js = `${"export const greeting = 'hello collie';\n".repeat(200)}`;
+    await writeFile(join(dir, "assets", "index-B7cWgJ3M.js"), js);
+    await writeFile(join(dir, "index.html"), `<!doctype html>${"<p>hello</p>".repeat(200)}`);
+    await Bun.write(join(dir, "apple-touch-icon.png"), new Uint8Array(4096).fill(7));
+    return { dir, js };
+  }
+
+  test("a client that offers br gets the asset as brotli, and it decompresses to the file", async () => {
+    const { dir, js } = await distTree();
+    const res = await serveStatic("/assets/index-B7cWgJ3M.js", "gzip, deflate, br", null, dir);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-encoding")).toBe("br");
+    expect(res.headers.get("vary")).toBe("accept-encoding");
+    expect(res.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+    expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+
+    const body = new Uint8Array(await res.arrayBuffer());
+    expect(body.byteLength).toBeLessThan(js.length / 2);
+    expect(new TextDecoder().decode(brotliDecompressSync(body))).toBe(js);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a client that offers only gzip gets gzip", async () => {
+    const { dir, js } = await distTree();
+    const res = await serveStatic("/assets/index-B7cWgJ3M.js", "gzip", null, dir);
+
+    expect(res.headers.get("content-encoding")).toBe("gzip");
+    const body = new Uint8Array(await res.arrayBuffer());
+    expect(new TextDecoder().decode(Bun.gunzipSync(body))).toBe(js);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("without the header the same asset arrives raw", async () => {
+    const { dir, js } = await distTree();
+    const res = await serveStatic("/assets/index-B7cWgJ3M.js", null, null, dir);
+
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("vary")).toBeNull();
+    expect(await res.text()).toBe(js);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a png is never compressed, however the client asks", async () => {
+    const { dir } = await distTree();
+    const res = await serveStatic("/apple-touch-icon.png", "gzip, br", null, dir);
+
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("content-encoding")).toBeNull();
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("index.html compresses, revalidates on every load, and answers 304 to its own tag", async () => {
+    const { dir } = await distTree();
+    const res = await serveStatic("/", "gzip", null, dir);
+
+    expect(res.headers.get("cache-control")).toBe("no-cache");
+    expect(res.headers.get("content-encoding")).toBe("gzip");
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    const tag = res.headers.get("etag");
+    expect(tag).not.toBeNull();
+
+    const again = await serveStatic("/", "gzip", tag, dir);
+    expect(again.status).toBe(304);
+
+    await rm(dir, { recursive: true, force: true });
   });
 });
 

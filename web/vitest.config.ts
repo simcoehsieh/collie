@@ -12,6 +12,7 @@ export default defineConfig({
       sha: "test",
       time: "1970-01-01T00:00:00.000Z",
       id: "test",
+      channel: "dev",
     }),
     // FORK: tests see the stock brand whatever ~/.config/collie/branding/ says on this machine;
     // the branded case is exercised by mocking "@/lib/brand" (see app-header.test.tsx).

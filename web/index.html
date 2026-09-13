@@ -55,7 +55,10 @@
          shell stretched to 852 put the composer off the bottom of the screen instead (index.css says
          the same from the other side). `default` asks for the placement the viewport was already
          being sized for. The header loses its 59pt of inset-top and the status bar becomes the OS's
-         to paint, so the chrome lands in the same place it always did. -->
+         to paint, so the chrome lands in the same place it always did.
+         Upstream 1.8.2 arrived at the same value from the other side: iOS 27 blurs the top edge of a
+         translucent one, into the header. iOS reads this once, at Add to Home Screen, so a change
+         needs a re-add to show. -->
     <meta
       name="apple-mobile-web-app-status-bar-style"
       content="default"

@@ -6,6 +6,15 @@ import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadBranding } from "./branding";
+import {
+  channelFor,
+  includeAssetsFor,
+  manifestFor,
+  precacheIgnoresFor,
+  transformIndexIcons,
+  type Channel,
+  type ChannelEvidence,
+} from "./vite-icons";
 
 // The bridge (Bun server) serves the built app from `web/dist` and proxies nothing — the
 // browser talks to the same origin for both static files and /api. In `vite dev`, proxy the
@@ -95,18 +104,47 @@ function gitSha(): string {
 }
 // Clean-tree builds off a non-release commit (a preview branch, mid-development main) would
 // otherwise stamp a version string identical to the real `vX.Y.Z` release, since `-dirty` only
-// fires on an uncommitted tree. `-dev` covers that gap: true only when the `vX.Y.Z` tag exists
-// AND points at HEAD. Compare full shas (`rev-parse HEAD`, not the short one gitSha() uses) since
-// that's what the tag's rev-parse resolves to. Any failure (no tag, no git) returns true — i.e.
-// we don't add the marker — mirroring build.ts's isStaleBuild "never nag spuriously" policy.
-function isReleaseBuild(version: string): boolean {
+// fires on an uncommitted tree. `-dev` covers that gap, but "does the version's tag exist and
+// point at HEAD" alone is not enough: a checkout can legitimately hold no tags at all and still be
+// a release. There are three shapes, and `channelFor` (vite-icons.ts) is the pure decision over
+// them:
+//
+//   1. no git at all (a tarball or packaged build) -> release
+//   2. git works, but the checkout holds NO tags at all -> release. This is the shallow, detached
+//      checkout `herdr plugin install` leaves (cli/update.ts's header, around line 67): `git init`
+//      + `fetch --depth 1` + `checkout --detach`, so it never fetched a tag either way. `collie
+//      update` fetches tags properly later (cli/update.ts, ~700-735), but until then an empty tag
+//      list here is normal for a genuine release install, not evidence of a dev tree.
+//   3. git works and tags exist -> a real dev checkout, so the version's own tag decides: its
+//      commit matching HEAD means release, anything else (including a missing tag for this
+//      version) means dev. This is the case a dev lane on an untagged `chore(release):` commit
+//      used to get wrong, building as release before its tag existed.
+//
+// Each git call below has its own try/catch, so one failure (e.g. no `.git`) doesn't discard
+// evidence another call already gathered.
+function gitEvidence(version: string): ChannelEvidence {
+  let head: string | null;
   try {
-    const tagCommit = git(`git rev-parse -q --verify "refs/tags/v${version}^{commit}"`);
-    const headCommit = git("git rev-parse HEAD");
-    return tagCommit === headCommit;
+    head = git("git rev-parse HEAD");
   } catch {
-    return true;
+    head = null;
   }
+  let tagCommit: string | null;
+  try {
+    tagCommit = git(`git rev-parse -q --verify "refs/tags/v${version}^{commit}"`);
+  } catch {
+    tagCommit = null;
+  }
+  let tagCount: number | null;
+  try {
+    const tags = git("git tag -l")
+      .split("\n")
+      .filter((line) => line.length > 0);
+    tagCount = tags.length;
+  } catch {
+    tagCount = null;
+  }
+  return { head, tagCommit, tagCount };
 }
 // SAFETY: `web/package.json` is this repo's own manifest, sitting next to this config, and
 // `scripts/check-version.sh` gates every build on its `version` agreeing with the other two files —
@@ -118,12 +156,17 @@ const pkgVersion = (
 ).version;
 const buildSha = gitSha();
 const buildTime = new Date().toISOString();
-const stampedVersion = isReleaseBuild(pkgVersion) ? pkgVersion : `${pkgVersion}-dev`;
+// channelFor(pkgVersion's evidence) is computed ONCE and drives both the version stamp above and
+// the icon/manifest channel below — never call it twice, the two must always agree.
+const channel: Channel = channelFor(gitEvidence(pkgVersion));
+const releaseBuild = channel === "release";
+const stampedVersion = releaseBuild ? pkgVersion : `${pkgVersion}-dev`;
 const BUILD_INFO = {
   version: stampedVersion,
   sha: buildSha,
   time: buildTime,
   id: `${stampedVersion}+${buildSha}.${Math.floor(Date.parse(buildTime) / 1000)}`,
+  channel,
 };
 
 // Emit dist/build-info.json so the bridge can read the current build id. Kept out of the SW precache
@@ -145,6 +188,35 @@ const buildInfoPlugin: Plugin = {
 // then have them swapped underneath the service worker's precache revisions. See branding.ts.
 const brand = loadBranding(import.meta.dirname);
 
+// FORK: A BRANDED MACHINE IS NEVER A "DEV" INSTALL. Upstream 1.8.1 paints a build whose HEAD is not
+// on its release tag with orange `-dev` tiles and calls it "Collie (dev)", so a developer's install
+// is never mistaken for the release next to it. This fork's HEAD is never on an upstream tag — the
+// version stamp above already says `-dev` for that reason — but the machine that serves it has its
+// own icon and name from `~/.config/collie/branding/`, and THAT is what tells its install apart. So
+// the icon channel follows the branding: branded → the release icon set (which the overlay's
+// `publicDir` then supplies), unbranded → upstream's rule as written. `channel` itself is untouched
+// and still stamps the build info.
+const branded = brand.publicDir !== resolve(import.meta.dirname, "public") || brand.htmlPlugin !== null;
+const iconChannel: Channel = branded ? "release" : channel;
+
+// A release build must ship index.html byte-for-byte unchanged, so this only rewrites the four
+// icon <link> hrefs, and only for index.html — never playground.html, which carries its own
+// -playground links statically instead (see playground.html itself). vite-icons.ts's
+// transformIndexIcons is a no-op on the release channel, so the `if` here is belt-and-braces: it
+// also means the hook never even inspects a file that isn't index.html.
+const channelIconsPlugin: Plugin = {
+  name: "collie-channel-icons",
+  transformIndexHtml: {
+    order: "pre",
+    handler(html, ctx) {
+      if (!ctx.filename.endsWith("/index.html")) return html;
+      return transformIndexIcons(html, iconChannel);
+    },
+  },
+};
+
+const channelManifest = manifestFor(iconChannel);
+
 export default defineConfig({
   publicDir: brand.publicDir,
   define: {
@@ -160,6 +232,7 @@ export default defineConfig({
     tailwindcss(),
     buildInfoPlugin,
     brand.htmlPlugin,
+    channelIconsPlugin,
     VitePWA({
       // Build the manifest + service worker. We use `injectManifest` (not the default generateSW)
       // because we hand-write the SW in `src/sw.ts` to add `push` + `notificationclick` handlers a
@@ -173,10 +246,10 @@ export default defineConfig({
       strategies: "injectManifest",
       srcDir: "src",
       filename: "sw.ts", // source; compiled to dist/sw.js (the bridge sets Service-Worker-Allowed: /)
-      includeAssets: ["favicon.svg", "favicon.ico", "favicon-96x96.png", "apple-touch-icon.png"],
+      includeAssets: includeAssetsFor(iconChannel),
       manifest: {
-        name: brand.name ?? "Collie",
-        short_name: brand.shortName ?? "Collie",
+        name: brand.name ?? channelManifest.name,
+        short_name: brand.shortName ?? channelManifest.short_name,
         description:
           brand.description ?? "Monitor and reply to your terminal AI agents from your phone",
         id: "/",
@@ -236,8 +309,12 @@ export default defineConfig({
           // practice, and the two manifest colours stay EQUAL so the installed chrome and its
           // splash are one surface.
           // If these are ever re-copied, take the `collie-tile-dark-*` files, not the light ones.
-          { src: "/web-app-manifest-192x192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
-          { src: "/web-app-manifest-512x512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
+          //
+          // A dev build (channel !== "release") swaps this pair for the `-dev` tiles instead
+          // (vite-icons.ts's manifestFor) — same dark polarity, same safe-zone padding, orange
+          // paint, so a dev install is unmistakable next to a release install on the same home
+          // screen without breaking either fact above.
+          ...channelManifest.icons,
         ],
       },
       injectManifest: {
@@ -248,6 +325,10 @@ export default defineConfig({
         // `unicode-range` already makes them lazy (index.css), so precaching them would charge
         // every install for glyphs most herds never paint. src/sw.ts caches them on first use.
         globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest}"],
+        // A release build's precache must not carry the dev channel's icons, and neither build
+        // may carry the playground's — see vite-icons.ts's precacheIgnoresFor. Without this, a
+        // release SW precached the dev AND playground icon sets too, every byte of it competing
+        // with the app's own polls on a slow link (2026-09-12 proxy log on a phone).
         // FORK: two things the sweep above caught that nothing ever asks for.
         //
         // THE SIX LOCALE CHUNKS (324 KB raw, ~92 KB gz) are lazy BY DESIGN — `src/lib/i18n/index.ts`
@@ -264,6 +345,7 @@ export default defineConfig({
         // `precache N entries (… KiB)` — it was 34 / 1440 KiB before this line existed. If a chunk
         // ever stops matching (vite renames an output), that number is where it shows.
         globIgnores: [
+          ...precacheIgnoresFor(iconChannel),
           "assets/de-*.js",
           "assets/es-*.js",
           "assets/ja-*.js",
