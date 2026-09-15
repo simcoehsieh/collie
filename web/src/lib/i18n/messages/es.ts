@@ -1089,6 +1089,13 @@ export const es: Dictionary = {
 
   // --- FORK: overview, pins, hotkeys, low power, read-aloud ---
   "status.section.pinned": "Fijados",
+  // FORK: closing a pane from the dashboard — the swipe-revealed button and the same act as a
+  // row in the hold sheet. Two taps either way: the first arms, the second closes.
+  "home.close.label": "Close",
+  "home.close.confirm": "Really close?",
+  "home.close.closing": "Closing…",
+  "home.close.sheet": "Close pane",
+  "home.close.failed": "Couldn't close the pane.",
   "home.pin.pinned": "Fijado",
   "home.pin.open": "Abrir",
   "home.pin.pin": "Fijar arriba",

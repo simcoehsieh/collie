@@ -1058,6 +1058,13 @@ export const zh: Dictionary = {
 
   // --- FORK: overview, pins, hotkeys, low power, read-aloud ---
   "status.section.pinned": "已置顶",
+  // FORK: closing a pane from the dashboard — the swipe-revealed button and the same act as a
+  // row in the hold sheet. Two taps either way: the first arms, the second closes.
+  "home.close.label": "关闭",
+  "home.close.confirm": "确定关闭？",
+  "home.close.closing": "关闭中…",
+  "home.close.sheet": "关闭这个 pane",
+  "home.close.failed": "关不掉这个 pane。",
   "home.pin.pinned": "已置顶",
   "home.pin.open": "打开",
   "home.pin.pin": "置顶",

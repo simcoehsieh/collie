@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { http, HttpResponse } from "msw";
@@ -381,5 +381,67 @@ describe("the usage section on the dashboard", () => {
     await settled();
     expect(await screen.findByRole("heading", { name: /usage/i })).toBeInTheDocument();
     expect(await screen.findByTestId("quota-row-claude")).toBeInTheDocument();
+  });
+});
+
+// ── FORK: CLOSING A PANE FROM THE DASHBOARD ─────────────────────────────────
+// Two ways in, one request. The gesture is covered in swipe-close.test.tsx; what matters here is
+// that the dashboard actually asks the bridge, that the answer is the pane's own scope, and that a
+// read-only device is offered neither road.
+describe("closing a pane from the dashboard", () => {
+  const closed: string[] = [];
+  const armClose = () => {
+    closed.length = 0;
+    server.use(
+      http.post(/\/api\/pane\/([^/]+)\/close$/, ({ request }) => {
+        closed.push(new URL(request.url).pathname);
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+  };
+
+  it("the hold sheet's last row closes it, on the second tap", async () => {
+    armClose();
+    const user = userEvent.setup();
+    renderHome(solo());
+    await settled();
+    const row = screen.getAllByRole("button", { name: /claude/i })[0]!;
+    fireEvent.contextMenu(row);
+    // The long press is a touch gesture; the sheet is what it opens, so drive the sheet.
+    await user.pointer({ keys: "[TouchA>]", target: row });
+    await new Promise((r) => setTimeout(r, 600));
+    await user.pointer({ keys: "[/TouchA]", target: row });
+    const close = await screen.findByRole("button", { name: /close pane/i });
+    await user.click(close);
+    expect(closed).toHaveLength(0); // the first tap only arms
+    await user.click(await screen.findByRole("button", { name: /really close/i }));
+    await waitFor(() => expect(closed).toHaveLength(1));
+  });
+
+  it("wraps each row without disturbing the group's own frame and hairlines", async () => {
+    renderHome(solo());
+    await settled();
+    const group = document.querySelector('[data-slot="list-group"]')!;
+    // The wrapper is the group's DIRECT child, which is what keeps `divide-y`'s hairlines between
+    // rows and the frame's rounded corners clipping them.
+    for (const child of Array.from(group.children)) {
+      expect(child.getAttribute("data-slot")).toBe("swipe-close");
+    }
+    expect(group.className).toMatch(/divide-y/);
+  });
+
+  it("a read-only device is offered no close at all", async () => {
+    const user = userEvent.setup();
+    const data = solo();
+    renderHome({ ...data, device: { enforced: true, authorized: false, device: "" } });
+    await settled();
+    // No swipe wrapper on any row…
+    expect(document.querySelector('[data-slot="swipe-close"]')).toBeNull();
+    // …and no row in the sheet either.
+    const row = screen.getAllByRole("button", { name: /claude/i })[0]!;
+    await user.pointer({ keys: "[TouchA>]", target: row });
+    await new Promise((r) => setTimeout(r, 600));
+    await user.pointer({ keys: "[/TouchA]", target: row });
+    expect(screen.queryByRole("button", { name: /close pane/i })).toBeNull();
   });
 });

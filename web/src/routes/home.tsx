@@ -27,6 +27,12 @@ import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 import type { AgentView } from "@/lib/types";
 import { useRootData } from "@/lib/route-data";
+import * as api from "@/lib/api";
+import { describeApiError, describeThrownError } from "@/lib/api-error-message";
+import { setStatus } from "@/lib/status";
+import { stampTopology } from "@/lib/poll-intent";
+import { isReadOnly } from "@/lib/types";
+import { useRevalidator } from "react-router";
 
 // Dashboard home screen. Everything you might ACT on comes first — Needs you → Ready · unseen (see
 // lib/triage.ts) — then every other pane under the `space › tab` it lives in (lib/pane-groups.ts),
@@ -43,6 +49,37 @@ export function HomeRoute() {
   // FORK: the row a long press picked up, for the pin sheet. Null while the sheet is closed.
   const [held, setHeld] = useState<AgentView | null>(null);
   const hold = useCallback((pane: AgentView) => setHeld(pane), []);
+  const revalidator = useRevalidator();
+  // FORK: CLOSING A PANE FROM THE LIST THAT MADE THE DECISION.
+  //
+  // Reached two ways, both of which land here: a left swipe on the row (components/swipe-close.tsx)
+  // and the last row of the hold sheet. The REQUEST lives in this route rather than in either of
+  // them, because the error copy, the topology stamp and the revalidate are one story and neither
+  // the list nor the sheet should own a copy of it.
+  //
+  // `undefined` on a read-only device, which is what removes the gesture and the row entirely —
+  // an affordance that exists and then refuses is worse than one that was never offered.
+  const closePane = useCallback(
+    async (pane: AgentView): Promise<boolean> => {
+      try {
+        const res = await api.closePane(pane.paneId, paneScope(data.scope, pane, data.servers, data.sessions));
+        if (!res.ok) {
+          setStatus(describeApiError(res, t("home.close.failed")), "error");
+          return false;
+        }
+        // The list the operator just closed a pane out of should not wait out an idle-timed gap to
+        // show it gone — the same catch-up the pane's own sheet asks for.
+        stampTopology();
+        revalidator.revalidate();
+        return true;
+      } catch (e) {
+        setStatus(describeThrownError(e), "error");
+        return false;
+      }
+    },
+    [data.scope, data.servers, data.sessions, revalidator],
+  );
+  const mayClose = !isReadOnly(data.device) ? closePane : undefined;
   const knownIds = useMemo(() => data.agents.map((a) => a.paneId), [data.agents]);
 
   // Which repos a worktree could be branched from: one entry per repo, taken from the space that
@@ -192,6 +229,7 @@ export function HomeRoute() {
             lastSeenAt={data.lastSeenAt}
             pinned={prefs.pinned}
             onLongPress={hold}
+            onClosePane={mayClose}
           />
           {/* THE LAUNCH STRIP IS DELIBERATELY NOT HERE (fork, 2026-09-06). Upstream renders the
               operator's `launchers.toml` rows as one-tap buttons on the dashboard, and a tap
@@ -248,6 +286,7 @@ export function HomeRoute() {
         known={knownIds}
         onClose={() => setHeld(null)}
         onOpen={open}
+        onClosePane={mayClose}
       />
 
       <NewSpaceSheet

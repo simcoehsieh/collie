@@ -6,6 +6,7 @@ import { useMuxCapability } from "@/lib/mux-capability";
 import { SectionHeader } from "@/components/section-header";
 import { ListGroup } from "@/components/ui/list-group";
 import { PaneRowsSkeleton } from "@/components/route-skeleton";
+import { SwipeClose } from "@/components/swipe-close";
 import { EmptyState } from "@/components/empty-state";
 import { groupPanesByWorkspace } from "@/lib/pane-groups";
 import { bucketOf, sectionHeaderProps, triage, type TriageKey } from "@/lib/triage";
@@ -44,6 +45,16 @@ interface AgentListProps {
   pinned?: readonly string[];
   /** FORK: a long press on a row — the dashboard opens its pin sheet. Omitted elsewhere. */
   onLongPress?: (pane: AgentView) => void;
+  /**
+   * FORK: close this pane. Given, every row becomes swipe-to-close; omitted, no row is (the sidebar
+   * and the palette pass nothing, and a read-only device is handed nothing either, so the gesture
+   * does not exist there rather than existing and refusing).
+   *
+   * Resolves TRUE when the pane is gone. The caller owns the request, its error copy and the
+   * revalidate; this list owns none of that and only needs the verdict to decide whether the row
+   * springs shut.
+   */
+  onClosePane?: (pane: AgentView) => Promise<boolean>;
 }
 
 /** The sections that mean "a human is required here" — pulled to the top and given the accented
@@ -73,6 +84,7 @@ export const AgentList = memo(function AgentList({
   lastSeenAt,
   pinned,
   onLongPress,
+  onClosePane,
 }: AgentListProps) {
   useLocale();
   // Whether the multiplexer can say which agent a pane holds. Read unconditionally — a hook cannot
@@ -149,7 +161,25 @@ export const AgentList = memo(function AgentList({
   // keyed by the id alone React recycles one row's element for another's between polls, and the
   // card you are looking at acquires a different row's `onClick`. On this list, that is a tap
   // landing in another terminal.
-  const row = (a: AgentView, scope: "herd" | "place", unseen = false, isPinned = false) => (
+  // FORK: every row is swipe-to-close when the caller handed one down — a pane the operator is done
+  // with is decided HERE, on the list, and the close it used to take was three screens away inside
+  // the pane. The wrapper only reveals a button; the button is the two-tap (swipe-close.tsx).
+  const row = (a: AgentView, scope: "herd" | "place", unseen = false, isPinned = false) =>
+    onClosePane === undefined ? (
+      card(a, scope, unseen, isPinned)
+    ) : (
+      <SwipeClose
+        key={paneRowKey(a)}
+        label={t("home.close.label")}
+        confirmLabel={t("home.close.confirm")}
+        closingLabel={t("home.close.closing")}
+        onConfirm={() => onClosePane(a)}
+      >
+        {card(a, scope, unseen, isPinned)}
+      </SwipeClose>
+    );
+
+  const card = (a: AgentView, scope: "herd" | "place", unseen = false, isPinned = false) => (
     <AgentCard
       key={paneRowKey(a)}
       agent={a}
