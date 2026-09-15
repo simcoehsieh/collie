@@ -60,7 +60,7 @@ import { MIRROR_SPACE, MIRROR_INVERT, segmentStyle } from "@/components/mirror-s
 import { cn } from "@/lib/utils";
 import { useMirrorModel } from "@/hooks/use-mirror-model";
 import { useStableCallback } from "@/hooks/use-stable-callback";
-import { adapterFor } from "@/lib/harness";
+import { adapterFor, rendersNativeMirror } from "@/lib/harness";
 import { blockOwnsKeyboard } from "@/lib/harness/dialog-contract";
 import { FindBar } from "@/components/find-bar";
 import { LatestReply } from "@/components/latest-reply";
@@ -834,7 +834,13 @@ export function AgentChat({
   // render inside <AnsiOutput> all read the same `lines` / `blocks`; nothing here re-parses
   // `display`. The adapter is picked the way the render picks it — off `mirrorAgent`, which is
   // `undefined` while raw-terminal is on — so the probes and the mirror can't disagree.
-  const mirrorAgent = grammarsOn ? agent?.agent : undefined;
+  // A NATIVE-MIRROR AGENT KEEPS ITS IDENTITY WITH RAW-TERMINAL ON (upstream 1.9.1, ADR 0047).
+  // The pref bypasses block GRAMMARS, and native rendering is display faithfulness rather than a
+  // grammar — muse has no adapter, so dropping the agent here would only re-invert the pane while
+  // bypassing nothing. Folded into this ONE definition rather than restated at the render site:
+  // the model, the adapter and the mirror all read it, and two answers to "which agent is this
+  // mirror" is exactly the drift this const exists to prevent.
+  const mirrorAgent = grammarsOn || rendersNativeMirror(agent?.agent) ? agent?.agent : undefined;
   const mirror = useMirrorModel(display, mirrorAgent);
   const mirrorAdapter = adapterFor(mirrorAgent);
   const statusLines = useMemo(

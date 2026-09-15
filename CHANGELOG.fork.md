@@ -11,6 +11,28 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.9.1
+
+Merged upstream v1.9.1 (2026-09-15) — 18 commits, 2 conflicted files, both in the mirror.
+
+- **Taken for this install specifically: a finished agent no longer hides in Recent.** Herdr 0.9
+  reports a completion as `idle` on its API — only its own TUI derives `done` — so Ready · unseen
+  read empty here and every completion sat unmarked in Recent. `isUnseen` now counts a settled pane,
+  `idle` or `done`, whose last turn ended after the operator last opened it (shells excluded). NOT
+  the same defect as the fork's `pushedTurn` dedupe, which fixes a done→idle→done flap pushing
+  twice: that one is about the push, this one about which section a row lands in. Both stand.
+- **The mirror's native-light rule, folded into the fork's one `mirrorAgent`.** Upstream restated
+  "which agent is this mirror" at the render site so a native-mirror harness keeps its identity with
+  raw-terminal on; this fork already had that answer in one const (it also feeds the pre-parsed model
+  and the adapter), so the rule went into the const instead of becoming a second answer.
+  `ansi-output.tsx` keeps the fork's `[contain:layout_paint]` island and takes upstream's
+  `native ? MUSE_MIRROR : MIRROR_SPACE` branch on top of it.
+- **Taken as-is:** the Codex light-fill rule now reads LUMINANCE rather than one exact colour (so a
+  fill Codex shifts by four levels no longer paints a black bar), the actions belt grows back to
+  40px with the reply field's focus ring clear of it, and the urgent-release cadence (a release that
+  marks itself `**Urgent.**` reaches the phone at publish or the next 09:00 instead of folding into
+  the weekly digest).
+
 ## On top of 1.9.0
 
 Merged upstream v1.9.0 (2026-09-15) — 130 commits, 50 conflicted files. What the merge decided:

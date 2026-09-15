@@ -4,11 +4,11 @@ import { Check, Copy, ExternalLink, FileCode, MonitorPlay } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { parseAnsi } from "@/lib/ansi";
-import { buildBlocks } from "@/lib/harness";
 import type { MirrorModel } from "@/hooks/use-mirror-model";
 import { buzz } from "@/lib/haptics";
 import { codeFences, type CodeFence } from "@/lib/code-fences";
 import { lineChips, type LineChips } from "@/lib/line-chips";
+import { buildBlocks, rendersNativeMirror } from "@/lib/harness";
 import {
   dropLeadingLines,
   lineText,
@@ -31,7 +31,13 @@ import {
 } from "@/lib/mirror-images";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
-import { MIRROR_SPACE, MIRROR_INVERT, segmentStyle } from "@/components/mirror-space";
+import {
+  MIRROR_SPACE,
+  MIRROR_INVERT,
+  MUSE_MIRROR,
+  segmentClassName,
+  segmentStyle,
+} from "@/components/mirror-space";
 import { findMatches, splitSegment, type FindMatch } from "@/lib/find";
 import { findLinks } from "@/lib/links";
 import { PromptSelectBlock, type PromptBlockAction } from "@/components/prompt-select-block";
@@ -200,7 +206,8 @@ const NO_BLOCK_RUNS: readonly (readonly TableRun[])[] = Object.freeze([]);
 const LINK_CLASS =
   "underline decoration-1 underline-offset-2 break-all cursor-pointer py-[0.35em]";
 
-function preClass(wrap: boolean, className?: string): string {
+function preClass(wrap: boolean, className?: string, agent?: string): string {
+  const native = rendersNativeMirror(agent);
   return cn(
     "m-0 font-mono leading-[1.25] tracking-normal text-foreground [font-variant-ligatures:none]",
     // FORK: the mirror is its own layout and paint island. Nothing outside the <pre> depends on
@@ -208,8 +215,11 @@ function preClass(wrap: boolean, className?: string): string {
     // changed line no longer invalidates layout beyond the pre, and its paint is clipped to its
     // box — which is what lets the browser skip it entirely when the composer repaints over it.
     "[contain:layout_paint]",
-    MIRROR_SPACE,
-    MIRROR_INVERT,
+    // A harness that paints its own light-mode palette (muse, upstream 1.9.1 / ADR 0047) keeps it:
+    // the mirror sits on the page ground and only its bright foregrounds resolve dark. Every other
+    // pane takes the inverted mirror space, on the containment island above.
+    native ? MUSE_MIRROR : MIRROR_SPACE,
+    native ? null : MIRROR_INVERT,
     wrap
       ? "whitespace-pre-wrap break-words"
       : // Horizontal pan for wide TUI tables. `overflow-x-auto` forces `overflow-y` to compute to
@@ -663,7 +673,13 @@ export const AnsiOutput = memo(function AnsiOutput({
             // single inversion, which renders them as a pale tan wash with the mapped text on top.
             // See .adr/0002 — "cancel the filter only on an element that fully specifies both its
             // foreground and its background".
-            isCurrent ? cn(MIRROR_INVERT, "bg-yellow-400 text-black") : "bg-yellow-400/30",
+            //
+            // Native mirrors (Muse, .adr/0047) invert nothing, so the current match takes its
+            // fully-specified yellow as-is: re-applying the filter there would blue-shift it in
+            // light and no-op in dark. Correct in both themes without a theme branch.
+            isCurrent
+              ? cn(rendersNativeMirror(agent) ? null : MIRROR_INVERT, "bg-yellow-400 text-black")
+              : "bg-yellow-400/30",
           )}
         >
           {p.text}
@@ -745,11 +761,7 @@ export const AnsiOutput = memo(function AnsiOutput({
       const segStart = offset;
       offset += s.text.length;
       return (
-        <span
-          key={si}
-          style={segmentStyle(s)}
-          className={s.mobileTransparentBg ? "terminal-mobile-transparent-bg" : undefined}
-        >
+        <span key={si} style={segmentStyle(s)} className={segmentClassName(s)}>
           {renderSegment(s.text, segStart)}
         </span>
       );
@@ -888,7 +900,7 @@ export const AnsiOutput = memo(function AnsiOutput({
   return (
     <>
       {rawBlocks.length > 0 && (
-        <pre className={preClass(wrap, className)} style={{ fontSize: `${fontSize}px` }}>
+        <pre className={preClass(wrap, className, agent)} style={{ fontSize: `${fontSize}px` }}>
           {rawBlocks.map(renderBlock)}
         </pre>
       )}
