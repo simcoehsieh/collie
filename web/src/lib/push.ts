@@ -229,11 +229,10 @@ export async function enablePush(): Promise<EnableResult> {
  */
 export function installResubscribeListener(): () => void {
   const sw = "serviceWorker" in navigator ? navigator.serviceWorker : undefined;
-  // The container has to be there AND be a real EventTarget: a test (and some embedded browsers)
-  // publish a partial `serviceWorker` with only the members they use, and a listener this page
-  // cannot install is a no-op, never a throw on mount. `instanceof EventTarget` is the contract
-  // itself rather than a shape check on one of its members.
-  if (!(sw instanceof EventTarget)) return () => {};
+  // The container has to be there AND take listeners: a test (and some embedded browsers) publish a
+  // partial `serviceWorker` carrying only the members they use, and a listener this page cannot
+  // install is a no-op, never a throw on mount.
+  if (sw === undefined || !("addEventListener" in sw)) return () => {};
   const onMessage = (event: MessageEvent) => {
     // SAFETY: `MessageEvent.data` is `any` — a structured clone from our own worker, which posts
     // exactly `{ type, endpoint }`; anything else fails the comparisons and is ignored.

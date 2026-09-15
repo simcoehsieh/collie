@@ -9,8 +9,8 @@ import { AgentIcon } from "@/components/agent-icon";
 import { PaneMeta } from "@/components/pane-meta";
 import { PaneHint } from "@/components/pane-hint";
 import { timeAgoShort } from "@/lib/format";
-import { modelLabel } from "@/lib/model-label";
 import { paneCwdLine, paneName, panePlaceParts } from "@/lib/pane-name";
+import { canonicalAgent } from "@/lib/operator-scope";
 import { statusLabel } from "@/lib/types";
 import type { AgentView } from "@/lib/types";
 import { useLocale } from "@/hooks/use-locale";
@@ -118,16 +118,6 @@ function StatusLine({ line, at }: { line?: string; at?: number }) {
 // FORK — which model and effort the agent is on, as one small monospace run under the address line.
 // The same standing as the status line above it in the source: text, never a branch. It sits in the
 // row's muted register because it is a fact about the pane, not the pane's subject — the name is.
-function ModelLine({ model, effort }: { model?: string; effort?: string }) {
-  const label = modelLabel({ model, effort });
-  if (label === null) return null;
-  return (
-    <p data-slot="agent-model-line" className="mt-0.5 truncate font-mono text-[10px] leading-4 text-muted-foreground/80">
-      {label}
-    </p>
-  );
-}
-
 // A pane row, used by the triage home and the space view. Usually an agent; for a bare shell pane
 // (kind:"shell") it shows a terminal glyph and a muted "shell" tag instead of a status badge.
 //
@@ -203,6 +193,28 @@ function AgentCardImpl({
   // which is where a sentence belongs.
   const inPlace = scope === "place";
   const flat = density === "row";
+  // FORK: DOES THIS ROW HAVE MORE THAN TWO LINES TO SAY?
+  //
+  // Upstream's flat row states its height (`h-11 py-0` below) because upstream's flat row is exactly
+  // two lines — the name and the place — and a stated pitch is what makes a list of them read as one
+  // list. This fork's row can carry two more: the agent's OWN sentence about what it is working on
+  // (`collie beacon status`) and the model·effort the bridge read off its log. On a herd where four
+  // rows all read `claude · working`, that sentence is the only thing that says which one to open,
+  // so it is not a candidate for withholding the way upstream withholds `PaneHint` here.
+  //
+  // So the height is stated only while the row IS two lines. A row with something more to say grows
+  // to fit it instead of clipping it through a stated box — which is what 1.9.0's merge did on the
+  // first phone that saw it: `opus-5 · medium` ran out under the group's own border.
+  // FORK: THE ROW DOES NOT NAME THE MODEL. It did, twice — a line of its own, then a run at the end
+  // of the name line — and the operator's answer was that the agent's own icon already says which
+  // agent this is, and that is what a glance at the dashboard is asking. The model and the effort
+  // still stand on the PANE's own header, where the question "which model is this one on" is
+  // actually being asked (agent-chat.tsx, `data-slot="header-model"`).
+  //
+  // What CAN still make this row a third line is the agent's own sentence (`collie beacon status`):
+  // that is a sentence, it is the only thing that tells four `claude · working` rows apart, and it
+  // does not fit on a line that already carries a name, a reading and an address.
+  const saysMore = (agent.statusLine ?? "") !== "";
   // ONE NAME, ONE PLACE (lib/pane-name.ts). Line 1 is what the pane is CALLED, on every row of
   // every list; line 2 is WHERE it sits. In a tab-scoped list the place is already established by
   // the space heading and the per-tab section above, so line 2 is the path instead — the one fact
@@ -231,7 +243,19 @@ function AgentCardImpl({
           tailMono: false,
           tailPositional: place.tab?.positional ?? false,
         };
-  const { primary, detailLead, detailTail } = lines;
+  const { primary, detailLead } = lines;
+  // FORK: A TAB NAMED AFTER THE HARNESS SAYS NOTHING THE ICON HAS NOT SAID. Tabs here are opened by
+  // `launchers.toml`, so they are called `claude`, `codex`, `agy` — and line 2 then repeated, in
+  // words, the tile sitting on line 1. The operator's call (2026-09-15): drop it. A tab with a name
+  // of its own (`develop`, `review`) is untouched, because that one IS an address; only the run
+  // that matches the pane's own agent, canonicalised so `claude-code` folds onto `claude`, is
+  // withheld. A row left with nothing on line 2 falls through to the same centred-name treatment a
+  // nameless tab already had.
+  const tailNamesTheAgent =
+    lines.detailTail !== null &&
+    canonicalAgent(lines.detailTail.trim().toLowerCase()) === canonicalAgent(agent.agent?.toLowerCase() ?? "") &&
+    canonicalAgent(agent.agent?.toLowerCase() ?? "") !== "";
+  const detailTail = tailNamesTheAgent ? null : lines.detailTail;
   // A workspace-grouped row whose tab has no name of its own reads its position instead — `tab 2` —
   // via `tabTitle` (`lib/pane-name.ts`) — or, when the raw label carries no digit at all, nothing:
   // the slot is then skipped outright.
@@ -292,6 +316,12 @@ function AgentCardImpl({
         {...hold}
         data-pane-row={agent.paneId}
         className={cn(
+          // FORK: the button IS the row box here (upstream nests `button > Shell`, this fork nests
+          // `Shell > button` so the long press lands on the element the pitch is stated on), so it
+          // carries what upstream's button carried: full width, and TEXT LEFT — a `<button>` centres
+          // its text by default, and losing this line in the 1.9.0 merge centred every row's second
+          // line under its name.
+          "w-full text-left",
           onLongPress !== undefined && "select-none [-webkit-touch-callout:none]",
           // 14px, the same as the card's own padding. A flat row now sits inside a 1px-bordered
           // ListGroup, so its content lands on the same x as a card row's content BY CONSTRUCTION
@@ -305,7 +335,9 @@ function AgentCardImpl({
           // stop being a number. Was `inPlace`-only; keyed on `flat` now (2026-09-14) so an urgent
           // row (`scope="herd"`, `density="row"`) gets the same 44px as a workspace-grouped one —
           // the two are meant to read as the SAME kind of row (agent-list.tsx's urgent section).
-          flat && "h-11 py-0",
+          flat && !saysMore && "h-11 py-0",
+          // …and when it does say more, the row keeps the flat row's own padding and grows.
+          flat && saysMore && "py-2",
           // The blocked TINT survives both treatments — it's the one cue that reads at a glance.
           // A card sits in a gap list and already carries a border in every state, so it only
           // recolours. A flat row sits in a divide-y list, where a four-sided edge would double the
@@ -442,9 +474,6 @@ function AgentCardImpl({
               describes a pane Collie is guessing at, this one is the pane telling you itself. */}
           <StatusLine line={agent.statusLine} at={agent.statusLineAt} />
 
-          {/* FORK: which model and effort the agent is on (bridge/session-facts.ts), when the bridge
-              has read it. Below the agent's own sentence because it is the drier fact of the two. */}
-          <ModelLine model={agent.model} effort={agent.effort} />
 
           {/* The bridge's own sentence about this pane, when it sent one — text, never a branch
               (components/pane-hint.tsx). It changes nothing about the row: a hinted pane is still a

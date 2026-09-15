@@ -1,4 +1,4 @@
-import { render, within } from "@testing-library/react";
+import { cleanup, render, within } from "@testing-library/react";
 
 import { AgentCard } from "./agent-card";
 import { fixtureAgents } from "@/test/handlers";
@@ -151,25 +151,44 @@ describe("AgentCard — the agent's status line", () => {
   });
 });
 
-// ── FORK: WHICH MODEL AND EFFORT ─────────────────────────────────────────────
-// The bridge reads the pair off the agent's own log (bridge/session-facts.ts); the row shows it as
-// one monospace run and nothing else changes — same sort, same badge, same tap.
-describe("AgentCard — the model and effort line", () => {
-  const modelLine = (container: HTMLElement) =>
-    container.querySelector<HTMLElement>('[data-slot="agent-model-line"]');
+// ── FORK: A TAB NAMED AFTER THE HARNESS IS NOT AN ADDRESS ───────────────────
+// Tabs opened from `launchers.toml` are called `claude` / `codex` / `agy`, so line 2 repeated in
+// words the tile already on line 1. A tab with a name of its own still shows it.
+describe("AgentCard — line 2 withholds a tab that just names the agent", () => {
+  const at = (over: Partial<AgentView>) =>
+    render(
+      <AgentCard agent={agent(over)} onClick={() => {}} scope="place" statusStyle="dot" density="row" />,
+    ).container;
 
-  it("renders the trimmed model id and the effort under the address line", () => {
+  it("drops the tab when it is the agent's own name, in any spelling", () => {
+    for (const tabLabel of ["claude", "Claude", "claude-code", "codex"]) {
+      const c = at({ tabLabel, agent: tabLabel.startsWith("codex") ? "codex" : "claude" });
+      expect(c.querySelector('[data-slot="agent-row-detail"]')).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("keeps a tab that names something", () => {
+    const c = at({ tabLabel: "develop", agent: "claude" });
+    expect(c.querySelector('[data-slot="agent-row-detail"]')).toHaveTextContent("develop");
+  });
+});
+
+// ── FORK: THE ROW DOES NOT NAME THE MODEL ───────────────────────────────────
+// It did, on its own line and then at the end of the name line. The operator's call (2026-09-15):
+// the agent's icon already answers "which agent is this", which is what the dashboard is asked, and
+// the model and effort belong on the pane's own header. Pinned so neither spelling creeps back.
+describe("AgentCard — the model stays off the row", () => {
+  it("draws no model run and no model line, even when the bridge has read both", () => {
     const { container } = render(
       <AgentCard agent={agent({ model: "claude-fable-5-1", effort: "xhigh" })} onClick={() => {}} />,
     );
-    expect(modelLine(container)).toHaveTextContent("fable-5-1 · xhigh");
-  });
-
-  it("renders nothing when the bridge has not read one", () => {
-    const { container } = render(<AgentCard agent={agent()} onClick={() => {}} />);
-    expect(modelLine(container)).toBeNull();
+    expect(container.querySelector('[data-slot="agent-model-run"]')).toBeNull();
+    expect(container.querySelector('[data-slot="agent-model-line"]')).toBeNull();
+    expect(container.textContent).not.toContain("fable-5-1");
   });
 });
+
 // A list already grouped by WORKSPACE (lib/pane-groups.ts) has said the workspace in its heading, so
 // the row's line 2 carries the TAB and nothing else — blank when that tab has no name of its own.
 // The row states its own height, and its address and cache reading ride at the end of line 1
@@ -208,6 +227,28 @@ describe("AgentCard in a workspace group", () => {
     // No slot at all: the row's own `items-center` puts the name in the middle instead.
     expect(line2(container)).toBeNull();
     expect(line1(container)).toHaveTextContent("logs");
+  });
+
+  // FORK: …and stops stating it the moment the row has a third line. The beacon sentence and the
+  // model run are what this fork's dashboard is FOR on a herd of identical `claude · working` rows,
+  // so a row carrying one grows instead of clipping it inside a stated 44px box (which is what the
+  // 1.9.0 merge shipped for one afternoon).
+  it("stops stating the height for a beacon sentence, and for nothing else", () => {
+    // The sentence is the one thing that cannot ride the name line, so it is the one thing that
+    // makes the row taller. The model run moved ONTO that line in the same edit precisely so a row
+    // with a reading and a row without still read as one list.
+    const said = row({ statusLine: "抓 Gmail 的 digest" });
+    expect(said.container.querySelector("button")!.className).not.toMatch(/(?:^|\s)h-11(?=\s|$)/);
+    cleanup();
+    const ran = row({ model: "claude-opus-5", effort: "medium" });
+    expect(ran.container.querySelector("button")!.className).toMatch(/(?:^|\s)h-11(?=\s|$)/);
+  });
+
+  // A `<button>` centres its text by default. Losing `text-left` off this element (the 1.9.0 merge
+  // did, for one afternoon) centres line 2 under the name on every row of the dashboard.
+  it("keeps the row's text left, because the row box is a button", () => {
+    const { container } = row();
+    expect(container.querySelector("button")!.className).toMatch(/(?:^|\s)text-left(?=\s|$)/);
   });
 
   it("states the row's height rather than letting its contents set it", () => {
