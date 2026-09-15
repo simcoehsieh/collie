@@ -84,7 +84,6 @@ export function DetailRoute() {
     findPane(root.agents, paneId, scope, root.servers, root.sessions) ??
     findPane(root.shellPanes, paneId, scope, root.servers, root.sessions) ??
     (fresh && fresh.paneId === paneId && !seen ? fresh : undefined);
-  const tabLabel = root.tabs.find((t) => t.tabId === agent?.tabId)?.label;
   const gone = !agent;
 
   // Recover from a closed pane: once a healthy snapshot no longer has it, bounce Home instead of
@@ -115,8 +114,8 @@ export function DetailRoute() {
       agents={root.agents}
       shellPanes={root.shellPanes}
       tabs={root.tabs}
-      tabLabel={tabLabel}
       text={pane.text}
+      logicalText={pane.logicalText}
       requestedLines={pane.requestedLines}
       revision={pane.revision}
       device={root.device}

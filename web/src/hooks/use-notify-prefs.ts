@@ -13,7 +13,7 @@ import type { PaneNotifyRule } from "@/lib/types";
 // list — the bridge replaces it rather than merging, because the phone edits the list it was shown.
 
 /** The three switches — the keys a `toggle` may name. */
-export type NotifySwitch = "blocked" | "done" | "updates";
+export type NotifySwitch = "blocked" | "done" | "updates" | "cache";
 
 export function useNotifyPrefs() {
   const [prefs, setPrefs] = useState<NotifyPrefs | null>(null);

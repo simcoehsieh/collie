@@ -11,6 +11,50 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.9.0
+
+Merged upstream v1.9.0 (2026-09-15) — 130 commits, 50 conflicted files. What the merge decided:
+
+- **Took upstream's actions belt; the composer's status band is gone.** 1.9.0 replaced the controls
+  row with one full-bleed belt carrying Collie's own controls and the harness's own commands
+  (`components/actions-row.tsx`, `harness-bar.tsx`), and deleted the 14 px band above it. The band
+  was where this fork drew the pane's model and effort, so those two facts moved to the PANE
+  HEADER's path line, beside 1.9.0's host chip and cache countdown (`data-slot="header-model"`).
+  The fork's controls-row fold went with the band; the fork's DOCK fold stays, and the full-width
+  grip above the composer is now drawn only when the dock is folded — the way back, not a second
+  switcher.
+- **The pane's `status` still reaches the composer, and nothing draws it.** Upstream removed the
+  prop with the band. Two fork features branch on it — "stop and edit what you sent" (offered only
+  while the agent is working) and the send queue's `answer` rows — so the prop stays with a note
+  saying it may not be rendered.
+- **Took upstream's dashboard: two axes, urgency then workspace.** `AgentList` now lists what needs
+  you on top and everything else under its workspace heading; the Working and Recent sections, the
+  fold and the sort toggle are gone. The fork's PINNED section is lifted with the urgent ones
+  (`LIFTED`), and a pinned pane is excluded from the groups so no row is listed twice. The fork's
+  `memo`, its pin glyph and its long-press survive; the card's relative-time chip does not.
+- **Upstream's wrapped-URL repair, moved behind the fork's read cache.** 1.9.0 asks Herdr for
+  `recent_unwrapped` when a grid shows a URL cut at the column edge (the `gcloud auth login` case,
+  ~300 characters). The fork answers pane reads from a cache that the live feed's watcher also
+  writes, so the repair lives in `paneReadPayload` — one extra read per CHANGED pane that shows a
+  split, the ETag covers the repaired body, and a poll and a poke carry the same `logicalText`.
+  Upstream's test drives that function directly.
+- **Kept the fork's Antigravity artwork for `agy`.** Upstream shipped a generic triangle path under
+  the same key; the fork's mark is the real one. `harness-bar.tsx`'s accent lookup now narrows for
+  an artwork brand, which carries no accent.
+- **Both notification fixes, both per-pane systems.** Upstream's multi-agent digest now names panes
+  rather than agent kinds, and its `cache` switch (default off) joins the fork's `notify.toml` rules
+  and per-pane overrides in one card; `NotifyPrefsCard` takes the fork's rules as props so upstream's
+  controller/playground split holds.
+- **Nine fork settings are now schema rows.** 1.9.0's `~/.collie/config.toml` layer names every
+  setting in `bridge/config-schema.ts`; the fork's `COLLIE_DIR_ROOTS`, `COLLIE_DOC_HOSTS`,
+  `COLLIE_KB_*`, `COLLIE_QUOTA_COMMAND` and `COLLIE_SHOT_*` are rows rather than exemptions, so
+  `collie config show` prints them. Env and `.env` still win over both files.
+- **Taken as-is, and they matter here:** the macOS update runner now spawns in its own session (a
+  phone-tapped update no longer leaves the launchd job unloaded), the prompt-cache countdown and its
+  sourced TTL rules, the one-name / one-place rule on every surface, the compact tab and pane rows,
+  the history view's terminal font, and the first-run tour (which holds the push prompt back until
+  it closes).
+
 ## On top of 1.8.2
 
 Merged upstream v1.8.1 and v1.8.2 (2026-09-13). What the merge decided, so the next one need not

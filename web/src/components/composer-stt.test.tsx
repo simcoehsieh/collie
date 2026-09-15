@@ -92,7 +92,6 @@ function baseProps(
     setRawTerminal: vi.fn(),
     setTapToFocus: vi.fn(),
     setExpandClippedReply: vi.fn(),
-    setControlsOpen: vi.fn(),
     onSent: vi.fn(),
     ...overrides,
   };

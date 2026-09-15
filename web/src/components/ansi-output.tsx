@@ -68,6 +68,10 @@ export interface AnsiOutputProps {
    * unchanged. `agent` is then only the adapter the caller already chose — the blocks are theirs.
    */
   model?: MirrorModel;
+  /** The same rows with soft wraps undone, when the bridge sent them: the autolinker uses it to give
+   * the fragments of one wrapped URL the href of the whole URL. Absent for every pane that needs no
+   * repair, and then links behave exactly as they did. */
+  logicalText?: string;
   className?: string;
   /** true = wrap; the block breaks at the viewport width instead of scrolling horizontally. Default
    *  true — the mirror is mostly agent prose, and a phone shows far fewer columns than the desktop
@@ -427,6 +431,7 @@ function LineChip({
 export const AnsiOutput = memo(function AnsiOutput({
   text,
   model,
+  logicalText,
   className,
   wrap = true,
   fontSize = 11,
@@ -561,8 +566,9 @@ export const AnsiOutput = memo(function AnsiOutput({
   }, [haystack, query]);
 
   // Autolinked URLs, in the SAME offset space as find matches — both are ranges over `haystack`, so
-  // one running offset serves both splits. Recomputed only when the mirror text changes.
-  const links = useMemo(() => findLinks(haystack), [haystack]);
+  // one running offset serves both splits. Recomputed only when the mirror text changes. `logicalText`
+  // (when the bridge sent it) lets a URL the pane wrapped be linked as the single URL it was.
+  const links = useMemo(() => findLinks(haystack, logicalText), [haystack, logicalText]);
 
   useEffect(() => {
     onMatchCount?.(matches.length);

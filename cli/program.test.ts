@@ -5,6 +5,7 @@ import { CREW_SUBCOMMANDS } from "./crew.ts";
 import { DEVICES_SUBCOMMANDS } from "./pairing.ts";
 import { PUSH_SUBCOMMANDS } from "./push.ts";
 import { STT_SUBCOMMANDS } from "./stt.ts";
+import { CONFIG_SUBCOMMANDS } from "./config.ts";
 import {
   type Command,
   COMMANDS,
@@ -82,6 +83,8 @@ const PUSH_VERBS = ["push"];
 // operator's own terminal is the only right place to configure, because they mint or accept a
 // credential.
 const STT_VERBS = ["stt"];
+/** The config-file tree (ADR 0040). Declared right after `stt`, for the same reasons. */
+const CONFIG_VERBS = ["config"];
 // The manual, printed out of the binary: `collie skill` for an AI agent, `collie docs` for the
 // operator pages. Neither was ever a shell verb — there was nothing to print before it was embedded.
 const MANUAL_VERBS = ["skill", "docs"];
@@ -103,6 +106,7 @@ describe("the verb table", () => {
       ...PAIRING_VERBS,
       ...PUSH_VERBS,
       ...STT_VERBS,
+      ...CONFIG_VERBS,
       ...CREW_VERBS,
       ...MANUAL_VERBS,
       "help",
@@ -260,6 +264,10 @@ describe("the subcommand trees", () => {
     expect(findCommand("stt")?.subcommands?.map((s) => s.name)).toEqual([...STT_SUBCOMMANDS]);
   });
 
+  test("`config` declares exactly `cli/config.ts`'s sub-verbs, in its order", () => {
+    expect(findCommand("config")?.subcommands?.map((s) => s.name)).toEqual([...CONFIG_SUBCOMMANDS]);
+  });
+
   test("no other verb declares a tree — the grammar is one level deep everywhere else", () => {
     expect(COMMANDS.filter((c) => c.subcommands !== undefined).map((c) => c.name)).toEqual([
       "hooks",
@@ -269,6 +277,7 @@ describe("the subcommand trees", () => {
       "devices",
       "push",
       "stt",
+      "config",
       "crew",
       // The alias carries the SAME array — that is what `cli/crew.test.ts` pins.
       "pack",
@@ -380,6 +389,10 @@ describe("exit codes", () => {
       // FORK: `artifact add` copies a file into this host's real artifact store; `list` and `promote`
       // resolve the same real dir. cli/artifact.test.ts drives all three against a throwaway dir.
       ...ARTIFACT_VERBS,
+      // `config init` writes a file into the developer's own `~/.collie`, and `show`/`check` resolve
+      // that same real path before they decide anything. cli/config.test.ts drives all three against
+      // fakes in a temp dir.
+      ...CONFIG_VERBS,
     ];
     // `skill` and `docs` print text compiled into this binary. They read nothing, resolve no state
     // dir and touch no machine, so the suite may run them for real.

@@ -20,7 +20,7 @@ import type { BootResponse } from "./types";
 // that boots from it makes no second request for anything it was handed, and goes back to the
 // ordinary routes from the next tick onward.
 
-const NOTIFY_PREFS = { blocked: true, done: false, updates: true, panes: [] };
+const NOTIFY_PREFS = { blocked: true, done: false, updates: true, cache: false, panes: [] };
 const QUOTA = { ok: true as const, fetchedAt: "2026-09-11T00:00:00.000Z", agents: [] };
 
 function bootBundle(over: Partial<BootResponse> = {}): BootResponse {

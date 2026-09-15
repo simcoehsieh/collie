@@ -64,9 +64,20 @@ export interface NotifyPrefs {
    * answers byte-identically to before.
    */
   operatorPanes?: PaneNotifyRule[];
+  /** Push about five minutes before an agent pane's prompt cache expires. Default OFF, and the global
+   *  half of a two-state rule: a pane is warned when this is true OR its session is on the watch list
+   *  (`bridge/cache/watch.ts`, ADR 0042). There is no per-pane off that overrides it. Not an agent
+   *  status either, so it never flows through {@link isNotifiable}; the cache warden reads it directly. */
+  cache: boolean;
 }
 
-export const DEFAULT_NOTIFY_PREFS: NotifyPrefs = { blocked: true, done: false, updates: true, panes: [] };
+export const DEFAULT_NOTIFY_PREFS: NotifyPrefs = {
+  blocked: true,
+  done: false,
+  updates: true,
+  cache: false,
+  panes: [],
+};
 
 /** The pane facts a rule is matched against — the slice of an `AgentView` that names it. */
 export interface PaneIdentity {
@@ -126,6 +137,7 @@ export function coerceNotifyPrefs(raw: JsonValue | undefined): NotifyPrefs {
     done: typeof o.done === "boolean" ? o.done : DEFAULT_NOTIFY_PREFS.done,
     updates: typeof o.updates === "boolean" ? o.updates : DEFAULT_NOTIFY_PREFS.updates,
     panes: coercePaneRules(o.panes),
+    cache: typeof o.cache === "boolean" ? o.cache : DEFAULT_NOTIFY_PREFS.cache,
   };
 }
 
@@ -244,6 +256,7 @@ export class NotifyPrefsStore {
     if (patch.done !== undefined) this.prefs.done = patch.done;
     if (patch.updates !== undefined) this.prefs.updates = patch.updates;
     if (patch.panes !== undefined) this.prefs.panes = patch.panes.map((r) => ({ ...r }));
+    if (patch.cache !== undefined) this.prefs.cache = patch.cache;
     await this.save();
     return this.current();
   }

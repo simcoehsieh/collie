@@ -14,7 +14,7 @@ import { ambientPanes, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
 import { homePath, panePath, artifactPath, artifactsPath } from "@/lib/nav";
 import { tailFor, useOverviewTails } from "@/lib/overview";
-import { paneParts } from "@/lib/pane-name";
+import { paneName, panePlaceParts } from "@/lib/pane-name";
 import { useRootData } from "@/lib/route-data";
 import type { Scope } from "@/lib/scope";
 import { triage } from "@/lib/triage";
@@ -167,8 +167,10 @@ const OverviewCard = memo(function OverviewCard({
   // lookup itself is one Map read, so it is not memoised.
   void version;
   const tail = tailFor(scope, pane.paneId);
-  const parts = paneParts(pane);
-  const title = parts.secondary ?? parts.tab ?? parts.project;
+  // 1.9.0's one-name rule: the card is titled the same thing every other surface titles this pane,
+  // and its place (space › tab) stays the caption below.
+  const title = paneName(pane);
+  const parts = panePlaceParts(pane);
   const blocked = pane.status === "blocked";
   return (
     <button
@@ -187,8 +189,8 @@ const OverviewCard = memo(function OverviewCard({
         {pinned && <span className="text-[10px] text-muted-foreground">{t("home.pin.pinned")}</span>}
         <StatusBadge status={pane.status} />
       </div>
-      {parts.project !== title && (
-        <div className="truncate text-xs text-muted-foreground">{parts.project}</div>
+      {parts.space !== title && (
+        <div className="truncate text-xs text-muted-foreground">{parts.space}</div>
       )}
       {/* FORK: WHAT A RESTING PANE SHOWS IS WHAT IT SAID, not its last six rows.
           An agent's TUI runs on the alternate screen, so the bottom of a finished pane is its input

@@ -116,6 +116,9 @@ const AGENT_VIEW_KEYS = {
   // a herd it has not is byte-identical to the baseline.
   model: true,
   effort: true,
+  // Also not a crew dimension: the pane's prompt-cache reading (M28/02), computed on the machine the
+  // pane lives on and absent until its agent has taken one turn. A 1.8.x peer omits it.
+  cache: true,
 } satisfies Record<keyof AgentView, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -199,6 +202,7 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
     expect(AGENT_VIEW_KEYS.session).toBe(true);
     expect(Object.keys(AGENT_VIEW_KEYS).toSorted()).toEqual([
       "agent",
+      "cache",
       "cwd",
       // FORK: which model and effort the agent is on — read off its log, never turned on by a
       // REQUEST, so the claim this case makes about the two address dimensions is untouched.

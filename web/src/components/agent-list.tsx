@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ArrowDown, ArrowUp, Check, WifiOff } from "lucide-react";
+import { Check, WifiOff } from "lucide-react";
 
 import { clockTime } from "@/lib/format";
 import { useMuxCapability } from "@/lib/mux-capability";
@@ -7,27 +7,28 @@ import { SectionHeader } from "@/components/section-header";
 import { ListGroup } from "@/components/ui/list-group";
 import { PaneRowsSkeleton } from "@/components/route-skeleton";
 import { EmptyState } from "@/components/empty-state";
-import { flipDir, sectionHeaderProps, triage, type RecentDir, type TriageKey } from "@/lib/triage";
+import { groupPanesByWorkspace } from "@/lib/pane-groups";
+import { bucketOf, sectionHeaderProps, triage, type TriageKey } from "@/lib/triage";
 import type { AgentView, BridgeStatus } from "@/lib/types";
 import { paneRowKey } from "@/lib/hosts";
 import { AgentCard } from "./agent-card";
-import { t } from "@/lib/i18n";
+import { t, tn } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
 interface AgentListProps {
   agents: AgentView[];
+  /**
+   * Bare shell panes. They join their own workspace's group, after that tab's agents — a shell is a
+   * pane of the tab it sits in, not a species that deserves a pen of its own (lib/pane-groups.ts).
+   * Omit and the list is agents alone, exactly as it was.
+   */
+  shellPanes?: AgentView[];
   bridge?: BridgeStatus | undefined;
   /**
    * Open a row. Takes the PANE, not its id: `w1:p1` names a different terminal on every machine in a
    * crew, and this list is one herd across all of them — an id alone cannot say which row was tapped.
    */
   onOpen: (pane: AgentView) => void;
-  /** Which way Recent runs, and how to flip it. Omit to render Recent newest-first with no toggle. */
-  recentDir?: RecentDir;
-  onRecentDirChange?: (dir: RecentDir) => void;
-  /** Whether Recent is expanded, and how to fold it. Omit to leave it always open (the sidebar). */
-  recentOpen?: boolean;
-  onRecentOpenChange?: (open: boolean) => void;
   /** Show the "no agents" placeholder when the herd is empty (default true). */
   emptyState?: boolean;
   /**
@@ -45,30 +46,28 @@ interface AgentListProps {
   onLongPress?: (pane: AgentView) => void;
 }
 
-/** Which timestamp a section's rows date themselves by. Attention rows show none — a blocked
- *  agent's age is noise beside the fact that it's blocked. */
-const AGE_BY_SECTION = new Map<TriageKey, "seen" | "active">([
-  ["ready", "active"],
-  // "working for 3h" and "working for 40s" are very different facts, and now that the age rides
-  // the title row it costs no vertical space to say which.
-  ["working", "active"],
-  ["recent", "seen"],
-]);
+/** The sections that mean "a human is required here" — pulled to the top and given the accented
+ *  header, and now the only ones the dashboard sorts by URGENCY at all. */
+/** A module-level empty list: a fresh `[]` default per render is a new reference for nothing. */
+const NO_PANES: AgentView[] = [];
 
-/** The sections that mean "a human is required here" — the only ones that get card chrome. */
 const ATTENTION: ReadonlySet<TriageKey> = new Set<TriageKey>(["needs", "ready"]);
+
+/** FORK: the sections that sit on top — the urgent two, plus the operator's pins. */
+const LIFTED: ReadonlySet<TriageKey> = new Set<TriageKey>(["pinned", "needs", "ready"]);
 
 // The herd in the one order the app agrees on: Needs you → Ready · unseen → Working → Recent
 // (lib/triage.ts). Only Recent folds, and only Recent takes the direction toggle; the three
 // attention sections are pinned open and never invert.
+//
+// FORK: a PINNED row is lifted with the urgent ones — the operator asked for it to sit on top, and
+// `triage` already pulls it out of its bucket — so it is excluded from the workspace groups below
+// and listed exactly once, on the same terms an urgent row is.
 export const AgentList = memo(function AgentList({
   agents,
+  shellPanes = NO_PANES,
   bridge,
   onOpen,
-  recentDir = "newest",
-  onRecentDirChange,
-  recentOpen = true,
-  onRecentOpenChange,
   emptyState = true,
   error = false,
   lastSeenAt,
@@ -79,7 +78,9 @@ export const AgentList = memo(function AgentList({
   // Whether the multiplexer can say which agent a pane holds. Read unconditionally — a hook cannot
   // sit behind the early return below, and the answer is only consulted in the empty branch.
   const agentDetection = useMuxCapability("agentDetection");
-  if (agents.length === 0) {
+  // A herd with nothing but bare shells in it is still something to show, and "No agents running."
+  // is then true rather than empty — so the placeholder waits for BOTH lists to be empty.
+  if (agents.length === 0 && shellPanes.length === 0) {
     if (!emptyState) return null;
     // "No agents running." is a claim about the herd, and only the bridge can make it. A stale render
     // (failed fetch, or a cold boot with nothing cached) knows nothing about the herd — saying the
@@ -126,12 +127,43 @@ export const AgentList = memo(function AgentList({
     );
   }
 
-  const all = triage(agents, recentDir, pinned);
-  const sections = all.filter((s) => s.agents.length > 0);
-  if (sections.length === 0) return null;
+  // Two passes over one herd. The attention buckets keep `triage()` exactly as they had it; the
+  // rest of the panes leave triage behind entirely and are grouped by workspace, in the order the
+  // bridge sent them (which is what `filter` preserves here). That `filter` is the whole of the
+  // pulled-out rule: a pane listed on top is never handed to the grouper, so it cannot appear a
+  // second time and the group's count never counts it.
+  const all = triage(agents, "newest", pinned);
+  const pinnedIds = new Set(pinned ?? []);
+  const lifted = all.filter((s) => LIFTED.has(s.key) && s.agents.length > 0);
+  const groups = groupPanesByWorkspace(
+    agents.filter((a) => !ATTENTION.has(bucketOf(a)) && !pinnedIds.has(a.paneId)),
+    shellPanes,
+  );
+  if (lifted.length === 0 && groups.length === 0) return null;
   // "What needs me right now?" deserves an answer even when the answer is "nothing". Without this
   // the section simply doesn't render, and an absence reads the same as a stale load.
   const allClear = all.find((s) => s.key === "needs")!.agents.length === 0;
+
+  // The FULL row identity, not the pane id — see `paneRowKey`. A pane id is unique only within one
+  // session on one machine, so a merged or widened list holds several rows that answer to `w1:p1`;
+  // keyed by the id alone React recycles one row's element for another's between polls, and the
+  // card you are looking at acquires a different row's `onClick`. On this list, that is a tap
+  // landing in another terminal.
+  const row = (a: AgentView, scope: "herd" | "place", unseen = false, isPinned = false) => (
+    <AgentCard
+      key={paneRowKey(a)}
+      agent={a}
+      onClick={() => onOpen(a)}
+      scope={scope}
+      statusStyle="dot"
+      density="row"
+      unseen={unseen}
+      // FORK: the pin glyph rides the row in the one section a pinned pane can sit in, and the hold
+      // opens the pane menu from the dashboard.
+      pinned={isPinned}
+      {...(onLongPress ? { onLongPress: () => onLongPress(a) } : {})}
+    />
+  );
 
   return (
     <div className="flex flex-col gap-5 px-4 py-4">
@@ -143,90 +175,35 @@ export const AgentList = memo(function AgentList({
           {t("home.allClear")}
         </p>
       )}
-      {sections.map((s) => {
-        // Recent is the only foldable section, and only where the parent wired the state.
-        const foldable = !!s.collapsible && onRecentOpenChange !== undefined;
-        const open = foldable ? recentOpen : true;
-        const bodyId = `agent-section-${s.key}`;
-        const age = AGE_BY_SECTION.get(s.key);
-        // statusStyle="dot": the section heading already says the status, so a pill on every row
-        // restates it and costs the width the title needs.
-        const rows = s.agents.map((a) => (
-          <AgentCard
-            // The FULL row identity, not the pane id — see `paneRowKey`. A pane id is unique only
-            // within one session on one machine, so a merged or widened list holds several rows that
-            // answer to `w1:p1`; keyed by the id alone React recycles one row's element for
-            // another's between polls, and the card you are looking at acquires a different row's
-            // `onClick`. On this list, that is a tap landing in another terminal.
-            key={paneRowKey(a)}
-            agent={a}
-            onClick={() => onOpen(a)}
-            statusStyle="dot"
-            density={ATTENTION.has(s.key) ? "card" : "row"}
-            {...(age ? { age } : {})}
-            // FORK: a pinned row wears its glyph in every section it could sit in — which is only
-            // this one, since triage lifts it out of the others.
-            pinned={s.key === "pinned"}
-            {...(onLongPress ? { onLongPress: () => onLongPress(a) } : {})}
+      {lifted.map((s) => (
+        <section key={s.key} className="flex flex-col gap-2">
+          <SectionHeader {...sectionHeaderProps(s)} />
+          <ListGroup id={`agent-section-${s.key}`}>
+            {s.agents.map((a) => row(a, "herd", s.key === "ready", s.key === "pinned"))}
+          </ListGroup>
+        </section>
+      ))}
+
+      {/* Everything else, by workspace. The heading IS the marker: it names the workspace and counts
+          the rows it actually holds, so a row under it says neither. Flat rows in ONE bordered
+          group, which gives the run of hairlines a first edge and a last edge for 2px. */}
+      {groups.map((g) => (
+        <section key={g.key} className="flex flex-col gap-2">
+          <SectionHeader
+            label={g.label}
+            trailing={
+              // The count in words rather than in the header's own `(n)` parentheses: this heading
+              // is an address, and "3 panes" after it says what the three things ARE — which is the
+              // whole reason the list is grouped this way. It counts what is LISTED here, not what
+              // the workspace holds: a pane pulled to the top is answered up there.
+              <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                {tn("home.workspace.paneCount", g.panes.length)}
+              </span>
+            }
           />
-        ));
-
-        return (
-          <section key={s.key} className="flex flex-col gap-2">
-            <SectionHeader
-              {...sectionHeaderProps(s)}
-              {...(foldable ? { open, onToggle: onRecentOpenChange, controls: bodyId } : {})}
-              trailing={
-                // A sibling of the fold button, never a child: nesting would be invalid markup and
-                // would make flipping the sort also fold the section. Hidden while folded, since
-                // sorting rows nobody can see does nothing.
-                s.key === "recent" && onRecentDirChange && open ? (
-                  <SortToggle dir={recentDir} onChange={onRecentDirChange} />
-                ) : undefined
-              }
-            />
-            {/* Cards mean "a human is required here", so only the attention sections get them —
-                and an attention section is a GAP LIST: every row is already a bordered object, so
-                it gets NO group frame. Wrapping it would be a box inside a box. Do not "fix" this
-                to a ListGroup later.
-
-                Every other section is flat rows in ONE bordered group. The frame gives the run of
-                hairlines a first edge and a last edge for 2px, which is the whole of what the
-                mockups changed — the row itself is untouched. */}
-            {open &&
-              (ATTENTION.has(s.key) ? (
-                <div id={bodyId} className="flex flex-col gap-2">
-                  {rows}
-                </div>
-              ) : (
-                <ListGroup id={bodyId}>{rows}</ListGroup>
-              ))}
-          </section>
-        );
-      })}
+          <ListGroup>{g.panes.map((p) => row(p, "place"))}</ListGroup>
+        </section>
+      ))}
     </div>
   );
 });
-
-// One tap flips the Recent order. Deliberately not a menu — the design offers a direction, not a
-// choice of sort keys. min-h-9 keeps it on the 36px touch floor.
-function SortToggle({ dir, onChange }: { dir: RecentDir; onChange: (dir: RecentDir) => void }) {
-  useLocale();
-  const newest = dir === "newest";
-  const Icon = newest ? ArrowDown : ArrowUp;
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(flipDir(dir))}
-      aria-label={newest ? t("home.sort.aria.newest") : t("home.sort.aria.oldest")}
-      // A bordered chip, not bare text: unstyled it read as an annotation ("sorted newest") rather
-      // than something you can press. Fixed width so flipping it doesn't shift the header. No fill —
-      // filled, it outweighed the heading it sits beside, which is backwards for a control that
-      // reorders the section you care least about.
-      className="flex min-h-9 items-center justify-center gap-1 rounded-full border border-transparent bg-muted px-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-95"
-    >
-      <Icon className="size-3.5" aria-hidden />
-      <span className="w-[3.25rem] text-left">{newest ? t("home.sort.newest") : t("home.sort.oldest")}</span>
-    </button>
-  );
-}

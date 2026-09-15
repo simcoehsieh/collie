@@ -418,6 +418,18 @@ can only use the browser tab in that mode. A dev build (any checkout not sitting
 tag) installs as **Collie (dev)** with an orange icon, so it never sits on your home screen next to
 a release install looking the same.
 
+**First launch.** The first time Collie opens on a device and the dashboard loads, one screen says
+what Collie does and what this install looks like: the multiplexer and the machine it mirrors, how
+many panes are running and how many need you, how many machines are in your crew, and whether this
+device may type.
+
+Under that it offers at most two things to do, and only where they apply: pair this phone, start
+something, turn notifications on, or keep Collie on your home screen. It closes with the six things
+you can do in the app.
+
+The screen is marked seen as soon as it opens, so a tab lost halfway down does not bring it back.
+Settings has a **Show the first screen again** row that shows it on demand.
+
 ### Is it actually working?
 
 Verify status and logs:

@@ -228,15 +228,20 @@ export async function enablePush(): Promise<EnableResult> {
  * unsubscribe; a no-op where there is no service worker.
  */
 export function installResubscribeListener(): () => void {
-  if (!("serviceWorker" in navigator) || !navigator.serviceWorker) return () => {};
+  const sw = "serviceWorker" in navigator ? navigator.serviceWorker : undefined;
+  // The container has to be there AND be a real EventTarget: a test (and some embedded browsers)
+  // publish a partial `serviceWorker` with only the members they use, and a listener this page
+  // cannot install is a no-op, never a throw on mount. `instanceof EventTarget` is the contract
+  // itself rather than a shape check on one of its members.
+  if (!(sw instanceof EventTarget)) return () => {};
   const onMessage = (event: MessageEvent) => {
     // SAFETY: `MessageEvent.data` is `any` — a structured clone from our own worker, which posts
     // exactly `{ type, endpoint }`; anything else fails the comparisons and is ignored.
     const data = event.data as { type?: string; endpoint?: string } | null;
     if (data?.type === RESUBSCRIBED_MESSAGE && data.endpoint) rememberEndpoint(String(data.endpoint));
   };
-  navigator.serviceWorker.addEventListener("message", onMessage);
-  return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  sw.addEventListener("message", onMessage);
+  return () => sw.removeEventListener("message", onMessage);
 }
 
 // Unsubscribe this device and remember the choice. This is the case the server-side prune DOES

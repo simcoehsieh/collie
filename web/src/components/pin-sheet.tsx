@@ -6,7 +6,8 @@ import { useLocale } from "@/hooks/use-locale";
 import { movePinned, setPinned } from "@/hooks/use-dash-prefs";
 import { buzz } from "@/lib/haptics";
 import { t } from "@/lib/i18n";
-import { paneDisplayName, type AgentView } from "@/lib/types";
+import type { AgentView } from "@/lib/types";
+import { paneName } from "@/lib/pane-name";
 
 // FORK: the sheet a long press on a dashboard row opens — pin, un-pin, nudge a pinned row up or
 // down, or just open the pane. Same `BottomSheet` + `ActionRow` anatomy as the pane and tab action
@@ -38,7 +39,7 @@ export function PinSheet({
   const id = pane?.paneId ?? "";
   const at = pinned.indexOf(id);
   const isPinned = at >= 0;
-  const title = pane ? paneDisplayName(pane) : "";
+  const title = pane ? paneName(pane) : "";
 
   const act = (fn: () => void) => {
     buzz();

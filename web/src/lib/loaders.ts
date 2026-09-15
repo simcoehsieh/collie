@@ -24,6 +24,7 @@ import {
 import { parseAnsi } from "@/lib/ansi";
 import { noteUpdateRun } from "./self-update";
 import { splitLines } from "@/lib/blocks";
+import { type CacheHold, holdCacheReadings } from "@/lib/cache-hold";
 import { isLostLatched } from "@/lib/connection-health";
 import { ambientSpaces } from "@/lib/hosts";
 import {
@@ -168,6 +169,10 @@ export interface PaneData {
   text: string;
   /** True when the buffer was cut off at the requested line count — older scrollback still exists. */
   truncated: boolean;
+  /** The same rows with soft wraps undone, when the bridge found a URL the pane split — the mirror
+   * hands it to the autolinker so a wrapped URL is one whole link instead of a truncated first
+   * fragment. Absent on every pane that needs no repair. */
+  logicalText?: string;
   /** The scrollback window this result was fetched with — lets the UI tell a grown fetch from a
    * stale in-flight poll (a "Load older" tap raises this; see growRequestedLines). */
   requestedLines: number;
@@ -234,6 +239,10 @@ let lastHome: {
   lastSeenAt: number | undefined;
   data: HomeData;
 } | null = null;
+// The last reading seen for each pane address, carried from one snapshot to the next by
+// {@link holdCacheReadings}. Module state, like the keep-previous-data caches above and for the same
+// reason: it is this page's memory of the last good answer, and a reload is entitled to forget it.
+let paneCacheHold: CacheHold = new Map();
 
 function toHomeData(
   snap: SnapshotResponse,
@@ -269,12 +278,24 @@ function buildHomeData(
   error: boolean,
   lastSeenAt?: number,
 ): HomeData {
+  // THE CACHE READING HOLDS ACROSS A POLL THAT ARRIVED WITHOUT ONE (lib/cache-hold.ts). The reading is
+  // a measurement, not a field of the pane, and the bridge drops one for a poll on several ordinary
+  // paths — a failed `stat`, a harness session id that has not resolved yet, another Herdr session's
+  // poll reaping it. Each of those used to unmount the chip for one frame and put it back on the next
+  // poll: "cache is blinking". BOTH pane lists are read against the SAME hold and their results are
+  // merged into the next one, so a pane that moves between the two lists keeps its reading and a pane
+  // in neither list drops it. This runs on the stale path as well, because the same snapshot read
+  // twice may not answer twice.
+  const holdIn = paneCacheHold;
+  const agents = holdCacheReadings(holdIn, snap.agents);
+  const shells = holdCacheReadings(holdIn, snap.shellPanes ?? []);
+  paneCacheHold = new Map([...agents.held, ...shells.held]);
   return {
     lastSeenAt,
     bridge: snap.bridge,
     device: snap.device,
-    agents: snap.agents,
-    shellPanes: snap.shellPanes ?? [],
+    agents: agents.panes,
+    shellPanes: shells.panes,
     // Narrowed to the address the URL is on, for the reason `ambientPanes` narrows the panes drawn
     // beside them: the navigator is a tree of ONE machine, and on a crew the lead's merged body now
     // carries every machine's spaces. A solo body carries no host on any row, so both calls pass
@@ -584,6 +605,7 @@ export async function paneLoader({
       scope,
       text,
       truncated: read.truncated,
+      logicalText: read.logicalText,
       requestedLines: lines,
       revision: read.revision,
       error: false,

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import {
   isRouteErrorResponse,
   Outlet,
@@ -12,7 +13,6 @@ import {
   useRouteLoaderData,
 } from "react-router";
 
-import { useEffect, useRef } from "react";
 import { TriangleAlert } from "lucide-react";
 
 import { usePolling } from "@/hooks/use-polling";
@@ -32,9 +32,11 @@ import { CrewProvider } from "@/components/crew-provider";
 import { MeowMark } from "@/components/meow-mark";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
+import { TourHost } from "@/components/tour-sheet";
 import { describeThrownError } from "@/lib/api-error-message";
 import { homePath } from "@/lib/nav";
 import { scopeFromUrl } from "@/lib/session";
+import { noteLeadName, noteSnapshotRun } from "@/lib/update-run-store";
 import { PANE_ROUTE_ID, type HomeData, type PaneData } from "@/lib/loaders";
 import { worstTriage, type TriageKey } from "@/lib/triage";
 import type { MarkState } from "@/components/meow-mark";
@@ -174,7 +176,6 @@ export function RootLayout() {
   useAgentTransitions(data.agents, paneId ?? null);
   // FORK: the app icon's badge follows what needs you (hooks/use-app-badge.ts).
   useAppBadge(data.agents);
-  usePushSetup();
   // FORK: desktop shortcuts, live only with a fine pointer (hooks/use-hotkeys.ts).
   const hotkeys = useHotkeys(data);
   // FORK: the herd in one word, for the mark in the header of every screen (components/meow-mark.tsx
@@ -184,6 +185,28 @@ export function RootLayout() {
   // is, and passed down as a prop; the header deriving it again would be a second answer.
   // `null` is an empty herd, which has nothing to report: idle, the rest drawing.
   const herd: MarkState = HERD_MARK[worstTriage(data.agents) ?? "recent"];
+  // THE PUSH RACE. `usePushSetup` can raise the browser's permission prompt on its own, behind the
+  // tour's backdrop, so it waits until the tour has decided it is not showing. "pending" is what
+  // makes this correct rather than racy: a child's effect runs before the parent's, but the state it
+  // sets is not visible to the parent's effect in the same commit, so a `paused` that started false
+  // would fire the prompt before `TourHost` had decided anything.
+  const [tourDecision, setTourDecision] = useState<"pending" | "open" | "closed">("pending");
+  usePushSetup(tourDecision !== "closed");
+
+  // TWO FACTS PUBLISHED OUT OF THIS ROUTER, and nothing mounted (M28/01). The update screen lives in
+  // `App.tsx`, beside the wrapper it makes inert, so it has no loader data and no `CrewProvider` — and
+  // it needs the snapshot's run record and this machine's own name. Both go into
+  // `lib/update-run-store.ts`, which is the one place the run is reconciled. A component rendered here
+  // would be a descendant of the node the sheet makes inert, which is the arrangement the sheet exists
+  // to avoid.
+  const leadName = data.servers?.find((server) => server.isLead)?.name ?? null;
+  useEffect(() => {
+    noteLeadName(leadName);
+  }, [leadName]);
+  const snapshotRun = data.update?.run;
+  useEffect(() => {
+    noteSnapshotRun(snapshotRun);
+  }, [snapshotRun]);
 
   // A viewport-height flex column: the top banners (when shown) are in-flow rows at the top and the
   // active route fills the rest (each route root is `min-h-0 flex-1`). This is what keeps a banner
@@ -199,6 +222,13 @@ export function RootLayout() {
     // second derivation of it, so the tolerance can never be computed against a cadence we aren't
     // using. That mattered more once the cadence gained inputs beyond the snapshot (#156).
     <CrewProvider servers={data.servers} sessions={data.sessions} ts={data.ts} pollMs={pollMs}>
+      {/* The first-launch tour, and the one component on this shelf that usually renders nothing. It
+          is the GATE as well as the sheet: it reads the per-device store, opens once on the first
+          real snapshot, marks itself seen before the first slide paints, and reports what it decided
+          so the push setup above can hold its prompt back. It sits beside the band rather than
+          inside it because it is not a strip: it covers the screen, it does not share the top of
+          it. */}
+      <TourHost home={data} onDecision={setTourDecision} />
       {/* FORK: `.app-viewport` (index.css) is the column — the 100dvh the skin measures, not a utility. */}
       <div className="app-viewport flex flex-col overflow-hidden">
         {/* THE BAND, and the rule that there is only ever one strip in it. Four facts can be true at
