@@ -1778,14 +1778,42 @@ export function AgentChat({
                       />
                     )}
                   </div>
-                  <span data-slot="pane-name" className="block truncate font-semibold leading-5">
+                  <span
+                    data-slot="pane-name"
+                    className="block min-w-0 self-baseline truncate font-semibold leading-5"
+                  >
                     {name}
                   </span>
+                  {/* FORK: THE CACHE READING RIDES THE NAME LINE (the operator, 2026-09-17). It sat at
+                      the end of the workspace line, which then carried three things — where the pane
+                      sits, which model at what effort, and how long the work stays warm — and read as
+                      a status bar rather than as a line. Up here it is the one number beside the one
+                      name, which is also the pair the eye goes to first; the workspace line is left
+                      with the two facts that belong together.
+
+                      This is the shape `pane-meta.tsx` already documents for the DASHBOARD row, and
+                      for the same reason: `items-center` keeps the tile and its status dot centred
+                      (neither has a baseline worth chasing) while the name and the meta ask for
+                      `self-baseline`, so those two share one text baseline and the icons do not drift
+                      for a fix that is not about them. The block's height is unchanged — the meta
+                      states its own 12px inside this line's 20px box, so 20 + 4 + 12 = 36px still
+                      holds (DESIGN.md §2). */}
+                  <PaneMeta
+                    host={agent.host}
+                    cache={agent.cache}
+                    onOpenCache={() => setCacheSheetOpen(true)}
+                    // The one descendant that takes its taps back from the surface under these lines.
+                    className="pointer-events-auto ml-auto self-baseline"
+                  />
                 </div>
-                {/* LINE 2 NAMES THE WORKSPACE, END TO END: the workspace on the left, which machine
-                    it sits on and how long its prompt cache stays warm on the right. The two used to
-                    be a stack in the corner above; they read as one sentence here and the corner is
-                    the menu's alone (see the rightLead note above).
+                {/* LINE 2 IS WHERE THE PANE SITS AND WHAT IT IS RUNNING: the workspace, then the
+                    model and its effort. It used to carry the cache reading and the host on its
+                    right as well, and three things on one 12px line read as a status bar — the
+                    operator's words, 2026-09-17: "too much on it, there is a workspace and a model
+                    and an effort". The reading went up to the name line (see the note there); the
+                    two that stayed are the two that answer different halves of one question, and
+                    the model and its effort are joined TIGHT (`lib/model-label.ts`) because they
+                    are one reading rather than two more items.
 
                     The WORKSPACE, not the place. This line used to carry `space › tab`, the same
                     crumb the dashboard row and the switcher row carry — but the tab strip sits right
@@ -1802,22 +1830,18 @@ export function AgentChat({
                     line's own 12px, so a pane whose cache reading arrives on the next poll keeps the
                     block at 20 + 4 + 12 = 36px and nothing above or below moves (DESIGN.md §2).
 
-                    WHO GIVES WAY: the place. It is `min-w-0 truncate` and the meta is `flex-none`, so
-                    a long tab name ends in an ellipsis and the machine's name and the countdown are
-                    never cut. Line 1 is untouched by all of it — the meta is inside this row, not
-                    beside the block, so the pane's own name still has the full width.
+                    WHO GIVES WAY: the place. It is `min-w-0 truncate` and the model run is
+                    `min-w-0 shrink truncate`, so a long workspace name ends in an ellipsis before
+                    the model run starts losing characters.
 
                     THE ROW STANDS ON ONE BASELINE, `items-baseline` and not `items-center`, and it
-                    still states its own `h-3` so the 36px sum above never depends on it. Centring the
-                    two boxes put the place text's ink foot a measured 8px above `PaneMeta`'s own — a
-                    flex container centres CHILDREN as boxes, and `pane-place`'s 12px line box and
-                    `PaneMeta`'s stated 12px box are not the same shape once their ink is accounted
-                    for. On the baseline the place text's own font baseline sets the line, and
-                    `PaneMeta` reports the baseline of its own first baseline-bearing descendant — the
-                    same chain `pane-meta.tsx`'s header already measured ink for. Measured in real
-                    Chromium at device-pixel resolution (3x, on the playground's minibuch mock), the
-                    place text's ink foot lands flush with the host name, the digits, the hourglass
-                    and the server glyph — `items-baseline` alone closes it, no nudge of its own. */}
+                    still states its own `h-3` so the 36px sum above never depends on it. The two runs
+                    here are both text in the same 12px box, so the baseline costs nothing and keeps
+                    the rule the moment a third box joins them again: a flex container centres
+                    CHILDREN as boxes, and two 12px boxes are not the same shape once their ink is
+                    accounted for. That is what dropped this line's ink a measured 8px under
+                    `PaneMeta`'s while the two shared the row; the fix travelled up to the name line
+                    with it, where `pane-meta.tsx`'s own header records the measurements. */}
                 <div className="flex h-3 min-w-0 items-baseline gap-2">
                   <span
                     data-slot="pane-place"
@@ -1838,13 +1862,6 @@ export function AgentChat({
                       {modelLabel({ model: agent.model, effort: agent.effort })}
                     </span>
                   )}
-                  <PaneMeta
-                    host={agent.host}
-                    cache={agent.cache}
-                    onOpenCache={() => setCacheSheetOpen(true)}
-                    // The one descendant that takes its taps back from the surface under these lines.
-                    className="pointer-events-auto ml-auto"
-                  />
                 </div>
               </div>
             </div>

@@ -6,9 +6,11 @@ import { cn } from "@/lib/utils";
 
 // A PANE'S ADDRESS AND ITS CACHE READING, drawn once for the two screens that carry them: the
 // dashboard row (`agent-card.tsx`) and the pane header (`agent-chat.tsx`). Which machine a pane
-// lives on and how long its work stays warm ride at the END OF THE NAME LINE on the dashboard and
-// at the end of the WORKSPACE LINE in the pane header — one sentence, on the line the name or the
-// workspace already owns, rather than a stack of its own.
+// lives on and how long its work stays warm ride at the END OF THE NAME LINE on both — one
+// sentence, on the line the name already owns, rather than a stack of its own. The header put it on
+// the workspace line until 2026-09-17, when that line had three things on it and the operator asked
+// for the reading to sit beside the name; the two screens now carry it the same way, which is what
+// this component existed to make possible.
 //
 // ── WHY IT IS ONE COMPONENT AND NOT TWO COPIES ───────────────────────────────
 // The header's row was written as a copy of the card's, comment by comment, so a pane's header and

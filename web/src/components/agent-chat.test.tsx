@@ -297,27 +297,37 @@ describe("AgentChat — the pane header's identity block", () => {
     expect(row!.textContent).not.toContain("needs you");
   });
 
-  it("carries the machine at the END OF THE PATH LINE, beside the cache reading, on a crew only", () => {
-    // WHERE A PANE LIVES AND HOW LONG ITS WORK STAYS WARM ARE ONE SENTENCE, so they ride on the line
-    // the working directory already owns and the corner keeps the ⋮ alone. The pair stood in a
-    // two-slot column in that corner for a day, and Altan, reading his phone: "the top section with
-    // host and cache stuff is not where it needs to be yet". The nine options went to the playground
-    // and option 2 is this.
+  it("carries the machine at the END OF THE NAME LINE, beside the cache reading, on a crew only", () => {
+    // WHERE A PANE LIVES AND HOW LONG ITS WORK STAYS WARM ARE ONE SENTENCE, so they ride on a line
+    // that already has a subject and the corner keeps the ⋮ alone. The pair stood in a two-slot
+    // column in that corner for a day, and Altan, reading his phone: "the top section with host and
+    // cache stuff is not where it needs to be yet". The nine options went to the playground and
+    // option 2 put it on the workspace line.
+    //
+    // FORK, 2026-09-17: it moved once more, up to the NAME line — the workspace line had grown a
+    // third run (the model and its effort) and the operator read it as a status bar. This pins the
+    // line it is on, because that is the whole of the change and a merge can undo it silently.
     const { container } = renderCrewChat("workshop"); // a REAL crew — HostChip hides on a solo one
     // The borderless `bare` run, and it still announces "host: …" — this header is ABOUT a pane, it
     // is not the surface a reply is typed on, which is the whole of what `sends` marks. Unreachable
     // here, so the run carries the fault with it.
     const tag = screen.getByLabelText(/^host: workshop \(unreachable\)$/i);
-    // In the meta row, and that row is INSIDE the lines block, on the second line — not in the
-    // trailing corner and not beside the block, either of which would take the width from line 1 and
-    // from the pane's own name.
+    // In the meta row, and that row is INSIDE the lines block, on the FIRST line, beside the pane's
+    // own name — not in the trailing corner and not beside the block, either of which would take the
+    // width from the lines rather than from the name that can afford to truncate.
     const meta = container.querySelector<HTMLElement>('[data-slot="pane-meta"]')!;
     expect(meta.contains(tag)).toBe(true);
     expect(slot(container, "lines")!.contains(meta)).toBe(true);
-    // SAFETY: the lines block's second child is the plain <div> line-2 row written in agent-chat.tsx,
+    // SAFETY: the lines block's first child is the plain <div> name row written in agent-chat.tsx,
     // never an SVG or other non-HTMLElement.
+    const nameLine = slot(container, "lines")!.children[0] as HTMLElement;
+    expect(nameLine.contains(meta)).toBe(true);
+    expect(nameLine.querySelector('[data-slot="pane-name"]')).not.toBeNull();
+    // And NOT on the workspace line, which is the half the operator asked to be rid of.
+    // SAFETY: the lines block's second child is the plain <div> workspace row written in
+    // agent-chat.tsx, never an SVG or other non-HTMLElement.
     const line2 = slot(container, "lines")!.children[1] as HTMLElement;
-    expect(line2.contains(meta)).toBe(true);
+    expect(line2.contains(meta)).toBe(false);
     // The PATH is conditional and this fixture has none to add; the ROW is not. It stands either
     // way, at the line's own height, so a pane with no path keeps the block at 36px and nothing
     // around it moves when a reading arrives on the next poll.
@@ -329,8 +339,8 @@ describe("AgentChat — the pane header's identity block", () => {
     expect(identity(container)!.contains(tag)).toBe(false);
     cleanup();
 
-    // Solo — every install that exists today. The row is still drawn, so line 2 keeps its height;
-    // the chip inside it renders nothing at all.
+    // Solo — every install that exists today. The row is still drawn, so the name line keeps its
+    // height; the chip inside it renders nothing at all.
     const solo = renderChat();
     expect(screen.queryByLabelText(/^host: /i)).toBeNull();
     const soloMeta = solo.container.querySelector<HTMLElement>('[data-slot="pane-meta"]')!;

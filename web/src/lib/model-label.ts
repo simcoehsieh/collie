@@ -12,10 +12,18 @@ export interface ModelFacts {
   effort?: string;
 }
 
-/** The interpunct the app uses between two runs of one line — the herd row's `space · tab`. */
-const JOIN = " · ";
+/**
+ * The interpunct between the two halves, TIGHT — `opus-5·medium`, not `opus-5 · medium`.
+ *
+ * The spaced form is the app's join between two INDEPENDENT facts (the herd row's `space › tab`).
+ * These two are not independent: a model and the effort it is running at are one reading of one
+ * thing, and spacing them apart read as two more items on a line the operator had already called
+ * crowded (2026-09-17). Tight, the pair is one token the eye takes in at once, which is also how it
+ * gets said out loud.
+ */
+const JOIN = "\u00b7";
 
-/** `fable-5-1 · xhigh`, `gpt-6-astra · medium`, or one half alone; null when the pane carries neither. */
+/** `fable-5-1·xhigh`, `gpt-6-astra·medium`, or one half alone; null when the pane carries neither. */
 export function modelLabel(facts: ModelFacts): string | null {
   const parts: string[] = [];
   if (facts.model !== undefined && facts.model !== "") parts.push(shortModel(facts.model));
