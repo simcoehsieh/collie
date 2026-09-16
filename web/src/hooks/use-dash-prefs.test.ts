@@ -43,6 +43,8 @@ describe("coerceDashPrefs", () => {
       pinned: [],
       lowPower: false,
       quotaOpen: true,
+      isolatedSpace: null,
+      hiddenSpaces: [],
     });
   });
 
@@ -58,6 +60,8 @@ describe("coerceDashPrefs", () => {
         pinned: ["w1:p1", "w2:p3"],
         lowPower: true,
         quotaOpen: false,
+        isolatedSpace: "k1",
+        hiddenSpaces: ["k2", 3, "k3"],
       }),
     ).toEqual({
       spacesOpen: false,
@@ -69,6 +73,8 @@ describe("coerceDashPrefs", () => {
       pinned: ["w1:p1", "w2:p3"],
       lowPower: true,
       quotaOpen: false,
+      isolatedSpace: "k1",
+      hiddenSpaces: ["k2", "k3"],
     });
   });
 
@@ -119,6 +125,8 @@ describe("useDashPrefs", () => {
       pinned: [],
       lowPower: false,
       quotaOpen: true,
+      isolatedSpace: null,
+      hiddenSpaces: [],
     });
   });
 
@@ -133,6 +141,10 @@ describe("useDashPrefs", () => {
     act(() => first.result.current.setLowPower(true));
     act(() => first.result.current.setPinned("w1:p1", true));
     act(() => first.result.current.setQuotaOpen(false));
+    act(() => first.result.current.setIsolatedSpace("k1"));
+    act(() => first.result.current.toggleHiddenSpace("k2"));
+    act(() => first.result.current.toggleHiddenSpace("k3"));
+    act(() => first.result.current.toggleHiddenSpace("k2"));
 
     // A remount AND a fresh page (the store re-reads storage) both see the same values.
     __resetDashPrefs();
@@ -147,6 +159,8 @@ describe("useDashPrefs", () => {
       pinned: ["w1:p1"],
       lowPower: true,
       quotaOpen: false,
+      isolatedSpace: "k1",
+      hiddenSpaces: ["k3"],
     });
   });
 

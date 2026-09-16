@@ -14,6 +14,9 @@ target/
 # behind on the way. Untracked, it made every build stamp the version `-dirty` — which on a fork that
 # merges upstream regularly is the one signal worth keeping honest: "is my tree clean?" has to mean
 # something before a merge.
+#
+# 1.10.0 added a narrower pattern for the same spill (`/.<16 hex>-<8 hex>.bun-build`); this glob is a
+# superset of it, so there is one rule here rather than two that drift.
 /.*.bun-build
 
 # Logs

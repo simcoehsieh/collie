@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react";
-import { asJsonBoolean, asJsonObject, type JsonValue } from "@/lib/json";
+import { asJsonBoolean, asJsonObject, asJsonString, type JsonValue } from "@/lib/json";
 
 import type { RecentDir } from "@/lib/triage";
 
@@ -69,6 +69,10 @@ export interface DashPrefs {
   lowPower: boolean;
   /** FORK: the dashboard's usage section (components/quota-card.tsx), open unless folded. */
   quotaOpen: boolean;
+  /** The dashboard's workspace filter: the one workspace shown alone, or null for all of them. */
+  isolatedSpace: string | null;
+  /** Workspaces hidden from the dashboard list (long-press a chip); their chips stay, dimmed. */
+  hiddenSpaces: string[];
 }
 
 const STORAGE_KEY = "collie:dash-prefs:v1";
@@ -86,6 +90,8 @@ const DEFAULTS: DashPrefs = {
   pinned: [],
   lowPower: false,
   quotaOpen: true,
+  isolatedSpace: null,
+  hiddenSpaces: [],
 };
 
 /**
@@ -129,6 +135,13 @@ export function coerceDashPrefs(raw: JsonValue | undefined): DashPrefs {
     pinned: coercePinned(p.pinned),
     lowPower: asJsonBoolean(p.lowPower) ?? DEFAULTS.lowPower,
     quotaOpen: asJsonBoolean(p.quotaOpen) ?? DEFAULTS.quotaOpen,
+    isolatedSpace: asJsonString(p.isolatedSpace) ?? DEFAULTS.isolatedSpace,
+    hiddenSpaces: Array.isArray(p.hiddenSpaces)
+      ? p.hiddenSpaces.flatMap((k) => {
+          const key = asJsonString(k);
+          return key === undefined ? [] : [key];
+        })
+      : [],
   };
 }
 
@@ -242,6 +255,8 @@ export interface UseDashPrefsReturn {
   setLowPower: (on: boolean) => void;
   /** FORK: fold or open the usage section. */
   setQuotaOpen: (open: boolean) => void;
+  setIsolatedSpace: (key: string | null) => void;
+  toggleHiddenSpace: (key: string) => void;
 }
 
 export function useDashPrefs(): UseDashPrefsReturn {
@@ -259,6 +274,17 @@ export function useDashPrefs(): UseDashPrefsReturn {
   const setLowPower = useCallback((lowPower: boolean) => updateDashPrefs({ lowPower }), []);
   const setQuotaOpen = useCallback((quotaOpen: boolean) => updateDashPrefs({ quotaOpen }), []);
 
+  const setIsolatedSpace = useCallback((isolatedSpace: string | null) => updateDashPrefs({ isolatedSpace }), []);
+  // Reads the SHARED prefs rather than a render's snapshot: upstream's `setPrefs(p => …)` folded the
+  // read into React's updater, which this fork's module store does not have. `prefs` here is the
+  // store's own current value, so two chips toggled in one tick cannot lose each other's write.
+  const toggleHiddenSpace = useCallback((key: string) => {
+    const hidden = dashPrefs().hiddenSpaces;
+    updateDashPrefs({
+      hiddenSpaces: hidden.includes(key) ? hidden.filter((k) => k !== key) : [...hidden, key],
+    });
+  }, []);
+
   return {
     prefs: current,
     setSpacesOpen,
@@ -271,5 +297,7 @@ export function useDashPrefs(): UseDashPrefsReturn {
     movePinned,
     setLowPower,
     setQuotaOpen,
+    setIsolatedSpace,
+    toggleHiddenSpace,
   };
 }

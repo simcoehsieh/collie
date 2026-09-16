@@ -11,6 +11,41 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.10.0
+
+Merged upstream v1.10.0 (2026-09-16) — 19 commits, 14 conflicted files, seven of them the message
+dictionaries taking one new key each.
+
+- **The dashboard stops moving, with one exception the operator asked for.** Upstream's rearrangement
+  lands whole: every pane stays in its workspace group in the multiplexer's own order, the "Needs
+  you" and "Ready · unseen" sections are gone, urgency is a mark (a row wash, a lit heading, a lit
+  chip) and the one summary line counts every state in words. The exception is the fork's PINNED
+  section, which still sits above the groups — a pin is not a status, it is the operator's own hand
+  saying "I am living in this one today", so it does not violate the rule upstream is enforcing. A
+  pinned pane is filtered out of the groups and listed exactly once, as before.
+- **The all-clear check reads the whole herd, not the unpinned part of it.** Upstream derives it
+  from the triage sections; here a pinned blocked pane is lifted out of its bucket, so that reading
+  would have said everything was clear while a pinned pane was waiting. It asks the panes directly.
+- **The workspace chip strip arrives with the fork's own pieces intact.** `use-dash-prefs.ts` keeps
+  the fork's single module store behind `useSyncExternalStore` (upstream still holds the prefs in
+  per-hook `useState`), so `isolatedSpace` and `hiddenSpaces` are written through `updateDashPrefs`
+  and `toggleHiddenSpace` reads the store rather than a render's snapshot.
+- **Swipe-to-close survives the row rewrite.** Upstream's `row` became a one-argument function; the
+  fork's wrapper keeps its `isPinned` argument, and the group render passes a lambda rather than the
+  function itself so an array index cannot arrive as a boolean.
+- **The launch strip stays out.** Upstream's dashboard hands `setLaunchOpen` down again; this fork
+  removed the strip in 2026-09-06 and the binding with it.
+- **Fixed by this merge, in the fork's own test fixture:** upstream's new build tests assemble a real
+  Git checkout in a temp directory and run `web/vite.config.ts` inside it. This fork's config imports
+  `./branding`, which imports `src/lib/json`, so the fixture now copies both.
+- **No-op here:** `HERDR_PLUGIN_STATE_DIR` is ignored from now on (#226). This install's state has
+  always been `~/.local/state/collie`, which is what the new rule resolves to.
+- **Taken as-is:** the named-one-pane-tab naming rule (a named tab's name becomes the pane's, with
+  Claude's own title moving to the dashboard row's second line — which composes with the fork's rule
+  that suppresses a second line merely repeating the agent's name), the unseen SQUARE in place of the
+  white dot and green wash, the red dot on the pane switcher's layers mark, the tab belt's underline,
+  and the Muse mirror and managed-update fixes (no Muse panes and no `collie update` here).
+
 ## On top of 1.9.1
 
 Merged upstream v1.9.1 (2026-09-15) — 18 commits, 2 conflicted files, both in the mirror.

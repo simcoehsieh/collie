@@ -119,7 +119,9 @@ export function HomeRoute() {
     return out;
   }, [data.workspaces, data.agents, data.shellPanes, data.scope?.host]);
   const [newSpaceOpen, setNewSpaceOpen] = useState(false);
-  const { prefs, setSpacesOpen, setQuotaOpen } = useDashPrefs();
+  // No `setLaunchOpen`: the launch strip is deliberately absent from this fork's dashboard (see the
+  // note where upstream renders it, below), and an unused binding is a lint error.
+  const { prefs, setSpacesOpen, setQuotaOpen, setIsolatedSpace, toggleHiddenSpace } = useDashPrefs();
   // FORK: the usage section draws only on a bridge that can answer `/api/quota` — absent from
   // `/api/config` is the feature off, and the dashboard is byte for byte what it was.
   const quotaOn = useQuotaEnabled();
@@ -230,6 +232,11 @@ export function HomeRoute() {
             pinned={prefs.pinned}
             onLongPress={hold}
             onClosePane={mayClose}
+            tabs={data.tabs}
+            isolated={prefs.isolatedSpace}
+            hidden={prefs.hiddenSpaces}
+            onIsolate={setIsolatedSpace}
+            onToggleHidden={toggleHiddenSpace}
           />
           {/* THE LAUNCH STRIP IS DELIBERATELY NOT HERE (fork, 2026-09-06). Upstream renders the
               operator's `launchers.toml` rows as one-tap buttons on the dashboard, and a tap
