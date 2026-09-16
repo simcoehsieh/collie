@@ -1577,7 +1577,12 @@ export function AgentChat({
           // meta on the path line ends where this column begins, because it lives in the row's centre
           // region and this is the right cluster; the two never share an edge and never had to.
           rightLead={
-            <div className="flex items-stretch gap-2 pr-3">
+            // NO GAP BETWEEN THE CHIPS AND THE MENU, and that is not a missing gap: the ⋮ is a 44px
+            // TAP BOX around a ~20px glyph, so its own left half already draws 12px of air. An 8px
+            // flex gap on top of that read as a hole between the chip and the menu (the operator,
+            // 2026-09-16). The boxes touch; what the eye measures — chip edge to glyph — is the
+            // button's own padding, and the 44px target is untouched.
+            <div className="flex items-stretch pr-3">
               {agent ? (
                 <>
                 {/* FORK: THE CHIPS ARE CENTRED, THE MENU IS STRETCHED. The cluster is `items-stretch`
@@ -1585,7 +1590,7 @@ export function AgentChat({
                     that row aligns to its TOP instead, which put the artifacts chip ~16px above the
                     menu glyph beside it (the operator's phone, 2026-09-16). Their own row centres
                     them against the same 60px, so the two read as one cluster again. */}
-                <span className="flex shrink-0 items-center gap-2">
+                <span className="flex shrink-0 items-center gap-1.5">
                 {/* FORK: the "3 files · +82 −11" chip that stood here is gone (2026-09-11, Simcoe:
                     it took header width and was never tapped). The numbers are still one tap away
                     in the pane menu's Changes row, and the mirror's own file chips still draw from
