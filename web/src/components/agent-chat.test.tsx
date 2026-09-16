@@ -322,7 +322,14 @@ describe("AgentChat — the pane header's identity block", () => {
     // never an SVG or other non-HTMLElement.
     const nameLine = slot(container, "lines")!.children[0] as HTMLElement;
     expect(nameLine.contains(meta)).toBe(true);
-    expect(nameLine.querySelector('[data-slot="pane-name"]')).not.toBeNull();
+    const nameSpan = nameLine.querySelector('[data-slot="pane-name"]')!;
+    expect(nameSpan).not.toBeNull();
+    // AGAINST THE NAME, not pushed to the corner (the operator, 2026-09-17: `claude ⧗ 59m`). jsdom
+    // has no layout, so the position is pinned structurally instead: the reading is the name's very
+    // next sibling, and nothing on it pushes it away — `ml-auto` is exactly how it used to sit at
+    // the far right, and is the one class that would silently put it back there.
+    expect(nameSpan.nextElementSibling).toBe(meta);
+    expect(meta.className).not.toContain("ml-auto");
     // And NOT on the workspace line, which is the half the operator asked to be rid of.
     // SAFETY: the lines block's second child is the plain <div> workspace row written in
     // agent-chat.tsx, never an SVG or other non-HTMLElement.

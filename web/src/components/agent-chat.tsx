@@ -1797,13 +1797,21 @@ export function AgentChat({
                       `self-baseline`, so those two share one text baseline and the icons do not drift
                       for a fix that is not about them. The block's height is unchanged — the meta
                       states its own 12px inside this line's 20px box, so 20 + 4 + 12 = 36px still
-                      holds (DESIGN.md §2). */}
+                      holds (DESIGN.md §2).
+
+                      IT SITS AGAINST THE NAME, not at the far right (the operator, 2026-09-17:
+                      `claude ⧗ 59m`, not `claude` then a gap then `⧗ 59m`). No `ml-auto`: the two
+                      are one subject and its reading, and the row's own `gap-2` between them is the
+                      same 8px the tile already takes from the name, so the three read as one run.
+                      Pushed to the corner it read as a second, unrelated cluster — and the corner
+                      belongs to the chips and the ⋮ (the rightLead note above). The name keeps
+                      `min-w-0 truncate`, so a long name is what gives way; the reading never is. */}
                   <PaneMeta
                     host={agent.host}
                     cache={agent.cache}
                     onOpenCache={() => setCacheSheetOpen(true)}
                     // The one descendant that takes its taps back from the surface under these lines.
-                    className="pointer-events-auto ml-auto self-baseline"
+                    className="pointer-events-auto self-baseline"
                   />
                 </div>
                 {/* LINE 2 IS WHERE THE PANE SITS AND WHAT IT IS RUNNING: the workspace, then the
