@@ -1580,6 +1580,12 @@ export function AgentChat({
             <div className="flex items-stretch gap-2 pr-3">
               {agent ? (
                 <>
+                {/* FORK: THE CHIPS ARE CENTRED, THE MENU IS STRETCHED. The cluster is `items-stretch`
+                    because upstream's ⋮ takes the row's whole height as its tap box; a 28px chip in
+                    that row aligns to its TOP instead, which put the artifacts chip ~16px above the
+                    menu glyph beside it (the operator's phone, 2026-09-16). Their own row centres
+                    them against the same 60px, so the two read as one cluster again. */}
+                <span className="flex shrink-0 items-center gap-2">
                 {/* FORK: the "3 files · +82 −11" chip that stood here is gone (2026-09-11, Simcoe:
                     it took header width and was never tapped). The numbers are still one tap away
                     in the pane menu's Changes row, and the mirror's own file chips still draw from
@@ -1596,6 +1602,7 @@ export function AgentChat({
                 {paneArtifactCount > 0 && (
                   <ArtifactCountChip count={paneArtifactCount} onClick={() => setDrawer("artifacts")} />
                 )}
+                </span>
                 <button
                   type="button"
                   onClick={() => setDrawer("paneMenu")}

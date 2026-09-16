@@ -3010,3 +3010,27 @@ describe("AgentChat: hand off", () => {
     expect(screen.queryByRole("button", { name: "Hand off to another agent" })).not.toBeInTheDocument();
   });
 });
+
+// ── FORK: THE HEADER'S RIGHT CLUSTER IS ONE CLUSTER ─────────────────────────
+// Upstream's corner row is `items-stretch`, because its ⋮ takes the whole 60px as a tap box. The
+// fork's count chips are 28px, and a fixed height in a stretch row aligns to its TOP — which put the
+// artifacts chip a visible 16px above the menu glyph beside it on the operator's phone (2026-09-16).
+// They get their own centred row inside the cluster.
+describe("AgentChat — the header's chips line up with the menu", () => {
+  it("centres the count chips against the row the ⋮ stretches across", async () => {
+    server.use(
+      http.get("/api/artifacts", () =>
+        HttpResponse.json({ ok: true, artifacts: [fixtureArtifact({ pane: { paneId: "w1:p1", workspaceId: "w1", workspaceLabel: "webapp", agent: "claude" } })] }),
+      ),
+    );
+    __resetArtifacts();
+    const { container } = renderChat();
+    const chip = await screen.findByRole("button", { name: /artifacts — open the list/i }, { timeout: 4000 });
+    const group = chip.parentElement!;
+    expect(group.className).toMatch(/(?:^|\s)items-center(?=\s|$)/);
+    // …and the group is a SIBLING of the menu, inside the stretched cluster — not nested in it.
+    const menu = container.querySelector('button[aria-label]')!;
+    expect(group.parentElement!.className).toMatch(/(?:^|\s)items-stretch(?=\s|$)/);
+    expect(menu).not.toBeNull();
+  });
+});
