@@ -1580,16 +1580,23 @@ export function AgentChat({
           // app-header.tsx) to 77px. The only thing here now is the 44px menu, under the floor, so
           // the floor is what sets the height and nothing in this corner can raise it.
           //
-          // RIGHT EDGES. `pr-3` is the line the corner lands on: the menu column's own edge. The
-          // meta on the path line ends where this column begins, because it lives in the row's centre
-          // region and this is the right cluster; the two never share an edge and never had to.
+          // RIGHT EDGES. `pr-1` is the line the corner lands on: the menu column's own edge. It was
+          // `pr-3`, and the header's own `pr-2` sits under it — 20px of inset against the 12px the
+          // brand mark takes on the left, so the whole right cluster hung short of its own margin and
+          // the chip beside the menu read as parked in the middle of nowhere (the operator,
+          // 2026-09-16: move it right). 4px here plus the header's 8px is that same 12px line.
+          // NOTHING INSIDE THE CLUSTER CHANGED: both tap boxes are the size they were, and what moved
+          // is where the column ends.
+          //
+          // The meta on the path line ends where this column begins, because it lives in the row's
+          // centre region and this is the right cluster; the two never share an edge and never had to.
           rightLead={
             // NO GAP BETWEEN THE CHIPS AND THE MENU, and that is not a missing gap: the ⋮ is a 44px
             // TAP BOX around a ~20px glyph, so its own left half already draws 12px of air. An 8px
             // flex gap on top of that read as a hole between the chip and the menu (the operator,
             // 2026-09-16). The boxes touch; what the eye measures — chip edge to glyph — is the
             // button's own padding, and the 44px target is untouched.
-            <div className="flex items-stretch pr-3">
+            <div className="flex items-stretch pr-1">
               {agent ? (
                 <>
                 {/* FORK: THE CHIPS ARE CENTRED, THE MENU IS STRETCHED. The cluster is `items-stretch`
