@@ -65,6 +65,14 @@ fix, decide whether upstream has now fixed **the same defect**. Load
 [`references/fix-comparison.md`](references/fix-comparison.md) and follow it — it defines what
 counts as the same defect, the evidence to gather, and the four possible verdicts.
 
+**Before asking, check the standing shapes.** Some fork decisions are not patches to be compared
+but SHAPES the operator has settled on, and an upstream release that walks back into one gets
+re-grafted rather than accepted. They are listed in `FORK.md` — today that is **the dashboard row's
+standing shape** (one line per pane, never the harness's own name, no model on the row). Each has a
+pinned test, so a merge that violates one usually shows up as a red test rather than as a conflict;
+a merge that violates one WITHOUT a red test is a gap in those tests and the fix includes closing
+it. Do not raise these as questions — they are already decided.
+
 Then **ask the operator with `AskUserQuestion`** before touching anything. Offer, at minimum:
 
 - **Merge the newest release** (name the tag).

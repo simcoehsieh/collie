@@ -227,6 +227,28 @@ one resolve. And **the annotate half outside the repo** — the CDP screenshot/p
 in `ai-live/tools/collie_shot/` and is named by `COLLIE_SHOT_COMMAND` in `~/.config/collie/.env`;
 unset means no route, no capability and no button, exactly like `COLLIE_QUOTA_COMMAND`.
 
+## The dashboard row's standing shape (2026-09-16)
+
+**One line per pane, and that line is never the harness's own name.** This is a standing decision,
+not a one-off patch: an upstream release that reintroduces a second line, or that puts `claude` back
+on line 1, gets re-grafted onto this shape rather than accepted as it arrives.
+
+Three rules, all in `web/src/components/agent-card.tsx`, each with a pinned test in
+`agent-card.test.tsx` so a merge cannot hand them back quietly:
+
+| Rule | Why |
+| --- | --- |
+| The model and effort never appear on the row | The agent's ICON already answers "which agent". Model and effort live on the pane's own header (`data-slot="header-model"`). |
+| Line 2 is withheld when it merely names the agent | Every pane here is opened from `launchers.toml`, so its tab is called `claude` / `codex` / `agy`. A tab with a name of its own (`develop`) is an address and stays. |
+| When line 1 IS the harness's name and a live title exists, the TITLE moves up and line 2 goes away | Otherwise line 1 says in words what the tile says in a picture, and the one thing that tells two rows apart sits in grey underneath. |
+
+Only the title is promoted. In a tab-scoped list line 2 carries the pane's PATH, which is an
+address and belongs underneath — `withheldTail === liveTitle` is that distinction.
+
+What this fork is defending against specifically: upstream 1.10.0 added "a named one-pane tab names
+its pane, and Claude's own title moves to the dashboard row's second line". On an install where
+every tab is named after its launcher, that rule produces exactly the row this section forbids.
+
 ## Taking upstream's changes
 
 The procedure below is automated by the **`collie-upstream-sync` skill**, which lives in this repo

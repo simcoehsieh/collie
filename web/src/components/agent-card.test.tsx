@@ -174,6 +174,41 @@ describe("AgentCard — line 2 withholds a tab that just names the agent", () =>
   });
 });
 
+// ── FORK: THE ROW IS ONE LINE, AND IT IS NOT THE HARNESS'S NAME ─────────────
+// Upstream 1.10.0 gave a named one-pane tab's row the agent's self-written title on line 2. Here
+// every pane comes out of `launchers.toml`, so its tab is CALLED `claude` — which made line 1 say
+// in words what the tile says in a picture, and pushed the only distinguishing text into grey on
+// line 2. The operator's standing shape (2026-09-16): the title moves up and line 2 goes away.
+// Pinned here so an upstream merge cannot quietly hand the second line back.
+describe("AgentCard — a row named after the harness takes its title instead", () => {
+  const at = (over: Partial<AgentView>) =>
+    render(
+      <AgentCard agent={agent(over)} onClick={() => {}} scope="place" statusStyle="dot" density="row" />,
+    ).container;
+
+  it("promotes the title to line 1 and leaves no line 2", () => {
+    const c = at({ soleTabName: "claude", agent: "claude", terminalTitle: "Transcript 空間問題" });
+    expect(c.querySelector('[data-slot="agent-row-title"]')).toHaveTextContent("Transcript 空間問題");
+    expect(c.querySelector('[data-slot="agent-row-detail"]')).toBeNull();
+  });
+
+  it("leaves a pane with a name of its own alone, both lines", () => {
+    const c = at({ soleTabName: "develop", agent: "claude", terminalTitle: "Transcript 空間問題" });
+    expect(c.querySelector('[data-slot="agent-row-title"]')).toHaveTextContent("develop");
+    expect(c.querySelector('[data-slot="agent-row-detail"]')).toHaveTextContent("Transcript 空間問題");
+  });
+
+  it("does not promote a stale title", () => {
+    const c = at({
+      soleTabName: "claude",
+      agent: "claude",
+      terminalTitle: "Transcript 空間問題",
+      terminalTitleStale: true,
+    });
+    expect(c.querySelector('[data-slot="agent-row-title"]')).toHaveTextContent("claude");
+  });
+});
+
 // ── FORK: THE ROW DOES NOT NAME THE MODEL ───────────────────────────────────
 // It did, on its own line and then at the end of the name line. The operator's call (2026-09-15):
 // the agent's icon already answers "which agent is this", which is what the dashboard is asked, and

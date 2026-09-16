@@ -255,7 +255,7 @@ function AgentCardImpl({
           tailMono: false,
           tailPositional: place.tab?.positional ?? false,
         };
-  const { primary, detailLead } = lines;
+  const { detailLead } = lines;
   // FORK: A TAB NAMED AFTER THE HARNESS SAYS NOTHING THE ICON HAS NOT SAID. Tabs here are opened by
   // `launchers.toml`, so they are called `claude`, `codex`, `agy` — and line 2 then repeated, in
   // words, the tile sitting on line 1. The operator's call (2026-09-15): drop it. A tab with a name
@@ -267,7 +267,29 @@ function AgentCardImpl({
     lines.detailTail !== null &&
     canonicalAgent(lines.detailTail.trim().toLowerCase()) === canonicalAgent(agent.agent?.toLowerCase() ?? "") &&
     canonicalAgent(agent.agent?.toLowerCase() ?? "") !== "";
-  const detailTail = tailNamesTheAgent ? null : lines.detailTail;
+  const withheldTail = tailNamesTheAgent ? null : lines.detailTail;
+  // FORK: AND NEITHER DOES LINE 1 (2026-09-16, after upstream's 1.10.0 naming rule).
+  //
+  // A pane opened from `launchers.toml` sits in a tab called `claude`, so the pane is CALLED
+  // `claude` — and the row then spent line 1 saying, in words, what the tile beside it already
+  // said in a picture, while the one thing that tells two of them apart (the title the agent
+  // writes for itself) sat on line 2 in grey. Two rows, four lines, and the only two that
+  // mattered were the small grey ones.
+  //
+  // So when the name IS the harness's own name and there is a real title underneath, the title
+  // MOVES UP and line 2 goes away: one line per pane, saying the one thing the icon cannot.
+  // A pane with a name of its own (`/rename`, a named tab, a pane label) never enters this branch
+  // and keeps both lines. This is the operator's standing shape for the dashboard row — see the
+  // note in FORK.md; an upstream merge that reintroduces a second line has to be re-grafted onto
+  // it, not accepted as-is.
+  const primaryNamesTheAgent =
+    canonicalAgent(lines.primary.trim().toLowerCase()) === canonicalAgent(agent.agent?.toLowerCase() ?? "") &&
+    canonicalAgent(agent.agent?.toLowerCase() ?? "") !== "";
+  // Only the TITLE is promoted. In a tab-scoped list line 2 is the pane's path, which is an address
+  // rather than a name and belongs underneath; `withheldTail === liveTitle` is that distinction.
+  const promoteTail = primaryNamesTheAgent && withheldTail !== null && withheldTail === liveTitle;
+  const primary = promoteTail && withheldTail !== null ? withheldTail : lines.primary;
+  const detailTail = promoteTail ? null : withheldTail;
   // A workspace-grouped row whose tab has no name of its own reads its position instead — `tab 2` —
   // via `tabTitle` (`lib/pane-name.ts`) — or, when the raw label carries no digit at all, nothing:
   // the slot is then skipped outright.
