@@ -1953,9 +1953,11 @@ describe("AgentChat — zen mode", () => {
     await openPaneMenu(user);
     // Exactly ONE way in, and it is this row — a second entry point creeping back in fails here.
     expect(screen.getAllByRole("button", { name: "Zen mode" })).toHaveLength(1);
-    await user.keyboard("{Escape}");
 
-    await user.click(await screen.findByRole("button", { name: "Display settings" }));
+    // The display prefs are a row of THIS SAME SHEET since 2026-09-19 (they had a pill on the
+    // actions belt before), so this also pins the one path that opens the dock: the row closes the
+    // sheet and hands through to the composer's handle.
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
     expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Zen mode" })).not.toBeInTheDocument();
   });

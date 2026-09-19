@@ -538,6 +538,9 @@ export const es: Dictionary = {
   // --- quickActions (one-tap reply dock) ---
   "quickActions.group.confirm": "confirmar",
   "quickActions.group.common": "comunes",
+  "quickActions.group.others": "otros",
+  "quickActions.group.harness": "agent",
+  "quickActions.confirm": "Pulsa otra vez para confirmar",
 
   // --- find (the in-mirror / in-history find bar) ---
   "find.placeholder": "Buscar en {subject}…",

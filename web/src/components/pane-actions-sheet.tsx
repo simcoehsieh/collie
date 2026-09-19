@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRightLeft, BookOpen, Camera, FileDiff, Maximize2, Monitor, Pencil, ScrollText, Search, SlidersHorizontal, XCircle, FileCode2 } from "lucide-react";
+import { ArrowRightLeft, BookOpen, Camera, FileDiff, Maximize2, Monitor, Pencil, ScrollText, Search, Settings2, SlidersHorizontal, XCircle, FileCode2 } from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { ActionRow, DestructiveActionRow, RenameView } from "@/components/action-sheet-rows";
@@ -53,6 +53,15 @@ interface PaneActionsSheetProps {
    *  this collie and types into nothing. Absence is the gate, as it is for find, history and zen — the
    *  pane strip passes no callback, so a strip pill opens the sheet it always did. */
   onSettings?: () => void;
+  /**
+   * FORK: open the display prefs — wrap, font size, raw terminal, tap-to-focus.
+   *
+   * A READ row like the four around it: it changes how this phone draws the mirror and types into
+   * nothing. It had a permanent pill on the actions belt until 2026-09-19; the operator's call was
+   * that a control you settle once does not deserve a seat on the row the thumb uses every minute.
+   * The dock it opens is the composer's, so the callback crosses through `ComposerHandle`.
+   */
+  onDisplay?: () => void;
   /** Enter zen mode — hide every Collie surface and leave the mirror alone on the screen.
    *
    *  The THIRD read row, and it is gated twice through this one prop: `Settings → Zen mode` decides
@@ -103,6 +112,7 @@ export function PaneActionsSheet({
   onFind,
   onHistory,
   onSettings,
+  onDisplay,
   onZen,
   onDiff,
   onAnnotate,
@@ -287,7 +297,7 @@ export function PaneActionsSheet({
           Hidden in `rename` mode with the rest of the list — that view is a sub-screen, not a
           section. */}
       {mode === "actions" &&
-        (onFind || onHistory || onSettings || onZen || onDiff || onDocs || onAnnotate || onArtifacts || onHandoff) && (
+        (onFind || onHistory || onSettings || onZen || onDisplay || onDiff || onDocs || onAnnotate || onArtifacts || onHandoff) && (
         <div className="mb-1 flex flex-col gap-1">
           {onFind && (
             <ActionRow
@@ -322,6 +332,19 @@ export function PaneActionsSheet({
               onClick={() => {
                 onClose();
                 onSettings();
+              }}
+            />
+          )}
+          {/* FORK: the display prefs, directly above Zen. Both are "look at the output
+              differently"; this one settles how the mirror draws and Zen is the one that takes the
+              screen, so they sit together with the reversible one first. */}
+          {onDisplay && (
+            <ActionRow
+              icon={<Settings2 className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("composer.controls.displayAria")}
+              onClick={() => {
+                onClose();
+                onDisplay();
               }}
             />
           )}

@@ -532,6 +532,9 @@ export const ko: Dictionary = {
   // --- quickActions (one-tap reply dock) ---
   "quickActions.group.confirm": "확인",
   "quickActions.group.common": "일반",
+  "quickActions.group.others": "기타",
+  "quickActions.group.harness": "agent",
+  "quickActions.confirm": "한 번 더 눌러 확인",
 
   // --- find (the in-mirror / in-history find bar) ---
   "find.placeholder": "{subject}에서 검색...",

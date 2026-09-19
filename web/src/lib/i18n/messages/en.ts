@@ -556,6 +556,9 @@ export const en = {
   // --- quickActions (one-tap reply dock) ---
   "quickActions.group.confirm": "confirm",
   "quickActions.group.common": "common",
+  "quickActions.group.others": "others",
+  "quickActions.group.harness": "agent",
+  "quickActions.confirm": "Again to confirm",
 
   // --- find (the in-mirror / in-history find bar) ---
   "find.placeholder": "Find in {subject}…",

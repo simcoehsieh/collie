@@ -534,6 +534,9 @@ export const ja: Dictionary = {
   // --- quickActions (one-tap reply dock) ---
   "quickActions.group.confirm": "確認",
   "quickActions.group.common": "一般",
+  "quickActions.group.others": "その他",
+  "quickActions.group.harness": "agent",
+  "quickActions.confirm": "もう一度押して確定",
 
   // --- find (the in-mirror / in-history find bar) ---
   "find.placeholder": "{subject}を検索...",

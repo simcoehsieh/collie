@@ -284,12 +284,32 @@ export interface ActionsRowProps {
     /** Another pane needs you: a red dot on the mark's corner. The label says so in words. */
     alert?: boolean;
   };
+  /**
+   * FORK: draw the harness's own section of the belt. Default true, which is upstream's behaviour
+   * and what the playground and every other caller get.
+   *
+   * The pane composer passes FALSE. Those commands moved into the Quick dock (components/
+   * quick-actions.tsx) on the operator's call, 2026-09-19: on a phone the belt already had to pan
+   * sideways to reach them, and a dock has room to draw four of them as a grid under the thumb.
+   * They are not drawn twice — a control in two places is two places to keep in step — so the belt
+   * keeps only Collie's own actions and gets its width back.
+   */
+  showHarness?: boolean;
 }
 
-export function ActionsRow({ general, agent, mine, onRun, disabled, handle }: ActionsRowProps) {
+export function ActionsRow({
+  general,
+  agent,
+  mine,
+  onRun,
+  disabled,
+  handle,
+  showHarness = true,
+}: ActionsRowProps) {
   useLocale();
 
-  const harnessItems = useHarnessBarItems(agent, mine);
+  const shipped = useHarnessBarItems(agent, mine);
+  const harnessItems = showHarness ? shipped : [];
   const switchBlock = useSwitchBlockWidth(!!handle);
   const switchInset = switchBlock.width ?? SWITCH_PILL_INSET;
 
@@ -410,7 +430,7 @@ export function ActionsRow({ general, agent, mine, onRun, disabled, handle }: Ac
                 ))}
               </div>
             )}
-            <HarnessBar agent={agent} mine={mine} onRun={onRun} disabled={disabled} />
+            {showHarness && <HarnessBar agent={agent} mine={mine} onRun={onRun} disabled={disabled} />}
             {/* THE TRAILING SPACER — a real flex child, not padding. `paddingRight` on this
                 scroller was tried first and measured wrong in Chrome: the scroller is a `flex`
                 row and the harness section is itself a nested `flex` row (`BELT_SECTION`), so the

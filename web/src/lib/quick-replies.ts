@@ -25,10 +25,24 @@ export interface QuickReplyGroup {
 
 // Shared by every LLM harness. Deduped to distinct intents: no yes/ok/approve/go-ahead pile-up, and
 // no "stop" that just duplicates Esc in the Keys pad.
+//
+// FORK — ONE GROUP IS PRIMARY AND THE REST IS ONE TAP DOWN (the operator, 2026-09-19: "Quick is a
+// bit useless, the only one in it I need is commit and push"). Six equal buttons made the dock a
+// wall to read every time, to reach the one phrase that is typed daily; yes / no / continue / retry
+// / skip are typed in bursts when a prompt is on screen and not at all for days between.
+//
+// THE SPLIT IS DATA, NOT A PREDICATE IN THE COMPONENT. A group titled `others` renders collapsed —
+// one button that opens it — and every other group renders open. That keeps the rule readable from
+// the catalog alone, keeps the shell's y/n pair open (it has no `others` group, so nothing folds),
+// and lets an operator's own `quick.toml` make the same choice by naming a group `others`, which a
+// hard-coded "everything but the first group" rule would have taken away from them.
 const AGENT: readonly QuickReplyGroup[] = [
-  { title: "confirm", items: ["yes", "no"] },
-  { title: "common", items: ["continue", "commit and push", "retry", "skip"] },
+  { title: "common", items: ["commit and push"] },
+  { title: "others", items: ["yes", "no", "continue", "retry", "skip"] },
 ];
+
+/** The group title that means "fold me": see {@link AGENT}. Exported so the dock and its test agree. */
+export const FOLDED_GROUP = "others";
 
 // A bare shell has no notion of continuing or skipping a turn — the only near-universal one-tap
 // replies are the classic Unix y/n confirmations, so that's all it gets. An almost-empty dock is the

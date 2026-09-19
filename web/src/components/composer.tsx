@@ -1,22 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, CSSProperties, ReactNode } from "react";
 import { useRevalidator } from "react-router";
-import {
-  Check,
-  FileText,
-  Image,
-  Keyboard,
-  Loader2,
-  Mic,
-  Paperclip,
-  Send,
-  Settings2,
-  Slash,
-  Square,
-  Terminal,
-  X,
-  Zap,
-} from "lucide-react";
+import { Check, FileText, Image, Keyboard, Loader2, Mic, Paperclip, Send, Slash, Square, Terminal, X, Zap } from "lucide-react";
 
 import { applyDraftFontSize, fontStack, inputFocusZoomsPage } from "@/hooks/use-display-prefs";
 import type { DisplayPrefs } from "@/hooks/use-display-prefs";
@@ -35,6 +20,7 @@ import { ChatInput } from "@/components/ui/chat/chat-input";
 import { NavTray } from "@/components/nav-tray";
 import { CommandPalette } from "@/components/command-palette";
 import { QuickActionsContent } from "@/components/quick-actions";
+import { useHarnessBarItems } from "@/components/harness-bar";
 import { ActionsRow } from "@/components/actions-row";
 import { DisplayPrefsContent } from "@/components/display-prefs";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -73,6 +59,13 @@ import { ImageMarkupSheet } from "@/components/annotate-sheet";
 export interface ComposerHandle {
   /** Focus the input and put the caret at the end — used by the mirror-tap-to-focus in AgentChat. */
   focusInput: () => void;
+  /**
+   * FORK: open the display-prefs dock. The prefs left the actions belt for the pane menu
+   * (`⋮ → Display settings`), and the menu lives in AgentChat while the dock lives here — so the
+   * one crossing is this method rather than lifting the composer's drawer state up a level for a
+   * single row. Routed through `requestDrawer`, so a staged key queue still raises its confirm.
+   */
+  openDisplay: () => void;
 }
 
 interface ComposerProps {
@@ -634,7 +627,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const effectiveStable = suppressEcho(terminalDraft);
   const effectiveRaw = suppressEcho(rawTerminalDraft);
 
-  useImperativeHandle(ref, () => ({ focusInput: focusInputImmediately }), []);
+  // No dependency array: `openDisplay` routes through `requestDrawer`, which closes over the
+  // current drawer and the staged-key count, so a handle frozen at mount would consult a stale
+  // queue and skip the discard confirm (ADR 0005). The handle is only ever called imperatively, so
+  // a fresh identity each render costs nothing.
+  useImperativeHandle(ref, () => ({
+    focusInput: focusInputImmediately,
+    openDisplay: () => {
+      requestDrawer("display");
+    },
+  }));
 
   useEffect(
     () => () => {
@@ -720,6 +722,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // The operator's own palette rows, resolved against the shipped catalog for both the button's
   // visibility test here and the palette's own list below (same call, same arguments).
   const operatorCommands = useOperatorCommands();
+  // FORK: the harness's own commands, read here rather than inside the belt — they are drawn by the
+  // Quick dock now (`showHarness={false}` on ActionsRow says why). The hook already honours the
+  // operator's Settings switch and their `bar = true` rows, so the dock inherits both.
+  const harnessItems = useHarnessBarItems(agent, operatorCommands);
   const commands = commandsFor(agent, operatorCommands);
   // What this collie takes as an attachment, off the same one-shot /api/config read. On a bridge
   // that publishes nothing (older than the field, or the read has not landed) `uploadLimits` answers
@@ -1405,6 +1411,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               agent={agent}
               isShell={isShell}
               disabled={locked || sending}
+              // FORK: the harness's own commands live here now rather than in a tinted section of
+              // the belt (see `showHarness` on ActionsRow below).
+              harness={harnessItems}
             />
           </ComposerDock>
         )}
@@ -1538,22 +1547,21 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     },
                   ]
                 : []),
-              // Display prefs. Not gated on `locked`: wrap/font/raw-terminal are local view
-              // state, so a read-only device or a gone pane can still make its mirror readable.
-              {
-                id: "display",
-                icon: Settings2,
-                label: translate("composer.controls.displayAria"),
-                word: translate("composer.controls.display"),
-                on: drawer === "display",
-                expanded: drawer === "display",
-                onSelect: () => requestDrawer(drawer === "display" ? null : "display"),
-              },
+              // NO DISPLAY PILL HERE ANY MORE (the operator, 2026-09-19: "this one can go inside
+              // the ⋮ at the top right"). Wrap, font size, raw terminal and tap-to-focus are set
+              // once and then left alone for weeks, and this belt is the row the thumb uses every
+              // minute — a permanent pill for a settle-once control is the wrong trade at phone
+              // width. The dock itself is unchanged and still opens here; what opens it is now a
+              // row in the pane menu, through `openDisplay` on this component's handle.
           ]}
           agent={agent}
           mine={operatorCommands}
           onRun={(command) => send(command, false)}
           disabled={locked}
+          // FORK: the harness's commands are in the Quick dock above, not on this belt. Drawing
+          // them in both places would be two controls to keep in step and a belt that still has to
+          // pan sideways, which is what moving them was meant to end.
+          showHarness={false}
           // The pane switcher: a Switch pill pinned at this belt's right end, above Send, and the
           // belt itself as the drag surface behind it. The pane decides whether there is one
           // (agent-chat.tsx); this row draws the pill, wires the drag, and costs no height.

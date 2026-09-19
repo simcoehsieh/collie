@@ -2800,6 +2800,10 @@ export function AgentChat({
           // already spent. It hands over to the sheet below in one React event, so the actions sheet
           // unmounts in the same commit the settings sheet mounts.
           onSettings={() => setDrawer("paneSettings")}
+          // FORK: the display prefs moved off the actions belt onto this sheet. The dock they open
+          // is the composer's own, so the row reaches it through the handle rather than this
+          // component learning what a display pref is.
+          onDisplay={() => composerRef.current?.openDisplay()}
         />
         {/* This pane's own settings — one switch today, the prompt-cache warning (ADR 0042). Scoped to
             the PANE's machine, because `?host=` there names where the pane lives; the preference itself

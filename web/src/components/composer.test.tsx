@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { __resetSendQueue, queuedForPane } from "@/lib/send-queue";
 import type { ComponentProps } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -13,7 +13,7 @@ import { __resetOperatorCommands } from "@/lib/operator-config";
 import { server } from "@/test/setup";
 import { fixtureServers, recordReply } from "@/test/handlers";
 import { CrewProvider } from "./crew-provider";
-import { Composer, TUI_SETTLE_MS } from "./composer";
+import { Composer, TUI_SETTLE_MS, type ComposerHandle } from "./composer";
 import { type ServerSummary } from "@/lib/types";
 
 // A guarded send is TWO reply calls: type (submit:false), then — once the text is verified on the
@@ -58,8 +58,10 @@ beforeAll(() => {
 });
 beforeEach(() => clearStatus());
 
-function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
-  const props: ComponentProps<typeof Composer> = {
+/** The props every case starts from. Extracted so a harness that wraps Composer (the display-prefs
+ *  door below) does not keep a second copy of them that drifts. */
+function baseComposerProps(): ComponentProps<typeof Composer> {
+  return {
     paneId: "w1:p1",
     agent: "claude",
     isShell: false,
@@ -76,8 +78,11 @@ function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}
     setTapToFocus: vi.fn(),
     setExpandClippedReply: vi.fn(),
     onSent: vi.fn(),
-    ...overrides,
   };
+}
+
+function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
+  const props: ComponentProps<typeof Composer> = { ...baseComposerProps(), ...overrides };
   const router = createMemoryRouter([{ path: "/", element: <Composer {...props} /> }]);
   render(<RouterProvider router={router} />);
   return props;
@@ -2151,6 +2156,13 @@ describe("Composer — keys dock (in-flow, not an overlay)", () => {
   });
 });
 
+/** Open the Quick dock's folded second level. The burst-use replies (yes / no / continue / retry /
+ *  skip) live behind one button now; `commit and push` is the one that stays on the first level
+ *  (lib/quick-replies.ts says why). */
+async function openOthers(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: /^others$/i }));
+}
+
 describe("Composer — quick dock (in-flow, matches the keys dock)", () => {
   it("tapping Quick docks the reply grids in the normal flow (no fixed overlay) and toggles it closed", async () => {
     const user = userEvent.setup();
@@ -2159,23 +2171,23 @@ describe("Composer — quick dock (in-flow, matches the keys dock)", () => {
     const quick = screen.getByRole("button", { name: "Quick" });
     expect(quick).toHaveAttribute("aria-expanded", "false");
     // Closed by default — none of the quick replies are mounted.
-    expect(screen.queryByRole("button", { name: "yes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "commit and push" })).not.toBeInTheDocument();
 
     await user.click(quick);
     expect(quick).toHaveAttribute("aria-expanded", "true");
 
-    // The reply grid is now mounted ("yes" is a good witness)…
-    const yes = screen.getByRole("button", { name: "yes" });
-    expect(yes).toBeInTheDocument();
+    // The reply grid is now mounted ("commit and push" is the first-level witness)…
+    const primary = screen.getByRole("button", { name: "commit and push" });
+    expect(primary).toBeInTheDocument();
     // …and it is IN-FLOW like the keys dock, not inside a BottomSheet's covering role="dialog".
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(yes.closest('[aria-modal="true"]')).toBeNull();
-    expect(yes.closest(".fixed")).toBeNull();
+    expect(primary.closest('[aria-modal="true"]')).toBeNull();
+    expect(primary.closest(".fixed")).toBeNull();
 
     // Tapping Quick again closes the dock (single-valued drawer toggle).
     await user.click(quick);
     expect(quick).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("button", { name: "yes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "commit and push" })).not.toBeInTheDocument();
   });
 
   it("opening Quick closes an open Keys dock (shared single-valued drawer)", async () => {
@@ -2188,7 +2200,7 @@ describe("Composer — quick dock (in-flow, matches the keys dock)", () => {
     await user.click(screen.getByRole("button", { name: "Quick" }));
     // Keys unmounts, Quick mounts — only one dock at the single placement site.
     expect(screen.queryByRole("button", { name: "Esc" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "yes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "commit and push" })).toBeInTheDocument();
   });
 
   it("the dock's own X close button dismisses it", async () => {
@@ -2196,10 +2208,10 @@ describe("Composer — quick dock (in-flow, matches the keys dock)", () => {
     renderComposer();
 
     await user.click(screen.getByRole("button", { name: "Quick" }));
-    expect(screen.getByRole("button", { name: "yes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "commit and push" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Close Quick" }));
-    expect(screen.queryByRole("button", { name: "yes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "commit and push" })).not.toBeInTheDocument();
   });
 
   it("a quick-action tap sends its text through the reply path, then closes the dock", async () => {
@@ -2209,14 +2221,14 @@ describe("Composer — quick dock (in-flow, matches the keys dock)", () => {
     const props = renderComposer();
 
     await user.click(screen.getByRole("button", { name: "Quick" }));
-    await user.click(screen.getByRole("button", { name: "continue" }));
+    await user.click(screen.getByRole("button", { name: "commit and push" }));
 
-    await waitFor(() => expect(replyText).toBe("continue"));
+    await waitFor(() => expect(replyText).toBe("commit and push"));
     expect(props.onSent).toHaveBeenCalled();
     // The dock deliberately OUTLIVES the send — the ✓ has to land somewhere the user is still
     // looking — and closes itself once the echo has been seen.
     await waitFor(
-      () => expect(screen.queryByRole("button", { name: "continue" })).not.toBeInTheDocument(),
+      () => expect(screen.queryByRole("button", { name: "commit and push" })).not.toBeInTheDocument(),
       { timeout: 3000 },
     );
   });
@@ -2240,6 +2252,7 @@ describe("Composer — quick dock (in-flow, matches the keys dock)", () => {
     renderComposer();
 
     await user.click(screen.getByRole("button", { name: "Quick" }));
+    await openOthers(user);
     await user.click(screen.getByRole("button", { name: "continue" }));
 
     // The tapped reply is busy; an untapped sibling is locked out so a second send can't race it.
@@ -2264,6 +2277,7 @@ describe("Composer — quick dock (in-flow, matches the keys dock)", () => {
     renderComposer();
 
     await user.click(screen.getByRole("button", { name: "Quick" }));
+    await openOthers(user);
     await user.click(screen.getByRole("button", { name: "continue" }));
 
     // No ✓, no close — the reply never landed, so the dock stays put for a retry.
@@ -2272,13 +2286,43 @@ describe("Composer — quick dock (in-flow, matches the keys dock)", () => {
   });
 });
 
-describe("Composer — display prefs behind the gear", () => {
-  it("the View row is gone; wrap/raw/font live behind the Display gear as labelled controls", async () => {
-    const user = userEvent.setup();
-    renderComposer();
+/**
+ * The display prefs left the actions belt for the pane menu (⋮ → Display settings, 2026-09-19), and
+ * the menu lives in AgentChat while the dock lives in Composer — so the one crossing is
+ * `ComposerHandle.openDisplay`. This file renders Composer alone, so it renders the DOOR the menu
+ * row is: a plain button that calls the handle. `agent-chat.test.tsx` pins the real row.
+ */
+function renderComposerWithDisplayDoor(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
+  const props: ComponentProps<typeof Composer> = { ...baseComposerProps(), ...overrides };
+  function Harness() {
+    const ref = useRef<ComposerHandle>(null);
+    return (
+      <>
+        <button type="button" onClick={() => ref.current?.openDisplay()}>
+          Display settings
+        </button>
+        <Composer ref={ref} {...props} />
+      </>
+    );
+  }
+  const router = createMemoryRouter([
+    { path: "/", element: <><Harness /><StatusSentinel /></> },
+  ]);
+  render(<RouterProvider router={router} />);
+  return props;
+}
 
-    // Nothing display-related is on the permanent rows any more.
+describe("Composer — display prefs behind the gear", () => {
+  it("the belt carries no display pill at all; wrap/raw/font live behind the pane menu's row", async () => {
+    const user = userEvent.setup();
+    renderComposerWithDisplayDoor();
+
+    // Nothing display-related is on the permanent rows any more — and since 2026-09-19 that
+    // includes the pill itself: the belt is Keys / Type / Quick / Agent and nothing else. The
+    // button tapped below is this file's stand-in for the pane-menu row (see the harness above).
     expect(screen.queryByRole("button", { name: "Decrease font size" })).not.toBeInTheDocument();
+    const belt = document.querySelector('[data-slot="composer-actions"]')!;
+    expect(belt.querySelector('[aria-label="Display settings"]')).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Display settings" }));
 
@@ -2290,7 +2334,7 @@ describe("Composer — display prefs behind the gear", () => {
 
   it("the Display dock shares the single drawer slot with Keys", async () => {
     const user = userEvent.setup();
-    renderComposer();
+    renderComposerWithDisplayDoor();
 
     await user.click(screen.getByRole("button", { name: "Display settings" }));
     expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
@@ -2302,9 +2346,9 @@ describe("Composer — display prefs behind the gear", () => {
 
   it("display prefs stay reachable on a read-only device", async () => {
     const user = userEvent.setup();
-    renderComposer({ readOnly: true });
+    renderComposerWithDisplayDoor({ readOnly: true });
 
-    // Keys/Quick are write affordances and lock; the gear is local view state and must not.
+    // Keys/Quick are write affordances and lock; the prefs are local view state and must not.
     expect(screen.getByRole("button", { name: "Keys" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Display settings" }));
     expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
@@ -2353,7 +2397,6 @@ describe("Composer — a composed key queue is guarded on the way out", () => {
   it.each([
     ["the Keys toggle", () => controlsToggle("Keys")],
     ["the Quick toggle", () => controlsToggle("Quick")],
-    ["the Display gear", () => screen.getByRole("button", { name: "Display settings" })],
   ])("%s also needs a second tap while keys are staged", async (_label, getButton) => {
     const user = userEvent.setup();
     renderComposerWithStatus();
@@ -2364,6 +2407,23 @@ describe("Composer — a composed key queue is guarded on the way out", () => {
 
     await user.click(getButton());
     expect(screen.queryByRole("button", { name: "Remove Ctrl Tab" })).not.toBeInTheDocument();
+  });
+
+  // The pane menu's Display row is the same exit and takes the same guard — which is the whole
+  // reason `ComposerHandle.openDisplay` routes through `requestDrawer` rather than setting the
+  // drawer directly. Its own case, because it arrives through the handle rather than off the belt.
+  it("the pane menu's Display row also needs a second tap while keys are staged", async () => {
+    const user = userEvent.setup();
+    renderComposerWithDisplayDoor();
+    await stageAKey(user);
+
+    const row = () => screen.getByRole("button", { name: "Display settings" });
+    await user.click(row());
+    expect(screen.getByRole("button", { name: "Remove Ctrl Tab" })).toBeInTheDocument();
+
+    await user.click(row());
+    expect(screen.queryByRole("button", { name: "Remove Ctrl Tab" })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
   });
 
   // Over-guarding trains you to double-tap through the confirm reflexively, which kills its value
@@ -2405,14 +2465,62 @@ describe("Composer — a composed key queue is guarded on the way out", () => {
   });
 });
 
+// ── FORK: WHAT THE QUICK DOCK IS FOR NOW (2026-09-19) ───────────────────────
+// It held six equal reply buttons and the operator used one of them: "Quick is a bit useless, the
+// only one in it I need is commit and push". So the harness's own commands moved in from the
+// actions belt — where reaching them meant panning the belt sideways — and the burst-use phrases
+// moved one tap down. Three things are pinned here because each is a decision an upstream merge
+// could quietly undo: the harness rows are IN this dock, they are NOT on the belt, and a row marked
+// dangerous still takes two taps after the move.
+describe("Composer — the Quick dock carries the harness's own commands", () => {
+  it("draws them in the dock and NOT on the belt", async () => {
+    const user = userEvent.setup();
+    renderComposer({ agent: "claude" });
+
+    const belt = document.querySelector('[data-slot="composer-actions"]')!;
+    expect(belt.querySelector('[data-slot="harness-bar"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: "Model" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Quick" }));
+    expect(screen.getByRole("button", { name: "Model" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compact" })).toBeInTheDocument();
+  });
+
+  it("sends the command the row names", async () => {
+    const user = userEvent.setup();
+    let replyText: string | null = null;
+    server.use(replyHandler((typed) => (replyText = typed)));
+    renderComposer({ agent: "claude" });
+
+    await user.click(screen.getByRole("button", { name: "Quick" }));
+    await user.click(screen.getByRole("button", { name: "Model" }));
+
+    await waitFor(() => expect(replyText).toBe("/model"));
+  });
+
+  it("a shell pane has no harness rows and the dock is its replies alone", async () => {
+    const user = userEvent.setup();
+    renderComposer({ agent: "shell", isShell: true });
+
+    await user.click(screen.getByRole("button", { name: "Quick" }));
+    expect(screen.getByRole("button", { name: "y" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Model" })).not.toBeInTheDocument();
+    // No folded level either — the shell set is two buttons and has nothing to hide.
+    expect(screen.queryByRole("button", { name: /^others$/i })).not.toBeInTheDocument();
+  });
+});
+
 describe("Composer — quick replies follow the pane kind", () => {
   it("an agent pane gets the agent set", async () => {
     const user = userEvent.setup();
     renderComposer({ agent: "claude", isShell: false });
     await user.click(screen.getByRole("button", { name: "Quick" }));
 
-    expect(screen.getByRole("button", { name: "continue" })).toBeInTheDocument();
+    // The first level is the phrase typed daily; the burst-use set is one tap down.
     expect(screen.getByRole("button", { name: "commit and push" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "continue" })).not.toBeInTheDocument();
+    await openOthers(user);
+    expect(screen.getByRole("button", { name: "continue" })).toBeInTheDocument();
   });
 
   it("a shell pane gets y/n, not the agent phrases", async () => {
