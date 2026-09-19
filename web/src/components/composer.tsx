@@ -23,6 +23,7 @@ import { CommandPalette } from "@/components/command-palette";
 import { QuickActionsContent } from "@/components/quick-actions";
 import { useHarnessBarItems } from "@/components/harness-bar";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { isComposingKey } from "@/lib/ime";
 import { ActionsRow } from "@/components/actions-row";
 import { DisplayPrefsContent } from "@/components/display-prefs";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -1748,6 +1749,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 ? direct.onKeyDown
                 : (e) => {
                     if (e.key !== "Enter") return;
+                    // An IME is committing a candidate, not sending a message (lib/ime.ts). This
+                    // is the first Enter of every 繁體中文 word typed on a desktop, so without it
+                    // Enter-to-send makes the composer unusable in Chinese.
+                    if (isComposingKey(e.nativeEvent)) return;
                     // FORK: ON A PHYSICAL KEYBOARD, ENTER SENDS AND SHIFT+ENTER BREAKS THE LINE —
                     // the convention every terminal and every chat client on a desktop already
                     // has, and the one the operator asked for (2026-09-19). Cmd/Ctrl+Enter keeps

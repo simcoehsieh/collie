@@ -2645,6 +2645,69 @@ describe("Composer — a fine pointer gets the terminal, not the phone composer"
     await waitFor(() => expect(sent).toContainEqual(["Escape"]));
   });
 
+  // ── THE IME'S KEYS ARE THE IME'S ─────────────────────────────────────────
+  // Reported the day Enter-to-send shipped: "when typing in Traditional Chinese, the first Enter
+  // confirms the candidate, but it sends the message". `userEvent` cannot drive an input method, so
+  // these use `fireEvent` and set the composition flags the browser would.
+  it("an IME's committing Enter is the IME's, in terminal mode and out of it", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    let replyText: string | null = null;
+    const sent: string[][] = [];
+    server.use(
+      replyHandler((typed) => (replyText = typed)),
+      http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
+        sent.push((await request.json()).keys);
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderComposer();
+
+    // ── terminal mode on: the commit key must not reach the pane
+    const terminal = await screen.findByPlaceholderText(/type into the terminal/i);
+    fireEvent.keyDown(terminal, { key: "Enter", isComposing: true });
+    // …nor the candidate-list keys, which is the half a plain Enter guard would still get wrong.
+    fireEvent.keyDown(terminal, { key: "ArrowDown", isComposing: true });
+    fireEvent.keyDown(terminal, { key: "Escape", isComposing: true });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toEqual([]);
+
+    // The same keys with no composition in flight still go, so this is the IME guard and not the
+    // mode being off.
+    fireEvent.keyDown(terminal, { key: "ArrowDown" });
+    await waitFor(() => expect(sent).toContainEqual(["Down"]));
+
+    // ── terminal mode off: the commit key must not send the draft
+    await user.click(screen.getByRole("button", { name: "Type into terminal" }));
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.type(box, "台北");
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(replyText).toBeNull();
+
+    // And the Enter that follows the commit — no composition — is the one that sends.
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(replyText).toBe("台北"));
+  });
+
+  it("catches the IMEs that end composition BEFORE the commit key arrives (keyCode 229)", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    let replyText: string | null = null;
+    server.use(replyHandler((typed) => (replyText = typed)));
+    renderComposer();
+
+    await user.click(screen.getByRole("button", { name: "Type into terminal" }));
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.type(box, "台北");
+
+    // Chromium with some IMEs fires compositionend first, so `isComposing` is already false on the
+    // committing Enter and only the 229 sentinel still identifies it.
+    fireEvent.keyDown(box, { key: "Enter", isComposing: false, keyCode: 229 });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(replyText).toBeNull();
+  });
+
   it("with terminal mode off, Enter SENDS the draft and Shift+Enter keeps writing", async () => {
     finePointer();
     const user = userEvent.setup();

@@ -9,6 +9,7 @@ import type {
 import { useOrderedKeySender } from "@/hooks/use-ordered-key-sender";
 import { t } from "@/lib/i18n";
 import { composeKey, textToKeySequence, type Modifier } from "@/lib/key-queue";
+import { isComposingKey } from "@/lib/ime";
 import { setStatus } from "@/lib/status";
 
 // Physical-keyboard events that do not change a textarea value still need wire names. Printable
@@ -380,6 +381,16 @@ export function useDirectTyping({
   }
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    // THE IME GETS ITS OWN KEYS BACK, ALL OF THEM (lib/ime.ts).
+    //
+    // Not just Enter. While a candidate window is open, Up and Down move through the candidates and
+    // Escape cancels the composition — and this handler would otherwise send all three to the pane
+    // AND swallow them with `preventDefault`, so picking a 繁體中文 word both scrolled somebody
+    // else's terminal and failed to scroll the candidate list. The committed text still reaches the
+    // pane, as text, through `onCompositionEnd` below.
+    //
+    // No `preventDefault` on this path: the field has to receive the event for the IME to work.
+    if (isComposingKey(event.nativeEvent) || composing.current) return;
     // A CONTROL CHORD: Ctrl + one printable key, the half of a terminal that has no other way in.
     // `event.key.length === 1` is the test for "printable" that needs no table — every named key
     // ("Enter", "ArrowUp", "Shift", "F5") is longer, and a bare modifier press reports its own
