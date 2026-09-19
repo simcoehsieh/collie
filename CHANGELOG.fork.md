@@ -11,6 +11,33 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.10.1
+
+Merged upstream v1.10.1 (2026-09-17) — 6 commits, one conflicted file, and it was a fixture array
+both sides had appended to.
+
+- **Taken for two bugs this phone hits daily.** A send stalled when Claude's slash menu cut a long
+  command name with a leading ellipsis: Collie lost the input box, typed the text and held back
+  Enter, so the message needed sending twice. And a send could land on Claude's background-agents
+  screen, whose own typing field Collie read as the message box — pressing Enter there started an
+  agent task. Upstream now finds the input box by its own frame and recognises that screen.
+- **The dashboard summary line stops splitting a count across two lines** — the line added in
+  1.10.0, on a phone showing all five states.
+- **Two of upstream's new golden regions were re-derived, because this fork's menu detector is the
+  more correct one.** `prompt-binding-regions.json` pins the exact region each detector hands the
+  bridge. Upstream's two new captures (`claude-lab--menu-config-panel--w82`,
+  `claude-lab--menu-resume-picker--w83`) both draw a rounded `⌕ Search…` box INSIDE the picker, and
+  upstream's scan stops at that box's bottom edge and calls it the region's top — which is the
+  defect this fork fixed on 2026-09-11 (`claude/menu.ts`, `INNER_BOX_BOTTOM`): the picker's own
+  title is then left outside the region and the project label under the box reads as the title. The
+  fork's regions include the title, the contract test's own header says to regenerate when a
+  detector legitimately changes what it captures, and the BRIDGE half (68 cases) confirms the wider
+  regions are still findable in the raw pane text. Pure upstream v1.10.1 passes its own version of
+  these two; the divergence is ours and it is the one worth keeping.
+- **Nothing in `bridge/`, `cli/`, `.env.example`, `docs/`, `sw.ts` or `push.ts` changed in this
+  range** — the whole release is web-side Claude screen parsing plus a large corpus of new pane
+  captures.
+
 ## On top of 1.10.0
 
 Merged upstream v1.10.0 (2026-09-16) — 19 commits, 14 conflicted files, seven of them the message
