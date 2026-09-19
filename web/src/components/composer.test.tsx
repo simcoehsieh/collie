@@ -2465,6 +2465,156 @@ describe("Composer — a composed key queue is guarded on the way out", () => {
   });
 });
 
+// ── FORK: ON A PHYSICAL KEYBOARD THE COMPOSER IS A TERMINAL (2026-09-19) ────
+// The default suite runs with the shared `matchMedia` stub, which answers false to everything — so
+// every case above is a COARSE pointer and pins the phone's behaviour. These stub a fine pointer
+// and pin the desktop's, which is a different composer: terminal mode armed without being asked
+// for, Enter sending, Shift+Enter breaking the line, and Shift+Tab reaching the pane as a chord
+// rather than a bare Tab.
+describe("Composer — a fine pointer gets the terminal, not the phone composer", () => {
+  /** A `matchMedia` that answers true to `(pointer: fine)` and false to everything else. */
+  function finePointer() {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("pointer: fine"),
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("arms terminal mode with nothing tapped, and says so where the phone had to ask", async () => {
+    finePointer();
+    renderComposer();
+
+    // The strip above the input is what states the mode; it is there on arrival.
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText(/type into the terminal/i)).toBeInTheDocument(),
+    );
+    // And the toggle reads as pressed rather than as an invitation.
+    expect(screen.getByRole("button", { name: "Type into terminal" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("a coarse pointer is untouched — the phone still arms it by hand", () => {
+    renderComposer();
+    expect(screen.getByRole("button", { name: "Type into terminal" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("turning it off STICKS — the effect must not arm it straight back on", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    renderComposer();
+
+    const toggle = () => screen.getByRole("button", { name: "Type into terminal" });
+    await waitFor(() => expect(toggle()).toHaveAttribute("aria-pressed", "true"));
+
+    await user.click(toggle());
+    expect(toggle()).toHaveAttribute("aria-pressed", "false");
+    // A render or three later it is STILL off. This is the case that fails if `terminalOff` goes.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(toggle()).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("Shift+Enter reaches the pane as a chord, where a bare Enter submits", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    const sent: string[][] = [];
+    server.use(
+      http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
+        sent.push((await request.json()).keys);
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderComposer();
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText(/type into the terminal/i)).toBeInTheDocument(),
+    );
+    const box = screen.getByPlaceholderText(/type into the terminal/i);
+    await user.click(box);
+
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await waitFor(() => expect(sent).toContainEqual(["shift+Enter"]));
+
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(sent).toContainEqual(["Enter"]));
+  });
+
+  it("Shift+Tab is a chord too — Claude Code's mode cycle, not a bare Tab", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    const sent: string[][] = [];
+    server.use(
+      http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
+        sent.push((await request.json()).keys);
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderComposer();
+    const box = await screen.findByPlaceholderText(/type into the terminal/i);
+    await user.click(box);
+
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    await waitFor(() => expect(sent).toContainEqual(["shift+Tab"]));
+  });
+
+  it("with terminal mode off, Enter SENDS the draft and Shift+Enter keeps writing", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    let replyText: string | null = null;
+    server.use(replyHandler((typed) => (replyText = typed)));
+    renderComposer();
+
+    // Off first: with the mode on, Enter is a keystroke and this branch is unreachable.
+    const toggle = screen.getByRole("button", { name: "Type into terminal" });
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
+    await user.click(toggle);
+
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.click(box);
+    await user.type(box, "first");
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await user.type(box, "second");
+    // Shift+Enter wrote a line break rather than sending.
+    expect(replyText).toBeNull();
+    // SAFETY: `box` came from a placeholder query on the composer's own <textarea> (ChatInput
+    // renders one), so it is that element and it has a `.value`.
+    expect((box as HTMLTextAreaElement).value).toBe("first\nsecond");
+
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(replyText).toBe("first\nsecond"));
+  });
+
+  it("a coarse pointer keeps Enter as a line break — a thumb has no easy Shift", async () => {
+    const user = userEvent.setup();
+    let replyText: string | null = null;
+    server.use(replyHandler((typed) => (replyText = typed)));
+    renderComposer();
+
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.click(box);
+    await user.type(box, "one");
+    await user.keyboard("{Enter}");
+    await user.type(box, "two");
+
+    expect(replyText).toBeNull();
+    // SAFETY: `box` came from a placeholder query on the composer's own <textarea> (ChatInput
+    // renders one), so it is that element and it has a `.value`.
+    expect((box as HTMLTextAreaElement).value).toBe("one\ntwo");
+  });
+});
+
 // ── FORK: WHAT THE QUICK DOCK IS FOR NOW (2026-09-19) ───────────────────────
 // It held six equal reply buttons and the operator used one of them: "Quick is a bit useless, the
 // only one in it I need is commit and push". So the harness's own commands moved in from the

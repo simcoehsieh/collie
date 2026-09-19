@@ -21,6 +21,7 @@ import { NavTray } from "@/components/nav-tray";
 import { CommandPalette } from "@/components/command-palette";
 import { QuickActionsContent } from "@/components/quick-actions";
 import { useHarnessBarItems } from "@/components/harness-bar";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { ActionsRow } from "@/components/actions-row";
 import { DisplayPrefsContent } from "@/components/display-prefs";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -488,6 +489,41 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       noticeNoEcho(null); // the notice's whole job was to get you here
     },
     focusInput: focusInputEnd,
+  });
+
+  // ── FORK: ON A PHYSICAL KEYBOARD, THE COMPOSER IS A TERMINAL ────────────────────────────────
+  //
+  // `(pointer: fine)` — a mouse or a trackpad, the same probe `use-hotkeys.ts` uses to decide the
+  // app has a desktop in front of it, and NOT a user-agent sniff. A phone with a Bluetooth keyboard
+  // reads coarse and keeps the phone's composer, which is the right answer: the reason this rule
+  // exists is a keyboard you can reach without thinking, not a keyboard that exists.
+  //
+  // The operator, 2026-09-19: "when I open the PWA on a computer I don't think I need Keys … I want
+  // it to work exactly like my terminal … every time I want to select something I have to press
+  // Keys to get the arrow keys." Arming was the toll. Arrows, Tab and Escape are not extras on a
+  // desktop, they are how you answer a picker, and a mode you must switch on first turns every
+  // one of them into two actions.
+  //
+  // WHY THIS DOES NOT BREAK ADR 0005's RULE THAT ARMING IS A DELIBERATE, NAMED CHOICE. That rule
+  // was written against a PHONE and against a GESTURE — a long press on Send that a pocket or a
+  // fumbled scroll could trigger with nothing on screen having asked. Neither half holds here: a
+  // keystroke on a physical keyboard is already deliberate, it only reaches the pane while this
+  // field has focus, and the strip above the input still says the mode is on in words. What is
+  // removed is the toll, not the visibility. The toggle is still there to turn it OFF, and turning
+  // it off STICKS for as long as you are on this pane (`terminalOff` below) — otherwise the effect
+  // would simply arm it again and the toggle would read as broken.
+  const finePointer = useMediaQuery("(pointer: fine)");
+  const [terminalOff, setTerminalOff] = useState(false);
+  // A pane switch remounts this component (DetailRoute keys AgentChat by paneId), so an "off" can
+  // never leak into the next pane — the same rule the mode itself lives by.
+  const wantsTerminal = finePointer && !terminalOff;
+  useEffect(() => {
+    if (!wantsTerminal || direct.active) return;
+    // `canActivate` is re-checked inside: this fires again the moment a lock lifts, which is what
+    // re-arms the mode after the idle pause ends or a read-only device is paired. A draft in the
+    // box refuses, silently — the same rule the explicit toggle follows, and the effect simply
+    // tries again once the draft is sent or cleared.
+    direct.activateSilently();
   });
 
   // ── VOICE (ADR 0029) ──────────────────────────────────────────────────────────────────────────
@@ -1515,6 +1551,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 onSelect: () => {
                   if (direct.active) {
                     direct.deactivate();
+                    // On a desktop this mode is the default, so "off" has to be REMEMBERED or the
+                    // effect above turns it straight back on and the toggle looks broken.
+                    setTerminalOff(true);
                     return;
                   }
                   // Close whatever dock is open first: the mode needs the phone keyboard, and a
@@ -1523,6 +1562,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   // (ADR 0005).
                   requestDrawer(null);
                   direct.activate();
+                  setTerminalOff(false);
                 },
               },
               {
@@ -1703,7 +1743,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               direct.active
                 ? direct.onKeyDown
                 : (e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    if (e.key !== "Enter") return;
+                    // FORK: ON A PHYSICAL KEYBOARD, ENTER SENDS AND SHIFT+ENTER BREAKS THE LINE —
+                    // the convention every terminal and every chat client on a desktop already
+                    // has, and the one the operator asked for (2026-09-19). Cmd/Ctrl+Enter keeps
+                    // working because it always did and costs nothing to honour.
+                    //
+                    // GATED ON THE SAME `(pointer: fine)` PROBE as terminal mode above, and that
+                    // gate is load-bearing rather than tidy: on a touch keyboard Enter is the only
+                    // easy way to get a second line and Shift+Enter is a two-thumb operation, so
+                    // the phone keeps Enter as a line break. This branch is also only reachable
+                    // with terminal mode OFF; with it on, Enter is a keystroke like any other and
+                    // `direct.onKeyDown` has it.
+                    if (e.metaKey || e.ctrlKey || (finePointer && !e.shiftKey)) {
                       e.preventDefault();
                       onSendClick();
                     }

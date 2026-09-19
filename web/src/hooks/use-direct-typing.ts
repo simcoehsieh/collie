@@ -8,7 +8,7 @@ import type {
 
 import { useOrderedKeySender } from "@/hooks/use-ordered-key-sender";
 import { t } from "@/lib/i18n";
-import { textToKeySequence } from "@/lib/key-queue";
+import { composeKey, textToKeySequence, type Modifier } from "@/lib/key-queue";
 import { setStatus } from "@/lib/status";
 
 // Physical-keyboard events that do not change a textarea value still need wire names. Printable
@@ -35,6 +35,32 @@ function keyForKeyDown(key: string): string | undefined {
   if (key === "Backspace") return "Backspace";
   if (key === "Enter") return "Enter";
   return SPECIAL_KEYS.get(key);
+}
+
+/**
+ * The modifiers held down with a special key, in wire form.
+ *
+ * FORK: they used to be dropped, so Shift+Enter went out as a bare `Enter` — it SUBMITTED the
+ * agent's prompt where the operator meant to break a line, and Shift+Tab (Claude Code's mode cycle)
+ * was an ordinary Tab. On a physical keyboard, where this mode is now the default rather than a
+ * thing you arm (components/composer.tsx), that is the difference between "the same as my terminal"
+ * and "a terminal that mangles two of the chords I use most".
+ *
+ * ONLY ON A SPECIAL KEY, never on a printable one. `Ctrl`/`Cmd` + a letter is the browser's own
+ * copy, paste and select-all, and a composer that swallowed those would take away the one thing a
+ * desktop reader does more than type. Printable characters reach the pane through the input path
+ * (`onChange`) as text, which carries no modifier and needs none.
+ *
+ * `meta` is deliberately absent: the wire grammar has `cmd`, but on macOS Cmd+arrow is the OS's and
+ * the browser's before it is ever the terminal's, and nothing in this app has verified one against
+ * Herdr.
+ */
+function modifiersOf(event: ReactKeyboardEvent<HTMLTextAreaElement>): Modifier[] {
+  const mods: Modifier[] = [];
+  if (event.ctrlKey) mods.push("ctrl");
+  if (event.altKey) mods.push("alt");
+  if (event.shiftKey) mods.push("shift");
+  return mods;
 }
 
 interface DirectTypingOptions {
@@ -135,6 +161,28 @@ export function useDirectTyping({
     // React swaps the controlled value so selection lands at the end.
     inputRef.current?.focus();
     focusInput();
+  }
+
+  /**
+   * Arm without announcing it and without taking focus — the entry point for a device where this
+   * mode is the DEFAULT rather than a choice (a physical keyboard; components/composer.tsx holds
+   * that rule and its reasoning).
+   *
+   * The two differences from {@link activate} are the whole point. A status toast on every pane you
+   * open is noise about a state that is simply how the composer works here, and stealing focus on
+   * mount would fight the reader who arrived to scroll the mirror, not to type. Every GUARD is the
+   * same: `canActivate`, and the refusal to arm over a pending draft. Returns whether it armed, so
+   * the caller can tell "not yet" from "not allowed".
+   */
+  function activateSilently(): boolean {
+    if (!canActivate() || replyDraft().length > 0) return false;
+    cancelPendingBlur();
+    setValue("");
+    composing.current = false;
+    committedComposition.current = null;
+    activeRef.current = true;
+    setActive(true);
+    return true;
   }
 
   /** Disarm and forget the transient state. Leaves the field alone — callers decide about focus. */
@@ -323,7 +371,7 @@ export function useDirectTyping({
     const key = keyForKeyDown(event.key);
     if (key === undefined) return;
     event.preventDefault();
-    sender.enqueue([key]);
+    sender.enqueue([composeKey(modifiersOf(event), key)]);
   }
 
   return {
@@ -331,6 +379,7 @@ export function useDirectTyping({
     value,
     busy: sender.busy,
     activate,
+    activateSilently,
     deactivate,
     deactivateSilently,
     onChange,
