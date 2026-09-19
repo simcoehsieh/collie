@@ -69,3 +69,26 @@ export function abortSignalAny(signals: AbortSignal[]): AbortSignal | null {
   if (!("any" in AbortSignal) || AbortSignal.any === undefined) return null;
   return AbortSignal.any(signals);
 }
+
+/**
+ * An Apple platform — macOS, iOS or iPadOS.
+ *
+ * The one question in this file that is about the PLATFORM rather than an API, and it is here for
+ * the same reason the rest is: three call sites were asking it with their own copy of the same
+ * regex. Two of them AND it with a touch digitiser to mean "an iPhone or iPad" (`use-display-prefs`
+ * for the focus-zoom floor, `lib/install` for the share-sheet hint); the third asks it alone, to
+ * mean "this keyboard has a Command key separate from Control" (`use-direct-typing`).
+ *
+ * `navigator.platform` is deprecated and still the only string here that is not routinely spoofed
+ * by a "request desktop site" toggle, so the user-agent is consulted as well and either half may
+ * carry the answer. Absent both (SSR, a stub in tests) the answer is false, and every caller's
+ * false branch is the conservative one.
+ *
+ * NOTE for the keyboard caller: iPadOS reports itself as "MacIntel" and is indistinguishable from a
+ * desktop Mac here. That is fine for THAT question — an iPad keyboard has a Command key too — and
+ * is exactly why the other two callers add the touch half instead of relying on this alone.
+ */
+export function applePlatform(): boolean {
+  if (globalThis.navigator === undefined) return false;
+  return /iPhone|iPad|iPod|Mac/.test(`${navigator.platform} ${navigator.userAgent}`);
+}

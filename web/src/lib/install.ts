@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { applePlatform } from "@/lib/env";
 
 // The PWA install offer, held for the moment the operator asks for it.
 //
@@ -104,7 +105,7 @@ export function installsViaShareSheet(touch: boolean, apple: boolean, standalone
 export function probeShareSheetInstall(): boolean {
   if (typeof navigator === "undefined" || typeof window === "undefined") return false;
   const touch = navigator.maxTouchPoints > 0;
-  const apple = /iPhone|iPad|iPod|Mac/.test(`${navigator.platform} ${navigator.userAgent}`);
+  const apple = applePlatform();
   // Standalone is either half: the display-mode media query (the PWA spec's answer) or WebKit's
   // nonstandard `navigator.standalone` (the older answer iOS itself gives). Either one true means
   // the app is already installed and running as itself, and the hint would be noise.

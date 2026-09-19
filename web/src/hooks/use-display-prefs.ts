@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { applePlatform } from "@/lib/env";
 import type { CSSProperties } from "react";
 import { asJsonBoolean, asJsonNumber, asJsonObject, asJsonString, parseJsonObject } from "@/lib/json";
 import type { JsonValue } from "@/lib/json";
@@ -375,7 +376,7 @@ export const IOS_NO_ZOOM_FONT_PX = 16;
 export function inputFocusZoomsPage(): boolean {
   if (typeof navigator === "undefined") return false;
   const touch = navigator.maxTouchPoints > 0;
-  const apple = /iPhone|iPad|iPod|Mac/.test(`${navigator.platform} ${navigator.userAgent}`);
+  const apple = applePlatform();
   return touch && apple;
 }
 

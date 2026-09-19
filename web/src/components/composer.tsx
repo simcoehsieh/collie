@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { applePlatform } from "@/lib/env";
 import type { ChangeEvent, ClipboardEvent, CSSProperties, ReactNode } from "react";
 import { useRevalidator } from "react-router";
 import { Check, FileText, Image, Keyboard, Loader2, Mic, Paperclip, Send, Slash, Square, Terminal, X, Zap } from "lucide-react";
@@ -483,6 +484,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     // banner has decided the connection counts as lost yet.
     suspended: locked,
     sendKeys: pressKeys,
+    // Ctrl chords reach the pane only where Cmd is the copy key (lib/env.ts). Probed at render
+    // rather than once at module load so a test can stub `navigator` per case.
+    controlChords: applePlatform(),
     onActivate: () => {
       sendConfirm.reset();
       forceConfirm.reset();

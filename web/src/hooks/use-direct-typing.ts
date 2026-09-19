@@ -76,6 +76,17 @@ interface DirectTypingOptions {
    *  device, or the idle pause. Arming survives none of them — see the disarm effect below. */
   suspended: boolean;
   sendKeys: (keys: string[]) => Promise<boolean>;
+  /**
+   * Send `Ctrl` + a printable key to the pane as a chord (`ctrl+c`, `ctrl+d`, `ctrl+r`) instead of
+   * leaving it to the browser.
+   *
+   * ONLY TRUE WHERE THE KEYBOARD HAS A SEPARATE COMMAND KEY (`applePlatform()`, lib/env.ts). On a
+   * Mac, Cmd is copy / paste / select-all and Ctrl is the terminal's — so this costs the reader
+   * nothing and hands back `Ctrl+C`, which is the chord this mode was most obviously missing. On a
+   * keyboard where Ctrl IS the copy key, taking it would cost more than it bought, so the caller
+   * passes false and those chords stay in the Keys pad where they always were.
+   */
+  controlChords: boolean;
   onActivate: () => void;
   focusInput: () => void;
 }
@@ -117,6 +128,7 @@ export function useDirectTyping({
   canActivate,
   suspended,
   sendKeys,
+  controlChords,
   onActivate,
   focusInput,
 }: DirectTypingOptions) {
@@ -368,6 +380,20 @@ export function useDirectTyping({
   }
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    // A CONTROL CHORD: Ctrl + one printable key, the half of a terminal that has no other way in.
+    // `event.key.length === 1` is the test for "printable" that needs no table — every named key
+    // ("Enter", "ArrowUp", "Shift", "F5") is longer, and a bare modifier press reports its own
+    // name, so a held Ctrl on its own never fires this.
+    //
+    // `!metaKey` keeps Cmd+Ctrl combinations out: those are the OS's, and a page that swallowed
+    // them would be guessing on the platform's behalf. The key is lowercased because the wire is
+    // case-insensitive and Shift+Ctrl+P would otherwise send `ctrl+shift+P` where the same chord
+    // typed without Shift sends `ctrl+p` — one chord, two spellings, for no reason.
+    if (controlChords && event.ctrlKey && !event.metaKey && event.key.length === 1) {
+      event.preventDefault();
+      sender.enqueue([composeKey(modifiersOf(event), event.key.toLowerCase())]);
+      return;
+    }
     const key = keyForKeyDown(event.key);
     if (key === undefined) return;
     event.preventDefault();

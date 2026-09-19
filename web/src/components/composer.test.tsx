@@ -2485,7 +2485,27 @@ describe("Composer — a fine pointer gets the terminal, not the phone composer"
       dispatchEvent: vi.fn(),
     }));
   }
-  afterEach(() => vi.unstubAllGlobals());
+  // `navigator.platform` / `userAgent` are stubbed per case below (the Apple probe reads both).
+  // Restored here rather than in each case: an unrestored platform leaks into every test that runs
+  // after it in this file, where it reads as that test's own failure.
+  const navigatorProps = ["platform", "userAgent"] as const;
+  const original = new Map<string, PropertyDescriptor | undefined>();
+  beforeEach(() => {
+    for (const k of navigatorProps) {
+      original.set(k, Object.getOwnPropertyDescriptor(Navigator.prototype, k));
+    }
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const k of navigatorProps) {
+      const d = original.get(k);
+      // Drop the per-case own property, then put the prototype's accessor back if we shadowed it.
+      // `Reflect.deleteProperty` rather than `delete` on a cast: the key is a string variable, and
+      // the cast that `delete` would need is exactly the untyped-dictionary shape lint refuses.
+      Reflect.deleteProperty(navigator, k);
+      if (d) Object.defineProperty(Navigator.prototype, k, d);
+    }
+  });
 
   it("arms terminal mode with nothing tapped, and says so where the phone had to ask", async () => {
     finePointer();
@@ -2567,6 +2587,62 @@ describe("Composer — a fine pointer gets the terminal, not the phone composer"
 
     await user.keyboard("{Shift>}{Tab}{/Shift}");
     await waitFor(() => expect(sent).toContainEqual(["shift+Tab"]));
+  });
+
+  it("Ctrl+C reaches the pane as a chord on a keyboard that has a separate Cmd", async () => {
+    finePointer();
+    // The Apple probe reads `navigator.platform`; stub that alone so everything else the composer
+    // asks of the navigator keeps working. The suite's own afterEach puts it back.
+    Object.defineProperty(navigator, "platform", { value: "MacIntel", configurable: true });
+    {
+      const user = userEvent.setup();
+      const sent: string[][] = [];
+      server.use(
+        http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
+          sent.push((await request.json()).keys);
+          return HttpResponse.json({ ok: true });
+        }),
+      );
+      renderComposer();
+      const box = await screen.findByPlaceholderText(/type into the terminal/i);
+      await user.click(box);
+
+      await user.keyboard("{Control>}c{/Control}");
+      await waitFor(() => expect(sent).toContainEqual(["ctrl+c"]));
+
+      // Cmd is the platform's own copy key and is NOT taken.
+      await user.keyboard("{Meta>}c{/Meta}");
+      await new Promise((r) => setTimeout(r, 50));
+      expect(sent).not.toContainEqual(["cmd+c"]);
+      expect(sent.flat().filter((k) => k.endsWith("+c"))).toEqual(["ctrl+c"]);
+    }
+  });
+
+  it("leaves Ctrl alone where Ctrl IS the copy key — those chords stay in the Keys pad", async () => {
+    finePointer();
+    Object.defineProperty(navigator, "platform", { value: "Win32", configurable: true });
+    Object.defineProperty(navigator, "userAgent", {
+      value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      configurable: true,
+    });
+    const user = userEvent.setup();
+    const sent: string[][] = [];
+    server.use(
+      http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
+        sent.push((await request.json()).keys);
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderComposer();
+    const box = await screen.findByPlaceholderText(/type into the terminal/i);
+    await user.click(box);
+
+    await user.keyboard("{Control>}c{/Control}");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).not.toContainEqual(["ctrl+c"]);
+    // The special keys still go, so this is the chord rule narrowing and not the mode being off.
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(sent).toContainEqual(["Escape"]));
   });
 
   it("with terminal mode off, Enter SENDS the draft and Shift+Enter keeps writing", async () => {
