@@ -11,6 +11,26 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.10.2
+
+Merged upstream v1.10.2 (2026-09-19) — 25 commits, ZERO conflicts, and nothing in `web/src` or
+`bridge/` at all: the whole release is `cli/` and the packaging recipes.
+
+- **Two of the three fixes cannot reach this install.** `collie update` refusing to run when the
+  home directory is a dotfiles git repository, and a corrupt `.git` being read as a binary install,
+  are both on the update path this fork never takes.
+- **The third one is broader than its title and is worth having.** `GIT_DIR` and seven siblings that
+  RELOCATE a repository are now stripped from every child Collie spawns, the bridge included, so a
+  shell (or a git hook) carrying one cannot make Collie answer git questions about somebody else's
+  repository. Nothing here sets them today — the bridge starts from launchd's clean environment —
+  but the build stamp this fork reads off git (`1.10.x-dev+<sha>`) is exactly the kind of answer
+  that would have gone quietly wrong rather than loudly.
+- **Held back: `v1.11.0-rc.1`.** A prerelease, and this install takes strict releases only. Worth
+  knowing what is in it before it lands, because one item touches a surface this fork has just
+  reworked: the cache chip is made to turn COLD when `/model`, an effort change or `/compact` drops
+  the cached prefix, read from Claude Code's transcript as it happens. This fork moved that chip
+  onto the pane's name line on 2026-09-17, so that merge will meet it.
+
 ## On top of 1.10.1
 
 Merged upstream v1.10.1 (2026-09-17) — 6 commits, one conflicted file, and it was a fixture array
