@@ -97,6 +97,9 @@ export interface AnsiOutputProps {
    *  registered adapter contributes its own: claude lifts dialogs and strips chrome, omp strips chrome
    *  only. An absent/unregistered agent renders pure raw output. */
   agent?: string;
+  /** False when the operator turned block grammars off (the raw-terminal pref): the adapter does not
+   *  run, while `agent` still picks the native-mirror rendering. Default true. */
+  grammars?: boolean;
   /**
    * The pane's journal images, oldest-first, for the terminal-graphics placeholders on screen.
    *
@@ -449,6 +452,7 @@ export const AnsiOutput = memo(function AnsiOutput({
   currentMatch = -1,
   onMatchCount,
   agent,
+  grammars = true,
   onPromptAction,
   onWizardAction,
   onPreviewAction,
@@ -472,9 +476,11 @@ export const AnsiOutput = memo(function AnsiOutput({
     () => (model === undefined ? splitLines(parseAnsi(text)) : model.lines),
     [model, text],
   );
+  // `grammars` (upstream 1.11.0) rides the `text` path only: a caller that hands us a MirrorModel
+  // built the blocks itself and already applied the pref there (components/agent-chat.tsx).
   const blocks = useMemo(
-    () => (model === undefined ? buildBlocks(ownLines, { agent }) : model.blocks),
-    [model, ownLines, agent],
+    () => (model === undefined ? buildBlocks(ownLines, { agent, grammars }) : model.blocks),
+    [model, ownLines, agent, grammars],
   );
 
   const rawBlocks = useMemo(

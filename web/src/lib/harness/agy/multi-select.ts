@@ -189,6 +189,12 @@ export function detectMultiSelectRegion(lines: StyledLine[]): MultiSelectRegion 
     options,
     escape: null,
     pointer,
+    // Upstream 1.11.0 split the toggle recipe out of the model. agy's is the DIGIT one — its
+    // footer says `space Toggle` but the digits toggle directly (AGY_NOTES.md, 2026-09-10), which
+    // is what the conformance list has always emitted — and its detector never reads which
+    // numbered row the pointer sits on, so `pointerRow` is null (digit mode never reads it).
+    pointerRow: null,
+    toggle: "digit",
     steps: null,
     advanceLabel: "Submit",
     submitKeys: AGY_MULTI_SELECT_SUBMIT_KEYS,

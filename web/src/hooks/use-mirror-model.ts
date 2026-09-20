@@ -22,10 +22,16 @@ export interface MirrorModel {
 //
 // This hook is the one parse. agent-chat derives its three probes from `lines` / `blocks` and hands
 // the same objects to AnsiOutput, which renders them instead of re-deriving them from `text`. The
-// adapter is chosen the way AnsiOutput chose it — by the `agent` it is given, `undefined` when the
-// grammars are off — so the probes and the render can never disagree about which grammar ran.
-export function useMirrorModel(display: string, agent: string | undefined): MirrorModel {
+// adapter is chosen the way AnsiOutput chose it — by the `agent` it is given, and by `grammars`
+// (upstream 1.11.0), which is the pref's own switch: a NATIVE-MIRROR agent keeps its identity with
+// raw-terminal on, so the agent alone can no longer say whether the grammars should run. The probes
+// and the render therefore still cannot disagree about which grammar ran.
+export function useMirrorModel(
+  display: string,
+  agent: string | undefined,
+  grammars = true,
+): MirrorModel {
   const lines = useMemo(() => splitLines(parseAnsi(display)), [display]);
-  const blocks = useMemo(() => buildBlocks(lines, { agent }), [lines, agent]);
+  const blocks = useMemo(() => buildBlocks(lines, { agent, grammars }), [lines, agent, grammars]);
   return useMemo(() => ({ lines, blocks }), [lines, blocks]);
 }

@@ -56,7 +56,8 @@ import { Collapse, CollapseSwap } from "@/components/ui/collapse";
 import { RouteHeader } from "@/components/app-header";
 import { HeaderStatus } from "@/components/header-status";
 import { AnsiOutput } from "@/components/ansi-output";
-import { MIRROR_SPACE, MIRROR_INVERT, segmentStyle } from "@/components/mirror-space";
+import { MIRROR_SPACE, MIRROR_INVERT, MUSE_MIRROR, segmentStyle } from "@/components/mirror-space";
+import { AgentsFooter } from "@/components/agents-footer";
 import { cn } from "@/lib/utils";
 import { useMirrorModel } from "@/hooks/use-mirror-model";
 import { useStableCallback } from "@/hooks/use-stable-callback";
@@ -848,11 +849,24 @@ export function AgentChat({
   // the model, the adapter and the mirror all read it, and two answers to "which agent is this
   // mirror" is exactly the drift this const exists to prevent.
   const mirrorAgent = grammarsOn || rendersNativeMirror(agent?.agent) ? agent?.agent : undefined;
-  const mirror = useMirrorModel(display, mirrorAgent);
+  // `grammarsOn` rides along because `mirrorAgent` alone cannot answer for a NATIVE-MIRROR agent:
+  // it keeps its identity with the pref off (that is the point of the line above), and without this
+  // flag its adapter's grammars would still run over the model while the render says they are off.
+  const mirror = useMirrorModel(display, mirrorAgent, grammarsOn);
   const mirrorAdapter = adapterFor(mirrorAgent);
   const statusLines = useMemo(
     () => mirrorAdapter?.extractStatusLines(mirror.lines) ?? [],
     [mirrorAdapter, mirror.lines],
+  );
+
+  // The background-agents block the harness paints under its statusline (issue #242). stripChrome
+  // peels it off the mirror with the box, and the strip stops above it, so this is its one surface.
+  // Same adapter and same parse source as the strip, so the two cannot disagree on where it starts.
+  // FORK: off the ONE parse, like `statusLines` above — upstream re-parses `display` here, which
+  // is a third full ANSI decode per poll of a moving mirror and can disagree with the render.
+  const agentsFooter = useMemo(
+    () => (grammarsOn ? mirrorAdapter?.extractAgentsFooter?.(mirror.lines) ?? [] : []),
+    [grammarsOn, mirrorAdapter, mirror.lines],
   );
 
   // A user draft stranded on the input box's "❯" line — a message queued while the agent was busy
@@ -2290,7 +2304,11 @@ export function AgentChat({
                     query={findOpen ? findQuery : ""}
                     currentMatch={findOpen ? currentMatch : -1}
                     onMatchCount={findOpen ? handleMatchCount : undefined}
+                    // The identity stays even with raw-terminal on — `mirrorAgent` folds
+                    // upstream's rule into one definition (see it, above) — and `grammars` is what
+                    // turns the adapter off.
                     agent={mirrorAgent}
+                    grammars={grammarsOn}
                     onPromptAction={handlePromptAction}
                     onWizardAction={handleWizardAction}
                     onPreviewAction={handlePreviewAction}
@@ -2385,9 +2403,10 @@ export function AgentChat({
                     // dark space and inverts in light with it (ADR 0002) — a bright statusline colour is
                     // chosen against a near-black background and is illegible re-themed onto app chrome.
                     // It also makes the strip read as the bottom of the pane it was cut from, which is
-                    // where the TUI drew it.
-                    MIRROR_SPACE,
-                    MIRROR_INVERT,
+                    // where the TUI drew it. So it follows the mirror all the way: a native-mirror
+                    // agent's strip stands on the native ground and is not inverted (.adr/0047).
+                    rendersNativeMirror(agent?.agent) ? MUSE_MIRROR : MIRROR_SPACE,
+                    rendersNativeMirror(agent?.agent) ? null : MIRROR_INVERT,
                     mirrorFace.className,
                   )}
                   style={mirrorFace.style}
@@ -2411,6 +2430,13 @@ export function AgentChat({
                   ))}
                 </div>
                 )}
+              </Collapse>
+
+              {/* Background agents, under the statusline as the TUI drew them. Its own element and its
+                  own budget, one row until tapped (agents-footer.tsx). Stands down with the strip
+                  while the keyboard is up, through `Collapse` for the same DESIGN.md reason. */}
+              <Collapse open={!composing && agentsFooter.length > 0}>
+                {agentsFooter.length > 0 && <AgentsFooter rows={agentsFooter} face={mirrorFace} />}
               </Collapse>
 
               {/* THE PANE SWITCHER'S MARK IS NOT A ROW ANY MORE. It was a 30px full-width band here,

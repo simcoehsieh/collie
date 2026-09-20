@@ -11,6 +11,39 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.11.0
+
+Merged upstream v1.11.0 (2026-09-20) — 23 commits, 9 conflicts. The release this fork had been
+waiting two weeks for: **the cache chip turns cold when an action drops the cache**. It lands almost
+entirely in `bridge/cache/*` plus the cache sheet, so the fork's own decision to move that chip up
+beside the pane name was never touched.
+
+### Dropped, because upstream superseded it
+
+- **The Codex composer's blank-row paragraph break** (2026-09-13). The fork had removed `isBlank(t)`
+  from `locateComposer`'s foreign-row test so a draft carrying a blank line stayed visible to the
+  reply path — without it the verify read found no composer and the retry typed a second copy of the
+  message under the first. Upstream's Astra-starfield fix replaced that whole predicate with
+  `/^\S/`, which a blank row does not match either: the same defect, fixed by a broader rule, so
+  keeping both would be two answers to one question. `codex--draft-blank-paragraph.txt` stays and
+  still pins the case.
+
+### Kept, alongside upstream's new work in the same files
+
+- **`MultiSelectModel.submitKeys`** (agy's direct submit) now rides beside upstream's new
+  `toggle` / `submit` choreography fields. They answer different questions — `submitKeys` is about
+  the ADVANCE, the choreography is about the toggle — so the action consults `submitKeys` first,
+  because it removes the advance walk entirely. agy's detector declares `toggle: "digit"` and
+  `pointerRow: null`.
+- **The `/rc` indicator filter** in `claude/chrome.ts` sits beside upstream's new `agentsStart` and
+  `extractAgentsFooter`: different defects, no overlap.
+- **One parse of the mirror** (`use-mirror-model.ts`). Upstream's new background-agents footer
+  re-parsed `display` a third time per poll; it reads the existing model's lines here instead. The
+  hook gained upstream's `grammars` flag, because a NATIVE-MIRROR agent now keeps its identity with
+  raw-terminal on, so the agent alone can no longer say whether the grammars should run.
+- **`AnsiOutput`'s `model` prop** takes upstream's `grammars` on the `text` path only — a caller
+  handing us a model built the blocks itself and applied the pref there.
+
 ## On top of 1.10.2
 
 ### Changed
