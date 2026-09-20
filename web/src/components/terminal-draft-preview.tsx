@@ -13,6 +13,17 @@ interface TerminalDraftPreviewProps {
    * user's words (Claude collapses a long paste into `[Pasted text #N +M lines]`), and copying that
    * into the composer would make the literal string the message. The preview still shows it. */
   onTakeOver: (() => void) | null;
+  /**
+   * FORK: draw this as the terminal's own input line rather than as an offer.
+   *
+   * Used by the slash-command mirror (components/composer.tsx). While the composer is typing
+   * STRAIGHT into the harness's box, `stripChrome` has peeled that box off the mirror, so this is
+   * the only place the command being typed appears at all — but nothing about it is a hand-over:
+   * the words are the operator's, arriving where they aimed them. Echo mode drops the title, the
+   * icon and the Take over button, and marks the line with the prompt glyph the box would have
+   * drawn.
+   */
+  echo?: boolean;
 }
 
 // A read-only preview of a draft stranded on the terminal's "❯" line (a message queued then recalled
@@ -26,8 +37,27 @@ interface TerminalDraftPreviewProps {
 // zinc/text-xs chip chrome as the composer's "You sent:" strip; the draft body clamps to a few readable
 // lines. Take over is withdrawn (not disabled-looking, just absent) when the line is only the harness's
 // own paste placeholder — see `onTakeOver`.
-export function TerminalDraftPreview({ text, onTakeOver }: TerminalDraftPreviewProps) {
+export function TerminalDraftPreview({ text, onTakeOver, echo = false }: TerminalDraftPreviewProps) {
   useLocale();
+  if (echo) {
+    return (
+      <div
+        data-slot="terminal-echo"
+        className="mb-2 flex items-start gap-1.5 rounded-md bg-muted/40 px-2.5 py-1.5 font-mono text-[11px] leading-snug text-muted-foreground"
+      >
+        {/* The prompt glyph the stripped box would have drawn, so the row reads as the terminal's
+            own line and not as a quotation of it. `aria-hidden`: punctuation, not a word. */}
+        <span aria-hidden className="shrink-0 select-none opacity-60">
+          ❯
+        </span>
+        {/* No clamp, unlike the preview below: this is what is being typed RIGHT NOW, and a long
+            command silently cut off at three lines is worse than a tall strip. */}
+        <div className="min-w-0 flex-1 whitespace-pre-wrap break-words text-muted-foreground/90">
+          {text}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="mb-2 flex items-start gap-1.5 rounded-md bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground">
       <Terminal className="mt-0.5 size-3 shrink-0" />

@@ -1,6 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { applePlatform } from "@/lib/env";
-import type { ChangeEvent, ClipboardEvent, CSSProperties, ReactNode } from "react";
+import type {
+  ChangeEvent,
+  ClipboardEvent,
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  ReactNode,
+} from "react";
 import { useRevalidator } from "react-router";
 import { Check, FileText, Image, Keyboard, Loader2, Mic, Paperclip, Send, Slash, Square, Terminal, X, Zap } from "lucide-react";
 
@@ -8,6 +14,7 @@ import { applyDraftFontSize, fontStack, inputFocusZoomsPage } from "@/hooks/use-
 import type { DisplayPrefs } from "@/hooks/use-display-prefs";
 import { usePendingConfirm } from "@/hooks/use-pending-confirm";
 import { useDirectTyping } from "@/hooks/use-direct-typing";
+import { useOrderedKeySender } from "@/hooks/use-ordered-key-sender";
 import { useLocale } from "@/hooks/use-locale";
 import { t as translate, tn as translatePlural } from "@/lib/i18n";
 import { setStatus } from "@/lib/status";
@@ -24,6 +31,32 @@ import { QuickActionsContent } from "@/components/quick-actions";
 import { useHarnessBarItems } from "@/components/harness-bar";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { isComposingKey } from "@/lib/ime";
+import { composeKey, type Modifier } from "@/lib/key-queue";
+
+// FORK: the keys an EMPTY composer hands to the pane on a physical keyboard, in wire spelling. See
+// the long note at `terminalNative` for the rule; these are the keys that answer a picker and have
+// no meaning over an empty text field. A Map, not an object literal: the lookup key is whatever
+// `KeyboardEvent.key` reports, and an object would answer for inherited names ("constructor").
+const EMPTY_BOX_PANE_KEYS = new Map([
+  ["Escape", "Escape"],
+  ["Tab", "Tab"],
+  ["ArrowUp", "Up"],
+  ["ArrowDown", "Down"],
+  ["ArrowLeft", "Left"],
+  ["ArrowRight", "Right"],
+  ["Enter", "Enter"],
+]);
+
+/** The modifiers held with a pane-bound key, in wire form. `meta` is absent on purpose: on macOS
+ *  Cmd+arrow is the OS's and the browser's before it is ever the terminal's. */
+function heldModifiers(event: { ctrlKey: boolean; altKey: boolean; shiftKey: boolean }): Modifier[] {
+  const mods: Modifier[] = [];
+  if (event.ctrlKey) mods.push("ctrl");
+  if (event.altKey) mods.push("alt");
+  if (event.shiftKey) mods.push("shift");
+  return mods;
+}
+
 import { ActionsRow } from "@/components/actions-row";
 import { DisplayPrefsContent } from "@/components/display-prefs";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -496,40 +529,155 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     focusInput: focusInputEnd,
   });
 
-  // ── FORK: ON A PHYSICAL KEYBOARD, THE COMPOSER IS A TERMINAL ────────────────────────────────
+  // ── FORK: ON A PHYSICAL KEYBOARD, ONE BOX THAT TYPES AND EDITS ─────────────────────────────
   //
   // `(pointer: fine)` — a mouse or a trackpad, the same probe `use-hotkeys.ts` uses to decide the
   // app has a desktop in front of it, and NOT a user-agent sniff. A phone with a Bluetooth keyboard
   // reads coarse and keeps the phone's composer, which is the right answer: the reason this rule
   // exists is a keyboard you can reach without thinking, not a keyboard that exists.
   //
-  // The operator, 2026-09-19: "when I open the PWA on a computer I don't think I need Keys … I want
-  // it to work exactly like my terminal … every time I want to select something I have to press
-  // Keys to get the arrow keys." Arming was the toll. Arrows, Tab and Escape are not extras on a
-  // desktop, they are how you answer a picker, and a mode you must switch on first turns every
-  // one of them into two actions.
+  // THE RULE, and it is one sentence: **when this box is EMPTY your keys go to the pane; when it
+  // has text you are editing a message, and Enter sends it.**
   //
-  // WHY THIS DOES NOT BREAK ADR 0005's RULE THAT ARMING IS A DELIBERATE, NAMED CHOICE. That rule
-  // was written against a PHONE and against a GESTURE — a long press on Send that a pocket or a
-  // fumbled scroll could trigger with nothing on screen having asked. Neither half holds here: a
-  // keystroke on a physical keyboard is already deliberate, it only reaches the pane while this
-  // field has focus, and the strip above the input still says the mode is on in words. What is
-  // removed is the toll, not the visibility. The toggle is still there to turn it OFF, and turning
-  // it off STICKS for as long as you are on this pane (`terminalOff` below) — otherwise the effect
-  // would simply arm it again and the toggle would read as broken.
+  // Everything the operator asked for over two days falls out of that one line, so it is worth
+  // saying what each attempt got wrong. 2026-09-19: "when I open the PWA on a computer I don't
+  // think I need Keys … every time I want to select something I have to press Keys to get the
+  // arrow keys." The obvious reading was "arm the existing Type mode for them", and that mode
+  // STREAMS every keystroke to the pane — so the message you are composing lives on the harness's
+  // `❯` line, which `stripChrome` peels off the mirror, which is why it then had to be re-surfaced
+  // as the "Draft in terminal / Take over" strip. 2026-09-20: "what I don't want is Draft in
+  // terminal, or having to take over to get back — I want type and edit in the same box. And make
+  // sure voice input and attachments still work."
+  //
+  // They do, unconditionally, because there is no mode any more. The box is the ordinary draft box
+  // on every device: a transcript inserts at the caret, an upload appends its path, the text is
+  // yours to edit until you send it. What a physical keyboard adds is only that an EMPTY box has
+  // nothing to edit, so the keys that answer a picker — arrows, Tab, Escape, and Enter — can only
+  // have been meant for the pane, and go there. Type one character and the same keys are a text
+  // editor again, which is exactly what a terminal's own line editor does.
+  //
+  // THREE EDGES, each chosen rather than fallen into:
+  //  • Ctrl + a printable key always goes to the pane, empty box or not. On a keyboard with a
+  //    separate Cmd it is never text editing (`applePlatform()`, lib/env.ts), and `Ctrl+C` must
+  //    not become the one chord you have to stop and think about.
+  //  • SHIFT+Enter on an empty box is a line break HERE, not a pane key: pressing it is how you
+  //    start a multi-line message, and there is nothing else it could mean over an empty field.
+  //    Shift+Tab is not excluded — that is Claude Code's mode cycle and has no local meaning.
+  //  • Printable characters over an empty box stay LOCAL. They start a draft, which is the whole
+  //    point; the Keys dock is still there for a harness prompt that wants a bare letter.
+  //
+  // The `Type` toggle, its armed strip and its stop-glyph are withdrawn here (`terminalNative`
+  // below): that mode's entire job on a desktop was the pass-through above, and leaving a pill for
+  // it invites the operator back into the streaming behaviour this rule exists to avoid. The phone
+  // keeps all three, unchanged, because a thumb has no arrow keys.
   const finePointer = useMediaQuery("(pointer: fine)");
-  const [terminalOff, setTerminalOff] = useState(false);
-  // A pane switch remounts this component (DetailRoute keys AgentChat by paneId), so an "off" can
-  // never leak into the next pane — the same rule the mode itself lives by.
-  const wantsTerminal = finePointer && !terminalOff;
-  useEffect(() => {
-    if (!wantsTerminal || direct.active) return;
-    // `canActivate` is re-checked inside: this fires again the moment a lock lifts, which is what
-    // re-arms the mode after the idle pause ends or a read-only device is paired. A draft in the
-    // box refuses, silently — the same rule the explicit toggle follows, and the effect simply
-    // tries again once the draft is sent or cleared.
-    direct.activateSilently();
+  const terminalNative = finePointer;
+
+  // Ordered, because arrows come in bursts. `send_keys` guarantees order INSIDE one array but not
+  // across concurrent calls, so three quick presses of Down must not race — the same invariant, and
+  // the same hook, the streaming mode uses. `pressKeys` is a hoisted declaration further down.
+  const paneKeys = useOrderedKeySender(pressKeys, () => {
+    setStatus(translate("directTyping.status.interrupted"), "error");
   });
+
+  // ── FORK: A SLASH COMMAND IS MIRRORED INTO THE PANE ────────────────────────────────────────
+  //
+  // The operator, 2026-09-20: "when I type /collie it doesn't show the command the way a terminal
+  // would … if it starts with `/` just mirror the input into herdr, so it feels like a terminal and
+  // I can use the arrow keys and Enter to pick quickly. Plain typing stays the chat box it is now."
+  //
+  // That is the one case where a local draft cannot work, and the reason is the harness rather than
+  // us: the completion list is CLAUDE'S, drawn by Claude, filtered by what Claude's own input box
+  // holds. A `/` typed into a box on this device is invisible to it, so no popup ever appears —
+  // and Collie already knows how to render that popup as a first-class list when it does
+  // (lib/harness/claude/index.ts, `kind: "autocomplete"`). Mirroring the keystrokes is what puts it
+  // on screen; the arrows and Enter that pick from it are the empty-box rule it already had.
+  //
+  // ENTERED on the `/` itself, over an EMPTY box, so the harness sees the command from its first
+  // character. LEFT when the harness's own line stops being a slash draft — submitted, cleared, or
+  // backspaced away — which is read off the mirror rather than guessed from our keystrokes, because
+  // picking from the popup rewrites that line in ways we did not type. `sawSlashLine` is the guard
+  // against the poll lag on the way IN: the line is still empty for up to one poll after arming,
+  // and without it the disarm would fire before the `/` had landed.
+  const [slashMirror, setSlashMirror] = useState(false);
+  const sawSlashLine = useRef(false);
+  useEffect(() => {
+    if (!slashMirror) {
+      sawSlashLine.current = false;
+      return;
+    }
+    // The mode can die on its own — a failed batch, a suspended view, the pane going away. When it
+    // does, this state has to follow or the composer claims a mirror that is not running.
+    if (!direct.active) {
+      setSlashMirror(false);
+      return;
+    }
+    const line = rawTerminalDraft;
+    if (line !== null && line.startsWith("/")) {
+      sawSlashLine.current = true;
+      return;
+    }
+    if (!sawSlashLine.current) return; // still waiting for the first poll to show the `/`
+    direct.deactivateSilently();
+    setSlashMirror(false);
+  }, [slashMirror, direct, rawTerminalDraft]);
+
+  /**
+   * The composer field's keydown when it is an ORDINARY draft box — which, on a desktop, is now
+   * always (the streaming mode is phone-only). See the `terminalNative` note above for the rule.
+   */
+  function onDraftKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    // THE IME GETS ITS KEYS BACK FIRST, before any branch below can claim one (lib/ime.ts). This
+    // is the first Enter of every 繁體中文 word, and it is also Up/Down moving through a candidate
+    // list — which the empty-box pass-through would otherwise send to the pane while swallowing it
+    // here. No `preventDefault` on this path: the field has to receive the event.
+    if (isComposingKey(event.nativeEvent)) return;
+
+    if (!terminalNative) {
+      // The phone, exactly as upstream: Enter is a line break (the only easy second line a thumb
+      // has) and Cmd/Ctrl+Enter is the deliberate send.
+      if (event.key !== "Enter") return;
+      if (event.metaKey || event.ctrlKey) {
+        event.preventDefault();
+        onSendClick();
+      }
+      return;
+    }
+
+    // Ctrl + a printable key, empty box or not — on this keyboard it is never text editing.
+    if (applePlatform() && event.ctrlKey && !event.metaKey && event.key.length === 1) {
+      event.preventDefault();
+      paneKeys.enqueue([composeKey(heldModifiers(event), event.key.toLowerCase())]);
+      return;
+    }
+
+    if (input === "") {
+      // A SLASH OVER AN EMPTY BOX opens the harness's own completion list — see the note above.
+      // Bare only: `Ctrl+/` and friends are chords, and one of them is handled above.
+      if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        if (direct.activateSilentlyWith("/")) setSlashMirror(true);
+        return;
+      }
+      // Shift+Enter over an empty field is how a multi-line message starts. Nothing else it could
+      // mean, so it stays here; every other pane key keeps its modifiers (Shift+Tab is Claude
+      // Code's mode cycle and has no local meaning).
+      if (event.key === "Enter" && event.shiftKey) return;
+      const key = EMPTY_BOX_PANE_KEYS.get(event.key);
+      if (key === undefined) return; // a printable character: it starts a draft, right here
+      event.preventDefault();
+      paneKeys.enqueue([composeKey(heldModifiers(event), key)]);
+      return;
+    }
+
+    // There is text: this is a message being written. Enter sends it, Shift+Enter breaks the line,
+    // and every other key — arrows included — edits, because that is what they are for.
+    if (event.key !== "Enter") return;
+    if (event.metaKey || event.ctrlKey || !event.shiftKey) {
+      event.preventDefault();
+      onSendClick();
+    }
+  }
 
   // ── VOICE (ADR 0029) ──────────────────────────────────────────────────────────────────────────
   //
@@ -742,7 +890,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // or sent, not a fresh one to re-show. Not gated on `locked`: read-only devices get the preview +
   // Take over (a local text copy); only the actual Send stays gated.
   const showPreview =
-    !gone && previewLatched && effectiveRaw !== null && normalizeDraft(effectiveRaw) !== handledKey;
+    !gone &&
+    // FORK: not while the slash mirror is running — that line is this composer's own keystrokes,
+    // so "the host left a draft, want it?" is false, and Take over would DISARM the mirror on its
+    // way in and hand you a copy of a command the harness already has. The echo below shows it
+    // instead. The latch is left alone deliberately: leaving the mirror mid-command really does
+    // strand the line, and the offer is then the right thing.
+    !slashMirror &&
+    previewLatched &&
+    effectiveRaw !== null &&
+    normalizeDraft(effectiveRaw) !== handledKey;
+
+  // FORK: the mirrored line, as a line rather than an offer. `stripChrome` peels the harness's
+  // input box off the mirror, so while the mirror is running this is the ONLY place the command
+  // being typed is drawn — hiding it outright was tried and made typing feel like a void. No
+  // stability latch: it is the live line or it is useless.
+  const showEcho = !gone && slashMirror && effectiveRaw !== null && effectiveRaw !== "";
 
   // Take over: the explicit "I'll handle this on mobile now" action. One-shot COPY of the current raw
   // draft into the composer (set on an empty input, else appended on a new line so mobile-typed work
@@ -1543,7 +1706,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               // strip above the input is what makes that visible. Arming is still an explicit
               // NAMED choice, which is what keeps an accidental touch from quietly wiring the
               // keyboard to a live terminal; see use-direct-typing.ts for the rest.
-              {
+              // FORK: withdrawn entirely on a physical keyboard — there is no mode to toggle
+              // there, and a lit pill for a state you did not choose is the complaint that made
+              // `terminalNative` exist. The phone keeps it exactly as upstream shipped it.
+              ...(terminalNative
+                ? []
+                : [{
                 id: "type",
                 icon: Terminal,
                 // Announced in full, drawn short: the pill has one word of room beside its glyph,
@@ -1556,9 +1724,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 onSelect: () => {
                   if (direct.active) {
                     direct.deactivate();
-                    // On a desktop this mode is the default, so "off" has to be REMEMBERED or the
-                    // effect above turns it straight back on and the toggle looks broken.
-                    setTerminalOff(true);
                     return;
                   }
                   // Close whatever dock is open first: the mode needs the phone keyboard, and a
@@ -1567,9 +1732,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   // (ADR 0005).
                   requestDrawer(null);
                   direct.activate();
-                  setTerminalOff(false);
                 },
-              },
+              }]),
               {
                 id: "quick",
                 icon: Zap,
@@ -1633,6 +1797,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             Take over copies the text here. No dismiss — it's honest state and persists until the user
             takes over, sends, or the host line clears. Same zinc/text-xs chrome as the "You sent:"
             strip above. */}
+        {/* FORK: the slash mirror's echo — same component, no offer. Not inside a Collapse: it
+            appears and goes on every command, and a 240ms slide each time is motion a terminal
+            does not have. */}
+        {showEcho && effectiveRaw !== null && (
+          <TerminalDraftPreview text={effectiveRaw} onTakeOver={null} echo />
+        )}
         <Collapse open={showPreview && effectiveRaw !== null}>
           {showPreview && effectiveRaw !== null && (
             <TerminalDraftPreview
@@ -1681,7 +1851,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             pills, which carry no controls at all. */}
         <Collapse open={direct.active || (recorder.busy && recorder.phase !== "requesting")}>
           {/* Armed indicator for direct typing, deliberately NOT only on the button and textarea —
-              see the component. */}
+              see the component. Unreachable on a physical keyboard, where the mode has no toggle
+              (`terminalNative`) and is never armed. */}
           {direct.active && <DirectTypingStrip onStop={() => direct.deactivate()} />}
           {/* The microphone's armed strip. Stop and ✕ are different actions: one transcribes the
               clip, the other throws it away. */}
@@ -1744,32 +1915,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             onChange={direct.active ? direct.onChange : (e) => updateInput(e.target.value)}
             onCompositionStart={direct.active ? direct.onCompositionStart : undefined}
             onCompositionEnd={direct.active ? direct.onCompositionEnd : undefined}
-            onKeyDown={
-              direct.active
-                ? direct.onKeyDown
-                : (e) => {
-                    if (e.key !== "Enter") return;
-                    // An IME is committing a candidate, not sending a message (lib/ime.ts). This
-                    // is the first Enter of every 繁體中文 word typed on a desktop, so without it
-                    // Enter-to-send makes the composer unusable in Chinese.
-                    if (isComposingKey(e.nativeEvent)) return;
-                    // FORK: ON A PHYSICAL KEYBOARD, ENTER SENDS AND SHIFT+ENTER BREAKS THE LINE —
-                    // the convention every terminal and every chat client on a desktop already
-                    // has, and the one the operator asked for (2026-09-19). Cmd/Ctrl+Enter keeps
-                    // working because it always did and costs nothing to honour.
-                    //
-                    // GATED ON THE SAME `(pointer: fine)` PROBE as terminal mode above, and that
-                    // gate is load-bearing rather than tidy: on a touch keyboard Enter is the only
-                    // easy way to get a second line and Shift+Enter is a two-thumb operation, so
-                    // the phone keeps Enter as a line break. This branch is also only reachable
-                    // with terminal mode OFF; with it on, Enter is a keystroke like any other and
-                    // `direct.onKeyDown` has it.
-                    if (e.metaKey || e.ctrlKey || (finePointer && !e.shiftKey)) {
-                      e.preventDefault();
-                      onSendClick();
-                    }
-                  }
-            }
+            onKeyDown={direct.active ? direct.onKeyDown : onDraftKeyDown}
             onPaste={onPasteFile}
             placeholder={
               gone

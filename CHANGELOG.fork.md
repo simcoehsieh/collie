@@ -20,9 +20,27 @@ stays true).
   value alone, so a fresh device, a cleared storage and a bumped `TOUR_VERSION` are all silent.
   Upstream's bump rule shows the screen once per device per version, which on a checkout that IS
   the service means the first-run screen greets the operator after a deployment they made
-  themselves. Six pinned tests and `FORK.md → The first-run screen's standing shape`.
+  themselves. Seven pinned tests and `FORK.md → The first-run screen's standing shape`. Asked a
+  second time, the Settings row that raised it ("Show the first screen again") is gone too, so the
+  install has no door to that screen at all.
 
+- **On a physical keyboard, one box that types and edits.** When the composer is EMPTY its keys go
+  to the pane — arrows, Tab, Escape and Enter, the ones that answer a picker; once it has text it
+  is a message being written, and Enter sends it. Ctrl+chords always reach the pane where Cmd is
+  the copy key. This replaces three same-day attempts that armed the existing streaming mode
+  instead, which put the message on the harness's `❯` line and dragged the "Draft in terminal /
+  Take over" strip in with it; because there is no mode now, **voice input and attachments work
+  unconditionally**, which they did not while streaming was armed on arrival. The Type toggle, its
+  armed strip and its stop-glyph are withdrawn on a fine pointer; the phone keeps all three.
+  `FORK.md → One box that types and edits, on a physical keyboard`.
 
+- **…with one exception: a slash command is mirrored into the pane.** A `/` over an empty box arms
+  the keystroke mirror, so Claude's own completion list appears and filters as you type and the
+  arrows and Enter pick from it — Collie already renders that popup as a list. It ends when the
+  harness's line stops being a slash draft. The mirrored line is echoed above the composer (prompt
+  glyph, no Take over), because `stripChrome` peels the harness's box off the mirror and that echo
+  is the only place the command is drawn. A `/` inside existing text is just a slash; the phone is
+  untouched.
 
 Merged upstream v1.10.2 (2026-09-19) — 25 commits, ZERO conflicts, and nothing in `web/src` or
 `bridge/` at all: the whole release is `cli/` and the packaging recipes.

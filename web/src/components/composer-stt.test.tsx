@@ -248,6 +248,32 @@ describe("Composer — the microphone sits beside the clip, and Send is always S
   });
 });
 
+// FORK (2026-09-20): the microphone survives a physical keyboard. Three earlier attempts at
+// "terminal typing on a desktop" armed the streaming mode on arrival, and `micShown` is
+// `stt !== null && !direct.active` — so on a Mac the button was simply absent, and nobody noticed
+// until the operator said "make sure voice input and attachments still work". There is no mode to
+// arm any more (composer.tsx, `terminalNative`); this pins that from the outside.
+describe("Composer — the microphone on a physical keyboard", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("is drawn and enabled on a fine pointer", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("pointer: fine"),
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    server.use(configHandler(CONFIG_WITH_STT));
+    renderComposer();
+
+    expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
+  });
+});
+
 describe("Composer — a finished clip", () => {
   it("lands in the draft at the caret", async () => {
     const user = userEvent.setup();

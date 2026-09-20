@@ -268,11 +268,101 @@ operator asked" stop being the same case, which is the only thing upstream's sin
 express. `markTourSeen()` still stamps `TOUR_VERSION`, so the stored number still says which screen
 this device last read — it just no longer decides whether the screen appears.
 
-Six pinned tests, so a merge cannot hand the behaviour back quietly: four in `lib/tour.test.ts` (a
+Seven pinned tests, so a merge cannot hand the behaviour back quietly: four in `lib/tour.test.ts` (a
 fresh device stays shut, a bump stays shut in both directions, the sentinel and nothing else opens
-it, a v1 device is not ambushed) and two in `routes/root.test.tsx` (never-seen and
-version-bumped devices both render no dialog). `e2e/fixtures/api.ts`'s `tour: "fresh"` now seeds the
-sentinel rather than leaving the origin untouched — an untouched origin is silent by design.
+it, a v1 device is not ambushed), two in `routes/root.test.tsx` (never-seen and version-bumped
+devices both render no dialog) and one in `routes/settings.test.tsx` (the row is absent).
+`e2e/fixtures/api.ts`'s `tour: "fresh"` now seeds the sentinel rather than leaving the origin
+untouched — an untouched origin is silent by design.
+
+**And the door itself is gone.** Asked a second time, so `TourControl` — upstream's "Show the first
+screen again" row, the only caller of `resetTour()` — no longer renders in `routes/settings.tsx`.
+Both components stay in the tree: `TourHost` is still mounted at the data root because it is what
+reports `"closed"` to the push handshake, and without that report `usePushSetup` never runs. Putting
+the screen back is one line in Settings.
+
+## One box that types and edits, on a physical keyboard (2026-09-20)
+
+**When the composer box is EMPTY your keys go to the pane; when it has text you are writing a
+message, and Enter sends it.** That is the whole rule, on a `(pointer: fine)` device. A phone with
+a Bluetooth keyboard reads coarse and keeps the phone's composer unchanged — the rule exists for a
+keyboard you can reach without thinking, not for a keyboard that exists.
+
+What it buys, and why the obvious implementations are wrong, is worth keeping because three of them
+shipped and were reverted in two days.
+
+The ask (2026-09-19) was *"when I open the PWA on a computer I don't think I need Keys … every time
+I want to select something I have to press Keys to get the arrow keys"*. The obvious reading is
+"arm the existing Type mode for them". That mode STREAMS every keystroke to the harness's `❯` line,
+so the message you are composing does not live in the composer at all — and `stripChrome` peels
+that line off the mirror, which is why it then has to be re-surfaced as the "Draft in terminal /
+Take over" strip. Each attempt to hide that consequence produced the next one:
+
+| Attempt | What it did | Why it went |
+| --- | --- | --- |
+| Arm the mode on mount | The pill sat lit, the armed strip offered Stop, Send became stop-typing | *"Not that you take the lazy route and pre-press Type for me"* |
+| Withdraw the pill/strip/stop-glyph | Right about the furniture; the streaming stayed | The staging strip stayed with it |
+| Suppress the strip in that mode | The `❯` line is your own output, so the offer is nonsense | That strip is the ONLY place those characters are drawn — typing went into a void, and 中文 made a whole word vanish on the commit Enter |
+| Echo the line instead of offering it | Worked | Operator judged the sequence worse than the start; reverted |
+
+The rule above needs none of it, because there is no mode. The box is the ordinary draft box on
+every device — a transcript inserts at the caret, an upload appends its path, the text is yours to
+edit until you send it — and **voice and attachments therefore work unconditionally**, which they
+did not while streaming was armed on arrival (`micShown` is `stt !== null && !direct.active`, and
+the attach button is disabled on the same condition). All a physical keyboard adds is that an empty
+box has nothing to edit, so the keys that answer a picker can only have been meant for the pane.
+
+Three edges, in `onDraftKeyDown` (`components/composer.tsx`):
+
+| Case | Where the key goes |
+| --- | --- |
+| `Ctrl` + a printable key, any time | The pane, where the keyboard has a separate Cmd (`applePlatform()`). It is never text editing there, and `Ctrl+C` must not be the one chord you stop and think about. |
+| `Shift+Enter` over an empty box | Here — it is how a multi-line message starts. `Shift+Tab` is NOT excluded: that is Claude Code's mode cycle and has no local meaning. |
+| A printable character over an empty box | Here. It starts a draft, which is the point; the Keys dock still covers a harness prompt that wants a bare letter. |
+
+The IME guard runs before all of it (`lib/ime.ts`). That matters more than it did when only Enter
+was at stake: Up and Down move through a candidate list, and without the guard the empty-box
+pass-through would send them to the pane AND swallow them here.
+
+The `Type` toggle, its armed strip and its stop-glyph are withdrawn on a fine pointer
+(`terminalNative`): that mode's whole job on a desktop was the pass-through above, and leaving a
+pill for it invites the operator back into the streaming behaviour this rule exists to avoid. The
+phone keeps all three, unchanged, because a thumb has no arrow keys.
+
+### The one exception: a slash command is mirrored into the pane
+
+*"When I type `/collie` it doesn't show the command the way a terminal would … if it starts with
+`/` just mirror the input into herdr, so it feels like a terminal and I can use the arrow keys and
+Enter to pick quickly. Plain typing stays the chat box it is now."*
+
+This is the one case a local draft cannot serve, and the reason is the harness rather than us: the
+completion list is **Claude's**, drawn by Claude, filtered by what Claude's own input box holds. A
+`/` typed into a box on this device is invisible to it, so no popup ever appears — while Collie
+already knows how to render that popup as a first-class list when it does
+(`lib/harness/claude/index.ts`, `kind: "autocomplete"`). Mirroring the keystrokes is what puts it
+on screen; the arrows and Enter that pick from it are the empty-box rule above, unchanged.
+
+- **Entered** on the `/` itself, over an EMPTY box, so the harness sees the command from its first
+  character. `activateSilentlyWith("/")` arms and seeds through the mode's OWN ordered sender — two
+  senders are two connections, and `send_keys` only guarantees order inside one array, so a `/`
+  racing the `c` after it can arrive as `c/`.
+- **Left** when the harness's line stops being a slash draft: submitted, cleared, or backspaced
+  away. Read off the mirror rather than inferred from our keystrokes, because picking from the
+  popup rewrites that line in ways we did not type. `sawSlashLine` guards the way in — the line is
+  still empty for up to one poll after arming.
+- **Shown** as an echo (`TerminalDraftPreview`'s `echo`): the prompt glyph and the words, no title,
+  no Take over, no stability latch. `stripChrome` peels the harness's box off the mirror, so this
+  is the only place the command being typed is drawn; hiding it was tried on 2026-09-20 and made
+  typing feel like a void. The take-over OFFER is suppressed while mirroring for the same reason it
+  is wrong there — the line is your own keystrokes, and Take over would disarm the mirror and hand
+  you a copy of what the harness already has. The latch itself is left running, so leaving the
+  mirror mid-command still strands the line honestly.
+- A `/` **inside existing text** is just a slash, and a phone types a plain `/` — the mirror is
+  fine-pointer only.
+
+Pinned in `components/composer.test.tsx`'s fine-pointer suite and one case in
+`composer-stt.test.tsx` — including the two the operator named (the microphone and the attach
+button), which a rule-only test would pass without.
 
 ## Taking upstream's changes
 

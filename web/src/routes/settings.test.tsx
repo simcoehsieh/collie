@@ -58,6 +58,23 @@ describe("SettingsRoute — the shared header shell", () => {
   });
 });
 
+// ── FORK: NO DOOR TO THE FIRST-RUN SCREEN (2026-09-20) ─────────────────────────────────────────
+//
+// Upstream ends the "how this phone treats you" block with "Show the first screen again", which is
+// the only way to raise the first-run tour. The operator asked twice for that screen to be pulled
+// out of this install, so the row is gone and there is no door left. `lib/tour.ts` holds the other
+// half — the screen never opens on its own — and FORK.md → The first-run screen's standing shape
+// says why a fork that deploys upstream weekly needs a different rule from upstream's.
+describe("SettingsRoute — the first-run screen has no door here", () => {
+  it("draws no 'show the first screen again' row", async () => {
+    renderSettings();
+    // Wait for the page proper, so this is an absence on a rendered route and not on an empty one.
+    await screen.findByRole("heading", { name: "Settings" });
+    expect(screen.queryByText("Show the first screen again")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show" })).toBeNull();
+  });
+});
+
 // ── THE FOOTER, AFTER THE UPDATE CHIP LEFT IT (M16/01) ──────────────────────────────────────────
 //
 // Settings used to end with three update surfaces for one subject. Updating has a page of its own

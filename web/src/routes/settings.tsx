@@ -16,7 +16,6 @@ import { HapticsControl } from "@/components/haptics-control";
 import { HandsFreeControl } from "@/components/hands-free-control";
 import { LowPowerControl } from "@/components/low-power-control";
 import { ZenControl } from "@/components/zen-control";
-import { TourControl } from "@/components/tour-control";
 import { InstallControl } from "@/components/install-control";
 import { LanguageControl } from "@/components/language-control";
 import { FontSettingsControl } from "@/components/font-settings";
@@ -171,10 +170,14 @@ export function SettingsRoute() {
 
         {/* FORK: Low power — the poll cadence, per device. Same family as the three above. */}
         <LowPowerControl />
-        {/* Last of the "how this phone treats you" block, and the ONLY way back to a tour that was
-            interrupted — the tour is marked seen the moment it opens. An action, so the row ends in
-            a button rather than a Switch. */}
-        <TourControl />
+        {/* FORK: NO FIRST-RUN ROW HERE (2026-09-20). Upstream's last row in this block is "show the
+            first screen again", the only way back to a tour that was interrupted. The operator
+            asked twice for that screen to be pulled out, so this install has no door to it at all:
+            `lib/tour.ts` already answers "never, unless asked", and `TourControl` was the only
+            thing that ever asked. The component and `TourHost` both stay in the tree — the host
+            still reports "closed" to the push handshake in routes/root.tsx, which is what lets the
+            notification prompt run at all — so putting the screen back is this one line.
+            FORK.md → The first-run screen's standing shape. */}
 
         <Card className="gap-0 py-0">
           <div className="flex items-center justify-between gap-4 p-4">

@@ -177,17 +177,22 @@ export function useDirectTyping({
   }
 
   /**
-   * Arm without announcing it and without taking focus — the entry point for a device where this
-   * mode is the DEFAULT rather than a choice (a physical keyboard; components/composer.tsx holds
-   * that rule and its reasoning).
+   * FORK: arm without announcing it or taking focus, and seed the pane with `seed` in the SAME
+   * ordered sender that every later keystroke uses.
    *
-   * The two differences from {@link activate} are the whole point. A status toast on every pane you
-   * open is noise about a state that is simply how the composer works here, and stealing focus on
-   * mount would fight the reader who arrived to scroll the mirror, not to type. Every GUARD is the
-   * same: `canActivate`, and the refusal to arm over a pending draft. Returns whether it armed, so
-   * the caller can tell "not yet" from "not allowed".
+   * The entry point for the slash-command mirror (components/composer.tsx): the operator types `/`
+   * over an empty composer, and from that character on the harness sees the keystrokes live, so its
+   * own completion popup filters as they type and arrows pick from it. The seed has to travel
+   * through THIS sender rather than the composer's own — two ordered senders are two connections,
+   * and `send_keys` only guarantees order inside one array, so a `/` racing the `c` after it can
+   * arrive as `c/`.
+   *
+   * Silent on purpose, like the toggle's status toast is not: the operator asked for a `/` to feel
+   * like a `/`, and a toast on every command is a notification about punctuation. Every GUARD is
+   * the toggle's: `canActivate`, and the refusal to arm over a pending draft — which cannot happen
+   * on this path, since the caller only offers it an empty box.
    */
-  function activateSilently(): boolean {
+  function activateSilentlyWith(seed: string): boolean {
     if (!canActivate() || replyDraft().length > 0) return false;
     cancelPendingBlur();
     setValue("");
@@ -195,6 +200,7 @@ export function useDirectTyping({
     committedComposition.current = null;
     activeRef.current = true;
     setActive(true);
+    sender.enqueue(textToKeySequence(seed));
     return true;
   }
 
@@ -416,7 +422,7 @@ export function useDirectTyping({
     value,
     busy: sender.busy,
     activate,
-    activateSilently,
+    activateSilentlyWith,
     deactivate,
     deactivateSilently,
     onChange,

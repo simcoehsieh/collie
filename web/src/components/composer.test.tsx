@@ -2465,13 +2465,17 @@ describe("Composer — a composed key queue is guarded on the way out", () => {
   });
 });
 
-// ── FORK: ON A PHYSICAL KEYBOARD THE COMPOSER IS A TERMINAL (2026-09-19) ────
+// ── FORK: ON A PHYSICAL KEYBOARD, ONE BOX THAT TYPES AND EDITS (2026-09-20) ─
 // The default suite runs with the shared `matchMedia` stub, which answers false to everything — so
-// every case above is a COARSE pointer and pins the phone's behaviour. These stub a fine pointer
-// and pin the desktop's, which is a different composer: terminal mode armed without being asked
-// for, Enter sending, Shift+Enter breaking the line, and Shift+Tab reaching the pane as a chord
-// rather than a bare Tab.
-describe("Composer — a fine pointer gets the terminal, not the phone composer", () => {
+// every case above is a COARSE pointer and pins the phone's behaviour. These stub a fine pointer.
+//
+// THE RULE: an EMPTY box sends its keys to the pane; a box with text is a message being written,
+// and Enter sends it. Three earlier attempts armed the STREAMING mode instead (every keystroke
+// straight to the harness's `❯` line), which is what dragged in the "Draft in terminal / Take
+// over" strip and made 中文 appear to vanish; the operator's words were "I want type and edit in
+// the same box — and make sure voice input and attachments still work". Both of those are pinned
+// here too, because "there is no mode any more" is exactly the claim that makes them true.
+describe("Composer — a fine pointer types and edits in one box", () => {
   /** A `matchMedia` that answers true to `(pointer: fine)` and false to everything else. */
   function finePointer() {
     vi.stubGlobal("matchMedia", (query: string) => ({
@@ -2507,49 +2511,8 @@ describe("Composer — a fine pointer gets the terminal, not the phone composer"
     }
   });
 
-  it("arms terminal mode with nothing tapped, and says so where the phone had to ask", async () => {
-    finePointer();
-    renderComposer();
-
-    // The strip above the input is what states the mode; it is there on arrival.
-    await waitFor(() =>
-      expect(screen.getByPlaceholderText(/type into the terminal/i)).toBeInTheDocument(),
-    );
-    // And the toggle reads as pressed rather than as an invitation.
-    expect(screen.getByRole("button", { name: "Type into terminal" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-  });
-
-  it("a coarse pointer is untouched — the phone still arms it by hand", () => {
-    renderComposer();
-    expect(screen.getByRole("button", { name: "Type into terminal" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-  });
-
-  it("turning it off STICKS — the effect must not arm it straight back on", async () => {
-    finePointer();
-    const user = userEvent.setup();
-    renderComposer();
-
-    const toggle = () => screen.getByRole("button", { name: "Type into terminal" });
-    await waitFor(() => expect(toggle()).toHaveAttribute("aria-pressed", "true"));
-
-    await user.click(toggle());
-    expect(toggle()).toHaveAttribute("aria-pressed", "false");
-    // A render or three later it is STILL off. This is the case that fails if `terminalOff` goes.
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(toggle()).toHaveAttribute("aria-pressed", "false");
-  });
-
-  it("Shift+Enter reaches the pane as a chord, where a bare Enter submits", async () => {
-    finePointer();
-    const user = userEvent.setup();
+  /** Collect every `send_keys` body the case produces. */
+  function captureKeys(): string[][] {
     const sent: string[][] = [];
     server.use(
       http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
@@ -2557,135 +2520,155 @@ describe("Composer — a fine pointer gets the terminal, not the phone composer"
         return HttpResponse.json({ ok: true });
       }),
     );
+    return sent;
+  }
+
+  it("is an ordinary reply box — no terminal mode, and none of its furniture", async () => {
+    finePointer();
     renderComposer();
-    await waitFor(() =>
-      expect(screen.getByPlaceholderText(/type into the terminal/i)).toBeInTheDocument(),
-    );
-    const box = screen.getByPlaceholderText(/type into the terminal/i);
-    await user.click(box);
 
-    await user.keyboard("{Shift>}{Enter}{/Shift}");
-    await waitFor(() => expect(sent).toContainEqual(["shift+Enter"]));
+    // The ordinary placeholder, not the streaming mode's.
+    expect(await screen.findByPlaceholderText(/type a reply/i)).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/type into the terminal/i)).not.toBeInTheDocument();
+    // No toggle, no armed strip, no stop-glyph on Send.
+    expect(screen.queryByRole("button", { name: "Type into terminal" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /stop typing/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("aria-pressed", "false");
+  });
 
+  // The 2026-09-19 ask, and the only thing the mode was ever needed for on a desktop.
+  it("an EMPTY box hands the picker keys to the pane", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    const sent = captureKeys();
+    renderComposer();
+    await user.click(screen.getByPlaceholderText(/type a reply/i));
+
+    await user.keyboard("{ArrowDown}");
+    await waitFor(() => expect(sent).toContainEqual(["Down"]));
+    await user.keyboard("{ArrowUp}");
+    await waitFor(() => expect(sent).toContainEqual(["Up"]));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(sent).toContainEqual(["Escape"]));
     await user.keyboard("{Enter}");
     await waitFor(() => expect(sent).toContainEqual(["Enter"]));
-  });
-
-  it("Shift+Tab is a chord too — Claude Code's mode cycle, not a bare Tab", async () => {
-    finePointer();
-    const user = userEvent.setup();
-    const sent: string[][] = [];
-    server.use(
-      http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
-        sent.push((await request.json()).keys);
-        return HttpResponse.json({ ok: true });
-      }),
-    );
-    renderComposer();
-    const box = await screen.findByPlaceholderText(/type into the terminal/i);
-    await user.click(box);
-
+    // Claude Code's mode cycle keeps its modifier.
     await user.keyboard("{Shift>}{Tab}{/Shift}");
     await waitFor(() => expect(sent).toContainEqual(["shift+Tab"]));
   });
 
-  it("Ctrl+C reaches the pane as a chord on a keyboard that has a separate Cmd", async () => {
+  // The other half of the same rule, and the thing three previous attempts got wrong: once there
+  // is text, this is a message and the keys are a text editor.
+  it("a box WITH text edits locally — arrows move the caret, nothing reaches the pane", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    const sent = captureKeys();
+    renderComposer();
+
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.click(box);
+    await user.type(box, "hello");
+    await user.keyboard("{ArrowLeft}{ArrowLeft}{ArrowUp}{Escape}");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toEqual([]);
+    // SAFETY: `box` came from a placeholder query on the composer's own <textarea> (ChatInput
+    // renders one), so it is that element and it has a `.value`.
+    expect((box as HTMLTextAreaElement).value).toBe("hello");
+  });
+
+  it("Enter sends the text and Shift+Enter keeps writing", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    let replyText: string | null = null;
+    server.use(replyHandler((typed) => (replyText = typed)));
+    renderComposer();
+
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.click(box);
+    await user.type(box, "first");
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await user.type(box, "second");
+    expect(replyText).toBeNull();
+    // SAFETY: as above — the composer's own <textarea>.
+    expect((box as HTMLTextAreaElement).value).toBe("first\nsecond");
+
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(replyText).toBe("first\nsecond"));
+  });
+
+  // Shift+Enter over an EMPTY box is how a multi-line message starts, so it must not be a pane key.
+  it("Shift+Enter on an empty box breaks the line here rather than reaching the pane", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    const sent = captureKeys();
+    renderComposer();
+
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.click(box);
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toEqual([]);
+  });
+
+  it("Ctrl+C reaches the pane with text in the box, on a keyboard that has a separate Cmd", async () => {
     finePointer();
     // The Apple probe reads `navigator.platform`; stub that alone so everything else the composer
     // asks of the navigator keeps working. The suite's own afterEach puts it back.
     Object.defineProperty(navigator, "platform", { value: "MacIntel", configurable: true });
-    {
-      const user = userEvent.setup();
-      const sent: string[][] = [];
-      server.use(
-        http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
-          sent.push((await request.json()).keys);
-          return HttpResponse.json({ ok: true });
-        }),
-      );
-      renderComposer();
-      const box = await screen.findByPlaceholderText(/type into the terminal/i);
-      await user.click(box);
+    const user = userEvent.setup();
+    const sent = captureKeys();
+    renderComposer();
 
-      await user.keyboard("{Control>}c{/Control}");
-      await waitFor(() => expect(sent).toContainEqual(["ctrl+c"]));
-
-      // Cmd is the platform's own copy key and is NOT taken.
-      await user.keyboard("{Meta>}c{/Meta}");
-      await new Promise((r) => setTimeout(r, 50));
-      expect(sent).not.toContainEqual(["cmd+c"]);
-      expect(sent.flat().filter((k) => k.endsWith("+c"))).toEqual(["ctrl+c"]);
-    }
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.click(box);
+    await user.type(box, "half a thought");
+    await user.keyboard("{Control>}c{/Control}");
+    await waitFor(() => expect(sent).toContainEqual(["ctrl+c"]));
   });
 
-  it("leaves Ctrl alone where Ctrl IS the copy key — those chords stay in the Keys pad", async () => {
+  it("leaves Ctrl+C alone where Ctrl IS the copy key", async () => {
     finePointer();
     Object.defineProperty(navigator, "platform", { value: "Win32", configurable: true });
-    Object.defineProperty(navigator, "userAgent", {
-      value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-      configurable: true,
-    });
+    Object.defineProperty(navigator, "userAgent", { value: "Mozilla/5.0 (Windows NT 10.0)", configurable: true });
     const user = userEvent.setup();
-    const sent: string[][] = [];
-    server.use(
-      http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
-        sent.push((await request.json()).keys);
-        return HttpResponse.json({ ok: true });
-      }),
-    );
+    const sent = captureKeys();
     renderComposer();
-    const box = await screen.findByPlaceholderText(/type into the terminal/i);
-    await user.click(box);
 
+    await user.click(screen.getByPlaceholderText(/type a reply/i));
     await user.keyboard("{Control>}c{/Control}");
     await new Promise((r) => setTimeout(r, 50));
-    expect(sent).not.toContainEqual(["ctrl+c"]);
-    // The special keys still go, so this is the chord rule narrowing and not the mode being off.
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(sent).toContainEqual(["Escape"]));
+    expect(sent).toEqual([]);
   });
 
   // ── THE IME'S KEYS ARE THE IME'S ─────────────────────────────────────────
-  // Reported the day Enter-to-send shipped: "when typing in Traditional Chinese, the first Enter
-  // confirms the candidate, but it sends the message". `userEvent` cannot drive an input method, so
-  // these use `fireEvent` and set the composition flags the browser would.
-  it("an IME's committing Enter is the IME's, in terminal mode and out of it", async () => {
+  // "When typing in Traditional Chinese, the first Enter confirms the candidate, but it sends the
+  // message." The empty-box pass-through makes this bigger than Enter: Up and Down move through a
+  // candidate list, and without the guard they would go to the pane AND be swallowed here.
+  it("an IME's keys are the IME's, over an empty box and over a draft", async () => {
     finePointer();
     const user = userEvent.setup();
     let replyText: string | null = null;
-    const sent: string[][] = [];
-    server.use(
-      replyHandler((typed) => (replyText = typed)),
-      http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
-        sent.push((await request.json()).keys);
-        return HttpResponse.json({ ok: true });
-      }),
-    );
+    const sent = captureKeys();
+    server.use(replyHandler((typed) => (replyText = typed)));
     renderComposer();
 
-    // ── terminal mode on: the commit key must not reach the pane
-    const terminal = await screen.findByPlaceholderText(/type into the terminal/i);
-    fireEvent.keyDown(terminal, { key: "Enter", isComposing: true });
-    // …nor the candidate-list keys, which is the half a plain Enter guard would still get wrong.
-    fireEvent.keyDown(terminal, { key: "ArrowDown", isComposing: true });
-    fireEvent.keyDown(terminal, { key: "Escape", isComposing: true });
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    // ── empty box: the candidate keys must not become pane keys
+    fireEvent.keyDown(box, { key: "ArrowDown", isComposing: true });
+    fireEvent.keyDown(box, { key: "Escape", isComposing: true });
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true });
     await new Promise((r) => setTimeout(r, 50));
     expect(sent).toEqual([]);
-
-    // The same keys with no composition in flight still go, so this is the IME guard and not the
-    // mode being off.
-    fireEvent.keyDown(terminal, { key: "ArrowDown" });
+    // The same key with no composition in flight still goes, so this is the guard and not a dead
+    // pass-through.
+    fireEvent.keyDown(box, { key: "ArrowDown" });
     await waitFor(() => expect(sent).toContainEqual(["Down"]));
 
-    // ── terminal mode off: the commit key must not send the draft
-    await user.click(screen.getByRole("button", { name: "Type into terminal" }));
-    const box = screen.getByPlaceholderText(/type a reply/i);
+    // ── a draft: the committing Enter must not send the message
     await user.type(box, "台北");
     fireEvent.keyDown(box, { key: "Enter", isComposing: true });
     await new Promise((r) => setTimeout(r, 50));
     expect(replyText).toBeNull();
-
-    // And the Enter that follows the commit — no composition — is the one that sends.
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() => expect(replyText).toBe("台北"));
   });
@@ -2697,10 +2680,8 @@ describe("Composer — a fine pointer gets the terminal, not the phone composer"
     server.use(replyHandler((typed) => (replyText = typed)));
     renderComposer();
 
-    await user.click(screen.getByRole("button", { name: "Type into terminal" }));
     const box = screen.getByPlaceholderText(/type a reply/i);
     await user.type(box, "台北");
-
     // Chromium with some IMEs fires compositionend first, so `isComposing` is already false on the
     // committing Enter and only the 229 sentinel still identifies it.
     fireEvent.keyDown(box, { key: "Enter", isComposing: false, keyCode: 229 });
@@ -2708,31 +2689,159 @@ describe("Composer — a fine pointer gets the terminal, not the phone composer"
     expect(replyText).toBeNull();
   });
 
-  it("with terminal mode off, Enter SENDS the draft and Shift+Enter keeps writing", async () => {
+  // "Make sure voice input and attachments still work." They do because there is no mode to
+  // suppress them: the previous arrangement armed streaming on arrival, and both of these are
+  // withdrawn while it is armed.
+  it("keeps the microphone and the attach button, because nothing is armed", async () => {
+    finePointer();
+    renderComposer();
+    await screen.findByPlaceholderText(/type a reply/i);
+
+    // The attach control is present and usable. Under the previous arrangement the streaming mode
+    // was armed on arrival and this button was `disabled` the whole time.
+    expect(screen.getByRole("button", { name: "Attach file" })).toBeEnabled();
+  });
+
+  // Nothing is streamed to the harness's `❯` line any more, so the host-draft strip goes back to
+  // meaning what it says — and it still means it here.
+  it("still surfaces a genuine host draft, with Take over intact", async () => {
+    finePointer();
+    renderDraftHarness();
+    strandDraft("left on the line");
+    expect(await screen.findByText(/draft in terminal/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Take over" })).toBeInTheDocument();
+  });
+
+  // ── THE SLASH MIRROR ─────────────────────────────────────────────────────
+  // "When I type /collie it doesn't show the command the way a terminal would … if it starts with
+  // `/` just mirror the input into herdr." It is the one case a local draft cannot serve: the
+  // completion list is the harness's, filtered by what the HARNESS's box holds, so a `/` typed on
+  // this device produces no popup at all.
+  it("mirrors a slash command into the pane from its first character", async () => {
     finePointer();
     const user = userEvent.setup();
-    let replyText: string | null = null;
-    server.use(replyHandler((typed) => (replyText = typed)));
+    const sent = captureKeys();
     renderComposer();
-
-    // Off first: with the mode on, Enter is a keystroke and this branch is unreachable.
-    const toggle = screen.getByRole("button", { name: "Type into terminal" });
-    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
-    await user.click(toggle);
 
     const box = screen.getByPlaceholderText(/type a reply/i);
     await user.click(box);
-    await user.type(box, "first");
-    await user.keyboard("{Shift>}{Enter}{/Shift}");
-    await user.type(box, "second");
-    // Shift+Enter wrote a line break rather than sending.
-    expect(replyText).toBeNull();
-    // SAFETY: `box` came from a placeholder query on the composer's own <textarea> (ChatInput
-    // renders one), so it is that element and it has a `.value`.
-    expect((box as HTMLTextAreaElement).value).toBe("first\nsecond");
+    await user.keyboard("/");
+    await waitFor(() => expect(sent).toContainEqual(["/"]));
+    // The `/` did NOT land in the local box — that is what would have kept the harness blind.
+    // SAFETY: `box` came from a placeholder query on the composer's own <textarea>.
+    expect((box as HTMLTextAreaElement).value).toBe("");
 
+    // And from here the keystrokes keep going, so the popup filters as you type.
+    await user.keyboard("co");
+    await waitFor(() => expect(sent.flat().join("")).toContain("co"));
+  });
+
+  it("still picks from the popup with the arrows and Enter once mirroring", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    const sent = captureKeys();
+    renderComposer();
+
+    await user.click(screen.getByPlaceholderText(/type a reply/i));
+    await user.keyboard("/");
+    await waitFor(() => expect(sent).toContainEqual(["/"]));
+
+    await user.keyboard("{ArrowDown}");
+    await waitFor(() => expect(sent).toContainEqual(["Down"]));
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(replyText).toBe("first\nsecond"));
+    await waitFor(() => expect(sent).toContainEqual(["Enter"]));
+  });
+
+  it("plain typing is untouched — no mirror, no keystrokes, just a draft", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    const sent = captureKeys();
+    renderComposer();
+
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.click(box);
+    await user.type(box, "not a command");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toEqual([]);
+    // SAFETY: as above — the composer's own <textarea>.
+    expect((box as HTMLTextAreaElement).value).toBe("not a command");
+  });
+
+  // A `/` mid-sentence is a slash, not a command.
+  it("a slash inside existing text is just a character", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    const sent = captureKeys();
+    renderComposer();
+
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.click(box);
+    await user.type(box, "src/lib");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toEqual([]);
+    // SAFETY: as above — the composer's own <textarea>.
+    expect((box as HTMLTextAreaElement).value).toBe("src/lib");
+  });
+
+  // What the operator SEES while mirroring. `stripChrome` peels the harness's input box off the
+  // mirror, so without this the command being typed is drawn nowhere — which is the complaint that
+  // started this, in its earlier form ("按 enter 字會整個不見").
+  it("echoes the mirrored line, and never offers to take it over", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    captureKeys();
+    renderDraftHarness();
+
+    await user.click(screen.getByPlaceholderText(/type a reply/i));
+    await user.keyboard("/");
+    // The harness's line, as the next poll reports it. RAW only — no stabilised value, so nothing
+    // the 1.5s latch would ever pass: the echo is the live line or it is useless.
+    setRawDraft("/collie");
+
+    expect(await screen.findByText("/collie")).toBeInTheDocument();
+    expect(screen.queryByText(/draft in terminal/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Take over" })).not.toBeInTheDocument();
+  });
+
+  // The way out, read off the harness's own line rather than guessed from our keystrokes — picking
+  // from the popup rewrites that line in ways we did not type.
+  it("stops mirroring once the harness's line is no longer a slash draft", async () => {
+    finePointer();
+    const user = userEvent.setup();
+    const sent = captureKeys();
+    renderDraftHarness();
+
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.click(box);
+    await user.keyboard("/");
+    setRawDraft("/collie");
+    await screen.findByText("/collie");
+
+    // Submitted: the line clears.
+    setRawDraft("");
+    await waitFor(() => expect(screen.queryByText("/collie")).not.toBeInTheDocument());
+
+    // And the box is an ordinary draft box again — this text stays here.
+    sent.length = 0;
+    await user.type(box, "back to prose");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toEqual([]);
+    // SAFETY: `box` came from a placeholder query on the composer's own <textarea>.
+    expect((box as HTMLTextAreaElement).value).toBe("back to prose");
+  });
+
+  it("a coarse pointer types a plain slash — no mirror on a phone", async () => {
+    const user = userEvent.setup();
+    const sent = captureKeys();
+    renderComposer();
+
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.click(box);
+    await user.type(box, "/collie");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toEqual([]);
+    // SAFETY: as above — the composer's own <textarea>.
+    expect((box as HTMLTextAreaElement).value).toBe("/collie");
   });
 
   it("a coarse pointer keeps Enter as a line break — a thumb has no easy Shift", async () => {
@@ -2748,9 +2857,19 @@ describe("Composer — a fine pointer gets the terminal, not the phone composer"
     await user.type(box, "two");
 
     expect(replyText).toBeNull();
-    // SAFETY: `box` came from a placeholder query on the composer's own <textarea> (ChatInput
-    // renders one), so it is that element and it has a `.value`.
+    // SAFETY: as above — the composer's own <textarea>.
     expect((box as HTMLTextAreaElement).value).toBe("one\ntwo");
+  });
+
+  it("a coarse pointer sends nothing to the pane from an empty box", async () => {
+    const user = userEvent.setup();
+    const sent = captureKeys();
+    renderComposer();
+
+    await user.click(screen.getByPlaceholderText(/type a reply/i));
+    await user.keyboard("{ArrowDown}{Escape}{Enter}");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toEqual([]);
   });
 });
 
