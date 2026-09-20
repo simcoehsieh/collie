@@ -67,8 +67,10 @@ counts as the same defect, the evidence to gather, and the four possible verdict
 
 **Before asking, check the standing shapes.** Some fork decisions are not patches to be compared
 but SHAPES the operator has settled on, and an upstream release that walks back into one gets
-re-grafted rather than accepted. They are listed in `FORK.md` — today that is **the dashboard row's
-standing shape** (one line per pane, never the harness's own name, no model on the row). Each has a
+re-grafted rather than accepted. They are listed in `FORK.md` — today those are **the dashboard row's
+standing shape** (one line per pane, never the harness's own name, no model on the row) and **the
+first-run screen's standing shape** (it opens only from the Settings row; a `TOUR_VERSION` bump must
+stay silent). Each has a
 pinned test, so a merge that violates one usually shows up as a red test rather than as a conflict;
 a merge that violates one WITHOUT a red test is a gap in those tests and the fix includes closing
 it. Do not raise these as questions — they are already decided.

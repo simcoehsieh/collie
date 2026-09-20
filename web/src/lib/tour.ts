@@ -5,13 +5,24 @@ import { useSyncExternalStore } from "react";
 // server-side record of who saw what.
 //
 // THE STORED VALUE IS A DECIMAL INTEGER STRING, never JSON and never a boolean — `"1"`, not
-// `{"v":1}`. An absent or unparseable value reads as `0`, which is also what `resetTour()` writes:
-// a device that asked to see the tour again and a device that never saw it are the same case, and
-// one case needs no second branch.
+// `{"v":1}`. An absent or unparseable value reads as `0`.
 //
-// THE BUMP RULE. Raise `TOUR_VERSION` when a CLAIM on the screen changes — a new fact, a different
-// way to answer a pane, a control that moved. Never raise it because the wording was polished. Every
-// device sees the screen once more on a bump, so a bump is a `### Changed` changelog line of its own.
+// FORK — THE SCREEN NEVER OPENS BY ITSELF (2026-09-20). Upstream opens it on a device that has
+// never seen it AND on every device whose stored number is behind `TOUR_VERSION`. On a fork that
+// merges upstream every few days, the second half is the one that bites: a bumped version means the
+// first-run screen greets the operator after a deployment they made themselves, on an install they
+// have run for months. The operator's words were "why does opening the app always give me a Collie
+// 'show dashboard' asking screen — pull it out".
+//
+// So "never seen" and "the operator asked to see it" stop being the same case, which is the one
+// thing upstream's single zero cannot express. `resetTour()` now writes the sentinel
+// `TOUR_REQUESTED` (-1) and `shouldShowTour` answers true for THAT AND NOTHING ELSE. The Settings
+// row keeps working exactly as before — it is the only door in — and no automatic path can open the
+// screen again: not a fresh device, not a cleared storage, not a version bump.
+//
+// THE BUMP RULE still governs `TOUR_VERSION` upstream-side, and `markTourSeen()` still stamps it,
+// so the number keeps meaning "which screen this device last read" for anything that asks. It just
+// no longer decides whether the screen appears.
 
 /** The one place this key is spelled. The e2e seeder imports it rather than re-typing it. The `v1`
  *  in it names the STORE’s shape (a decimal integer), not the screen’s version — that is the
@@ -25,7 +36,14 @@ export const TOUR_STORAGE_KEY = "collie:tour:v1";
  */
 export const TOUR_VERSION = 2;
 
-/** The version this device last saw, `0` for "never" (and for a device that asked to see it again). */
+/**
+ * FORK: the one value that opens the screen. Negative on purpose — the version space is positive,
+ * so no bump and no stored history can ever collide with it, and a device that has genuinely never
+ * seen the screen (`0`) stays distinct from one whose operator just asked for it.
+ */
+export const TOUR_REQUESTED = -1;
+
+/** The version this device last saw, `0` for "never" and `TOUR_REQUESTED` for "asked to see it". */
 let seen = load();
 const listeners = new Set<() => void>();
 
@@ -36,6 +54,9 @@ function load(): number {
     const raw = localStorage.getItem(TOUR_STORAGE_KEY);
     if (raw === null) return 0;
     const parsed = Number.parseInt(raw, 10);
+    // FORK: the sentinel survives a reload — an operator who taps "show it again" and lands on a
+    // cold start must still get the screen. Every OTHER non-positive value is still never-seen.
+    if (parsed === TOUR_REQUESTED) return TOUR_REQUESTED;
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
   } catch {
     return 0; // private mode / SSR
@@ -62,13 +83,19 @@ export function markTourSeen(): void {
   write(TOUR_VERSION);
 }
 
-/** The Settings row's "show it again". Writes `"0"`; it does not remove the key. */
+/** The Settings row's "show it again" — FORK: writes the sentinel, not `"0"`. It is the ONLY
+ *  caller, and therefore the only way the screen is ever shown. It does not remove the key. */
 export function resetTour(): void {
-  write(0);
+  write(TOUR_REQUESTED);
 }
 
+/**
+ * FORK: only an explicit request opens the screen. Upstream's `seenVersion < TOUR_VERSION` also
+ * fired for a fresh device and for every device left behind by a version bump — see the file
+ * header for why a fork that deploys upstream weekly cannot live with the second one.
+ */
 export function shouldShowTour(seenVersion: number): boolean {
-  return seenVersion < TOUR_VERSION;
+  return seenVersion === TOUR_REQUESTED;
 }
 
 /** Reactive read for the host. Module-scoped store, mirroring lib/haptics.ts. */

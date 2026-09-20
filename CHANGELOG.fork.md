@@ -13,6 +13,17 @@ stays true).
 
 ## On top of 1.10.2
 
+### Changed
+
+- **The first-run screen never opens by itself.** The Settings row is now the only way to raise it:
+  `resetTour()` writes a sentinel (`TOUR_REQUESTED`, -1) and `shouldShowTour` answers true for that
+  value alone, so a fresh device, a cleared storage and a bumped `TOUR_VERSION` are all silent.
+  Upstream's bump rule shows the screen once per device per version, which on a checkout that IS
+  the service means the first-run screen greets the operator after a deployment they made
+  themselves. Six pinned tests and `FORK.md → The first-run screen's standing shape`.
+
+
+
 Merged upstream v1.10.2 (2026-09-19) — 25 commits, ZERO conflicts, and nothing in `web/src` or
 `bridge/` at all: the whole release is `cli/` and the packaging recipes.
 

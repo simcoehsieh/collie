@@ -249,6 +249,31 @@ What this fork is defending against specifically: upstream 1.10.0 added "a named
 its pane, and Claude's own title moves to the dashboard row's second line". On an install where
 every tab is named after its launcher, that rule produces exactly the row this section forbids.
 
+## The first-run screen's standing shape (2026-09-20)
+
+**The first-run screen never opens by itself.** The Settings row ("show the first screen again") is
+the only door in; nothing else — not a fresh device, not cleared storage, not a `TOUR_VERSION` bump
+— may raise it. This is a standing decision, not a one-off patch.
+
+Why a fork needs a different rule from upstream's: upstream shows the screen once per device per
+version, which is right for an app people install and then leave alone. This checkout **is** the
+service, and a merge here is a deployment — so upstream's bump rule turns every sync into "the
+first-run screen greets the operator over a dashboard they have run for months". The operator's
+words on 2026-09-20 were *"why does opening the app always give me a Collie 'show dashboard' asking
+screen — pull it out"*.
+
+The mechanism is one sentinel in `web/src/lib/tour.ts`: `resetTour()` writes `TOUR_REQUESTED` (-1)
+instead of `0`, and `shouldShowTour` answers true for that value alone. "Never seen" (`0`) and "the
+operator asked" stop being the same case, which is the only thing upstream's single zero could not
+express. `markTourSeen()` still stamps `TOUR_VERSION`, so the stored number still says which screen
+this device last read — it just no longer decides whether the screen appears.
+
+Six pinned tests, so a merge cannot hand the behaviour back quietly: four in `lib/tour.test.ts` (a
+fresh device stays shut, a bump stays shut in both directions, the sentinel and nothing else opens
+it, a v1 device is not ambushed) and two in `routes/root.test.tsx` (never-seen and
+version-bumped devices both render no dialog). `e2e/fixtures/api.ts`'s `tour: "fresh"` now seeds the
+sentinel rather than leaving the origin untouched — an untouched origin is silent by design.
+
 ## Taking upstream's changes
 
 The procedure below is automated by the **`collie-upstream-sync` skill**, which lives in this repo

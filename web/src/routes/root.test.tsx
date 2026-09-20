@@ -13,6 +13,7 @@ import { ROOT_ROUTE_ID, type HomeData, type PaneData } from "@/lib/loaders";
 import { en } from "@/lib/i18n/messages/en";
 import {
   __resetTourStore,
+  resetTour,
   markTourSeen,
   TOUR_STORAGE_KEY,
   tourSeenVersion,
@@ -405,7 +406,10 @@ describe("RootLayout — the first-run gate", () => {
 
   const live: HomeData = { ...home(AFTERNOON), error: false };
 
-  it("opens on the first live snapshot of a device that has never seen it", async () => {
+  // FORK: the ONLY door. Upstream opens on a fresh device and on any device a version bump left
+  // behind; here `resetTour()` — the Settings row — is the whole precondition. lib/tour.ts says why.
+  it("opens on the first live snapshot after the operator asked to see it", async () => {
+    resetTour();
     renderWith(live);
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
     expect(screen.getByRole("dialog")).toHaveAccessibleName(en["tour.title"]);
@@ -415,6 +419,7 @@ describe("RootLayout — the first-run gate", () => {
   // Marked seen on OPEN, before the screen paints. Nothing in the close path writes the key, so a
   // phone that loses the tab half way down recovers through the Settings row and nowhere else.
   it("marks itself seen as soon as it opens, not when it closes", async () => {
+    resetTour();
     renderWith(live);
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
     expect(tourSeenVersion()).toBe(TOUR_VERSION);
@@ -423,6 +428,23 @@ describe("RootLayout — the first-run gate", () => {
 
   it("stays shut on a device that has already seen this screen", async () => {
     markTourSeen();
+    const { container } = renderWith(live);
+    await shellReady(container);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  // FORK, and the reason the sentinel exists: a fresh install is not an invitation, and neither is
+  // a deployment. `__resetTourStore()` above already left this device at "never seen".
+  it("stays shut on a device that has never seen it", async () => {
+    const { container } = renderWith(live);
+    await shellReady(container);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  // The case the operator actually hit: an upstream merge bumps TOUR_VERSION and the screen greets
+  // them over a dashboard they have used for months.
+  it("stays shut on a device a version bump left behind", async () => {
+    localStorage.setItem(TOUR_STORAGE_KEY, String(TOUR_VERSION - 1));
     const { container } = renderWith(live);
     await shellReady(container);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -445,6 +467,7 @@ describe("RootLayout — the first-run gate", () => {
   // A read-only device SEES it. A family tablet left on the dashboard is exactly the device that
   // needs to be told what it is looking at; the setup row and the first card branch instead.
   it("still opens on a read-only device, and offers pairing as the first thing to do", async () => {
+    resetTour();
     renderWith({
       ...live,
       device: { enforced: true, device: "tablet", authorized: false },
@@ -455,6 +478,7 @@ describe("RootLayout — the first-run gate", () => {
   });
 
   it("does not re-open itself once it has been closed", async () => {
+    resetTour();
     const { router } = renderWith(live);
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: en["tour.skip"] }));
@@ -475,6 +499,9 @@ describe("RootLayout — the tour holds the push prompt back", () => {
 
   beforeEach(() => {
     __resetTourStore();
+    // FORK: the screen only opens on request now, and this suite is about what it holds back WHILE
+    // it is up — so the request is part of the setup. See lib/tour.ts.
+    resetTour();
     register = vi.fn(() => Promise.resolve({}));
     Object.defineProperty(navigator, "serviceWorker", {
       value: {

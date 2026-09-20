@@ -1,7 +1,7 @@
 import type { Page, Route } from "@playwright/test";
 
 import type { Locale } from "@/lib/i18n/locale";
-import { TOUR_STORAGE_KEY, TOUR_VERSION } from "@/lib/tour";
+import { TOUR_REQUESTED, TOUR_STORAGE_KEY, TOUR_VERSION } from "@/lib/tour";
 import {
   fixtureCrewSnapshot,
   fixtureCrewStatus,
@@ -145,7 +145,11 @@ async function answer(route: Route, path: string): Promise<void> {
 
 /** What a case wants the first-launch tour to do. `"seen"` is the default and covers every spec
  *  that is not about the tour: the sheet is full-height, so an unseeded origin would put it over the
- *  screen each case is actually looking at. `"fresh"` is the tour's own spec. */
+ *  screen each case is actually looking at. `"fresh"` is the tour's own spec.
+ *
+ *  FORK: `"fresh"` no longer means "an untouched origin" — on this fork an untouched origin never
+ *  opens the screen (lib/tour.ts). It means "the operator just asked for it", which is the only
+ *  state in which the screen appears at all, and therefore the only one worth an e2e. */
 export interface ApiStubOptions {
   readonly tour?: "seen" | "fresh";
 }
@@ -161,7 +165,7 @@ export interface ApiStubOptions {
  * Call it before the first `page.goto`.
  */
 export async function installApiStub(page: Page, options: ApiStubOptions = {}): Promise<void> {
-  if (options.tour !== "fresh") await seedTourSeen(page);
+  await (options.tour === "fresh" ? seedTourRequested(page) : seedTourSeen(page));
   await page.route("**/api/**", async (route) => {
     await answer(route, new URL(route.request().url()).pathname);
   });
@@ -173,11 +177,24 @@ export async function installApiStub(page: Page, options: ApiStubOptions = {}): 
  * `TOUR_VERSION` seeds the new number without this file changing.
  */
 export async function seedTourSeen(page: Page): Promise<void> {
+  await seedTourKey(page, String(TOUR_VERSION));
+}
+
+/**
+ * FORK: put the origin in the one state that opens the screen — the sentinel the Settings row
+ * writes. See `src/lib/tour.ts`: a fresh device is silent, so "unseeded" is no longer a way to
+ * reach the first-run screen from a test.
+ */
+export async function seedTourRequested(page: Page): Promise<void> {
+  await seedTourKey(page, String(TOUR_REQUESTED));
+}
+
+async function seedTourKey(page: Page, value: string): Promise<void> {
   await page.addInitScript(
-    ([key, value]) => {
-      window.localStorage.setItem(key, value);
+    ([key, v]) => {
+      window.localStorage.setItem(key, v);
     },
-    [TOUR_STORAGE_KEY, String(TOUR_VERSION)],
+    [TOUR_STORAGE_KEY, value],
   );
 }
 
