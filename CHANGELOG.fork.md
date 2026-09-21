@@ -11,6 +11,14 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.11.1
+
+Merged upstream v1.11.1 (2026-09-22) — 1 commit, no conflicts. Three fixes around upstream's own
+update run; the one this solo install can see is that **the update badge no longer covers the
+message box** — it is a line in the band above the header now. `web/src/routes/root.tsx` was touched
+by both sides and merged itself: upstream added one strip to the band, the fork's hunks are
+elsewhere in the file. No fork patch was dropped.
+
 ## On top of 1.11.0
 
 Merged upstream v1.11.0 (2026-09-20) — 23 commits, 9 conflicts. The release this fork had been
