@@ -11,6 +11,60 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.12.1
+
+Merged upstream v1.12.1 (2026-09-23, with v1.12.0 under it) — 87 commits, 25 conflicted files. The
+releases that make Claude Code 2.1.278+ usable from the phone again: **the folder-trust prompt is two
+buttons again** (2.1.278 dropped its row numbers), **`/effort` shows Confirm and Cancel and every
+level as a tap**, **a `!` shell-mode prompt is a live input box**, and **`/resume` works from the
+card**. Also: the unread-dialog card with the harness's own way out, the card dock above the belt, the
+one-box composer with attachment chips, the floating terminal-draft notice, 22px shorter tab and pane
+rows, and a doctor `restart-pending` that finally reads this launchd install right. The composer was
+rebuilt on upstream's box and the fork's physical-keyboard shape re-grafted onto it (FORK.md); the
+dashboard kept its pinned section on top of upstream's "a row never moves" (ADR 0063), which the fork
+had already reached on its own.
+
+### Dropped, because upstream superseded it
+
+- **The generic menu's synthesised Select** (2026-09-11). It gave any Claude picker whose footer named
+  no Enter an Enter of its own, for the `/resume` picker. Upstream now reads `/resume` with its own
+  grammar (`claude/resume.ts`, ADR 0058), which claims that screen before the generic menu and sends
+  its unprinted Enter as that one dialog's deliberate exception — while the fork's rule granted the
+  same exception to every picker, against upstream's "no key the screen did not offer". The `select`
+  flag, its renderer branch and the `dialog.menu.select` string in seven locales went with it.
+- **The composer field's own soft frame** (`rounded-lg border-input`, lighter fill). It answered "an
+  unframed grey slab on a dark phone"; upstream's one box now draws the frame around the field at
+  rest, so the field itself is borderless again and the complaint cannot recur.
+- **The fork's `/resume` golden in the binding contract** now reads `prompt-select`, regenerated with
+  the contract's own derivation: upstream's grammar claims the 2.1.267 capture as well, which is kept
+  as a second, older-format pin.
+
+### Kept, and why
+
+- **The inner-box skip in the generic menu** (`claude/menu.ts`). Upstream's resume grammar covers
+  `/resume` only; `/config` draws the same `⌕ Search…` box inside its panel, and without the skip the
+  region's top lands on the box's lower edge — its golden turned red the moment the rule was removed.
+- **ETag + brotli for the static files**, beside upstream's mount support. Upstream's base already had
+  gzip and its release changed nothing but the mount; the fork's validator is what stops `sw.js` being
+  re-downloaded whole every 60 seconds. A mounted `index.html` skips the ETag (it is not the file on
+  disk) and compresses per request with the fork's own encoder.
+- **The microphone as its own control.** In upstream's box it is a sibling of the attach button; the
+  round end button is always Send, or the fork's Stop-and-edit while the agent works.
+- **Clearing on the tap**, extended to chips: they leave the box with the words, are held rather than
+  released, come back with the draft on a stall, and are released on a verified send or when the send
+  queue takes the message. Restore now puts back the DRAFT (`[Image #1] look`), not the composed line
+  with the paths already in it.
+- **The parse-once MirrorModel** now also carries upstream's per-pane native-render override, and is
+  the one build upstream's card dock, mirror and keyboard lock read.
+
+### Fixed in the fork's own tree on the way through
+
+- `agent-chat.tsx` carried two literal NUL bytes as a `join()` separator; `grep` and `file` read the
+  whole file as binary, which is how a conflicted copy was nearly staged. They are `"\0"` escapes now.
+- The test setup's Map-backed `localStorage` listed no keys through `Object.keys()`, unlike every real
+  Storage; four of upstream's new tests depended on it. A Proxy adds the listing and nothing else.
+- The bridge tests no longer need the live service to be restarted afterwards — see FORK.md.
+
 ## On top of 1.11.1
 
 Merged upstream v1.11.1 (2026-09-22) — 1 commit, no conflicts. Three fixes around upstream's own

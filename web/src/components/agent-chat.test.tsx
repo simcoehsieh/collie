@@ -23,9 +23,10 @@ import { clearStatus, setStatus } from "@/lib/status";
 import { setAutoZenEnabled, setZenEnabled, __resetZen } from "@/lib/zen";
 import { setStripsCollapsed, __resetStripsCollapsed } from "@/lib/strips-collapsed";
 import { __resetOperatorCommands } from "@/lib/operator-config";
+import { paneMirrorOverride, setPaneMirrorOverride } from "@/lib/mirror-invert";
 import { submitPromptOption } from "@/lib/prompt-action";
 import { submitWizardKeys } from "@/lib/wizard-action";
-import { fixtureAgents, fixtureShellPanes, fixtureTabs } from "@/test/handlers";
+import { fixtureAgents, fixtureShellPanes, fixtureTabs, paneTextWithDraft } from "@/test/handlers";
 import { fixtureArtifact } from "@/test/artifacts";
 import { __resetArtifacts } from "@/lib/artifacts";
 import { CrewProvider } from "./crew-provider";
@@ -65,7 +66,11 @@ function renderChat(overrides: Partial<ComponentProps<typeof AgentChat>> = {}) {
     agents: fixtureAgents,
     shellPanes: [],
     tabs: [],
-    text: "recent pane output",
+    // A REAL claude pane: the transcript row plus the input box under it. Since M34 a pane with no
+    // composer on screen is the unread-dialog card's territory (.adr/0053) — the card owns the
+    // keyboard, so the composer would refuse every send in this file. Cases that want the card build
+    // their own text.
+    text: paneTextWithDraft("recent pane output"),
     onBack: vi.fn(),
     onSelect: vi.fn(),
     ...overrides,
@@ -634,19 +639,83 @@ describe("AgentChat — raw-terminal escape hatch", () => {
     expect(screen.getByText(/☐ Focus area/)).toBeInTheDocument();
   });
 
-  it("keeps native rendering for muse with raw terminal on — the pref bypasses grammars, not display", () => {
+  // The per-pane override reaches agents that DO have adapters — codex is the one #241 was opened
+  // about — so the escape hatch has to keep the two axes apart. Opting a pane out of inversion is a
+  // DISPLAY choice; it must not hand the pane's grammars back after raw terminal turned them off.
+  // The control case first, so the assertion below is not vacuous: with grammars on, codex's Tier-1
+  // chrome strip eats the composer and status rows.
+  it("strips codex chrome from the mirror by default (grammars on)", () => {
+    const agent = { ...fixtureAgents[0]!, agent: "codex" };
+    const { container } = renderChat({ agent, agents: [agent], text: CODEX_CHROME_TEXT });
+    // Scoped to the MIRROR: the status row is re-surfaced natively in the strip, so a document-wide
+    // query would find it either way and prove nothing.
+    expect(container.querySelector("pre")!.textContent).not.toContain("Context 90% left");
+  });
+
+  it("opting a codex pane into native rendering does not re-enable its grammars under raw terminal", () => {
     localStorage.setItem(
       "collie:display-prefs:v4",
       JSON.stringify({ wrap: true, fontSize: 11, rawTerminal: true }),
     );
-    const muse = { ...fixtureAgents[0]!, agent: "muse" };
-    const { container } = renderChat({ agent: muse, agents: [muse], text: "body\n" });
+    const agent = { ...fixtureAgents[0]!, agent: "codex" };
+    // renderChat passes no scope, so the override is stored under the undefined scope this mounts in.
+    setPaneMirrorOverride(undefined, agent.paneId, true);
+    const { container } = renderChat({ agent, agents: [agent], text: CODEX_CHROME_TEXT });
+
+    // Raw terminal still means raw: the chrome is mirrored verbatim…
+    expect(container.querySelector("pre")!.textContent).toContain("Context 90% left");
+    // …while the pane still honours the override and renders on the native ground.
+    expect(container.querySelector("pre")!.className).toContain("bg-[#fffbf8]");
+  });
+
+  // The switch writes through `setMirrorNative`, which CLEARS rather than pins when the operator
+  // picks the agent's own answer. That is what keeps the 32-entry bound meaningful (only real
+  // decisions are stored) and stops a Muse pane freezing on today's answer if .adr/0047's set
+  // changes under it later.
+  it("stores an override that contradicts the agent, and clears it when the agent's own answer is picked back", async () => {
+    const user = userEvent.setup();
+    const agent = { ...fixtureAgents[0]!, agent: "muse" };
+    renderChat({ agent, agents: [agent], text: "body\n" });
+
+    // FORK: the display prefs are a row of the pane menu, not a pill on the actions belt (2026-09-19).
+    await openPaneMenu(user);
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    const toggle = screen.getByRole("switch", { name: "Render this pane natively" });
+    // Muse renders natively already, so the switch starts on with nothing stored.
+    expect(toggle).toBeChecked();
+    expect(paneMirrorOverride(undefined, agent.paneId)).toBeUndefined();
+
+    await user.click(toggle);
+    expect(paneMirrorOverride(undefined, agent.paneId)).toBe(false);
+
+    await user.click(toggle);
+    expect(paneMirrorOverride(undefined, agent.paneId)).toBeUndefined();
+  });
+
+  it.each([["muse"]])("keeps native rendering for %s with raw terminal on — the pref bypasses grammars, not display", (agentName) => {
+    localStorage.setItem(
+      "collie:display-prefs:v4",
+      JSON.stringify({ wrap: true, fontSize: 11, rawTerminal: true }),
+    );
+    const agent = { ...fixtureAgents[0]!, agent: agentName };
+    const { container } = renderChat({ agent, agents: [agent], text: "body\n" });
     expect(container.querySelector("pre")!.className).toContain("terminal-muse");
   });
 });
 
 // A minimal permission dialog at the buffer tail — enough for the REAL detector (not a mock) to
 // lift it into prompt-select buttons inside AgentChat's mirror.
+// Codex's Tier-1 chrome: the `\u203a ` composer row and the dot-separated status row at the tail.
+// Plain text on purpose — STATUS_ROW's text acceptor matches a row carrying `Context N% left`, so
+// this needs no SGR to be recognised as chrome.
+const CODEX_CHROME_TEXT = [
+  "some codex output",
+  "",
+  "\u203a a half typed draft",
+  "",
+  "  gpt-5 \u00b7 ~/code/collie \u00b7 Context 90% left",
+].join("\n");
+
 const MENU_TEXT = [
   "Do you want to create hello.txt?",
   " ❯ 1. Yes",
@@ -1172,7 +1241,7 @@ describe("AgentChat \u2014 the pane menu in the header", () => {
   // when the `query` prop was dropped from the mirror: the bar counted matches it never marked.
   it("passes the find query down to the mirror, so a hit is highlighted", async () => {
     const user = userEvent.setup();
-    const { container } = renderChat({ text: "alpha needle omega" });
+    const { container } = renderChat({ text: paneTextWithDraft("alpha needle omega") });
     expect(container.querySelector("[data-find-match]")).toBeNull();
     await openFind(user);
     await user.type(screen.getByRole("textbox", { name: /find in output/i }), "needle");
@@ -2566,7 +2635,9 @@ describe("AgentChat — full latest reply", () => {
 
   // A screen holding the END of the reply, then what the agent did next.
   const AFTER = "abc1234 fix";
-  const SCREEN = `${REPLY.slice(120)}\n\nBash(git log --oneline)\n  ${AFTER}`;
+  // The input box rides along: a claude pane without one is the unread-dialog card's screen
+  // since M34 (.adr/0053), and the card renders the whole pane itself.
+  const SCREEN = paneTextWithDraft(`${REPLY.slice(120)}\n\nBash(git log --oneline)\n  ${AFTER}`);
 
   it("shows the whole message, and takes the rows it covers out of the mirror", async () => {
     withJournalReply(REPLY);
@@ -2683,7 +2754,7 @@ describe("AgentChat — a knowledge-base link opens in the panel", () => {
     // Access with third-party cookies blocked it would answer a login page that also refuses.
     withDocHosts();
     const user = userEvent.setup();
-    renderChat({ text: MIRROR });
+    renderChat({ text: paneTextWithDraft(MIRROR) });
     const link = await screen.findByRole("link", { name: /herdr-interface-anatomy/ });
 
     await user.click(link);
@@ -2701,7 +2772,7 @@ describe("AgentChat — a knowledge-base link opens in the panel", () => {
     // which is what makes "the bridge serves no documents" absent rather than broken.
     withDocHosts();
     const user = userEvent.setup();
-    renderChat({ text: MIRROR });
+    renderChat({ text: paneTextWithDraft(MIRROR) });
     const other = await screen.findByRole("link", { name: /example\.com/ });
     expect(other).toHaveAttribute("target", "_blank");
 
@@ -2715,7 +2786,7 @@ describe("AgentChat — a knowledge-base link opens in the panel", () => {
     // field and every bridge whose operator configured no knowledge base. The link must behave
     // exactly as it did before this feature existed — not be tappable-but-broken.
     const user = userEvent.setup();
-    renderChat({ text: MIRROR });
+    renderChat({ text: paneTextWithDraft(MIRROR) });
     const link = await screen.findByRole("link", { name: /herdr-interface-anatomy/ });
 
     await user.click(link);
@@ -2729,7 +2800,7 @@ describe("AgentChat — a knowledge-base link opens in the panel", () => {
     // lingering `doc` would keep the frame alive on the next open of any OTHER sheet.
     withDocHosts();
     const user = userEvent.setup();
-    renderChat({ text: MIRROR });
+    renderChat({ text: paneTextWithDraft(MIRROR) });
     await user.click(await screen.findByRole("link", { name: /herdr-interface-anatomy/ }));
     await screen.findByTitle("herdr-interface-anatomy");
 
@@ -2788,7 +2859,7 @@ describe("AgentChat — what changed, the file viewer, and the mirror's chips", 
       ),
     );
     const user = userEvent.setup();
-    renderChat({ text: "wrote bridge/preview.ts\n" });
+    renderChat({ text: paneTextWithDraft("wrote bridge/preview.ts\n") });
     await user.click(await screen.findByRole("button", { name: "Open bridge/preview.ts" }));
     expect(await screen.findByRole("dialog", { name: "bridge/preview.ts" })).toBeInTheDocument();
     expect(await screen.findByText("export const x = 1;")).toBeInTheDocument();
@@ -2801,7 +2872,7 @@ describe("AgentChat — what changed, the file viewer, and the mirror's chips", 
     const open = vi.fn();
     vi.stubGlobal("open", open);
     const user = userEvent.setup();
-    renderChat({ text: "vite ready at http://localhost:5173/\n", onPreviewUrl });
+    renderChat({ text: paneTextWithDraft("vite ready at http://localhost:5173/\n"), onPreviewUrl });
     await user.click(
       await screen.findByRole("button", { name: "Open the local server at http://localhost:5173/" }),
     );
@@ -2815,7 +2886,7 @@ describe("AgentChat — what changed, the file viewer, and the mirror's chips", 
     const open = vi.fn();
     vi.stubGlobal("open", open);
     const user = userEvent.setup();
-    renderChat({ text: "docs at https://herdr.dev/docs\n", onPreviewUrl });
+    renderChat({ text: paneTextWithDraft("docs at https://herdr.dev/docs\n"), onPreviewUrl });
     await user.click(await screen.findByRole("button", { name: "Open https://herdr.dev/docs" }));
     expect(open).toHaveBeenCalledWith("https://herdr.dev/docs", "_blank", "noopener,noreferrer");
     expect(onPreviewUrl).not.toHaveBeenCalled();
@@ -2845,7 +2916,7 @@ describe("AgentChat — what changed, the file viewer, and the mirror's chips", 
       ),
     );
     const user = userEvent.setup();
-    renderChat({ text: "wrote report.html\n" });
+    renderChat({ text: paneTextWithDraft("wrote report.html\n") });
     await user.click(await screen.findByRole("button", { name: "Open report.html" }));
     await user.click(await screen.findByRole("button", { name: "Preview" }));
     const frame = await screen.findByTitle("report.html");
@@ -2877,7 +2948,7 @@ describe("AgentChat — chat mode", () => {
 
   it("an agent pane with a transcript opens on the terminal, the conversation one tap away", async () => {
     const user = userEvent.setup();
-    renderChat({ ...withTab, agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    renderChat({ ...withTab, agent: sessionAgent(), agents: [sessionAgent()], text: paneTextWithDraft("recent pane output") });
     expect(mirror()).not.toBeNull();
     await waitFor(() => expect(toggle()).toBeInTheDocument());
     expect(terminalTab()).toHaveAttribute("aria-checked", "true");
@@ -2892,7 +2963,7 @@ describe("AgentChat — chat mode", () => {
   it("the thread's own footer hands the screen back to the terminal in one tap", async () => {
     const user = userEvent.setup();
     pinTranscriptView();
-    renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: paneTextWithDraft("recent pane output") });
     expect(mirror()).toBeNull();
     await user.click(await screen.findByRole("button", { name: /show the terminal/i }));
     await waitFor(() => expect(mirror()).not.toBeNull());
@@ -2901,7 +2972,7 @@ describe("AgentChat — chat mode", () => {
 
   it("the switch remembers the choice per pane and per device", async () => {
     const user = userEvent.setup();
-    const { props } = renderChat({ ...withTab, agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    const { props } = renderChat({ ...withTab, agent: sessionAgent(), agents: [sessionAgent()], text: paneTextWithDraft("recent pane output") });
     await waitFor(() => expect(toggle()).toBeInTheDocument());
 
     await user.click(transcriptTab());
@@ -2932,7 +3003,7 @@ describe("AgentChat — chat mode", () => {
   it("opening find hands the mirror back too", async () => {
     const user = userEvent.setup();
     pinTranscriptView();
-    renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: "recent pane output" });
+    renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: paneTextWithDraft("recent pane output") });
     expect(mirror()).toBeNull();
 
     await openFind(user);
@@ -3051,5 +3122,132 @@ describe("AgentChat — the header's chips line up with the menu", () => {
     const menu = container.querySelector('button[aria-label]')!;
     expect(group.parentElement!.className).toMatch(/(?:^|\s)items-stretch(?=\s|$)/);
     expect(menu).not.toBeNull();
+  });
+});
+
+// ADR 0059 — a card docks above the belt. The lifted card used to render inside the mirror's
+// scroller, after the terminal text, so its bottom edge moved with the text above it and floated
+// mid-page on a short screen. It now renders in ONE slot: outside the scroller, directly above the
+// chrome block (the actions belt and the input). These pin the slot, the empty case, and the one
+// property the move could have broken, ADR 0056's per-dialog Terminal choice surviving a poll.
+describe("AgentChat — a card docks above the belt (ADR 0059)", () => {
+  function mirrorScroller(container: HTMLElement) {
+    const mirror = [...container.querySelectorAll<HTMLElement>('div[role="presentation"]')].find(
+      (el) => el.querySelector(".overflow-y-auto") && !el.matches('[data-slot="card-dock"]'),
+    )!;
+    return { mirror, scroller: mirror.querySelector<HTMLElement>(".overflow-y-auto")! };
+  }
+
+  it("renders the card outside the mirror's scroller, in the slot directly above the chrome block", async () => {
+    const { container } = renderChat({ text: MENU_TEXT });
+    const yes = await screen.findByRole("button", { name: "Yes" });
+    const dock = yes.closest<HTMLElement>('[data-slot="card-dock"]');
+    expect(dock).not.toBeNull();
+
+    // Not inside the scroller any more: the text above cannot move it.
+    const { mirror, scroller } = mirrorScroller(container);
+    expect(scroller.contains(yes)).toBe(false);
+
+    // Its own row of the pane column, between the mirror and the bottom region that holds the belt.
+    const bottomRow = container
+      .querySelector('[data-slot="chrome-block"]')!
+      .closest('[data-slot="collapse"]')!;
+    expect(dock!.previousElementSibling).toBe(mirror);
+    expect(dock!.nextElementSibling).toBe(bottomRow);
+
+    // A tall card scrolls inside the dock instead of pushing the composer off the screen.
+    expect(dock!.className).toMatch(/(?:^|\s)max-h-\[55dvh\](?=\s|$)/);
+    expect(dock!.className).toMatch(/(?:^|\s)overflow-y-auto(?=\s|$)/);
+    expect(dock!.className).toMatch(/(?:^|\s)border-t border-border(?=\s|$)/);
+  });
+
+  it("renders no dock at all when no card is on screen", () => {
+    const { container } = renderChat({ text: STATUS_TEXT });
+    expect(container.querySelector('[data-slot="card-dock"]')).toBeNull();
+    // …so the mirror is still the row right above the bottom region, as before the dock existed.
+    const bottomRow = container
+      .querySelector('[data-slot="chrome-block"]')!
+      .closest('[data-slot="collapse"]')!;
+    expect(bottomRow.previousElementSibling).toBe(mirrorScroller(container).mirror);
+  });
+
+  it("keeps the Terminal choice across a poll of the same dialog, and drops it when the dialog goes", async () => {
+    const user = userEvent.setup();
+    let setText: (t: string) => void = () => {};
+    function Harness() {
+      const [text, set] = useState(`building...\n${MENU_TEXT}`);
+      setText = set;
+      const agent = fixtureAgents[0]!;
+      return (
+        <AgentChat
+          paneId={agent.paneId}
+          agent={agent}
+          agents={fixtureAgents}
+          shellPanes={[]}
+          tabs={[]}
+          text={text}
+          onBack={vi.fn()}
+          onSelect={vi.fn()}
+        />
+      );
+    }
+    const router = createMemoryRouter([{ path: "/", element: withHeaderHost(<Harness />) }]);
+    render(<RouterProvider router={router} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Show the terminal instead of this card" }),
+    );
+    expect(screen.getByRole("button", { name: "Back to the card" })).toBeInTheDocument();
+
+    // A poll lands with new output above the SAME dialog: the card instance is reused, so the
+    // operator's choice holds.
+    act(() => setText(`building...\ndone.\n${MENU_TEXT}`));
+    expect(screen.getByRole("button", { name: "Back to the card" })).toBeInTheDocument();
+
+    // The dialog leaves and a new one arrives: a fresh card, back in card mode.
+    act(() => setText(STATUS_TEXT));
+    expect(screen.queryByRole("button", { name: "Back to the card" })).toBeNull();
+    act(() => setText(MENU_TEXT));
+    expect(await screen.findByRole("button", { name: "Yes" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back to the card" })).toBeNull();
+  });
+});
+
+// ADR 0061: the terminal-draft notice floats over the mirror's bottom edge. It used to be a strip in
+// the composer's flow, so a draft stranding on the host pushed the belt and the field up and the
+// mirror's scroller down. jsdom measures no heights, so the no-shift claim is asserted as structure:
+// the notice lives in an absolutely positioned slot INSIDE the mirror region, and nowhere in the
+// bottom region, whose rows are the only things that could have grown.
+describe("AgentChat — the terminal draft notice floats (ADR 0061)", () => {
+  const withHostDraft = (draft: string) =>
+    paneTextWithDraft("recent pane output").replace(/^❯ .*$/m, `❯ ${draft}`);
+
+  it("renders in the mirror's own slot, never in the bottom region", async () => {
+    const { container } = renderChat({ text: withHostDraft("typed on the host") });
+    await screen.findByText(/draft in terminal/i, undefined, { timeout: 4000 });
+
+    const slot = container.querySelector('[data-slot="draft-notice-slot"]')!;
+    expect(slot).toHaveTextContent("typed on the host");
+    expect(slot.className).toMatch(/(?:^|\s)absolute(?=\s|$)/);
+    expect(slot.className).toMatch(/(?:^|\s)pointer-events-none(?=\s|$)/);
+    // The slot is the last child of the mirror wrapper, beside the scroller, not in it.
+    expect(slot.parentElement!.className).toMatch(/(?:^|\s)relative(?=\s|$)/);
+    expect(slot.parentElement!.className).toMatch(/(?:^|\s)flex-1(?=\s|$)/);
+
+    // The bottom region holds no part of it.
+    const bottom = container.querySelector('[data-slot="chrome-block"]')!.parentElement!;
+    expect(bottom).not.toHaveTextContent(/draft in terminal/i);
+    expect(bottom.querySelector('[data-slot="terminal-draft-notice"]')).toBeNull();
+  });
+
+  it("the x hides it without moving anything into the flow", async () => {
+    const user = userEvent.setup();
+    const { container } = renderChat({ text: withHostDraft("typed on the host") });
+    await screen.findByText(/draft in terminal/i, undefined, { timeout: 4000 });
+
+    await user.click(screen.getByRole("button", { name: "Dismiss the terminal draft notice" }));
+    expect(screen.queryByText(/draft in terminal/i)).toBeNull();
+    // The slot stays, empty, and pass-through.
+    expect(container.querySelector('[data-slot="draft-notice-slot"]')!.childElementCount).toBe(0);
   });
 });

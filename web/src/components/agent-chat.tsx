@@ -56,6 +56,7 @@ import { Collapse, CollapseSwap } from "@/components/ui/collapse";
 import { RouteHeader } from "@/components/app-header";
 import { HeaderStatus } from "@/components/header-status";
 import { AnsiOutput } from "@/components/ansi-output";
+import { CardDock } from "@/components/card-dock";
 import { MIRROR_SPACE, MIRROR_INVERT, MUSE_MIRROR, segmentStyle } from "@/components/mirror-space";
 import { AgentsFooter } from "@/components/agents-footer";
 import { cn } from "@/lib/utils";
@@ -78,7 +79,7 @@ import { CacheSheet } from "@/components/cache-sheet";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { NewTabSheet } from "@/components/new-tab-sheet";
 import { PaneSettingsSheet } from "@/components/pane-settings-sheet";
-import { CompactStripLabels, STRIP_TAP_TARGET_SQUARE } from "@/components/ui/labelled-strip";
+import { CompactStripLabels, TAB_ROW_SQUARE_TAP_TARGET } from "@/components/ui/labelled-strip";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { HostStaleBanner } from "@/components/host-stale-banner";
 import { useHostHealth } from "@/components/crew-provider";
@@ -91,26 +92,30 @@ import { submitWizardKeys } from "@/lib/wizard-action";
 import { submitPreviewKeys, submitPreviewNote, submitPreviewOption } from "@/lib/preview-action";
 import { submitMultiSelectIntent, type MultiSelectIntent } from "@/lib/multi-select-action";
 import { submitMenuKeys } from "@/lib/menu-action";
+import { sendGuardedKeys } from "@/lib/dialog-guard";
 import type { PromptBlockAction } from "@/components/prompt-select-block";
 import type { PreviewBlockAction } from "@/components/preview-select-block";
 import type { MenuBlockAction } from "@/components/menu-block";
 import { locateReply } from "@/lib/latest-reply";
 import { canGrowRequestedLines, growRequestedLines } from "@/lib/loaders";
 import { paneName, panePlaceParts } from "@/lib/pane-name";
+import { panesOfTab } from "@/lib/pane-ordinal";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { hasJournalAdapter } from "@/lib/journal-agents";
-import { paneRowKey } from "@/lib/hosts";
+import { paneRowKey, paneScope } from "@/lib/hosts";
 import { historyPath, spacePath, artifactPath, panePath } from "@/lib/nav";
 import { isReadOnly, statusLabel } from "@/lib/types";
 import { usePairing } from "@/lib/pairing";
-import type { AgentView, BridgeStatus, DeviceAuth, TabView } from "@/lib/types";
+import type { AgentView, BridgeStatus, DeviceAuth, ServerSummary, TabView } from "@/lib/types";
 import type {
   MenuModel,
   MultiSelectModel,
   PreviewSelectModel,
   PromptModel,
+  UnreadDialogModel,
   WizardModel,
 } from "@/lib/blocks";
+import { paneMirrorOverride, setPaneMirrorOverride } from "@/lib/mirror-invert";
 import { paneScopeKey, type Scope } from "@/lib/scope";
 import { ArtifactSheet } from "@/components/artifact-sheet";
 import { HandoffSheet } from "@/components/handoff-sheet";
@@ -125,6 +130,8 @@ interface AgentChatProps {
   agents: AgentView[];
   shellPanes: AgentView[];
   tabs: TabView[];
+  /** The snapshot's machine list, for the switcher's machine order (the lead first). Absent when solo. */
+  servers?: readonly ServerSummary[] | undefined;
   /** Pane output from the route loader (refreshed by polling/revalidation). */
   text: string;
   /** The same rows with soft wraps undone, present only when {@link text} splits a URL — frozen
@@ -250,6 +257,7 @@ export function AgentChat({
   agents,
   shellPanes,
   tabs,
+  servers,
   text,
   logicalText,
   requestedLines = 0,
@@ -273,6 +281,31 @@ export function AgentChat({
   // together — dimming only one of them would leave a frozen reading looking half live.
   const connecting = isConnecting({ bridge, error, stalled });
   const { newTab, launch, launching, creatingTab } = useSpaceActions();
+  // The pane's light-theme inversion override (lib/mirror-invert.ts). Read once at mount, which is
+  // enough: DetailRoute keys this component by `paneScopeKey(scope, paneId)` — the full address, not
+  // the id, for the reason that file records — so a walk to another pane, session or host remounts it
+  // and re-reads. Both halves of the stored key therefore change with the mount.
+  const [mirrorOverride, setMirrorOverride] = useState<boolean | undefined>(() =>
+    paneMirrorOverride(scope, paneId),
+  );
+  const chooseMirrorOverride = useCallback(
+    (next: boolean | undefined) => {
+      setMirrorOverride(next);
+      setPaneMirrorOverride(scope, paneId, next);
+    },
+    [scope, paneId],
+  );
+  const agentNative = rendersNativeMirror(agent?.agent);
+  const mirrorNative = rendersNativeMirror(agent?.agent, mirrorOverride);
+  const setMirrorNative = useCallback(
+    (next: boolean) => {
+      // Choosing the agent's own answer CLEARS the override instead of pinning it, so a pane does
+      // not freeze on today's answer if .adr/0047's set changes under it later.
+      chooseMirrorOverride(next === agentNative ? undefined : next);
+    },
+    [chooseMirrorOverride, agentNative],
+  );
+
   const { launchers, home: launchersHome } = useLaunchers(scope);
   // Single display-prefs instance: the View controls (in <Composer>) write it, the mirror reads it.
   const { prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, setPaneView } =
@@ -293,22 +326,11 @@ export function AgentChat({
   // were the same pane. The address did not vanish, it moved down one line, where an address belongs.
   const name = agent === undefined ? "" : paneName(agent);
   const workspace = agent === undefined ? "" : panePlaceParts(agent, tabs).space;
-  // The panes that share this tab (agents + shells), in stable order — the switcher's whole list, and
-  // the order the numbers on its pills count in (pane-strip.tsx). Computed here, once: the row is far
-  // from the header in this file and the two must not disagree about which panes there are.
-  // THE BRIDGE'S ORDER, NOT A SECOND ONE. It used to sort by pane id, which is alphabetical order
-  // over an OPAQUE id (identity rule 1): `%10` before `%2`, `pN` before `pC`. Two panes side by side
-  // on the desk therefore reached the phone in an order the desk never showed. The bridge now sends
-  // every pane in the multiplexer's own arrangement — space, then tab, then the pane's position in
-  // that tab (bridge/state-engine.ts) — so the strip only has to keep what it was sent.
-  // Agents come before shells because they arrive in two arrays; within each, position is the mux's.
+  // The panes that share this tab (agents + shells), in the strip's stable order (lib/pane-ordinal.ts
+  // § panesOfTab: position in the tab, never status). Computed here, once: the row is far from the
+  // header in this file and the two must not disagree about which panes there are.
   const tabPanes = useMemo(
-    () =>
-      agent === undefined
-        ? []
-        : [...agents, ...shellPanes].filter(
-            (p) => p.workspaceId === agent.workspaceId && p.tabId === agent.tabId,
-          ),
+    () => (agent === undefined ? [] : panesOfTab(agent, agents, shellPanes)),
     [agent, agents, shellPanes],
   );
   // This device may not type into agents: the backend rejects every write, so the composer drops to
@@ -459,12 +481,12 @@ export function AgentChat({
   // arrays on every poll, so an identity dep would re-run this once a second forever on a screen
   // where nothing about which panes exist had changed.
   const livePaneIds = useMemo(
-    () => [...agents, ...shellPanes].map((p) => p.paneId).join(" "),
+    () => [...agents, ...shellPanes].map((p) => p.paneId).join("\0"),
     [agents, shellPanes],
   );
   useEffect(() => {
     if (bridge !== "connected" || error) return;
-    pruneNotesForScope(scope, livePaneIds.split(" "));
+    pruneNotesForScope(scope, livePaneIds.split("\0"));
   }, [bridge, error, scope, livePaneIds]);
 
   // ── ZEN MODE — chrome-free, mirror-only viewing ───────────────────────────────
@@ -564,6 +586,9 @@ export function AgentChat({
   }, [landscape, zen, autoZenActive]);
   const listRef = useRef<ChatMessageListHandle>(null);
   const composerRef = useRef<ComposerHandle>(null);
+  // The box the composer's terminal-draft notice floats in (ADR 0061), at the mirror's bottom edge.
+  // State rather than a ref: the composer portals into it, so it must re-render once it exists.
+  const [draftNoticeSlot, setDraftNoticeSlot] = useState<HTMLDivElement | null>(null);
 
   const gone = !agent;
 
@@ -852,7 +877,7 @@ export function AgentChat({
   // `grammarsOn` rides along because `mirrorAgent` alone cannot answer for a NATIVE-MIRROR agent:
   // it keeps its identity with the pref off (that is the point of the line above), and without this
   // flag its adapter's grammars would still run over the model while the render says they are off.
-  const mirror = useMirrorModel(display, mirrorAgent, grammarsOn);
+  const mirror = useMirrorModel(display, mirrorAgent, grammarsOn, mirrorOverride);
   const mirrorAdapter = adapterFor(mirrorAgent);
   const statusLines = useMemo(
     () => mirrorAdapter?.extractStatusLines(mirror.lines) ?? [],
@@ -891,7 +916,20 @@ export function AgentChat({
   // slash-command `autocomplete` popup is painted while the agent's input box is live under it, so
   // treating it as a dialog would lock the composer out of a pane that is demonstrably typeable.
   // With no adapter the blocks are one raw block, which owns nothing — so no gate is needed here.
-  const dialogPresent = useMemo(() => mirror.blocks.some(blockOwnsKeyboard), [mirror.blocks]);
+  //
+  // ONE BUILD, THREE READERS (upstream .adr/0059): the blocks the mirror draws, the one the card
+  // dock lifts, and the ones this lock reads. In this fork that build is `mirror` above — the
+  // parse-once MirrorModel, which shares its LINES with AnsiOutput as well — so upstream's second
+  // `buildBlocks` call is not made here. The native-mirror override rides in through
+  // `useMirrorModel`'s own `nativeMirror` argument, which is where upstream passed it.
+  const blocks = mirror.blocks;
+  const dialogPresent = useMemo(() => blocks.some(blockOwnsKeyboard), [blocks]);
+  // Which KIND owns it, narrowed to the one the composer treats differently: the card is a guess
+  // about an unknown screen, so its refusal arms the type-anyway override instead of standing flat.
+  const dialogUnread = useMemo(
+    () => blocks.some((b) => b.kind === "unread-dialog"),
+    [blocks],
+  );
 
   // Both are threaded to the composer: the RAW value (live) plus a stabilised one. extractInputDraft
   // is stateless, so it can't distinguish a stranded draft from the ~350ms flash where our OWN
@@ -1318,15 +1356,67 @@ export function AgentChat({
     [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator],
   );
 
+  // The unread-dialog card's one control (.adr/0053). Same guard as every other dialog tap — the
+  // card has a row in the dialog contract, so `sendGuardedKeys` re-reads the pane and refuses if the
+  // screen moved. No wrapper in lib/ because there is no judgement call to make: one key, it commits,
+  // and the default `commits` comparison is the right one.
+  const handleUnreadDialogAction = useCallback(
+    async (key: string, cancel: UnreadDialogModel) => {
+      const refusal = refuseWrite();
+      if (refusal) {
+        setStatus(refusal, "error");
+        return;
+      }
+      const result = await sendGuardedKeys(
+        {
+          paneId,
+          scope,
+          requestedLines,
+          detectedRevision: shown.revision,
+          agent: agent?.agent,
+          kind: "unread-dialog",
+          model: cancel,
+        },
+        [key],
+      );
+      if (result.status === "sent") {
+        setStatus(t("chat.status.sent"), "success");
+        setFollowing(true);
+        revalidator.revalidate();
+        listRef.current?.scrollToBottom();
+      } else if (result.status === "changed") {
+        setStatus(t("chat.status.screenChanged"), "warn");
+        revalidator.revalidate();
+      } else {
+        setStatus(result.error || t("chat.status.sendFailed"), "error");
+      }
+    },
+    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator],
+  );
+
   // NOTE: the composer is deliberately NOT auto-focused on open/switch — that would pop the Android
   // keyboard and cover the output. You read the pane first, then tap the input to type. (Explicit
   // actions inside the composer still focus it; the mirror tap focuses it via composerRef.)
 
-  // Switch to another thread from the sidebar or the swipe-up switcher (DetailRoute keys AgentChat
-  // by pane, so this remounts fresh — composer resets — same as opening from home).
+  // Switch to another thread by its bare id — the in-pane tab bar and the pane strip (goToTab,
+  // closeCurrentTab below), where every candidate already shares THIS pane's host and session, so
+  // the id alone is unambiguous. (DetailRoute keys AgentChat by pane, so this remounts fresh —
+  // composer resets — same as opening from home.)
   function switchTo(id: string) {
     closeDrawer();
     if (id !== paneId) onSelect(id);
+  }
+
+  // Switch to a pane from the CREW-AWARE switcher (ThreadSidebar's swipe-up sheet), whose list spans
+  // every machine — `w1:p1` can name a different terminal on another host, so the target's own host
+  // has to travel with it. `switchTo`'s bare id forwards to `onSelect`, which DetailRoute resolves
+  // WITHIN THE CURRENT scope's host; handed a peer's row that would silently reopen this host's own
+  // identically-numbered pane instead. This resolves the pane's OWN scope via `paneScope` first, the
+  // same call home.tsx's dashboard `open` makes to open a crew-wide row correctly.
+  function switchToPane(pane: AgentView) {
+    closeDrawer();
+    if (paneRowKey(pane) === hereKey) return;
+    navigate(panePath(pane.paneId, paneScope(scope ?? {}, pane, servers)));
   }
 
   // Jump to another tab in this space by opening one of its panes (the in-pane tab bar).
@@ -1396,10 +1486,11 @@ export function AgentChat({
     else revalidator.revalidate();
   });
   const onToggleStrips = useStableCallback(() => toggleStrips());
-  // The fold's own control, pinned to the row's trailing end where it costs no height — the tab
-  // row is already 44px, so this centres in pixels the row was spending anyway. Same 32px square
-  // recipe as the "+" beside it: they are two controls of the same rank in the same row, and
-  // drawing them differently would rank them. Memoised on its label so the strip sees one element.
+  // The fold's own control, pinned to the row's trailing end where it costs no height: a 28px circle
+  // centred in the 30px tab row, its 44px reach hanging down out of the row the way every tab's does.
+  // Same square recipe as the "+" beside it, transparent border included (the reach's numbers assume
+  // one): they are two controls of the same rank in the same row, and drawing them differently would
+  // rank them. Memoised on its label so the strip sees one element.
   const foldLabel = t(foldLabelKey(stripTabs.length, tabPanes.length));
   const foldControl = useMemo(
     () => (
@@ -1409,8 +1500,8 @@ export function AgentChat({
         aria-expanded={true}
         aria-label={foldLabel}
         className={cn(
-          STRIP_TAP_TARGET_SQUARE,
-          "flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent active:scale-95",
+          TAB_ROW_SQUARE_TAP_TARGET,
+          "flex size-7 shrink-0 items-center justify-center rounded-full border border-transparent text-muted-foreground transition-colors hover:bg-accent active:scale-95",
         )}
       >
         <ChevronUp className="size-4" />
@@ -2179,7 +2270,8 @@ export function AgentChat({
             data-slot="mirror"
             className={cn(
               mirrorGap,
-              "min-h-0 min-w-0 flex-1 border-t border-rule",
+              // `relative` anchors the floating terminal-draft notice's slot, the last child below.
+              "relative min-h-0 min-w-0 flex-1 border-t border-rule",
               // FORK: the terminal FACE dresses the terminal and nothing else. In chat mode this
               // wrapper holds agent PROSE, which DESIGN.md § "Chrome wears the app face" puts in
               // `font-content` — an inline `font-family` here would be inherited by every word of it
@@ -2309,12 +2401,8 @@ export function AgentChat({
                     // turns the adapter off.
                     agent={mirrorAgent}
                     grammars={grammarsOn}
-                    onPromptAction={handlePromptAction}
-                    onWizardAction={handleWizardAction}
-                    onPreviewAction={handlePreviewAction}
-                    onMultiSelectAction={handleMultiSelectAction}
-                    onMenuAction={handleMenuAction}
-                    promptDisabled={readOnly || gone}
+                    nativeMirror={mirrorOverride}
+                    blocks={blocks}
                     hideLeadingLines={hiddenMirrorLines}
                     onLinkOpen={handleLinkOpen}
                     images={mirrorImages}
@@ -2332,7 +2420,47 @@ export function AgentChat({
                 </div>
               )}
             </ChatMessageList>
+            {/* THE TERMINAL-DRAFT NOTICE FLOATS HERE (ADR 0061). The composer portals the notice
+                into this box, pinned to the mirror's bottom edge: above the card dock when a card
+                is docked, else above the chrome block and its belt. Absolute, so it covers the
+                mirror's last rows and changes the height of nothing: not the scroller, not the dock,
+                not the composer. `pointer-events-none` lets a touch on its empty part reach the
+                mirror; the notice itself takes touches back. */}
+            <div
+              ref={setDraftNoticeSlot}
+              data-slot="draft-notice-slot"
+              className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-2"
+            />
           </div>
+
+          {/* THE CARD DOCK (.adr/0059). The lifted card used to render inside the scroller above,
+              after the mirror text, so its bottom edge moved with the text, the trailing rows and
+              the scroll position, and on a short screen it floated mid-page. It docks here instead:
+              out of every scroller, below the mirror, directly above the chrome block, the same
+              bottom edge for every card kind on every harness. Renders nothing without a card.
+
+              OUTSIDE the bottom region's zen `Collapse`, on purpose. The card is the pane's own
+              dialog, not Collie's chrome, and zen hides only chrome; inside that row a dialog would
+              vanish with the belt. Nothing comes between it and the chrome block while it shows:
+              the statusline strip and the agents footer both need a live input box at the tail, and
+              every card means there is none (the completion popup's box has a popup under it, not
+              a statusline run). */}
+          {display && (
+            <CardDock
+              blocks={blocks}
+              onPromptAction={handlePromptAction}
+              onWizardAction={handleWizardAction}
+              onPreviewAction={handlePreviewAction}
+              onMultiSelectAction={handleMultiSelectAction}
+              onMenuAction={handleMenuAction}
+              onUnreadDialogAction={handleUnreadDialogAction}
+              promptDisabled={readOnly || gone}
+              composing={composing}
+              faceClassName={mirrorFace.className}
+              faceStyle={mirrorFace.style}
+              onClick={focusFromMirror}
+            />
+          )}
 
           {/* Bottom region, in the order it paints: the agent's own statusline (the mirror's last row),
               the pane-switch handle, the composer. The connection status line USED to float here as an
@@ -2538,6 +2666,7 @@ export function AgentChat({
                   // machine am I typing into" has to be answerable without tapping Send to find out.
                   hostBlock={hostBlock}
                   dialogPresent={dialogPresent}
+                  dialogUnread={dialogUnread}
                   text={text}
                   terminalDraft={terminalDraft}
                   rawTerminalDraft={rawTerminalDraft}
@@ -2546,6 +2675,8 @@ export function AgentChat({
                   stepFontSize={stepFontSize}
                   setRawTerminal={setRawTerminal}
                   setTapToFocus={setTapToFocus}
+                  mirrorNative={mirrorNative}
+                  setMirrorNative={setMirrorNative}
                   setExpandClippedReply={setExpandClippedReply}
                   onSent={onSent}
                   // FORK: the `## Feedback:` heading of a send that carries anchored notes.
@@ -2553,6 +2684,7 @@ export function AgentChat({
                   // The switcher mark, for the actions belt's top rule — see the condition at
                   // `pullHandle` above, and actions-row.tsx for what it draws.
                   pullHandle={pullHandle}
+                  draftNoticeSlot={draftNoticeSlot}
                 />
                 </Collapse>
               </div>
@@ -2575,10 +2707,13 @@ export function AgentChat({
           <ThreadSidebar
             agents={agents}
             shellPanes={shellPanes}
-            currentPaneId={paneId}
-            onSelect={switchTo}
-            recentOpen={dash.prefs.recentOpen}
-            onRecentOpenChange={dash.setRecentOpen}
+            // The full row identity, not the bare id (`hereKey`, computed above for the same reason
+            // the "elsewhere needs you" dot is): on a crew this sheet lists every machine's panes,
+            // and a peer's row can share this pane's own id.
+            currentPaneKey={hereKey ?? ""}
+            onSelect={switchToPane}
+            tabs={tabs}
+            servers={servers}
             // Shells fold on the same count rule Spaces uses: on a herd with dozens of bare shells
             // they'd otherwise bury the agents you opened this sheet to reach.
             shellsOpen={openForCount(dash.prefs.shellsOpen, shellPanes.length)}

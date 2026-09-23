@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ComponentProps } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -91,6 +91,8 @@ function baseProps(
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
     setTapToFocus: vi.fn(),
+    mirrorNative: false,
+    setMirrorNative: vi.fn(),
     setExpandClippedReply: vi.fn(),
     onSent: vi.fn(),
     ...overrides,
@@ -162,8 +164,10 @@ describe("Composer — the record button is drawn only when there is a microphon
     renderComposer();
     await waitFor(() => expect(reads).toBe(1));
     expect(screen.queryByRole("button", { name: /record a voice message/i })).toBeNull();
-    // …and the field keeps the narrow padding, so a collie without one loses no width to it.
-    expect(screen.getByPlaceholderText(/type a reply/i).className).toContain("pr-11");
+    // …and the field reserves no strip at all, so a collie without one loses no width to it. It
+    // was `pr-11` while the attach button stood in the field's corner; the button is the field's
+    // sibling on the box's one row now (ADR 0057) and nothing inside the field reserves width.
+    expect(screen.getByPlaceholderText(/type a reply/i).className).not.toMatch(/(?:^|\s)pr-/);
   });
 
   it("renders no microphone in an insecure context, even with a provider configured", async () => {
@@ -204,8 +208,9 @@ describe("Composer — the microphone sits beside the clip, and Send is always S
 
     expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /^send$/i })).toBeDisabled();
-    // The field reserves room for the microphone beside the clip.
-    expect(screen.getByPlaceholderText(/type a reply/i).className).toContain("pr-20");
+    // The microphone is a sibling of the field in the box now (FORK: its own control, never the
+    // end button), so the field reserves no horizontal strip for it — or for anything.
+    expect(screen.getByPlaceholderText(/type a reply/i).className).not.toMatch(/(?:^|\s)pr-/);
   });
 
   it("lights Send on the first character, and keeps the microphone where it was", async () => {
@@ -222,6 +227,28 @@ describe("Composer — the microphone sits beside the clip, and Send is always S
     await user.clear(box);
     await waitFor(() => expect(screen.getByRole("button", { name: /^send$/i })).toBeDisabled());
   });
+
+  // ADR 0060: a chip is something to send. FORK: the microphone is its own control and stays
+  // put; what a chips-only box changes is that Send comes on.
+  it("a box holding only chips turns Send on, and the microphone stays", async () => {
+    server.use(
+      configHandler(CONFIG_WITH_STT),
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/a.png" })),
+    );
+    renderComposer();
+    const box = await screen.findByPlaceholderText(/type a reply/i);
+    await screen.findByRole("button", { name: /record a voice message/i });
+
+    // SAFETY: `getByTestId` throws when the element is absent, and this id is on an `<input>`.
+    const photos = screen.getByTestId("attach-photos") as HTMLInputElement;
+    fireEvent.change(photos, { target: { files: [new File(["x"], "a.png", { type: "image/png" })] } });
+    await waitFor(() => expect(box).toHaveValue("[Image #1] "));
+    fireEvent.change(box, { target: { value: "" } });
+
+    expect(screen.getByRole("button", { name: /record a voice message/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeEnabled();
+  });
+
 
   it("whitespace alone is not text — Send stays off over a box holding only spaces", async () => {
     const user = userEvent.setup();

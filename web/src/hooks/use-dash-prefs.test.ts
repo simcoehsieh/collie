@@ -36,7 +36,6 @@ describe("coerceDashPrefs", () => {
       spacesOpen: null,
       shellsOpen: null,
       launchOpen: null,
-      recentOpen: true,
       recentDir: "newest",
       // `""` is "a plain shell", which is what the tab strip's "+" has always opened.
       newTabLauncher: "",
@@ -54,7 +53,6 @@ describe("coerceDashPrefs", () => {
         spacesOpen: false,
         shellsOpen: true,
         launchOpen: false,
-        recentOpen: false,
         recentDir: "oldest",
         newTabLauncher: "claude",
         pinned: ["w1:p1", "w2:p3"],
@@ -67,7 +65,6 @@ describe("coerceDashPrefs", () => {
       spacesOpen: false,
       shellsOpen: true,
       launchOpen: false,
-      recentOpen: false,
       recentDir: "oldest",
       newTabLauncher: "claude",
       pinned: ["w1:p1", "w2:p3"],
@@ -100,9 +97,31 @@ describe("coerceDashPrefs", () => {
 
   it("survives garbage", () => {
     expect(coerceDashPrefs(null).recentDir).toBe("newest");
-    expect(coerceDashPrefs("nope").recentOpen).toBe(true);
+    expect(coerceDashPrefs("nope").recentDir).toBe("newest");
     expect(coerceDashPrefs({ spacesOpen: "yes" }).spacesOpen).toBeNull();
     expect(coerceDashPrefs({ launchOpen: 1 }).launchOpen).toBeNull();
+  });
+
+  it("ignores a retired `recentOpen` key from an older version's stored blob", () => {
+    // The Recent fold this once toggled is gone (agent-list.tsx no longer sorts into it), so the
+    // key is dropped from DashPrefs — but a device that saved it under an older Collie must still
+    // parse today, with the rest of its stored choices intact.
+    expect(
+      coerceDashPrefs({ spacesOpen: true, recentOpen: false, recentDir: "oldest" }),
+    ).toMatchObject({
+      spacesOpen: true,
+      shellsOpen: null,
+      launchOpen: null,
+      recentDir: "oldest",
+      isolatedSpace: null,
+      hiddenSpaces: [],
+    });
+    // FORK: toMatchObject, not toEqual — this fork's DashPrefs carries fields upstream's does not
+    // (the new-tab launcher, low power, the quota fold). What the case pins is unchanged: the rest of
+    // the stored choices survive, and the retired key is not carried along.
+    expect(coerceDashPrefs({ spacesOpen: true, recentOpen: false, recentDir: "oldest" })).not.toHaveProperty(
+      "recentOpen",
+    );
   });
 });
 
@@ -119,7 +138,6 @@ describe("useDashPrefs", () => {
       spacesOpen: null,
       shellsOpen: null,
       launchOpen: null,
-      recentOpen: true,
       recentDir: "newest",
       newTabLauncher: "",
       pinned: [],
@@ -135,7 +153,6 @@ describe("useDashPrefs", () => {
     act(() => first.result.current.setSpacesOpen(true));
     act(() => first.result.current.setShellsOpen(true));
     act(() => first.result.current.setLaunchOpen(false));
-    act(() => first.result.current.setRecentOpen(false));
     act(() => first.result.current.setRecentDir("oldest"));
     act(() => first.result.current.setNewTabLauncher("claude"));
     act(() => first.result.current.setLowPower(true));
@@ -153,7 +170,6 @@ describe("useDashPrefs", () => {
       spacesOpen: true,
       shellsOpen: true,
       launchOpen: false,
-      recentOpen: false,
       recentDir: "oldest",
       newTabLauncher: "claude",
       pinned: ["w1:p1"],

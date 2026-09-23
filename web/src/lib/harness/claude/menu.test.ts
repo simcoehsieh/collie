@@ -71,36 +71,6 @@ describe("detectMenuRegion — the /model picker", () => {
 });
 
 describe("detectMenuRegion — what it must decline", () => {
-  // FORK: the /resume picker (2.1.267). Its footer names side keys and Esc but nothing that selects,
-  // and at this width it WRAPS, so the last line the grammar reads is `search · Esc to cancel`. The
-  // `❯` row is still there, and that is what earns the synthesised Enter — first, as the primary.
-  it("supplies the Enter a highlighted picker's footer never named (the /resume picker)", () => {
-    const model = detectMenu(load("claude--menu-resume-picker.txt"));
-    expect(model).not.toBeNull();
-    expect(model!.title).toBe("Resume session");
-    expect(model!.nav).toEqual({ upDown: true });
-    expect(model!.actions).toEqual([
-      { label: "Select", keys: ["Enter"], select: true },
-      { label: "Cancel", keys: ["Escape"], cancel: true },
-    ]);
-  });
-
-  it("supplies no second Enter when the footer names one (the /model picker keeps its verb)", () => {
-    const model = detectMenu(load("claude--menu-model-picker.txt"))!;
-    expect(model.actions.filter((a) => a.keys.includes("Enter"))).toEqual([
-      { label: "Set as default", keys: ["Enter"] },
-    ]);
-  });
-
-  it("supplies no Enter without a highlight row — there is nothing for it to commit", () => {
-    const model = detectMenu(
-      lines([BOX_RULE, "Some picker", "  a row", "  another", "", "s to save · Esc to cancel"].join("\n")),
-    )!;
-    expect(model).not.toBeNull();
-    expect(model.nav.upDown).toBe(false);
-    expect(model.actions.some((a) => a.keys.includes("Enter"))).toBe(false);
-  });
-
   it("declines a normal prompt screen whose statusline reads like key hints", () => {
     // The negative control: identical footer text, but an input box at the tail. Without the
     // input-box gate this would render fake buttons under a live composer.
@@ -137,5 +107,35 @@ describe("detectMenuRegion — what it must decline", () => {
   it("declines once ordinary output has scrolled below the picker (tail anchor)", () => {
     const scrolled = [...load("claude--menu-model-picker.txt"), ...lines("● Wrote the file")];
     expect(detectMenu(scrolled)).toBeNull();
+  });
+});
+
+// The screen that proved bail 2 was reading a phrase instead of a dialog: `/effort` prints
+// "Enter to confirm", which used to file it as the folder-trust prompt and stand the generic menu
+// down, leaving the operator a modal with no buttons at all (ADR 0053). Nothing here is
+// Effort-specific: once the bail stops firing, the generic grammar claims the screen on the keys the
+// screen itself printed.
+//
+// What SHIPS for this screen is not this model. A Claude-specific grammar (./effort.ts) runs ahead
+// of the generic arm and reads two things the generic one cannot: the current value, from the `▲`'s
+// column, and the `s` key, whose footer segment says "for" where this parser demands "to". That
+// model, and the block `claudeBuildBlocks` really emits, are asserted in effort.test.ts. The case
+// below is about the generic detector alone.
+describe("detectMenuRegion — the /effort slider", () => {
+  it("no longer stands down on the slider's footer phrase", () => {
+    const model = detectMenu(load("claude--menu-effort-slider.txt"));
+    expect(model).not.toBeNull();
+    expect(model!.title).toBe("Effort");
+    // Two actions, not three: the generic parser drops "s for this session only". The Effort grammar
+    // is what puts that key back.
+    expect(model!.actions).toEqual([
+      { label: "Confirm", keys: ["Enter"] },
+      { label: "Cancel", keys: ["Escape"], cancel: true },
+    ]);
+    // And no arrows: the `←/→` phrase is this screen's FOOTER, which the region scan never reaches.
+    expect(model!.nav).toEqual({ upDown: false });
+    for (const key of model!.actions.flatMap((a) => a.keys)) {
+      expect(/^\d+$/.test(key), key).toBe(false);
+    }
   });
 });

@@ -1,3 +1,4 @@
+import { paneTextWithDraft } from "@/test/handlers";
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -32,7 +33,9 @@ describe("useMirrorModel — the one parse of the mirror", () => {
     }
     const initial: Props = {};
     const { result, rerender } = renderHook(
-      ({ agent }: Props) => useMirrorModel("plain output", agent),
+      // A REAL Claude screen — output plus its input box. A bare line with no box is, since upstream
+      // 1.12.0 (.adr/0053), exactly the screen the unread-dialog card is for, not a plain one.
+      ({ agent }: Props) => useMirrorModel(paneTextWithDraft("plain output"), agent),
       { initialProps: initial },
     );
     const lines = result.current.lines;

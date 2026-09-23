@@ -30,8 +30,14 @@ export function useMirrorModel(
   display: string,
   agent: string | undefined,
   grammars = true,
+  // The pane's own native-render override (upstream 1.12.0, `lib/mirror-invert.ts`). `buildBlocks`
+  // resolves it against the agent, and its decoration touches raw blocks only.
+  nativeMirror?: boolean,
 ): MirrorModel {
   const lines = useMemo(() => splitLines(parseAnsi(display)), [display]);
-  const blocks = useMemo(() => buildBlocks(lines, { agent, grammars }), [lines, agent, grammars]);
+  const blocks = useMemo(
+    () => buildBlocks(lines, { agent, grammars, nativeMirror }),
+    [lines, agent, grammars, nativeMirror],
+  );
   return useMemo(() => ({ lines, blocks }), [lines, blocks]);
 }

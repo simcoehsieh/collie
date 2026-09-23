@@ -189,9 +189,11 @@ const CONTENT_TYPES = new Map<string, string>([
 
 // Strict CSP. Scripts are external, hashed bundles (script-src 'self'); pane text is rendered by
 // React as text nodes, never markup, so terminal output can't inject. 'unsafe-inline' is allowed
-// for styles only (the toast library injects a <style> tag) — it can't execute code.
+// for styles only (the toast library injects a <style> tag) — it can't execute code. `blob:` in
+// img-src is the composer's attachment thumbnail (ADR 0060): a blob URL is minted only by this
+// page's own script, from a file the operator picked, so it admits no new origin.
 const CSP =
-  "default-src 'self'; connect-src 'self'; img-src 'self' data:; " +
+  "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; " +
   "style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self'; " +
   "manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
@@ -1730,6 +1732,12 @@ export function startServer(opts: {
 
     async fetch(req) {
       const url = new URL(req.url);
+      // A mounted collie (`COLLIE_BASE_PATH`, ADR 0052) is normally reached through a proxy that
+      // strips the mount before it forwards — `tailscale serve` does, `http.StripPrefix` on the
+      // mount point. One that does not would otherwise be answered with the app shell for
+      // `/collie/api/health`, so an inbound path that still carries the mount is read as if it had
+      // been stripped. Before the crew surface and every gate, because all of them read the path.
+      if (cfg.basePath !== "/") url.pathname = stripMount(url.pathname, cfg.basePath);
       const { pathname } = url;
 
       // The federated surface, before anything else. It answers only the prefix it owns and returns
@@ -2429,6 +2437,8 @@ export function startServer(opts: {
           crew: opts.crewLead?.updateRows() ?? [],
           // And the legs of the last run, which is what "Retry crew update" is about (M16/04).
           peers: opts.crewLead?.updatePeers() ?? [],
+          // A crew run still open refuses a second confirm (A5).
+          crewRunOpen: opts.crewLead?.updateRunOpen() ?? false,
         });
         if (verdict.kind === "refuse") {
           return jsonError(verdict.body, verdict.status, req.headers.get("accept-encoding"));
@@ -2676,11 +2686,17 @@ export function startServer(opts: {
       if (isReservedAuthPath(pathname)) return reservedAuthPlaceholder();
 
       // ── Static PWA (with SPA fallback) ───────────────────────────────────
-      return serveStatic(pathname, req.headers.get("accept-encoding"), req.headers.get("if-none-match"));
+      return serveStatic(pathname, req.headers.get("accept-encoding"), req.headers.get("if-none-match"), WEB_DIR, cfg.basePath);
     },
   });
 
   console.log(`[bridge] listening on http://${cfg.host}:${cfg.port}  (poll ${cfg.pollMs}ms)`);
+  if (cfg.basePath !== "/") {
+    console.log(
+      `[bridge] mounted at ${cfg.basePath} (COLLIE_BASE_PATH) — the app, its assets and /api/* answer under that path` +
+        " and at the root; the front door must proxy that path here",
+    );
+  }
   if (cfg.deviceHeader) {
     console.log(
       `[bridge] per-device auth ON: trusting '${cfg.deviceHeader}', ${cfg.deviceAllowlist.length} device(s) allowlisted`,
@@ -5309,6 +5325,42 @@ export function resolveStaticPath(
 }
 
 /**
+ * An inbound path with the mount taken off it, for a proxy that forwards the mount instead of
+ * stripping it: `/collie/api/health` under `/collie/` reads `/api/health`, `/collie` and `/collie/`
+ * read `/`. A path outside the mount is returned as it came — the bridge still answers at its own
+ * root for the proxy that strips, which is the common case and the one `tailscale serve` is.
+ * `/collieX` is not under `/collie/`. Pure + exported for tests.
+ */
+export function stripMount(pathname: string, basePath: string): string {
+  if (basePath === "/") return pathname;
+  const bare = basePath.slice(0, -1);
+  if (pathname === bare) return "/";
+  return pathname.startsWith(basePath) ? pathname.slice(bare.length) : pathname;
+}
+
+/**
+ * The app shell resolved to its mount (ADR 0052). `web/dist/index.html` is built with every
+ * reference ROOT-ABSOLUTE (`/assets/…`, `/theme-init.js`, `/fonts/…`) and the mount declared as
+ * `<meta name="collie-base" content="/">`; inside the bundle nothing names the root (Vite's
+ * `renderBuiltUrl` makes every chunk and stylesheet reference relative). So the shell is the one
+ * file that has to be told where it is: each root-absolute reference gets the mount in front of it,
+ * and the meta tag carries the mount for the app, the router and the service-worker registration
+ * to read. At the root this is the identity, and `serveStatic` does not even call it there.
+ *
+ * Four spellings and no more, because the file is ours: an attribute value (`href="/`, `src="/`,
+ * `content="/`), and a double-quoted, single-quoted or bare CSS `url(/` in the inline splash style.
+ * A protocol-relative `//host` is not a root-absolute path and is left alone. The CSP forbids a
+ * `<base>` element (`base-uri 'none'`), which is why this is a rewrite and not a tag.
+ * Pure + exported for tests.
+ */
+export function mountIndexHtml(html: string, basePath: string): string {
+  if (basePath === "/") return html;
+  return html
+    .replace(/(="|url\("|url\('|url\()\/(?!\/)/g, `$1${basePath}`)
+    .replace(/(<meta\s+name="collie-base"\s+content=")[^"]*(")/, `$1${basePath}$2`);
+}
+
+/**
  * The namespace reserved for the operator's front door. Matches `/auth` with or without a trailing
  * slash and anything beneath it — a proxy may serve one page or a whole flow. Kept in lockstep with
  * the service worker's navigation denylist (`web/src/lib/sw-routes.ts`); if these two disagree, an
@@ -5362,6 +5414,7 @@ export async function serveStatic(
   acceptEncoding: string | null = null,
   ifNoneMatch: string | null = null,
   webDir: string = WEB_DIR,
+  basePath: string = "/",
 ): Promise<Response> {
   const resolved = resolveStaticPath(pathname, webDir);
   if (!resolved) return text("forbidden", 403);
@@ -5391,6 +5444,23 @@ export async function serveStatic(
   };
   if (ext === ".html") headers["content-security-policy"] = CSP;
   if (rel === "sw.js") headers["service-worker-allowed"] = "/";
+
+  // Under a mount the app shell is the one file not served as it lies on disk: its root-absolute
+  // references and its `<meta name="collie-base">` are resolved to the mount here (ADR 0052). At the
+  // root the file goes out as built, through the same path as every other file.
+  //
+  // FORK: ahead of the ETag below, because the tag is a hash of the file ON DISK and a mounted shell
+  // is not that file — validating one against the other would 304 a stale mount. It compresses with
+  // the fork's own `compressStatic` rather than upstream's gzip cache, which this fork replaced with
+  // brotli + ETag; a 12 KB shell compresses in well under a millisecond, so it needs no cache.
+  if (rel === "index.html" && basePath !== "/") {
+    const body = new TextEncoder().encode(mountIndexHtml(await file.text(), basePath));
+    const shellEncoding = pickEncoding(acceptEncoding);
+    if (shellEncoding === null) return secure(new Response(body, { headers }));
+    headers["content-encoding"] = shellEncoding;
+    headers["vary"] = "accept-encoding";
+    return secure(new Response(compressStatic(body, shellEncoding), { headers }));
+  }
 
   // ── FORK: `no-cache` WITHOUT A VALIDATOR CAN ONLY EVER RE-SEND THE WHOLE FILE ────────────────
   // Every non-hashed dist file ships `no-cache`, which is correct (a rebuild must never be pinned)

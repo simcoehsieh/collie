@@ -6,6 +6,7 @@ import { waitFor } from "@testing-library/react";
 import { __resetConnectionHealth, isLongUpload, isLostLatched, lastHealthyAt } from "./connection-health";
 import { isConnecting } from "./connection";
 import { __resetSnapshotCache } from "./api";
+import { resetBasePathForTests } from "./base-path";
 import {
   handoffPane,
   checkForUpdates,
@@ -726,5 +727,31 @@ describe("handoffPane", () => {
     const res = await handoffPane("w1:p1", "codex", "Finish the tests");
     expect(bodies).toEqual([{ command: "codex", instruction: "Finish the tests" }]);
     expect(res).toMatchObject({ ok: true, pane: { paneId: "w1:p7" }, artifact: { id: "h1-00000001" } });
+  });
+});
+
+// ADR 0052: every caller spells `/api/…`; the mount the bridge served the document under is put in
+// front of it in one place, `apiFetch`.
+describe("api client under a mount", () => {
+  afterEach(() => {
+    document.querySelector('meta[name="collie-base"]')?.remove();
+    resetBasePathForTests();
+  });
+
+  it("asks for /collie/api/… when the document says it is mounted at /collie/", async () => {
+    const meta = document.createElement("meta");
+    meta.setAttribute("name", "collie-base");
+    meta.setAttribute("content", "/collie/");
+    document.head.appendChild(meta);
+    resetBasePathForTests();
+    const asked: string[] = [];
+    server.use(
+      http.get("/collie/api/snapshot", ({ request }) => {
+        asked.push(new URL(request.url).pathname);
+        return HttpResponse.json(fixtureSnapshot);
+      }),
+    );
+    await fetchSnapshot();
+    expect(asked).toEqual(["/collie/api/snapshot"]);
   });
 });

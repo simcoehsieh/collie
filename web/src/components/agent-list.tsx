@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Check, WifiOff } from "lucide-react";
+import { WifiOff } from "lucide-react";
 
 import { clockTime } from "@/lib/format";
 import { useMuxCapability } from "@/lib/mux-capability";
@@ -10,10 +10,10 @@ import { SwipeClose } from "@/components/swipe-close";
 import { EmptyState } from "@/components/empty-state";
 import { groupPanesByWorkspace, type WorkspaceGroup } from "@/lib/pane-groups";
 import { Chip } from "@/components/ui/chip";
-import { StatusCounts } from "@/components/status-counts";
+import { StatusCounts, StatusSummaryLine } from "@/components/status-counts";
 import { STRIP_SCROLLER } from "@/components/ui/labelled-strip";
 import { bucketOf, sectionHeaderProps, triage, worstTriage, type TriageKey } from "@/lib/triage";
-import type { AgentView, BridgeStatus, TabView } from "@/lib/types";
+import type { AgentView, BridgeStatus, ServerSummary, TabView } from "@/lib/types";
 import { paneRowKey } from "@/lib/hosts";
 import { AgentCard } from "./agent-card";
 import { t } from "@/lib/i18n";
@@ -61,6 +61,8 @@ interface AgentListProps {
   onClosePane?: (pane: AgentView) => Promise<boolean>;
   /** The raw tab list, for the multiplexer's own tab order inside a workspace. */
   tabs?: readonly TabView[];
+  /** The snapshot's machine list, for the order machines run in: the lead first (lib/pane-groups.ts). */
+  servers?: readonly ServerSummary[] | undefined;
   /**
    * The workspace filter the strip on top drives, per device (hooks/use-dash-prefs.ts). `isolated`
    * shows one workspace alone; `hidden` drops workspaces from the list while their chips stay in
@@ -75,8 +77,6 @@ interface AgentListProps {
   onToggleHidden?: (key: string) => void;
 }
 
-/** The sections that mean "a human is required here" — pulled to the top and given the accented
- *  header, and now the only ones the dashboard sorts by URGENCY at all. */
 /** A module-level empty list: a fresh `[]` default per render is a new reference for nothing. */
 const NO_PANES: AgentView[] = [];
 const NO_KEYS: readonly string[] = [];
@@ -107,15 +107,33 @@ function groupDomId(key: string): string {
   return `ws-group-${key.replace(/[^A-Za-z0-9_-]/gu, "_")}`;
 }
 
+/** The buckets that mean "a human is required here". They no longer move a row (ADR 0063); they
+ *  decide the marks — the heading's urgent count and the all-clear line. */
 const ATTENTION: ReadonlySet<TriageKey> = new Set<TriageKey>(["needs", "ready"]);
 
-// The herd in the one order the app agrees on: Needs you → Ready · unseen → Working → Recent
-// (lib/triage.ts). Only Recent folds, and only Recent takes the direction toggle; the three
-// attention sections are pinned open and never invert.
+// ── THE DASHBOARD, IN ONE FIXED ORDER (ADR 0063) ─────────────────────────────
+// BY WORKSPACE, always. One group per workspace, headed by its name and counted, in machine and
+// workspace-number order (lib/pane-groups.ts), with the panes inside in the order the bridge sent.
+// Rows under one workspace heading are panes, because that is what a workspace holds. The workspace
+// is the level the operator thinks in, so it is the level the heading names; the tab drops onto
+// line 2 of the row (`AgentCard` at `scope="place"`), where it tells two rows apart without
+// spending a heading, and the group reads as one 44px pitch.
 //
-// FORK: a PINNED row is lifted with the urgent ones — the operator asked for it to sit on top, and
-// `triage` already pulls it out of its bucket — so it is excluded from the workspace groups below
-// and listed exactly once, on the same terms an urgent row is.
+// A PANE'S ROW NEVER MOVES WHEN ITS STATE CHANGES. The operator finds a pane by where it sits, not
+// by what it is doing right now, and every arrangement that once reordered on a status change — a
+// "Needs you" section pulled to the top, the Working and Recent sections, the sort toggle — broke
+// exactly that and is gone (ADR 0063).
+//
+// URGENCY IS A MARK NOW, NEVER A POSITION. A workspace holding a pane that needs you lights its own
+// heading (a dot) and its own count (`StatusCounts`); the pane's own row takes a full-colour wash
+// (`AgentCard`'s `tint`) rather than moving anywhere; and ONE summary line above every group counts
+// what needs you across the whole herd and jumps to the first of it. A row is listed once, in its
+// one place, and its marks say the rest.
+//
+// FORK: the ONE row that does move is a PINNED one, and it is not an exception to the rule above: a
+// pin is not a state, it is the operator's own hand saying "this one sits on top". `triage` already
+// pulls it out of its bucket, so it is excluded from the workspace groups below and listed exactly
+// once, in the pinned section.
 export const AgentList = memo(function AgentList({
   agents,
   shellPanes = NO_PANES,
@@ -128,6 +146,7 @@ export const AgentList = memo(function AgentList({
   onLongPress,
   onClosePane,
   tabs,
+  servers,
   isolated = null,
   hidden = NO_KEYS,
   onIsolate,
@@ -204,7 +223,7 @@ export const AgentList = memo(function AgentList({
   const groups = groupPanesByWorkspace(
     agents.filter((a) => !pinnedIds.has(a.paneId)),
     shellPanes,
-    { order: "fixed", tabs },
+    { order: "fixed", tabs, servers },
   );
   if (groups.length === 0 && pinnedSection === undefined) return null;
   // A stale key (a workspace since closed) filters nothing: an isolation nobody can see is dropped.
@@ -270,9 +289,14 @@ export const AgentList = memo(function AgentList({
           each lit with the worst status inside. Tap a chip to see that workspace alone, tap it or
           All to see everything again. Long-press a chip to hide the workspace, and again to bring it
           back; a hidden chip stays in the strip, dimmed, with its dot, so hiding never silences a
-          workspace that needs you. One height always, so nothing below moves. */}
+          workspace that needs you. One height always, so nothing below moves.
+          The scroller keeps STRIP_SCROLLER's own `py-1.5` and must: that padding is the room a
+          chip's STRIP_TAP_TARGET `::before` reaches into for the 44px tap floor. Trimmed to `py-0`
+          it cost both halves at once — the reach was clipped away, so the chips answered a 34px
+          touch, and the same overflow became 6px of vertical scroll that dragged their bottom edge
+          out of sight. `actions-row.tsx` hit this before; its note carries the mechanism. */}
       <nav aria-label={t("space.strip.title")} className="-mx-4">
-        <div className={cn(STRIP_SCROLLER, "px-4 py-0")}>
+        <div className={cn(STRIP_SCROLLER, "px-4")}>
           <Chip label={t("space.tabStrip.all")} active={!isolatedGroup} onClick={() => onIsolate?.(null)} />
           {groups.map((g) => (
             <Chip
@@ -292,20 +316,11 @@ export const AgentList = memo(function AgentList({
           word, once for the whole dashboard (the headings below repeat the numbers, not the words).
           The all-clear check leads when nothing needs you. A tap goes to the first workspace
           holding something urgent. */}
-      <button
-        type="button"
-        onClick={() => firstUrgent && jumpTo(firstUrgent)}
-        disabled={!firstUrgent}
-        className="flex min-h-8 items-center gap-3 text-left text-xs font-medium text-foreground disabled:opacity-100"
-      >
-        {allClear && (
-          <span className="flex items-center gap-1.5 leading-none">
-            <Check className="size-4 shrink-0 text-status-done" aria-hidden />
-            {t("home.allClear")}
-          </span>
-        )}
-        <StatusCounts panes={agents} labelled={!allClear} className={allClear ? "text-muted-foreground" : undefined} />
-      </button>
+      <StatusSummaryLine
+        panes={agents}
+        allClear={allClear}
+        onJump={firstUrgent ? () => jumpTo(firstUrgent) : undefined}
+      />
 
       {/* FORK: the operator's own pins, above the workspaces. The only thing on this screen that
           moves a row, and the only thing that should: a hand put it there. */}

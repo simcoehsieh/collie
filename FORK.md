@@ -446,8 +446,24 @@ the suite running, every session-scoped route — `/api/config`, `/api/launchers
 pane family — hangs until Bun's 10s idle timeout, while `/api/snapshot` and `/api/health` (which
 never call `caller.resolve()`) stay fast. The bridge does not recover on its own.
 
-So: **`./bin/collie restart` after any bridge test run**, and do not run one while the phone is being
-used. `bridge/pack/harness.test.ts` is the worst of them — several minutes on its own — and it also
+**Run them with the herdr environment scrubbed, and they leave the live service alone** (measured
+2026-09-24: the full `./bridge` suite ran for 25 minutes and the live `/api/config` answered 200 in
+under 1.3 s throughout):
+
+```bash
+env -u HERDR_SESSION -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID -u HERDR_ENV -u HERDR_BIN_PATH \
+  HERDR_SOCKET_PATH=/private/tmp/collie-test-no-such-herdr.sock bun test ./bridge ./cli
+```
+
+A shell opened inside a herdr pane carries that pane's `HERDR_SOCKET_PATH` — on this machine the
+`listeners` session, which is every listener and the scheduler, not just Collie. Without the scrub, a
+test run dials it. Without the scrub, too, the old rule stands: **`./bin/collie restart` after the
+run**, and never while the phone is in use.
+
+Three failures are the tree's own and not a merge's, identical on the fork before 1.12.1 was taken:
+the TLS one below, `resolveBlobPath > resolves candidate contained in sibling blobs directory`
+(`bridge/journal/pi.test.ts`), and `collie --version` / `-V` printing the same as `collie version`
+(`cli/`). `bridge/pack/harness.test.ts` is the worst of them — several minutes on its own — and it also
 carries one failure that is NOT yours: "an unpinned client certificate is refused before any handler
 runs" fails identically on an unmodified tree.
 

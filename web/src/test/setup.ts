@@ -77,7 +77,21 @@ if (!storageIsWired && "Storage" in globalThis) {
     // SAFETY: every member the app and this suite touch has just been redefined above as an ordinary
     // Map-backed function, so the object needs nothing from Storage but its prototype — which is
     // exactly what `Object.create` gives it, and what makes the spies find their target.
-    const value = Object.create(Storage.prototype) as Storage;
+    const instance = Object.create(Storage.prototype) as Storage;
+    // A real Storage lists its stored keys as its own enumerable properties, so
+    // `Object.keys(localStorage)` names every entry — upstream's own tests find a key that way
+    // (lib/mirror-invert.test.ts, 1.12.0). A bare `Object.create` has no own properties, so it answered
+    // `[]` and four of them failed here while passing upstream. The Proxy adds exactly that listing and
+    // nothing else: every method still resolves through the prototype, so the Storage.prototype spies
+    // above keep their target, and `this` inside them is the proxy, which is the key the backing map
+    // was filed under from the first call.
+    const value: Storage = new Proxy(instance, {
+      ownKeys: (target): (string | symbol)[] => [...Reflect.ownKeys(target), ...mapOf(value).keys()],
+      getOwnPropertyDescriptor: (target, prop): PropertyDescriptor | undefined =>
+        typeof prop === "string" && mapOf(value).has(prop)
+          ? { value: mapOf(value).get(prop), enumerable: true, configurable: true, writable: true }
+          : Reflect.getOwnPropertyDescriptor(target, prop),
+    });
     Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
     if ("window" in globalThis) {
       Object.defineProperty(window, name, { value, configurable: true, writable: true });

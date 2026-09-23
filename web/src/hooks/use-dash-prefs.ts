@@ -34,8 +34,6 @@ export interface DashPrefs {
    * their herd pushed off the first screen by a wall of buttons.
    */
   launchOpen: boolean | null;
-  /** Whether the Recent section is expanded. Defaults open — it's the recency list itself. */
-  recentOpen: boolean;
   /** Which way Recent runs. Attention sections are never affected. */
   recentDir: RecentDir;
   /**
@@ -84,7 +82,6 @@ const DEFAULTS: DashPrefs = {
   spacesOpen: null,
   shellsOpen: null,
   launchOpen: null,
-  recentOpen: true,
   recentDir: "newest",
   newTabLauncher: "",
   pinned: [],
@@ -126,7 +123,9 @@ export function coerceDashPrefs(raw: JsonValue | undefined): DashPrefs {
     spacesOpen: asJsonBoolean(p.spacesOpen) ?? DEFAULTS.spacesOpen,
     shellsOpen: asJsonBoolean(p.shellsOpen) ?? DEFAULTS.shellsOpen,
     launchOpen: asJsonBoolean(p.launchOpen) ?? DEFAULTS.launchOpen,
-    recentOpen: asJsonBoolean(p.recentOpen) ?? DEFAULTS.recentOpen,
+    // `p.recentOpen` (the fold's own state, from before the Recent section was removed) is read by
+    // nothing here — an older version's stored blob still carries the key, and it is simply ignored,
+    // the same way any other unknown field in a persisted object would be.
     recentDir: p.recentDir === "oldest" || p.recentDir === "newest" ? p.recentDir : DEFAULTS.recentDir,
     // A string of unknown provenance, and it is NOT validated against the current launcher rows
     // here: this store has never read that file and the rows are per-host anyway. An unknown
@@ -243,7 +242,6 @@ export interface UseDashPrefsReturn {
   setSpacesOpen: (open: boolean) => void;
   setShellsOpen: (open: boolean) => void;
   setLaunchOpen: (open: boolean) => void;
-  setRecentOpen: (open: boolean) => void;
   setRecentDir: (dir: RecentDir) => void;
   /** Point the tab strip's "+" at a launcher row, or at a plain shell with `""`. */
   setNewTabLauncher: (command: string) => void;
@@ -265,7 +263,6 @@ export function useDashPrefs(): UseDashPrefsReturn {
   const setSpacesOpen = useCallback((spacesOpen: boolean) => updateDashPrefs({ spacesOpen }), []);
   const setShellsOpen = useCallback((shellsOpen: boolean) => updateDashPrefs({ shellsOpen }), []);
   const setLaunchOpen = useCallback((launchOpen: boolean) => updateDashPrefs({ launchOpen }), []);
-  const setRecentOpen = useCallback((recentOpen: boolean) => updateDashPrefs({ recentOpen }), []);
   const setRecentDir = useCallback((recentDir: RecentDir) => updateDashPrefs({ recentDir }), []);
   const setNewTabLauncher = useCallback(
     (newTabLauncher: string) => updateDashPrefs({ newTabLauncher }),
@@ -290,7 +287,6 @@ export function useDashPrefs(): UseDashPrefsReturn {
     setSpacesOpen,
     setShellsOpen,
     setLaunchOpen,
-    setRecentOpen,
     setRecentDir,
     setNewTabLauncher,
     setPinned,
