@@ -374,6 +374,9 @@ const WORKSPACE_KEYS = {
   paneCount: true,
   repoRoot: true,
   isWorktree: true,
+  // The space's own folder when the multiplexer keeps one (Changes view root, ADR 0065). Optional and
+  // not a crew dimension: it is present on a solo instance whenever the mux reports it.
+  folder: true,
   // A crew dimension, and the SAME one a pane and a session carry: Herdr numbers spaces per machine,
   // so `(host, workspaceId)` is a space's identity in a crew and `workspaceId` alone collides. Like
   // `PaneWire.host` it is present exactly when `servers` is, which is never in this baseline — the
@@ -502,6 +505,7 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
     expect(Object.keys(WORKSPACE_KEYS).toSorted()).toEqual([
       "activeTabId",
       "focused",
+      "folder",
       "host",
       "isWorktree",
       "label",
@@ -619,6 +623,8 @@ describe("solo zero-tax — routes", () => {
       // read-gated like the pane read beside it, so a `?host=` call forwards to the member whose
       // journal named the file (CREW_PROTOCOL.md §9.1).
       "/^\\/api\\/blobs\\/([^/]+)$/",
+      // `changes` is the Changes view (ADR 0065): read-only git over the pane's folder, read-gated
+      // like `history` beside it and forwarded to the member that owns the pane.
       // `diff` is the fork's read-only "what did the agent change" view (bridge/diff.ts): three
       // read-only git subcommands against the pane's own cwd, read-gated like `history`, and it
       // is named here for the reason every other action is — a route arrives on purpose.
@@ -631,8 +637,11 @@ describe("solo zero-tax — routes", () => {
       // and its answer is drafted INTO that pane's composer. Being in this regex is also what keeps
       // them session-scoped and write-gated through the block every other pane action rides — see
       // the `caller.resolve()` count in server.test.ts, which did not move.
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|focus|diff|file|shot|probe|handoff))?$/",
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|changes|focus|diff|file|shot|probe|handoff))?$/",
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
+      // The Changes view asked by workspace (ADR 0065): the same read as the pane route's `changes`,
+      // read-gated and forwarded with `?host=` to the member that owns the space.
+      "/^\\/api\\/workspace\\/([^/]+)\\/changes$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktree(?:\\/(open))?$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktrees$/",
       // The cold boot as one round trip (bridge/boot.ts) — a SOLO route that legitimately extends
@@ -1011,6 +1020,10 @@ const STATE_DIR_ENTRIES = [
   // Speech-to-text settings. Absent until the operator runs `collie stt setup`, and READ ONLY by
   // the bridge — `bridge/stt/config.ts` names this path and never writes it.
   "stt.json",
+  // The detached updater's own stdout and stderr (#283), with the run before it kept beside it as
+  // `update-runner.log.1`. Absent until the first update started from the phone: the bridge opens it
+  // only to hand the descriptor to the runner it spawns.
+  "update-runner.log",
   "update-state.json",
   // The detached updater's run record and its lock (M15/04). WRITTEN BY THE CLI, never by the
   // bridge — `bridge/update-run.ts` only reads them, so the scan below sees the names here and no

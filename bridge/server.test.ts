@@ -1725,9 +1725,19 @@ describe("marksPaneSeen — CSRF guard on marking a pane seen", () => {
     expect(marksPaneSeen(withHeader({ [SEEN_HEADER]: "1" }), "history")).toBe(true);
   });
 
+  test("changes is a read too — a git view of the folder does not mark the pane seen on its own", () => {
+    expect(marksPaneSeen(withHeader(), "changes")).toBe(false);
+  });
+
   test("diff is a read of the REPO, not the pane — it needs the header too", () => {
     expect(marksPaneSeen(withHeader(), "diff")).toBe(false);
     expect(marksPaneSeen(withHeader({ [SEEN_HEADER]: "1" }), "diff")).toBe(true);
+  });
+
+  // FORK: `file` is the same read one step further in. Before 1.13.1 it was missing here, so a bare
+  // cross-site `<img src="…/api/pane/w1:p1/file?path=x">` cleared the pane's unseen mark.
+  test("file is a read of the tree — a bare GET of it does not mark the pane seen", () => {
+    expect(marksPaneSeen(withHeader(), "file")).toBe(false);
   });
 
   test("write actions count without it — they already cleared the Origin-requiring write gate", () => {
@@ -2233,33 +2243,33 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // The load-bearing claim: `?h=laptop` + `w1:p1` must never be served the DESK's `w1:p1`, and
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
-    // All TWELVE session-scoped routes (tab create, workspace create, launch, this host's launcher
-    // rows, the folder listing, one journal blob, one previewed HTML file, tab action, the pane
-    // family — reply, keys, upload, close, rename, history, focus, diff, file, shot, probe — "look
-    // now", the worktree listing and the worktree actions) reach their runtime through the
-    // caller's resolver and nothing else.
-    //
-    // The twelfth is the fork's `/api/preview/file` (bridge/preview.ts). It is session-scoped for
-    // `/api/blobs/*`'s exact reason and not a weaker one: the file it serves sits on the disk of the
-    // machine that runs the pane it is jailed to, and the lead holds no copy — so a `?h=laptop`
-    // preview answered locally would show the LEAD's file under the laptop's name, which is the same
-    // class of fault as serving the desk's `w1:p1`.
+    // All session-scoped routes reach their runtime through the caller's resolver and nothing else.
+    // Upstream's ELEVEN (tab create, workspace create, launch, this host's launcher rows, one journal
+    // blob, a workspace's Changes list, tab action, the pane family, "look now", the worktree listing
+    // and the worktree actions), plus the fork's:
     //
     // `/api/dirs` resolves for its FORWARD rather than for the runtime's value: a `?h=laptop` browse
     // must list the LAPTOP's disk, and resolution is what sends it there. A route that answered
     // locally without resolving would quietly show the lead's directories under a peer's name — the
     // same class of fault as serving the desk's `w1:p1`.
     //
-    // STILL TWELVE after the fork's annotate-and-ask landed, and that is the claim rather than an
-    // accident: `shot` and `probe` are ACTIONS IN THE PANE FAMILY (bridge/shot.ts, `PANE_ROUTE`),
-    // so they reach their runtime through the pane block's single resolve like `upload` does. Had
-    // they been given a route of their own, this number would have had to move — and a route of
+    // `/api/preview/file` (bridge/preview.ts) is session-scoped for `/api/blobs/*`'s exact reason:
+    // the file it serves sits on the disk of the machine that runs the pane it is jailed to, and the
+    // lead holds no copy — so a `?h=laptop` preview answered locally would show the LEAD's file under
+    // the laptop's name.
+    //
+    // `shot` and `probe` are ACTIONS IN THE PANE FAMILY (bridge/shot.ts, `PANE_ROUTE`), so they reach
+    // their runtime through the pane block's single resolve like `upload` does, and add nothing here.
+    // Had they been given a route of their own, this number would have had to move — and a route of
     // their own is exactly the shape that forgets to resolve and serves the lead's answer under a
     // peer's name.
-    // FORK: 12 → 17 for the five artifact arms (list, save-from-preview, one record / its bytes, patch, delete —
+    //
+    // FORK: the five artifact arms (list, save-from-preview, one record / its bytes, patch, delete —
     // bridge/artifacts.ts), each resolving through the same gate so a `?host=` call is answered by
     // the runtime whose agents carry the sessions the records name.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(17);
+    //
+    // 11 upstream + dirs + preview + 5 artifacts = 18.
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(18);
     // Exactly seven `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS

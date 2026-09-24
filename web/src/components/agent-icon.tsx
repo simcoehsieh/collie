@@ -31,9 +31,12 @@ function brandKey(agent: string): string | undefined {
 export function AgentIcon({
   agent,
   className,
+  glide,
 }: {
   agent: string | null | undefined;
   className?: string;
+  /** The tile's `data-glide` part name, where it flies in a glide (lib/glide.ts). */
+  glide?: string;
 }) {
   const brand = agent ? AGENT_BRANDS.get(brandKey(agent) ?? "") : undefined;
   // One id per mounted tile, sanitised the way collie-mark.tsx does it and for the same two
@@ -62,6 +65,7 @@ export function AgentIcon({
         className={cn("shrink-0", className)}
         role="img"
         aria-label={agent ? `${agent} icon` : "agent icon"}
+        data-glide={glide}
       >
         <rect width="24" height="24" rx="5.3" fill="var(--muted)" />
         <text
@@ -116,6 +120,7 @@ export function AgentIcon({
       className={cn("shrink-0", className)}
       role="img"
       aria-label={`${agent} logo`}
+      data-glide={glide}
     >
       {grad && (
         <defs>

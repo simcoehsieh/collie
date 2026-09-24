@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import { WifiOff } from "lucide-react";
 
 import { clockTime } from "@/lib/format";
@@ -13,6 +13,7 @@ import { Chip } from "@/components/ui/chip";
 import { StatusCounts, StatusSummaryLine } from "@/components/status-counts";
 import { STRIP_SCROLLER } from "@/components/ui/labelled-strip";
 import { bucketOf, sectionHeaderProps, triage, worstTriage, type TriageKey } from "@/lib/triage";
+import { shownGroups } from "@/lib/dash-view";
 import type { AgentView, BridgeStatus, ServerSummary, TabView } from "@/lib/types";
 import { paneRowKey } from "@/lib/hosts";
 import { AgentCard } from "./agent-card";
@@ -33,7 +34,11 @@ interface AgentListProps {
    * Open a row. Takes the PANE, not its id: `w1:p1` names a different terminal on every machine in a
    * crew, and this list is one herd across all of them — an id alone cannot say which row was tapped.
    */
-  onOpen: (pane: AgentView) => void;
+  onOpen: (pane: AgentView, row?: HTMLElement) => void;
+  /** A row's glide key, its pane's path (lib/glide.ts, the `pane` pair). Omit and no row glides. */
+  glideKeyOf?: (pane: AgentView) => string;
+  /** The finger landed on a row (lib/pane-prefetch.ts). */
+  onPress?: (pane: AgentView) => void;
   /** Show the "no agents" placeholder when the herd is empty (default true). */
   emptyState?: boolean;
   /**
@@ -75,6 +80,17 @@ interface AgentListProps {
   onIsolate?: (key: string | null) => void;
   /** Long-press a chip: hide the workspace, or show it again. */
   onToggleHidden?: (key: string) => void;
+  /**
+   * The "Focus" tab (issue 270, ADR 0066, renamed by ADR 0068): a group shows only its panes that need you, and a
+   * group with none is dropped. A filter, never a sort. The strip, the summary line and every
+   * heading's counts still count ALL panes, so the filter never understates the herd.
+   */
+  needsYouOnly?: boolean;
+  /**
+   * The "Changes" tab: draws its own body in place of the pane groups, from the workspaces the strip
+   * leaves shown. The strip and the summary line above stay exactly where they were.
+   */
+  renderBody?: (shown: readonly WorkspaceGroup[]) => ReactNode;
 }
 
 /** A module-level empty list: a fresh `[]` default per render is a new reference for nothing. */
@@ -139,6 +155,8 @@ export const AgentList = memo(function AgentList({
   shellPanes = NO_PANES,
   bridge,
   onOpen,
+  glideKeyOf,
+  onPress,
   emptyState = true,
   error = false,
   lastSeenAt,
@@ -151,6 +169,8 @@ export const AgentList = memo(function AgentList({
   hidden = NO_KEYS,
   onIsolate,
   onToggleHidden,
+  needsYouOnly = false,
+  renderBody,
 }: AgentListProps) {
   useLocale();
   // Whether the multiplexer can say which agent a pane holds. Read unconditionally — a hook cannot
@@ -217,8 +237,13 @@ export const AgentList = memo(function AgentList({
   // it is their own hand that put it there. So the pinned section is lifted and `needs` / `ready`
   // are not — they are marks now, exactly as upstream intends. A pinned pane is listed ONCE: it is
   // filtered out of the workspace groups below, so no group counts it twice.
-  const all = triage(agents, "newest", pinned);
-  const pinnedIds = new Set(pinned ?? []);
+  //
+  // Only on the Panes tab (upstream 1.13's footer, ADR 0066). Focus narrows each workspace to the
+  // panes that need you; a pin lifted out of its workspace there would drop a blocked pinned pane
+  // from the one list meant to show it. The Changes tab draws its own body.
+  const liftPins = !needsYouOnly && !renderBody;
+  const all = triage(agents, "newest", liftPins ? pinned : undefined);
+  const pinnedIds = new Set(liftPins ? (pinned ?? []) : []);
   const pinnedSection = all.find((s) => s.key === "pinned");
   const groups = groupPanesByWorkspace(
     agents.filter((a) => !pinnedIds.has(a.paneId)),
@@ -234,9 +259,12 @@ export const AgentList = memo(function AgentList({
   // not make the summary line say everything is clear.
   const allClear = !agents.some((a) => ATTENTION.has(bucketOf(a)));
   const firstUrgent = groups.find((g) => urgentCount(g) > 0);
+  // What the body draws. Needs you narrows the rows and drops a group left empty; the group itself
+  // rides along whole, so its heading keeps counting every pane (lib/dash-view.ts).
+  const drawn = shownGroups(shown, needsYouOnly);
   const jumpTo = (g: WorkspaceGroup) => {
     // The target may be filtered out: isolate it, which is also the scroll.
-    if (!shown.includes(g)) {
+    if (!drawn.some((d) => d.group === g)) {
       onIsolate?.(workspacePrefKey(g));
       return;
     }
@@ -270,7 +298,9 @@ export const AgentList = memo(function AgentList({
     <AgentCard
       key={paneRowKey(a)}
       agent={a}
-      onClick={() => onOpen(a)}
+      onClick={(el) => onOpen(a, el)}
+      glideKey={glideKeyOf?.(a)}
+      onPress={onPress && (() => onPress(a))}
       scope="place"
       statusStyle="dot"
       density="row"
@@ -319,11 +349,12 @@ export const AgentList = memo(function AgentList({
       <StatusSummaryLine
         panes={agents}
         allClear={allClear}
-        onJump={firstUrgent ? () => jumpTo(firstUrgent) : undefined}
+        onJump={firstUrgent && !renderBody ? () => jumpTo(firstUrgent) : undefined}
       />
 
       {/* FORK: the operator's own pins, above the workspaces. The only thing on this screen that
-          moves a row, and the only thing that should: a hand put it there. */}
+          moves a row, and the only thing that should: a hand put it there. Panes tab only (see
+          `liftPins`). */}
       {pinnedSection && (
         <section key="pinned" className="flex flex-col gap-2">
           <SectionHeader {...sectionHeaderProps(pinnedSection)} />
@@ -332,10 +363,13 @@ export const AgentList = memo(function AgentList({
           </ListGroup>
         </section>
       )}
+      {renderBody?.(shown)}
 
       {/* By workspace. The heading IS the landmark: full ink, its own case, and it lights up with a
-          dot and a count when a pane inside needs you. Flat rows in ONE bordered group. */}
-      {shown.map((g) => (
+          dot and a count when a pane inside needs you. Flat rows in ONE bordered group. Under Needs
+          you with nothing urgent, no group is left, and the summary line's all-clear above is the
+          whole answer: no empty list, no second message. */}
+      {!renderBody && drawn.map(({ group: g, rows }) => (
         <section key={g.key} id={groupDomId(g.key)} className="flex scroll-mt-4 flex-col gap-2">
           <SectionHeader
             label={g.label}
@@ -345,7 +379,9 @@ export const AgentList = memo(function AgentList({
               <StatusCounts panes={g.panes} className="shrink-0 text-[11px] text-muted-foreground" />
             }
           />
-          <ListGroup>{g.panes.map((a) => row(a))}</ListGroup>
+          {/* Not `rows.map(row)`: `row`'s second parameter is the fork's `isPinned`, and map would
+              hand it the index, pinning every row but the first. */}
+          <ListGroup>{rows.map((a) => row(a))}</ListGroup>
         </section>
       ))}
     </div>

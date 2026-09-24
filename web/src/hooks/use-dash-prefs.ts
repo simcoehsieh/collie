@@ -1,6 +1,8 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { asJsonBoolean, asJsonObject, asJsonString, type JsonValue } from "@/lib/json";
 
+import type { ChangesLayout } from "@/lib/changes-tree";
+import { coerceDashView, type DashView } from "@/lib/dash-view";
 import type { RecentDir } from "@/lib/triage";
 
 // Dashboard layout preferences, persisted in localStorage. Deliberately separate from
@@ -71,9 +73,35 @@ export interface DashPrefs {
   isolatedSpace: string | null;
   /** Workspaces hidden from the dashboard list (long-press a chip); their chips stay, dimmed. */
   hiddenSpaces: string[];
+  /**
+   * Whether the Changes view also looks for repos INSIDE the pane's folder, not only the repo that
+   * contains it (ADR 0065). On by default: a workspace that keeps its member repos gitignored shows
+   * nothing otherwise.
+   */
+  changesNested: boolean;
+  /** How many folder levels below the pane's folder that search goes, 1 to 4. */
+  changesDepth: number;
+  /** The Changes list drawn flat, one row per file, or as a folder tree. */
+  changesLayout: ChangesLayout;
+  /**
+   * The composer's action belt size, one factor for the whole belt: band, pills, icons and words
+   * all grow from it together (`--belt-scale`, `components/actions-row.tsx`). One of
+   * {@link BELT_SCALES}. 1.15 is the baseline Altan asked for on 2026-09-23 ("slightly higher and
+   * the icons slightly larger, like 15%"); the other two are the Settings row's way up from there.
+   */
+  beltScale: BeltScale;
+  /** The dashboard's footer tab: Panes, Focus or Changes (ADR 0066, renamed by ADR 0068). Panes by default. */
+  dashView: DashView;
 }
 
 const STORAGE_KEY = "collie:dash-prefs:v1";
+
+/** The depths the Changes setting offers. The bridge clamps to the same range on its side. */
+export const CHANGES_DEPTHS = [1, 2, 3, 4] as const;
+
+/** The belt sizes the Settings row offers: Default, Large, Larger. */
+export const BELT_SCALES = [1.15, 1.3, 1.5] as const;
+export type BeltScale = (typeof BELT_SCALES)[number];
 
 /** Above this many rows, an un-chosen foldable section starts collapsed. */
 export const COLLAPSE_THRESHOLD = 8;
@@ -89,7 +117,20 @@ const DEFAULTS: DashPrefs = {
   quotaOpen: true,
   isolatedSpace: null,
   hiddenSpaces: [],
+  changesNested: true,
+  changesDepth: 2,
+  changesLayout: "list",
+  beltScale: 1.15,
+  dashView: "panes",
 };
+
+function coerceDepth(raw: JsonValue | undefined): number {
+  return CHANGES_DEPTHS.find((d) => d === raw) ?? DEFAULTS.changesDepth;
+}
+
+function coerceBeltScale(raw: JsonValue | undefined): BeltScale {
+  return BELT_SCALES.find((s) => s === raw) ?? DEFAULTS.beltScale;
+}
 
 /**
  * The effective open state of a count-sensitive section: an explicit choice always wins, otherwise
@@ -141,6 +182,11 @@ export function coerceDashPrefs(raw: JsonValue | undefined): DashPrefs {
           return key === undefined ? [] : [key];
         })
       : [],
+    changesNested: asJsonBoolean(p.changesNested) ?? DEFAULTS.changesNested,
+    changesDepth: coerceDepth(p.changesDepth),
+    changesLayout: p.changesLayout === "tree" ? "tree" : DEFAULTS.changesLayout,
+    beltScale: coerceBeltScale(p.beltScale),
+    dashView: coerceDashView(p.dashView),
   };
 }
 
@@ -255,6 +301,11 @@ export interface UseDashPrefsReturn {
   setQuotaOpen: (open: boolean) => void;
   setIsolatedSpace: (key: string | null) => void;
   toggleHiddenSpace: (key: string) => void;
+  setChangesNested: (nested: boolean) => void;
+  setChangesDepth: (depth: number) => void;
+  setChangesLayout: (layout: ChangesLayout) => void;
+  setBeltScale: (scale: number) => void;
+  setDashView: (view: DashView) => void;
 }
 
 export function useDashPrefs(): UseDashPrefsReturn {
@@ -270,6 +321,12 @@ export function useDashPrefs(): UseDashPrefsReturn {
   );
   const setLowPower = useCallback((lowPower: boolean) => updateDashPrefs({ lowPower }), []);
   const setQuotaOpen = useCallback((quotaOpen: boolean) => updateDashPrefs({ quotaOpen }), []);
+
+  const setChangesNested = useCallback((changesNested: boolean) => updateDashPrefs({ changesNested }), []);
+  const setChangesDepth = useCallback((depth: number) => updateDashPrefs({ changesDepth: coerceDepth(depth) }), []);
+  const setChangesLayout = useCallback((changesLayout: ChangesLayout) => updateDashPrefs({ changesLayout }), []);
+  const setBeltScale = useCallback((scale: number) => updateDashPrefs({ beltScale: coerceBeltScale(scale) }), []);
+  const setDashView = useCallback((dashView: DashView) => updateDashPrefs({ dashView }), []);
 
   const setIsolatedSpace = useCallback((isolatedSpace: string | null) => updateDashPrefs({ isolatedSpace }), []);
   // Reads the SHARED prefs rather than a render's snapshot: upstream's `setPrefs(p => …)` folded the
@@ -295,5 +352,10 @@ export function useDashPrefs(): UseDashPrefsReturn {
     setQuotaOpen,
     setIsolatedSpace,
     toggleHiddenSpace,
+    setChangesNested,
+    setChangesDepth,
+    setChangesLayout,
+    setBeltScale,
+    setDashView,
   };
 }

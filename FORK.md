@@ -159,7 +159,7 @@ each piece lives, for the next merge.
 | Show-first-fetch-second for Settings / Crew / History, follow window 200 lines, snapshot identity memo | `web/src/lib/loaders.ts`, `web/src/lib/api.ts`, `web/src/routes/root.tsx`, `web/src/routes/history.tsx` | Same as the pane's `pending` path from the redesign: a dozen lines each, re-apply |
 | Optimistic send, single mirror parse, memo boundaries, lazy routes, rAF auto-scroll, containment, copy-a-fence | `web/src/components/composer.tsx`, new `web/src/hooks/use-mirror-model.ts`, `use-stable-callback.ts`, `web/src/router.tsx`, `web/src/hooks/use-auto-scroll.ts`, `web/src/lib/code-fences.ts` | Keep upstream's screen, re-apply the hook and the `memo()` wrappers |
 | Push self-heal, one-tap approve (shade + dashboard row), per-pane notify rules | `web/src/sw.ts`, new `web/src/lib/push-heal.ts`, `bridge/push.ts`, new `bridge/prompt-peek.ts`, `bridge/notify-prefs.ts`, `web/src/components/agent-card.tsx`, `notify-prefs-control.tsx` | `sw.ts` is already a fork file (the iOS silent-push patch); keep the fork's. **Every push must still show a notification** |
-| Diff sheet, document browser | new `bridge/diff.ts`, `bridge/docs-list.ts`, `web/src/components/diff-sheet.tsx`, `doc-panel.tsx`, `pane-actions-sheet.tsx` rows | Fork-only files; only the `agent-chat.tsx` mounts and the `server.ts` routes can conflict |
+| Diff sheet, document browser | new `bridge/diff.ts`, `bridge/docs-list.ts`, `web/src/components/diff-sheet.tsx`, `doc-panel.tsx`, `pane-actions-sheet.tsx` rows | Fork-only files; only the `agent-chat.tsx` mounts and the `server.ts` routes can conflict. **Lives beside upstream's Changes view (1.13, ADR 0065) on the operator's call (2026-09-24)**: different routes (`/diff`, `/file` against `/changes`), and the fork's sheet carries what upstream's does not — hunk notes, the file viewer, the mirror's file chips, the away digest's diff stat. `PANE_ROUTE`, `isPaneReadAction` and `crew/forward.ts` list both families |
 | Send queue, connection verdicts | new `web/src/lib/send-queue.ts`, `send-failure.ts`, `queued-sends.tsx`, `web/src/components/connection-banner.tsx`, `web/src/lib/reply-action.ts` (`transport` on the `error` outcome) | `connection-banner.tsx` is a rewrite around `probeBridge()`: keep the fork's |
 | Overview, pins, hotkeys, low power, TTS, share target | new `web/src/routes/overview.tsx`, `web/src/lib/overview.ts`, `triage.ts` (third arg), `use-dash-prefs.ts` (store), `use-hotkeys.ts`, `use-tts.ts`, `last-pane.ts`, `web/vite.config.ts` manifest | Mostly new files. `triage.ts` and `use-dash-prefs.ts` are the two upstream may touch |
 | agy harness parity | `web/src/lib/harness/agy/*`, ten `web/src/fixtures/panes/agy--*.txt`, `multi-select-model.ts` (`submitKeys`), `conformance.ts` (`notApplicable`) | If upstream ships its own agy adapters, compare fixtures before choosing; theirs may be from a newer agy |
@@ -213,6 +213,7 @@ pass built had never held. Everything else is in [`CHANGELOG.fork.md`](./CHANGEL
 | Tonal-state rule (`--control-on` for state, `--primary` for the one action) | `pane-strip.tsx`, `ui/chip.tsx`, `theme-control.tsx`, `doc-panel.tsx`, `nav-tray.tsx` | One class string each — keep upstream's structure, re-apply |
 | Skeletons | new `ui/skeleton.tsx`, `route-skeleton.tsx`; `router.tsx` fallbacks; `skin.css` FORK · SCREENS block | Fork-only files; only `router.tsx`'s `lazyRoute` signature can conflict |
 | Directional route entrance | `routes/root.tsx` (`routeEnter`), `skin.css` **appended block** | Append-only by design — take both sides |
+| No glide (upstream 1.13's shared-element move, ADR 0069) | `web/src/lib/glide.ts` — one `FORK_GLIDE_OFF` gate in `canGlide()` | The glide is built on `ScreenTransition`, which this fork deleted at 1.8.2 for `routeEnter`. Off at the gate, every upstream call site (`glideForward`/`glideBack`/`glideForwardWhenReady`) runs its plain `go()` and merges untouched; the engine's own unit tests still run it (vitest MODE is `test`). Upstream's `pane-glide` / `changes-glide` e2e specs will fail here by design. To take the glide, `routeEnter` must first learn `glideOwnsMove` |
 | Keys pad | `nav-tray.tsx` (grid + keycaps), `composer.tsx` `ComposerDock` one class | Keep upstream's pad geometry, re-apply the grid spans and `KEYCAP` |
 | Empty / error states | new `components/empty-state.tsx`; `agent-list.tsx`, `routes/overview.tsx`, `routes/root.tsx` `RootError` | Fork-only file; the mounts are a few lines each |
 | Agent tile | `agent-icon.tsx` fallback branch | Keep upstream's brand table, re-apply the svg monogram |
@@ -221,8 +222,8 @@ pass built had never held. Everything else is in [`CHANGELOG.fork.md`](./CHANGEL
 
 Three things to know when operating it. **`/api/boot` is a bundle, so its snapshot tag rides in the
 body (`snapshotEtag`), not in an HTTP `ETag`** — a validator names one document and this answers
-four. **`caller.resolve()` is counted twelve times** in `bridge/server.test.ts`: the twelfth is
-`/api/preview/file`; `shot`, `probe` and `file` are pane-family actions and share the pane block's
+four. **`caller.resolve()` is counted eighteen times** in `bridge/server.test.ts` (1.13.1: upstream's eleven, plus
+`/api/dirs`, `/api/preview/file` and the five artifact arms); `shot`, `probe` and `file` are pane-family actions and share the pane block's
 one resolve. And **the annotate half outside the repo** — the CDP screenshot/probe command — lives
 in `ai-live/tools/collie_shot/` and is named by `COLLIE_SHOT_COMMAND` in `~/.config/collie/.env`;
 unset means no route, no capability and no button, exactly like `COLLIE_QUOTA_COMMAND`.
@@ -463,7 +464,9 @@ run**, and never while the phone is in use.
 Three failures are the tree's own and not a merge's, identical on the fork before 1.12.1 was taken:
 the TLS one below, `resolveBlobPath > resolves candidate contained in sibling blobs directory`
 (`bridge/journal/pi.test.ts`), and `collie --version` / `-V` printing the same as `collie version`
-(`cli/`). `bridge/pack/harness.test.ts` is the worst of them — several minutes on its own — and it also
+(`cli/`). Since 1.13.1 a fourth, upstream's own: `repoOfFolder > names the deepest listed repo that holds
+the folder` (`bridge/changes.test.ts`, byte-identical to the tag) realpaths the folder but not the root, and
+macOS's tmpdir sits under the `/var` → `/private/var` symlink. `bridge/pack/harness.test.ts` is the worst of them — several minutes on its own — and it also
 carries one failure that is NOT yours: "an unpinned client certificate is refused before any handler
 runs" fails identically on an unmodified tree.
 

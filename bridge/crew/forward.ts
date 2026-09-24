@@ -52,13 +52,17 @@ export function crewRouteFor(pathname: string): string | null {
  * but not across a link (or, worse, the reverse).
  */
 const FORWARDABLE: readonly RegExp[] = [
-  // FORK: `shot`, `probe` and `handoff` are the fork's own pane routes, on the same literal in
-  // server.ts — each is answered by the member that owns the pane (its screen, its journal, its
-  // launchers), so each rides the link exactly as `reply` does.
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|focus|diff|file|shot|probe|handoff))?$/,
+  // FORK: `diff`, `file`, `shot`, `probe` and `handoff` are the fork's own pane routes, on the same
+  // literal in server.ts — each is answered by the member that owns the pane (its screen, its
+  // journal, its launchers), so each rides the link exactly as `reply` does. `changes` is upstream's.
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|changes|focus|diff|file|shot|probe|handoff))?$/,
   /^tab$/,
   /^tab\/[^/]+\/(?:rename|close)$/,
   /^workspace$/,
+  // The Changes view asked by workspace (ADR 0065): read-only git over the folder of a space that
+  // lives on ONE member, so a `?host=` call is proxied like `pane/:id/changes`. Mirrors
+  // `WORKSPACE_CHANGES_ROUTE` in bridge/server.ts one-for-one.
+  /^workspace\/[^/]+\/changes$/,
   // Rows must come from the host that runs them: a launch (and the rows a launch button reads)
   // addressed at a peer via `?host=` has to reach THAT machine's `launchers.toml`, never the
   // lead's. Both ride the crew link exactly like `workspace` does.
@@ -75,6 +79,11 @@ const FORWARDABLE: readonly RegExp[] = [
   // `forwardParams` carries through untouched, so the grammar is an exact path and nothing else.
   /^preview\/file$/,
 ];
+
+/** `workspace/<id>/changes` — the one workspace route that is a read. */
+function isWorkspaceChanges(route: string): boolean {
+  return /^workspace\/[^/]+\/changes$/.test(route);
+}
 
 /** The inverse of {@link crewRouteFor}, for the peer dispatching a crew route into its own routes. */
 export function apiPathFor(route: string): string | null {
@@ -100,12 +109,19 @@ export function forwardKind(route: string): ForwardKind {
   // FORK: a preview serves a page off the owning member's disk and changes nothing there — a blob by
   // another name, and attempted against a stale member for the same reason (§10.3).
   if (route === "preview/file") return "read";
+  // A workspace's Changes list is the pane route's `changes`, asked by space: a read.
+  if (isWorkspaceChanges(route)) return "read";
   if (!route.startsWith("pane/")) return "write";
   const action = route.split("/")[2];
-  // `diff` is the fork's read-only `git diff` of the pane's work tree — the same shape as `history`:
-  // a GET that changes nothing, answered by whichever member owns the pane's disk. `file` is that
-  // same read one step further in: the bytes of one file in that tree, never written.
-  return action === undefined || action === "history" || action === "diff" || action === "file"
+  // `changes` is read-only git over the owning member's folder (ADR 0065): a read, like history.
+  // `diff` is the fork's read-only `git diff` of the pane's work tree — the same shape: a GET that
+  // changes nothing, answered by whichever member owns the pane's disk. `file` is that same read one
+  // step further in: the bytes of one file in that tree, never written.
+  return action === undefined ||
+    action === "history" ||
+    action === "changes" ||
+    action === "diff" ||
+    action === "file"
     ? "read"
     : "write";
 }
@@ -135,9 +151,17 @@ export function forwardAuditAction(route: string): string | null {
   if (route === "launchers") return null;
   if (route.startsWith("blobs/")) return null; // a read
   if (route === "preview/file") return null; // a read (FORK)
+  if (isWorkspaceChanges(route)) return null; // a read
   if (route.startsWith("tab/")) return route.endsWith("/close") ? "tab.close" : "tab.rename";
   const action = route.split("/")[2];
-  if (action === undefined || action === "history" || action === "diff" || action === "file") return null;
+  if (
+    action === undefined ||
+    action === "history" ||
+    action === "changes" ||
+    action === "diff" ||
+    action === "file"
+  )
+    return null;
   if (action === "close" || action === "rename" || action === "handoff") return `pane.${action}`;
   return action; // reply | keys | upload | shot | probe (FORK)
 }

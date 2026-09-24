@@ -8,6 +8,7 @@ import { __resetConnectionHealth } from "@/lib/connection-health";
 import { __resetPairing } from "@/lib/pairing";
 import { __resetConfigMemo } from "@/lib/api";
 import { __resetDraftPrune } from "@/lib/drafts";
+import { __resetDashPrefs } from "@/hooks/use-dash-prefs";
 
 // One MSW server for all tests; tests add per-case overrides with `server.use(...)`.
 export const server = setupServer(...handlers);
@@ -124,6 +125,9 @@ beforeEach(() => {
     // ignore
   }
   __resetDraftPrune();
+  // FORK: the dash prefs are one module store (hooks/use-dash-prefs.ts), read from storage once. Reload
+  // it from the storage just cleared, or one case's belt size or Changes depth answers the next case.
+  __resetDashPrefs();
 });
 afterEach(() => {
   cleanup();

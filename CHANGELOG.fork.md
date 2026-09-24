@@ -11,6 +11,52 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.13.1
+
+Merged upstream v1.13.1 (2026-09-24, with v1.13.0 under it) — 88 commits, 34 conflicted files. What
+it brings that matters here: **the Changes view** (a workspace's git changes as a list or a tree, a
+filter, syntax colour, the last commit when the tree is clean, a 5-second refresh), **the dashboard
+footer** (Panes / Focus / Changes, Focus narrowing each workspace to the panes that need you), **a swipe
+back goes up one level** (ADR 0067), the prefetch that starts a pane's read as the finger lands, a
+larger actions belt with a size setting, and the six catalogs catching up. The update-mode rewrite
+(ADR 0064) does not reach this install, which never runs `collie update`.
+
+### Not taken, on the operator's call
+
+- **The glide** (ADR 0069: a row's icon and name flying into the pane header). It is built on
+  `ScreenTransition`, which the fork dropped at 1.8.2 for its own route entrance; taking it would mean
+  either the slide and the glide playing at once or giving up `routeEnter`. Off at one gate in
+  `lib/glide.ts` (FORK.md), so every upstream call site merged untouched and the swipe-back fix, which is
+  independent of it, came in whole.
+
+### Kept, and why
+
+- **The fork's diff sheet beside upstream's Changes view.** Both stay (operator, 2026-09-24): the routes
+  do not collide (`/diff` and `/file` against `/changes`), and the fork's sheet is what hunk notes, the
+  file viewer, the mirror's file chips and the away digest hang off. Upstream's Changes pill on the belt
+  and its footer tab are the new door; the pane menu's diff row is the old one.
+- **The launch strip stays off the dashboard**, now under upstream's "Panes tab only" block beside the
+  Spaces navigator and the usage card.
+- **Pins lift only on the Panes tab.** Focus narrows each workspace to what needs you; a pinned pane
+  lifted out of its workspace there would have dropped a blocked pinned pane from the one list meant
+  to show it.
+
+### Fixed in the fork's own tree on the way through
+
+- **`file` was missing from the reads that may not mark a pane seen.** A bare cross-site
+  `<img src="…/api/pane/w1:p1/file?path=x">` cleared the pane's unseen mark, the exact hole
+  `marksPaneSeen` exists to close. `file` and `diff` now sit in upstream's new `isPaneReadAction` beside
+  `history` and `changes`, with a pinned test.
+- **Upstream's new bottom bands read `env(safe-area-inset-bottom)`**, which is 0 in this install's iOS
+  standalone view (FORK.md → the bottom reserve). The footer tab bar, the Changes screen's step bar and
+  the update panel use `--safe-bottom` instead, so none of them sits under the home indicator.
+- **`rows.map(row)` would have pinned every row but the first**: upstream's `row` takes one argument,
+  the fork's takes `isPinned` second, and `map` hands it the index. Spelled `(a) => row(a)`.
+- **The dash prefs store leaked between test cases.** It is one module store read once, and the suite's
+  `localStorage.clear()` never reached it, so one case's belt size or Changes depth answered the next
+  (four upstream tests went red, order-dependent). `test/setup.ts` now reloads it after the clear, and
+  the three tests that write the prefs mid-case call `__resetDashPrefs()` after the write.
+
 ## On top of 1.12.1
 
 Merged upstream v1.12.1 (2026-09-23, with v1.12.0 under it) — 87 commits, 25 conflicted files. The
