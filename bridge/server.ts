@@ -1,4 +1,5 @@
 import { readHandoffModels } from "./handoff-models.ts";
+import { driveCodexModel, type CodexModelClient, type DriveOptions } from "./codex-model.ts";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, join, normalize, sep } from "node:path";
@@ -125,6 +126,7 @@ import { uploadTooLarge } from "./uploads.ts";
 import { MUX_LOGO_PATH, OPERATOR_FONTS_PATH, journalAgentOf, toPaneWire } from "./types.ts";
 import type {
   ActionResponse,
+  CodexHandoffModel,
   AgentView,
   BridgeConfig,
   CreateResponse,
@@ -259,7 +261,7 @@ export function isLoopbackPeer(address: string | null | undefined): boolean {
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
 }
 
-const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|changes|focus|diff|file|shot|probe|handoff))?$/;
+const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|changes|focus|diff|file|shot|probe|handoff|model))?$/;
 
 /**
  * A pairing claim's refusal, as an error code.
@@ -1636,6 +1638,9 @@ export function startServer(opts: {
         );
       }
       if (action === "keys" && req.method === "POST") return keysPane(herdr, cfg, paneId, req, audit_, device, session);
+      // FORK: switch a Codex pane's model and effort for this session only (bridge/codex-model.ts).
+      if (action === "model" && req.method === "POST")
+        return codexModelPane({ herdr, engine: rt.engine, submitKeys: cfg.submitKeys }, paneId, req, audit_, device, session);
       if (action === "upload" && req.method === "POST") return uploadPane(cfg, paneId, req, audit_, device, session);
       // FORK: annotate-and-ask (bridge/shot.ts). Session-scoped and write-gated like the upload
       // beside it, and 404 when no command is configured — the same declined-by-doing-nothing
@@ -3670,6 +3675,59 @@ export async function keysPane(
     { ok: false, ...apiError("keys.send_failed", { reason: sent.detail }) } satisfies ActionResponse,
     ae,
   );
+}
+
+/**
+ * FORK: POST /api/pane/:id/model `{ model, effort }` — drive the pane's own `/model` picker to
+ * that model at that effort and finish with `s`, "this session only" (bridge/codex-model.ts says why
+ * the picker is driven and why step by step). Both values must be in this host's Codex catalog, the
+ * same one the handoff sheet offers, and the pane must be running Codex.
+ */
+export async function codexModelPane(
+  deps: {
+    herdr: CodexModelClient;
+    engine: StateEngine;
+    submitKeys: readonly string[];
+    getModels?: () => Promise<CodexHandoffModel[]>;
+    drive?: DriveOptions;
+  },
+  paneId: string,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+): Promise<Response> {
+  let body: JsonValue;
+  try {
+    // SAFETY: `Request.json()` output IS a JsonValue by construction; both fields are checked below.
+    body = (await req.json()) as JsonValue;
+  } catch {
+    return text("bad body", 400);
+  }
+  const fields = asJsonRecord(body) ?? {};
+  const modelId = typeof fields.model === "string" ? fields.model : "";
+  const effort = typeof fields.effort === "string" ? fields.effort : "";
+  const pane = deps.engine.current().agents.find((p) => p.paneId === paneId);
+  if (!pane) return text("no such pane", 404);
+  if (pane.agent !== "codex") return text("not a Codex pane", 400);
+  const models = await (deps.getModels ?? readHandoffModels)();
+  const model = models.find((m) => m.id === modelId);
+  if (!model || !model.efforts.includes(effort)) return text("model or effort is not in this host's Codex catalog", 400);
+
+  const ae = req.headers.get("accept-encoding");
+  const outcome = await driveCodexModel(deps.herdr, paneId, model, effort, { ...deps.drive, submitKeys: deps.submitKeys });
+  audit.record({
+    action: "codex-model",
+    paneId,
+    session,
+    device,
+    detail: outcome.ok
+      ? { model: model.id, effort, switched: true }
+      : { model: model.id, effort, switched: false, reason: outcome.reason },
+  });
+  if (outcome.ok) return json({ ok: true } satisfies ActionResponse, ae);
+  // `keys.send_failed` renders its `{reason}` verbatim — the step that failed, in the bridge's words.
+  return json({ ok: false, ...apiError("keys.send_failed", { reason: outcome.reason }) } satisfies ActionResponse, ae);
 }
 
 type ExpectedPrompt =

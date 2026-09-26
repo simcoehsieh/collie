@@ -33,6 +33,20 @@ screens (`/mcp`, `/hooks`, `/status`, `/usage`, …) show their keys instead of 
   0.156 marker rewrite. The code patch was already dropped at 1.11.0; the test still passes on
   upstream's new locator, so it stays as the pin for that capture.
 
+### A Codex pane's model and effort from the Quick dock (2026-09-26)
+
+- **Quick on a Codex pane picks the model and the effort.** A model row (this host's Codex catalog,
+  the list the handoff sheet offers), then that model's efforts; one tap switches the pane for this
+  session only. Codex 0.156's `/model` takes no arguments (`/model gpt-6-luna low` goes to the model
+  as a prompt), so `POST /api/pane/:id/model` drives the pane's own picker: `/model`, the model's
+  number, down into "More reasoning…" for max and ultra, the cursor onto the effort, then `s`, and
+  it answers only once Codex prints "Model changed to … for this session only". Each step waits for
+  its screen on the pane's grid, because a batched `/model` Enter `2` `3` lands the digits in the
+  composer before the picker paints. A digit or Enter on the effort screen would set the DEFAULT and
+  rewrite `~/.codex/config.toml`; `s` touches nothing on disk. A step that fails backs out with
+  Escape only while a picker is open, so a running turn is never interrupted. Rides a crew link like
+  `handoff` (`bridge/crew/forward.ts`).
+
 ## On top of 1.13.1
 
 Merged upstream v1.13.1 (2026-09-24, with v1.13.0 under it) — 88 commits, 34 conflicted files. What

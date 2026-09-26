@@ -204,7 +204,7 @@ describe("which routes cross a link", () => {
     const tab = server.match(/^const TAB_ACTION_ROUTE = (.+);$/m)![1]!;
     const alternation = /\(([a-z]+(?:\|[a-z]+)+)\)/;
     const paneActions = pane.match(alternation)![1]!.split("|").toSorted();
-    // FORK: `handoff`, `probe` and `shot` are fork routes on the same literal, as are `diff` and `file`.
+    // FORK: `handoff`, `model`, `probe` and `shot` are fork routes on the same literal, as are `diff` and `file`.
     expect(paneActions).toEqual([
       "changes",
       "close",
@@ -214,6 +214,7 @@ describe("which routes cross a link", () => {
       "handoff",
       "history",
       "keys",
+      "model",
       "probe",
       "rename",
       "reply",

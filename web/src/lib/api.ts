@@ -1745,6 +1745,18 @@ export function handoffPane(paneId: string, command: string, instruction: string
 }
 
 /**
+ * FORK: switch a Codex pane to `model` at `effort` for this session only (bridge/codex-model.ts).
+ * The bridge drives the pane's own `/model` picker and answers once Codex confirms, so this can take
+ * a few seconds. Both values come from `fetchLaunchers`' `handoffModels` and are re-checked there.
+ */
+export function codexModel(paneId: string, model: string, effort: string, scope?: Scope): Promise<ActionResponse> {
+  return req<ActionResponse>(withScope(`/api/pane/${encodeURIComponent(paneId)}/model`, scope), {
+    method: "POST",
+    body: JSON.stringify({ model, effort }),
+  });
+}
+
+/**
  * The bytes, for a frame (`sandbox=""`) or an `<img>`. An `/api/` path for preview's two reasons
  * (lib/doc-links.ts): the service worker hands every `/api/` request to the network, and the path
  * is already behind the device guard. The scope rides along so a peer's artifact is fetched from

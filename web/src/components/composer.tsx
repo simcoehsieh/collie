@@ -1509,6 +1509,25 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   }
 
+  // FORK: switch this Codex pane's model and effort (bridge/codex-model.ts). Errors go to the status
+  // channel like a failed key send; the tapped button falls back to idle.
+  async function pickCodexModel(model: string, effort: string): Promise<boolean> {
+    if (locked) return false;
+    stampSend(paneId);
+    try {
+      const res = await api.codexModel(paneId, model, effort, scope);
+      if (!res.ok) {
+        setStatus(describeApiError(res), "error");
+        return false;
+      }
+      scheduleKeyRevalidate();
+      return true;
+    } catch (e) {
+      setStatus(describeThrownError(e), "error");
+      return false;
+    }
+  }
+
   // Insert "/cmd " into the composer (arg-taking commands) and focus it. Appends to any draft already
   // typed (with a separating space) rather than clobbering it; an empty draft just gets set.
   function insertCommand(value: string) {
@@ -1867,6 +1886,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               // FORK: the harness's own commands live here now rather than in a tinted section of
               // the belt (see `showHarness` on ActionsRow below).
               harness={harnessItems}
+              // FORK: a Codex pane's model and effort, driven through its own /model picker.
+              codex={agent === "codex" && !isShell ? { scope, onPick: pickCodexModel } : undefined}
             />
           </ComposerDock>
         )}

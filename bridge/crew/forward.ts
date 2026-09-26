@@ -52,10 +52,10 @@ export function crewRouteFor(pathname: string): string | null {
  * but not across a link (or, worse, the reverse).
  */
 const FORWARDABLE: readonly RegExp[] = [
-  // FORK: `diff`, `file`, `shot`, `probe` and `handoff` are the fork's own pane routes, on the same
-  // literal in server.ts — each is answered by the member that owns the pane (its screen, its
+  // FORK: `diff`, `file`, `shot`, `probe`, `handoff` and `model` are the fork's own pane routes, on
+  // the same literal in server.ts — each is answered by the member that owns the pane (its screen, its
   // journal, its launchers), so each rides the link exactly as `reply` does. `changes` is upstream's.
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|changes|focus|diff|file|shot|probe|handoff))?$/,
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|changes|focus|diff|file|shot|probe|handoff|model))?$/,
   /^tab$/,
   /^tab\/[^/]+\/(?:rename|close)$/,
   /^workspace$/,

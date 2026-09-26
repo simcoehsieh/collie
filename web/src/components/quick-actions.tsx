@@ -12,6 +12,9 @@ import { usePendingConfirm } from "@/hooks/use-pending-confirm";
 import { Collapse } from "@/components/ui/collapse";
 import { t as translate, type MessageKey } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
+import * as api from "@/lib/api";
+import { scopeKey, type Scope } from "@/lib/scope";
+import type { CodexHandoffModel } from "@/lib/types";
 
 interface QuickActionsContentProps {
   /** Resolves true once the reply is verified sent — drives the ✓ and the deferred close. */
@@ -31,6 +34,13 @@ interface QuickActionsContentProps {
    * is what a shell pane, an unknown harness, and the operator's own Settings switch all produce.
    */
   harness?: readonly HarnessBarItem[];
+  /**
+   * FORK: a Codex pane's model and effort, one tap each (2026-09-26). The catalog is this host's
+   * Codex's own (`handoffModels`, the list the handoff sheet offers); `onPick` resolves true once the
+   * bridge has driven the pane's `/model` picker to it for this session only (bridge/codex-model.ts).
+   * Absent on every other pane, and then this dock is exactly what it was.
+   */
+  codex?: { scope?: Scope; onPick: (model: string, effort: string) => Promise<boolean> };
 }
 
 /** `quickRepliesFor`'s group titles are catalog identifiers ("confirm"/"common"), not display text —
@@ -113,6 +123,102 @@ function Group({
   );
 }
 
+/** The echo id of one model+effort pick — distinct from any reply text, which is never this shape. */
+const codexPickId = (model: string, effort: string) => `\u0000codex:${model}:${effort}`;
+
+// FORK: the Codex model group. Tap a model to see its efforts; tap an effort to switch. Two taps, not
+// one grid of every pair: seven models times up to six efforts is a wall, and the model is the choice
+// the operator makes first anyway.
+function CodexModelGroup({
+  scope,
+  disabled,
+  busy,
+  phaseOf,
+  onFire,
+}: {
+  scope?: Scope;
+  disabled?: boolean;
+  busy: boolean;
+  phaseOf: (id: string) => EchoPhase;
+  onFire: (model: string, effort: string) => void;
+}) {
+  const [models, setModels] = useState<readonly CodexHandoffModel[] | null>(null);
+  const [chosen, setChosen] = useState("");
+  const key = scopeKey(scope);
+  useEffect(() => {
+    let live = true;
+    void api
+      .fetchLaunchers(scope)
+      .then((res) => {
+        if (live) setModels(res.handoffModels ?? []);
+        return undefined;
+      })
+      .catch(() => {
+        if (live) setModels([]);
+      });
+    return () => {
+      live = false;
+    };
+    // `scope` is keyed by value: a fresh object for the same scope must not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  if (models === null) {
+    return <p className="text-xs text-muted-foreground">{translate("handoff.model.loading")}</p>;
+  }
+  // No catalog on this host: say nothing — the harness row's Model button still opens the picker.
+  if (models.length === 0) return null;
+  const model = models.find((m) => m.id === chosen);
+  return (
+    <div>
+      <p className="mb-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+        {translate("handoff.model.label")}
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        {models.map((m) => (
+          <Button
+            key={m.id}
+            type="button"
+            variant={m.id === chosen ? "default" : "outline"}
+            aria-pressed={m.id === chosen}
+            disabled={disabled || busy}
+            onClick={() => setChosen((prev) => (prev === m.id ? "" : m.id))}
+            className="h-10 text-sm font-medium"
+          >
+            {m.label}
+          </Button>
+        ))}
+      </div>
+      {model && (
+        <>
+          <p className="mb-1.5 mt-3 text-[10px] uppercase tracking-wide text-muted-foreground">
+            {translate("handoff.effort.label")}
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {model.efforts.map((effort) => {
+              const phase = phaseOf(codexPickId(model.id, effort));
+              return (
+                <Button
+                  key={effort}
+                  type="button"
+                  variant={phase === "idle" ? "outline" : "default"}
+                  disabled={disabled || busy}
+                  onClick={() => onFire(model.id, effort)}
+                  className={cn("h-12 gap-1.5 text-sm font-medium", phase !== "idle" && "disabled:opacity-100")}
+                >
+                  {phase === "pending" && <Loader2 className="size-4 animate-spin" />}
+                  {phase === "done" && <Check className="size-4" />}
+                  {effort}
+                </Button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // The Quick-actions body — the two one-tap reply grids, no chrome of its own. Docked in-flow by the
 // composer (same ComposerDock wrapper as Keys), so it never covers the mirror. Padding matches
 // NavTray so both docks read identically.
@@ -130,6 +236,7 @@ export function QuickActionsContent({
   isShell,
   disabled,
   harness = NO_HARNESS,
+  codex,
 }: QuickActionsContentProps) {
   useLocale();
   const operatorGroups = useOperatorQuickReplies();
@@ -158,6 +265,15 @@ export function QuickActionsContent({
       const ok = await onSend(text);
       // Let the ✓ land before the dock goes. On failure we hold it open — the status bar carries the
       // reason and the user is one tap from trying again.
+      if (ok) closeTimer.current = setTimeout(onClose, ECHO_DONE_MS);
+      return ok;
+    });
+  };
+
+  const fireCodex = (model: string, effort: string) => {
+    if (disabled || echo.pending || !codex) return;
+    void echo.run(codexPickId(model, effort), async () => {
+      const ok = await codex.onPick(model, effort);
       if (ok) closeTimer.current = setTimeout(onClose, ECHO_DONE_MS);
       return ok;
     });
@@ -203,6 +319,15 @@ export function QuickActionsContent({
             })}
           </div>
         </div>
+      )}
+      {codex && (
+        <CodexModelGroup
+          scope={codex.scope}
+          disabled={disabled}
+          busy={echo.pending}
+          phaseOf={echo.phaseOf}
+          onFire={fireCodex}
+        />
       )}
       {groups.map((g) =>
         g.title === FOLDED_GROUP ? (
