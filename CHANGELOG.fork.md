@@ -37,7 +37,9 @@ screens (`/mcp`, `/hooks`, `/status`, `/usage`, …) show their keys instead of 
 
 - **The Panes / Focus / Changes bar is gone from the dashboard** (operator: not needed). Off at one
   gate, `lib/dash-tabs.ts`, the way the glide is; the dashboard always shows the Panes list, even on a
-  device that stored Focus or Changes. Changes stays on a pane's belt.
+  device that stored Focus or Changes. Changes stays reachable from a pane's menu (the diff row).
+- **The belt's two pinned icons are gone too**: the Switch mark (Layers) and the Changes pill
+  (GitCompare), off at `lib/belt-pins.ts`. A pull up on the belt still opens the pane switcher.
 
 ### A Codex pane's model and effort from the Quick dock (2026-09-26)
 

@@ -9,6 +9,7 @@ import { SectionLabel } from "@/components/ui/section-label";
 import { BELT_ICON, STRIP_ROW_PILL, STRIP_SCROLLER } from "@/components/ui/labelled-strip";
 import { useDashPrefs } from "@/hooks/use-dash-prefs";
 import { useLocale } from "@/hooks/use-locale";
+import { FORK_BELT_PINS_ON } from "@/lib/belt-pins";
 import { hasResizeObserver } from "@/lib/env";
 import { t as translate } from "@/lib/i18n";
 import type { OperatorCommand } from "@/lib/types";
@@ -401,7 +402,8 @@ export function ActionsRow({
   const { beltScale } = useDashPrefs().prefs;
   // Anything pinned at the right end: the Switch mark, the Changes pill, or both. The drag surface
   // (`handle.ref`, `touch-pan-x`) stays tied to `handle` alone.
-  const pinned = !!handle || !!changes;
+  // FORK: neither is drawn in production (lib/belt-pins.ts); the drag surface below is untouched.
+  const pinned = FORK_BELT_PINS_ON && (!!handle || !!changes);
   const switchBlock = useSwitchBlockWidth(pinned);
   const switchInset = switchBlock.width ?? switchPillInset(beltScale, !!changes && !!handle);
 

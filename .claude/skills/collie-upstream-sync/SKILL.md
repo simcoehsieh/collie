@@ -82,7 +82,8 @@ counts as the same defect, the evidence to gather, and the four possible verdict
 but SHAPES the operator has settled on, and an upstream release that walks back into one gets
 re-grafted rather than accepted. They are listed in `FORK.md` — today those are **the dashboard row's
 standing shape** (one line per pane, never the harness's own name, no model on the row), **the dashboard's
-no-footer shape** (no Panes / Focus / Changes bar, `lib/dash-tabs.ts`), **the
+no-footer shape** (no Panes / Focus / Changes bar, `lib/dash-tabs.ts`), **the belt's no-pins shape** (no Switch mark
+or Changes pill at its right end, `lib/belt-pins.ts`), **the
 first-run screen's standing shape** (it never opens; a `TOUR_VERSION` bump must stay silent and
 Settings has no row for it) and **the composer's standing shape on a physical keyboard** (an empty box
 sends its keys to the pane, a box with text is a message Enter sends, a `/` over an empty box

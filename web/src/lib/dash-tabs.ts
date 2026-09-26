@@ -1,7 +1,7 @@
 // FORK: NO DASHBOARD FOOTER (operator, 2026-09-27). Upstream 1.13.1 put a Panes / Focus / Changes tab
 // bar under the dashboard (ADR 0066, ADR 0068); on this install it is a row of chrome nobody used, so
-// the dashboard is the Panes list alone. Changes stays one tap away from a pane, on the belt's
-// Changes pill.
+// the dashboard is the Panes list alone. Changes stays reachable from a pane's menu (the diff row);
+// the belt's Changes pill is off too (lib/belt-pins.ts).
 //
 // Off at this one gate, like the glide (lib/glide.ts): routes/home.tsx asks it twice, for whether
 // to draw the TabBar and for which view to show. The view is forced to "panes" as well as the bar
