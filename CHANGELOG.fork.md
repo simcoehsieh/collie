@@ -11,6 +11,28 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.13.2
+
+Merged upstream v1.13.2 (2026-09-26) — 8 commits, 2 conflicted files. What it brings that matters
+here: **Codex 0.156 panes take messages again** (the new status row hid the input box), **Claude
+2.1.283 permission dialogs show their buttons in every state**, a tapped answer no longer types into
+the "Type something" field, a pasted `────` or `❯` line no longer blocks sending, and the newer slash
+screens (`/mcp`, `/hooks`, `/status`, `/usage`, …) show their keys instead of the Esc card.
+
+### Re-applied on top of upstream's new structure
+
+- **The inner-box skip moved from `claude/menu.ts` into `claude/region-top.ts`** (`findRegionTop`).
+  Upstream lifted the region scan out of `menu.ts` to add the `▔` modal edge; its new `/config` test
+  covers a search box PAST the rule window, not one inside it, and its own pin for
+  `claude-lab--menu-config-panel--w82` still opens the region at the box's lower edge. `menu.ts` is now
+  upstream's byte for byte; the fork's pin went red with the skip disabled and green with it back.
+
+### Kept, and why
+
+- **The Codex blank-paragraph regression test** (`codex--draft-blank-paragraph`), beside upstream's
+  0.156 marker rewrite. The code patch was already dropped at 1.11.0; the test still passes on
+  upstream's new locator, so it stays as the pin for that capture.
+
 ## On top of 1.13.1
 
 Merged upstream v1.13.1 (2026-09-24, with v1.13.0 under it) — 88 commits, 34 conflicted files. What
