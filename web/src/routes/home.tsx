@@ -24,6 +24,7 @@ import { useSpaceActions } from "@/hooks/use-spaces";
 import { useNav } from "@/hooks/use-nav";
 import { usePaneOpen } from "@/hooks/use-pane-open";
 import { useScrollMemory } from "@/hooks/use-scroll-memory";
+import { FORK_DASH_TABS_ON } from "@/lib/dash-tabs";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { useQuotaEnabled } from "@/lib/operator-config";
 import { ambientHost, ambientPanes, paneScope, sessionsOnHost } from "@/lib/hosts";
@@ -179,7 +180,8 @@ export function HomeRoute() {
   // FORK: the usage section draws only on a bridge that can answer `/api/quota` — absent from
   // `/api/config` is the feature off, and the dashboard is byte for byte what it was.
   const quotaOn = useQuotaEnabled();
-  const view: DashView = prefs.dashView;
+  // FORK: no footer, so no other view (lib/dash-tabs.ts) — a stored "focus" must not strand the list.
+  const view: DashView = FORK_DASH_TABS_ON ? prefs.dashView : "panes";
   // Focus's corner mark (ADR 0066, renamed from Attention by ADR 0068): a red count of the panes
   // blocked on you, or, when none is blocked, a quiet dot for finished panes you have not opened. A
   // count means something waits on you; the dot only says there is something new. The list itself
@@ -365,14 +367,18 @@ export function HomeRoute() {
             with a stale-cache nudge). The crew line self-hides on a solo install. */}
         <CrewFooterLink scope={data.scope} className="px-4 pt-3" />
         <UpdateBanner className="px-4 pt-3" />
-        {/* The footer below owns the safe area now, so the stamp only keeps its own air. */}
-        <BuildStamp className="px-4 pt-3 pb-2" />
+        {/* The footer below owns the safe area now, so the stamp only keeps its own air.
+            FORK: without the footer (lib/dash-tabs.ts) the stamp is the last row, so it takes it back. */}
+        <BuildStamp className={FORK_DASH_TABS_ON ? "px-4 pt-3 pb-2" : "px-4 pt-3 pb-[calc(var(--safe-bottom)+0.5rem)]"} />
       </div>
 
       {/* The dashboard's footer (ADR 0066, ADR 0068): three lists, each named for what it holds. It sits
           OUTSIDE the scroller, so the content scrolls above it and a switch moves neither it nor the
           strip and summary line at the top of the list. At every width: the dashboard has no
           sidebar on a wide screen (it is one centred column), so nothing else offers these views. */}
+      {/* FORK: off in production (lib/dash-tabs.ts). The bar's own lines are left at upstream's
+          indentation so the next merge meets them unchanged. */}
+      {FORK_DASH_TABS_ON && (
       <TabBar<DashView>
         label={t("home.tabs.aria")}
         active={view}
@@ -391,6 +397,7 @@ export function HomeRoute() {
           { value: "changes", label: t("changes.title"), icon: <GitCompare className="size-5" /> },
         ]}
       />
+      )}
 
       {/* Status overlay, anchored to the bottom of the viewport (no input here) — same slim line,
           floating so it never shifts the list. Stays outside the scroller so it never scrolls away.
@@ -400,7 +407,7 @@ export function HomeRoute() {
           z-rung, the safe-area inset — belongs to ToastViewport and is stated there once, which is
           what stopped it being three hand-rolled copies of the same four utilities. DESIGN.md §1. */}
       {/* Lifted by the footer's 56px row and its 1px rule, so a toast floats above the tabs. */}
-      <ToastViewport className="bottom-[calc(3.5rem+1px)]">
+      <ToastViewport className={FORK_DASH_TABS_ON ? "bottom-[calc(3.5rem+1px)]" : undefined}>
         <StatusArea />
       </ToastViewport>
 

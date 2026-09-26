@@ -33,6 +33,12 @@ screens (`/mcp`, `/hooks`, `/status`, `/usage`, …) show their keys instead of 
   0.156 marker rewrite. The code patch was already dropped at 1.11.0; the test still passes on
   upstream's new locator, so it stays as the pin for that capture.
 
+### No dashboard footer (2026-09-27)
+
+- **The Panes / Focus / Changes bar is gone from the dashboard** (operator: not needed). Off at one
+  gate, `lib/dash-tabs.ts`, the way the glide is; the dashboard always shows the Panes list, even on a
+  device that stored Focus or Changes. Changes stays on a pane's belt.
+
 ### A Codex pane's model and effort from the Quick dock (2026-09-26)
 
 - **Quick on a Codex pane picks the model and the effort.** A model row (this host's Codex catalog,
