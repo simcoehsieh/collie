@@ -284,7 +284,7 @@ function beaconStatusDeps(io: Io): BeaconStatusDeps {
 }
 
 /** FORK — `artifact add` / `list` / `promote`: the state dir, the bytes of one file, an Io, and (for
- *  promote) the real Exec the kb CLI runs under. */
+ *  promote) the real Exec the agentry CLI runs under. */
 function artifactDeps(io: Io): ArtifactDeps {
   const ctx = loadContext(io.err);
   return { ctx, io, files: realArtifactFiles, exec: realExec(ctx.env, ctx.home) };
@@ -601,7 +601,7 @@ export const COMMANDS: readonly Command[] = [
       },
       {
         name: "promote",
-        summary: "archive one artifact in the knowledge base: `artifact promote <id> --folder ai`",
+        summary: "archive one artifact in agentry (Alfred): `artifact promote <id> --folder ai`",
         run: (args, s) => cmdArtifactPromote(artifactDeps(s.io), args),
       },
     ],

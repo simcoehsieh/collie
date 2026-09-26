@@ -717,7 +717,7 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   },
 
   // ── FORK ───────────────────────────────────────────────────────────────────
-  // Nine names this fork reads and upstream does not. They are rows rather than exemptions for the
+  // Eight names this fork reads and upstream does not. They are rows rather than exemptions for the
   // reason the file's own header gives: a setting an operator can set is a setting `config show`
   // must be able to print. Every one is OFF when unset, and an instance that sets none behaves
   // exactly as an upstream instance does.
@@ -740,38 +740,30 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     configField: "docHosts",
   },
   {
-    key: "kb_origin",
-    env: "COLLIE_KB_ORIGIN",
+    key: "agentry_home",
+    env: "COLLIE_AGENTRY_HOME",
     section: "bridge",
     kind: "string",
     default: "",
-    doc: "FORK: the knowledge-system origin the document reader fetches from.",
-    configField: "kbOrigin",
+    doc: "FORK: agentry's data home; the document reader reads its archive there. Unset, the reader is off.",
+    configField: "agentryHome",
   },
   {
-    key: "kb_token",
-    env: "COLLIE_KB_TOKEN",
-    section: "bridge",
-    kind: "secret",
-    default: "",
-    doc: "FORK: the bearer token for that origin. Both halves are needed before a document opens.",
-    configField: "kbToken",
-  },
-  {
-    key: "kb_cli",
-    env: "COLLIE_KB_CLI",
+    key: "agentry_cli",
+    env: "COLLIE_AGENTRY_CLI",
     section: "bridge",
     kind: "string",
     default: "",
-    doc: "FORK: the kb CLI `collie artifact promote` shells out to. Read by cli/artifact.ts, not by loadConfig.",
+    doc: "FORK: the agentry binary the reader and `collie artifact promote` run. Default ~/.local/bin/agentry.",
+    configField: "agentryCli",
   },
   {
-    key: "kb_public_origin",
-    env: "COLLIE_KB_PUBLIC_ORIGIN",
+    key: "agentry_public_origin",
+    env: "COLLIE_AGENTRY_PUBLIC_ORIGIN",
     section: "bridge",
     kind: "string",
     default: "",
-    doc: "FORK: the public origin a promoted artifact's URL is printed under. Read by cli/artifact.ts.",
+    doc: "FORK: the origin a promoted artifact's URL is printed under. Default https://alfred.agnex.dev. Read by cli/artifact.ts.",
   },
   {
     key: "quota_command",

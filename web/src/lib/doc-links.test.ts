@@ -24,6 +24,26 @@ describe("classifyDocLink", () => {
     });
   });
 
+  // kb was shut down on 2026-09-26 and its documents moved to agentry, whose front is Alfred. Two
+  // families of link now name the same document: kb's `/d/<slug>` in months of scrollback, and
+  // Alfred's `/doc/<slug>` page (plus its raw `/d/<slug>`). All three must open the SAME panel.
+  it("maps Alfred's /doc/<slug> page and its raw /d/<slug> onto the same path as kb's link", () => {
+    const ALFRED = "alfred.agnex.dev";
+    const hosts = [KB, ALFRED];
+    const expected = { kind: "doc", slug: "tradingview-mcp-official-vs-github", path: `${DOC_PROXY_PATH}tradingview-mcp-official-vs-github` };
+    expect(classifyDocLink(`https://${ALFRED}/doc/tradingview-mcp-official-vs-github`, hosts)).toEqual(expected);
+    expect(classifyDocLink(`https://${ALFRED}/d/tradingview-mcp-official-vs-github`, hosts)).toEqual(expected);
+    expect(classifyDocLink(`https://${KB}/d/tradingview-mcp-official-vs-github`, hosts)).toEqual(expected);
+    // Alfred's other pages are not documents, and its /doc/ path gets the same one-segment rule.
+    expect(kind(`https://${ALFRED}/library`, hosts)).toBe("external");
+    expect(kind(`https://${ALFRED}/i/sched%3Ax`, hosts)).toBe("external");
+    expect(kind(`https://${ALFRED}/doc/`, hosts)).toBe("external");
+    expect(kind(`https://${ALFRED}/doc/a/b`, hosts)).toBe("external");
+    expect(kind(`https://${ALFRED}/doc/Upper`, hosts)).toBe("external");
+    // The host list is still the trust decision: /doc/ on a host nobody configured is external.
+    expect(kind(`https://${ALFRED}/doc/notes`, [KB])).toBe("external");
+  });
+
   it("returns a path that is origin-relative, so nothing in the href can aim it elsewhere", () => {
     // If this ever became absolute, the whole same-origin argument for the panel would be void —
     // the iframe would be loading a stranger's origin under Collie's chrome.
@@ -253,6 +273,8 @@ describe("classifyDocLink", () => {
     // Pinned because the constant is the wiring's escape hatch when configuration is silent; if it
     // stopped naming the operator's kb, the fallback would quietly recognise nothing.
     expect(DEFAULT_DOC_HOSTS).toContain(KB);
+    expect(DEFAULT_DOC_HOSTS).toContain("alfred.agnex.dev");
     expect(kind(`https://${KB}/d/notes`, DEFAULT_DOC_HOSTS)).toBe("doc");
+    expect(kind("https://alfred.agnex.dev/doc/notes", DEFAULT_DOC_HOSTS)).toBe("doc");
   });
 });

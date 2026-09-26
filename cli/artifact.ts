@@ -34,7 +34,7 @@ export const ARTIFACT_USAGE = [
   "usage:",
   '  collie artifact add <file> [--title "…"] [--slug s] [--tag t]… [--origin name]',
   "  collie artifact list [--limit N]",
-  '  collie artifact promote <id> --folder <kb folder> [--summary "…"] [--tag t]… [--kb-slug s]',
+  '  collie artifact promote <id> --folder <folder> [--summary "…"] [--tag t]… [--slug s] [--source report]',
 ].join("\n");
 
 export interface ArtifactFiles {
@@ -49,7 +49,7 @@ export interface ArtifactDeps {
   readonly files: ArtifactFiles;
   /** A store to use instead of the state dir's — the test seam. */
   readonly store?: ArtifactStore;
-  /** For `promote`: how the kb CLI is run. Absent ⇒ promote refuses (nothing to run it with). */
+  /** For `promote`: how the agentry CLI is run. Absent ⇒ promote refuses (nothing to run it with). */
   readonly exec?: Exec;
 }
 
@@ -240,16 +240,36 @@ export async function cmdArtifactList(deps: ArtifactDeps, args: readonly string[
   return EXIT.OK;
 }
 
-// ── promote: the long-term copy, in the knowledge base ────────────────────────────────────────
+// ── promote: the long-term copy, in agentry's document archive ────────────────────────────────
 //
-// The library is the WORKING set — filed by pane, pruned one day. The knowledge base is the archive
-// the operator searches in a month. `promote` is the one step between them: push the artifact's
-// bytes with the operator's own `kb` CLI (push, then promote — its two verbs), and write the kb
-// slug back onto the record so the viewer can offer the archived copy. HTML only, because that is
-// what the kb takes; the CLI's path and the public origin come from the deployment's env.
+// The library is the WORKING set — filed by pane, pruned one day. The archive is what the operator
+// searches in a month, and it is agentry's `documents` stream since 2026-09-26 (the knowledge
+// system, kb, was shut down that day; everything it held was imported). `promote` is the one step
+// between them: `agentry doc push` stores the artifact's bytes under a slug and records the row, and
+// the slug is written back onto the record so the viewer can offer the archived copy — which Alfred
+// serves at `https://alfred.agnex.dev/doc/<slug>`. HTML only, because that is what the archive
+// takes. One verb, where kb needed two (push a draft, then promote it): agentry has no draft step.
+//
+// The record field is still called `kbSlug`. It is persisted in every artifacts.json and read by the
+// phone; renaming it would need a migration for a name, so the name stays and means "the archive's
+// slug".
 
-export const KB_CLI_ENV = "COLLIE_KB_CLI";
-export const KB_PUBLIC_ORIGIN_ENV = "COLLIE_KB_PUBLIC_ORIGIN";
+export const AGENTRY_CLI_ENV = "COLLIE_AGENTRY_CLI";
+export const AGENTRY_HOME_ENV = "COLLIE_AGENTRY_HOME";
+export const AGENTRY_PUBLIC_ORIGIN_ENV = "COLLIE_AGENTRY_PUBLIC_ORIGIN";
+
+/** What produced the document, in agentry's `source` vocabulary; the earlier promotes are `report`. */
+export const DEFAULT_PROMOTE_SOURCE = "report";
+
+/**
+ * A tag the phone's archive browser can filter by: kb's ltree labels, dotted (`database.pgvector`),
+ * the grammar bridge/docs-list.ts's `TAG_PATTERN` admits. A hyphen would store fine in agentry and
+ * then be unreachable from the tag chips, so it is refused here.
+ */
+const PROMOTE_TAG = /^[a-z0-9_]{1,40}(\.[a-z0-9_]{1,40})*$/;
+
+/** agentry's own `source` grammar is looser; this is the shape every existing source has. */
+const PROMOTE_SOURCE = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 
 export interface ArtifactPromoteArgs {
   readonly id: string;
@@ -257,6 +277,7 @@ export interface ArtifactPromoteArgs {
   readonly summary: string | null;
   readonly tags: readonly string[];
   readonly kbSlug: string | null;
+  readonly source: string;
 }
 
 export function parseArtifactPromoteArgs(args: readonly string[]): ArtifactPromoteArgs | { error: string } {
@@ -264,6 +285,7 @@ export function parseArtifactPromoteArgs(args: readonly string[]): ArtifactPromo
   let folder: string | null = null;
   let summary: string | null = null;
   let kbSlug: string | null = null;
+  let source = DEFAULT_PROMOTE_SOURCE;
   const tags: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -283,37 +305,42 @@ export function parseArtifactPromoteArgs(args: readonly string[]): ArtifactPromo
     }
     switch (name) {
       case "folder":
+        if (!ARTIFACT_SLUG.test(value)) return { error: `--folder must match ${ARTIFACT_SLUG.source} (got "${value}")` };
         folder = value;
         break;
       case "summary":
         summary = value;
         break;
       case "tag":
-        // The kb's tag grammar is stricter than ours (an ltree label: `[a-z0-9_]`); a hyphen would be
-        // silently dropped on that side, so it is refused on this one.
-        if (!/^[a-z0-9_]{1,40}$/.test(value)) return { error: `--tag must be [a-z0-9_] for the kb (got "${value}")` };
+        if (!PROMOTE_TAG.test(value)) return { error: `--tag must be [a-z0-9_], dotted for a child (got "${value}")` };
         if (!tags.includes(value)) tags.push(value);
         break;
+      case "source":
+        if (!PROMOTE_SOURCE.test(value)) return { error: `--source must match ${PROMOTE_SOURCE.source} (got "${value}")` };
+        source = value;
+        break;
+      // `--kb-slug` is the pre-agentry spelling, kept so a command in an old note still runs.
+      case "slug":
       case "kb-slug":
-        if (!ARTIFACT_SLUG.test(value)) return { error: `--kb-slug must match ${ARTIFACT_SLUG.source} (got "${value}")` };
+        if (!ARTIFACT_SLUG.test(value)) return { error: `--${name} must match ${ARTIFACT_SLUG.source} (got "${value}")` };
         kbSlug = value;
         break;
       default:
         return { error: `unknown flag --${name}` };
     }
   }
-  if (id === null) return { error: "which artifact? `collie artifact promote <id> --folder <kb folder>`" };
-  return { id, folder, summary, tags, kbSlug };
+  if (id === null) return { error: "which artifact? `collie artifact promote <id> --folder <folder>`" };
+  return { id, folder, summary, tags, kbSlug, source };
 }
 
-function kbCliPath(ctx: CliContext): string {
-  const configured = ctx.env[KB_CLI_ENV]?.trim();
-  return configured !== undefined && configured !== "" ? configured : `${ctx.home}/git/side-projects/knowledge-system/bin/kb`;
+function agentryCliPath(ctx: CliContext): string {
+  const configured = ctx.env[AGENTRY_CLI_ENV]?.trim();
+  return configured !== undefined && configured !== "" ? configured : `${ctx.home}/.local/bin/agentry`;
 }
 
-function kbPublicOrigin(ctx: CliContext): string {
-  const configured = ctx.env[KB_PUBLIC_ORIGIN_ENV]?.trim();
-  return configured !== undefined && configured !== "" ? configured.replace(/\/+$/, "") : "https://knowledge.agnex.dev";
+function archivePublicOrigin(ctx: CliContext): string {
+  const configured = ctx.env[AGENTRY_PUBLIC_ORIGIN_ENV]?.trim();
+  return configured !== undefined && configured !== "" ? configured.replace(/\/+$/, "") : "https://alfred.agnex.dev";
 }
 
 export async function cmdArtifactPromote(deps: ArtifactDeps, args: readonly string[]): Promise<number> {
@@ -324,11 +351,13 @@ export async function cmdArtifactPromote(deps: ArtifactDeps, args: readonly stri
     return EXIT.USAGE;
   }
   if (parsed.folder === null) {
-    deps.io.err("--folder is required: which kb folder should it live in? (`kb folder tree` lists them)");
+    // agentry would take a document with no folder, and Alfred's library would then list it nowhere:
+    // its shelves are folders. So the archive keeps kb's rule.
+    deps.io.err("--folder is required: which folder should it live in? (ai, side-projects, medium-digest, …)");
     return EXIT.USAGE;
   }
   if (deps.exec === undefined) {
-    deps.io.err("promote needs a way to run the kb CLI, and this build has none");
+    deps.io.err("promote needs a way to run the agentry CLI, and this build has none");
     return EXIT.FAIL;
   }
   const store = deps.store ?? new ArtifactStore(deps.ctx.stateDir);
@@ -338,31 +367,25 @@ export async function cmdArtifactPromote(deps: ArtifactDeps, args: readonly stri
     return EXIT.FAIL;
   }
   if (record.kind !== "html") {
-    deps.io.err(`the knowledge base takes HTML; ${record.id} is ${record.kind}`);
+    deps.io.err(`the archive takes HTML; ${record.id} is ${record.kind}`);
     return EXIT.REFUSED;
   }
-  const kb = kbCliPath(deps.ctx);
   const slug = parsed.kbSlug ?? record.kbSlug ?? record.slug;
-  const pushed = deps.exec.capture(
-    kb,
-    ["push", store.filePath(record), "--folder", parsed.folder, "--slug", slug, "--title", record.title],
-    120_000,
-  );
+  const push = ["doc", "push", store.filePath(record), "--slug", slug, "--title", record.title, "--source", parsed.source];
+  push.push("--folder", parsed.folder);
+  if (parsed.summary !== null) push.push("--summary", parsed.summary);
+  for (const tag of parsed.tags) push.push("--tag", tag);
+  // Only when the deployment names one: agentry's own default home is the operator's, and a promote
+  // run from an agent's shell must land where the phone's reader (COLLIE_AGENTRY_HOME) looks.
+  const home = deps.ctx.env[AGENTRY_HOME_ENV]?.trim();
+  if (home !== undefined && home !== "") push.push("--home", home);
+  push.push("--format", "json");
+  const pushed = deps.exec.capture(agentryCliPath(deps.ctx), push, 120_000);
   if (pushed.code !== 0) {
-    deps.io.err(`kb push failed (${String(pushed.code)}): ${(pushed.stderr || pushed.stdout).trim()}`);
-    return EXIT.FAIL;
-  }
-  const promoteArgs = ["promote", slug];
-  if (parsed.summary !== null) promoteArgs.push("--summary", parsed.summary);
-  for (const tag of parsed.tags) promoteArgs.push("--tag", tag);
-  const promoted = deps.exec.capture(kb, promoteArgs, 300_000);
-  if (promoted.code !== 0) {
-    deps.io.err(`kb promote failed (${String(promoted.code)}): ${(promoted.stderr || promoted.stdout).trim()}`);
-    deps.io.err("the document was pushed and sits in the kb as a draft — re-run promote, or `kb promote` it by hand");
+    deps.io.err(`agentry doc push failed (${String(pushed.code)}): ${(pushed.stderr || pushed.stdout).trim()}`);
     return EXIT.FAIL;
   }
   await store.patch(record.id, { kbSlug: slug });
-  deps.io.out(`promoted ${record.id} → ${kbPublicOrigin(deps.ctx)}/d/${slug}`);
+  deps.io.out(`promoted ${record.id} → ${archivePublicOrigin(deps.ctx)}/doc/${slug}`);
   return EXIT.OK;
 }
-

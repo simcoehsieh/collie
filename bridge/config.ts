@@ -48,6 +48,11 @@ function envInt(
   return n;
 }
 
+/** `~/x` → `<home>/x`; every other value, the empty string included, unchanged. */
+function tildeHome(value: string, home: string): string {
+  return value.startsWith("~/") ? join(home, value.slice(2)) : value;
+}
+
 function envList(name: string, env: Environment = process.env): string[] {
   return (env[name] ?? "")
     .split(",")
@@ -173,25 +178,27 @@ export interface Config {
    */
   dirRoots: string[];
   /**
-   * The loopback base URL of the operator's knowledge-base API, e.g. `http://127.0.0.1:8082`.
+   * FORK: agentry's data home (`$AGENTRY_HOME`, e.g. `/Users/op/agentry-data`) — where the document
+   * panel reads the archive: `documents_latest` through `agentry query`, the bytes from its
+   * `documents/` directory. Replaced the knowledge system's loopback API origin and token on
+   * 2026-09-26, when kb was shut down.
    *
    * Empty — the default — turns the document panel off completely: `/api/doc/<slug>` answers 404 and
-   * the bridge makes no outbound call at all. That is how CLAUDE.md's "the bridge makes no outbound
-   * call for content" survives this feature; it is declined by doing nothing, exactly as the STT
-   * seam is. A value that is not loopback is REFUSED at serve time (bridge/docs.ts
-   * `normaliseKbOrigin`) rather than merely discouraged — the difference between reading a container
-   * on this machine and proxying the open web into Collie's own origin is one typo.
+   * no process is spawned. A relative value is REFUSED at serve time (bridge/docs.ts
+   * `normaliseAgentry`), because it would resolve against the bridge's cwd.
    */
-  kbOrigin: string;
+  agentryHome: string;
   /**
-   * The knowledge base's internal token, presented over loopback. Empty = the panel is off. It is
-   * never logged, never fingerprinted and never put in a response body (bridge/docs.ts).
+   * FORK: the `agentry` binary the panel runs `agentry query` with. Defaults to
+   * `~/.local/bin/agentry`, where agentry installs itself, because a launchd unit's PATH does not
+   * carry `~/.local/bin` and a bare `agentry` would be looked up in the wrong places.
    */
-  kbToken: string;
+  agentryCli: string;
   /**
-   * The PUBLIC hostnames whose `/d/<slug>` links this bridge can serve itself — the operator-facing
-   * half of the same fact `kbOrigin` states in loopback terms, and not derivable from it: nothing
-   * about `http://127.0.0.1:8082` says which domain name the agents print.
+   * The PUBLIC hostnames whose document links this bridge can serve itself —
+   * `knowledge.agnex.dev/d/<slug>` (kb's, still in months of scrollback) and
+   * `alfred.agnex.dev/doc/<slug>` or `/d/<slug>` (agentry's front). Not derivable from
+   * `agentryHome`: nothing about a data directory says which domain name the agents print.
    *
    * Published to the client in `/api/config` ONLY when the panel is actually on, so the frontend
    * cannot classify a link as openable-in-app by a bridge that would answer it 404.
@@ -674,11 +681,10 @@ export function loadConfig(env: Environment = process.env): Config {
     // Comma-separated like every other list here. `~` is expanded by the consumer (dirs.ts), which
     // is also where a root that does not resolve is dropped — one bad entry must not break the rest.
     dirRoots: envList("COLLIE_DIR_ROOTS", env),
-    kbOrigin: (env.COLLIE_KB_ORIGIN ?? "").trim(),
-    // Trimmed because this is nearly always pasted out of a 0600 file that ends in a newline
-    // (`COLLIE_KB_TOKEN="$(cat …/knowledge-system/secrets/internal_token)"`), and kb answers 401 to
-    // that trailing byte. docs.ts trims again — a credential is cheap to check on both sides.
-    kbToken: (env.COLLIE_KB_TOKEN ?? "").trim(),
+    // A leading `~/` is expanded (a `.env` is not a shell); anything else is kept as written, and a
+    // relative value is refused by bridge/docs.ts rather than resolved against the cwd here.
+    agentryHome: tildeHome((env.COLLIE_AGENTRY_HOME ?? "").trim(), env.HOME ?? homedir()),
+    agentryCli: (env.COLLIE_AGENTRY_CLI ?? "").trim() || join(env.HOME ?? homedir(), ".local", "bin", "agentry"),
     docHosts: envList("COLLIE_DOC_HOSTS", env),
     quotaCommand: (env.COLLIE_QUOTA_COMMAND ?? "").trim(),
     shotCommand: (env.COLLIE_SHOT_COMMAND ?? "").trim(),

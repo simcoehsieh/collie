@@ -2,9 +2,10 @@
 //
 // lib/links.ts finds the URLs in the mirror; this module answers the single question the renderer
 // has about each one afterwards: can Collie show this without leaving the PWA? Exactly one family
-// of URL can — the operator's knowledge base, `https://<kb host>/d/<slug>` — because only for those
-// does the bridge have a route of its OWN that fetches the document over loopback and serves it
-// back same-origin. Everything else is `external`, and the anchor keeps the `target="_blank"` it
+// of URL can — the operator's document archive, `https://<doc host>/d/<slug>` (kb's layout, and
+// Alfred's raw path) or `https://<doc host>/doc/<slug>` (Alfred's page) — because only for those
+// does the bridge have a route of its OWN that reads the document out of agentry and serves it back
+// same-origin. Everything else is `external`, and the anchor keeps the `target="_blank"` it
 // has today, untouched.
 //
 // ── WHY A LOCAL PATH INSTEAD OF FRAMING THE REAL URL ─────────────────────────────────────────────
@@ -96,11 +97,18 @@ export function previewSrc(paneId: string, path: string): string {
 }
 
 /**
- * The knowledge base's own document path. Not configurable: it is the kb's URL layout, the same one
- * its CLI builds when it prints a link (`<api_url minus /api>/d/<slug>`), so an operator who changed
- * it would have a kb that no longer matches its own tooling.
+ * The archive's document paths. Not configurable: they are URL layouts other tools print.
+ *
+ *   - `/d/<slug>` — the knowledge system's (kb, shut down 2026-09-26), which months of scrollback
+ *     and Telegram still carry, and ALSO Alfred's raw-document path, the same bytes unframed.
+ *   - `/doc/<slug>` — Alfred's document page (alfred.agnex.dev), what `collie artifact promote` and
+ *     agentry's own tools print now.
+ *
+ * Both name the same slug in the same store, so both open the same panel. They are accepted on
+ * every configured host rather than paired to one, because the host list is the trust decision and
+ * the path is only which spelling of "this document" the printer happened to use.
  */
-const KB_DOC_PREFIX = "/d/";
+const DOC_PREFIXES = ["/d/", "/doc/"] as const;
 
 /**
  * The hostnames recognised when the caller has nothing better. Exported as a starting value the
@@ -111,11 +119,12 @@ const KB_DOC_PREFIX = "/d/";
  * the feature is absent, not broken (the same argument lib/mux-capability.ts makes for an absent
  * logo — an empty answer means render nothing, not render an error).
  */
-export const DEFAULT_DOC_HOSTS = ["knowledge.agnex.dev"] as const;
+export const DEFAULT_DOC_HOSTS = ["knowledge.agnex.dev", "alfred.agnex.dev"] as const;
 
 /**
- * A valid kb slug, character for character the constraint the kb's own database enforces:
- * `CHECK (slug ~ '^[a-z0-9][a-z0-9-]*$')` (knowledge-system db/schema.sql, documents.slug).
+ * A valid archive slug, character for character the constraint kb's database enforced —
+ * `CHECK (slug ~ '^[a-z0-9][a-z0-9-]*$')` — and the shape of every slug agentry holds (agentry also
+ * admits `.` and `_`; no document uses them, and the bridge's grammar does not admit them either).
  *
  * Copied rather than loosened, because the charset is doing security work as a side effect of being
  * accurate. It admits no `/`, no `%`, no `.`, no `:` and no `\` — which is why the path segment is
@@ -235,7 +244,7 @@ function previewTarget(href: string, cwd: string): DocLinkTarget | null {
  *     a kb link never has any.
  *   - **An explicit non-default port.** A different port is a different service. `:443` survives
  *     because the URL parser normalises it away; it names the same endpoint.
- *   - **A query string.** The kb prints bare `/d/<slug>`, so a query is already not that URL, and
+ *   - **A query string.** The archive's links are a bare `/d/<slug>` or `/doc/<slug>`, so a query is already not that URL, and
  *     the bridge route takes only a slug — there is nowhere to forward one. Silently dropping it
  *     would mean opening a different URL from the one the operator tapped, which for
  *     `?next=https://evil.com` is precisely the confusion to avoid. The fragment is kept instead,
@@ -273,8 +282,9 @@ export function classifyDocLink(href: string, hosts: readonly string[], cwd = ""
   const host = url.hostname;
   if (!hosts.some((h) => h.trim().toLowerCase() === host)) return EXTERNAL;
 
-  if (!url.pathname.startsWith(KB_DOC_PREFIX)) return EXTERNAL;
-  const slug = url.pathname.slice(KB_DOC_PREFIX.length);
+  const prefix = DOC_PREFIXES.find((p) => url.pathname.startsWith(p));
+  if (prefix === undefined) return EXTERNAL;
+  const slug = url.pathname.slice(prefix.length);
   if (!SLUG.test(slug)) return EXTERNAL;
 
   // `url.hash` is "" or "#…", already percent-encoded for the fragment set by the parser — taken

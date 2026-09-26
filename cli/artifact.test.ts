@@ -157,28 +157,54 @@ describe("artifactPhoneUrl", () => {
 });
 
 describe("cmdArtifactPromote", () => {
-  test("pushes then promotes through the kb CLI, and writes the kb slug back", async () => {
+  test("pushes through `agentry doc push` in one call, writes the slug back, prints Alfred's URL", async () => {
     const stateDir = await freshStateDir();
-    const ctx = context({ COLLIE_KB_CLI: "/opt/kb", COLLIE_KB_PUBLIC_ORIGIN: "https://kb.example/" }, { stateDir });
+    const ctx = context(
+      { COLLIE_AGENTRY_CLI: "/opt/agentry", COLLIE_AGENTRY_HOME: "/data/agentry", COLLIE_AGENTRY_PUBLIC_ORIGIN: "https://alfred.example/" },
+      { stateDir },
+    );
     const store = new ArtifactStore(stateDir);
     const added = await store.add({ bytes: new TextEncoder().encode("<p>x</p>"), fileName: "plan.html", title: "The plan", slug: "the-plan" });
     if (!added.ok) throw new Error("add failed");
-    const exec = fakeExec({ answers: [["/opt/kb push", { code: 0, stdout: "ok" }], ["/opt/kb promote", { code: 0, stdout: "ok" }]] });
+    const exec = fakeExec({ answers: [["/opt/agentry doc push", { code: 0, stdout: '{"ok":true}' }]] });
     const io = capture();
     const code = await cmdArtifactPromote(
       { ctx, io, files: files({}), store, exec },
-      [added.record.id, "--folder", "ai", "--summary", "A plan.", "--tag", "meow", "--tag", "ai_ops"],
+      [added.record.id, "--folder", "ai", "--summary", "A plan.", "--tag", "meow", "--tag", "database.pgvector"],
     );
     expect(code).toBe(EXIT.OK);
     expect(exec.calls).toEqual([
-      `/opt/kb push ${store.filePath(added.record)} --folder ai --slug the-plan --title The plan`,
-      "/opt/kb promote the-plan --summary A plan. --tag meow --tag ai_ops",
+      `/opt/agentry doc push ${store.filePath(added.record)} --slug the-plan --title The plan --source report ` +
+        "--folder ai --summary A plan. --tag meow --tag database.pgvector --home /data/agentry --format json",
     ]);
-    expect(io.stdout).toEqual([`promoted ${added.record.id} → https://kb.example/d/the-plan`]);
+    expect(io.stdout).toEqual([`promoted ${added.record.id} → https://alfred.example/doc/the-plan`]);
     expect((await store.get(added.record.id))!.kbSlug).toBe("the-plan");
   });
 
-  test("refuses a non-HTML artifact, a missing --folder, a hyphenated tag, and reports a failed push", async () => {
+  test("by default runs ~/.local/bin/agentry, passes no --home, and prints alfred.agnex.dev/doc/<slug>", async () => {
+    const stateDir = await freshStateDir();
+    const ctx = context({}, { stateDir });
+    const store = new ArtifactStore(stateDir);
+    const added = await store.add({ bytes: new TextEncoder().encode("<p>"), fileName: "r.html", title: "R", slug: "r-doc" });
+    if (!added.ok) throw new Error("add failed");
+    const agentry = `${ctx.home}/.local/bin/agentry`;
+    const exec = fakeExec({ answers: [[`${agentry} doc push`, { code: 0, stdout: "{}" }]] });
+    const io = capture();
+    const code = await cmdArtifactPromote({ ctx, io, files: files({}), store, exec }, [added.record.id, "--folder", "ai", "--slug", "renamed", "--source", "medium"]);
+    expect(code).toBe(EXIT.OK);
+    expect(exec.calls).toEqual([
+      `${agentry} doc push ${store.filePath(added.record)} --slug renamed --title R --source medium --folder ai --format json`,
+    ]);
+    expect(io.stdout).toEqual([`promoted ${added.record.id} → https://alfred.agnex.dev/doc/renamed`]);
+    // The kb CLI is not run for anything, under any name.
+    expect(exec.calls.some((c) => c.includes("/kb "))).toBe(false);
+  });
+
+  test("the pre-agentry --kb-slug spelling still names the slug", () => {
+    expect(parseArtifactPromoteArgs(["x", "--kb-slug", "old-name"])).toMatchObject({ kbSlug: "old-name", source: "report" });
+  });
+
+  test("refuses a non-HTML artifact, a missing --folder, a hyphenated tag, a bad source, and reports a failed push", async () => {
     const stateDir = await freshStateDir();
     const ctx = context({}, { stateDir });
     const store = new ArtifactStore(stateDir);
@@ -189,16 +215,18 @@ describe("cmdArtifactPromote", () => {
     expect(await cmdArtifactPromote({ ctx, io, files: files({}), store, exec: fakeExec() }, [md.record.id])).toBe(EXIT.USAGE);
     expect(io.stderr[0]).toContain("--folder is required");
     expect(parseArtifactPromoteArgs(["x", "--tag", "not-ok"])).toMatchObject({ error: expect.stringContaining("[a-z0-9_]") });
+    expect(parseArtifactPromoteArgs(["x", "--tag", "a..b"])).toMatchObject({ error: expect.stringContaining("[a-z0-9_]") });
+    expect(parseArtifactPromoteArgs(["x", "--source", "Not Ok"])).toMatchObject({ error: expect.stringContaining("--source") });
+    expect(parseArtifactPromoteArgs(["x", "--folder", "../up"])).toMatchObject({ error: expect.stringContaining("--folder") });
     const io2 = capture();
     expect(await cmdArtifactPromote({ ctx, io: io2, files: files({}), store, exec: fakeExec() }, [md.record.id, "--folder", "ai"])).toBe(EXIT.REFUSED);
     expect(io2.stderr[0]).toContain("takes HTML");
     const io3 = capture();
     const failing = fakeExec({
-      answers: [[`${ctx.home}/git/side-projects/knowledge-system/bin/kb push`, { code: 1, stderr: "401 unauthorised" }]],
+      answers: [[`${ctx.home}/.local/bin/agentry doc push`, { code: 2, stdout: '{"ok":false,"error":{"code":"USAGE"}}' }]],
     });
     expect(await cmdArtifactPromote({ ctx, io: io3, files: files({}), store, exec: failing }, [html.record.id, "--folder", "ai"])).toBe(EXIT.FAIL);
-    expect(io3.stderr[0]).toContain("kb push failed (1): 401 unauthorised");
+    expect(io3.stderr[0]).toContain("agentry doc push failed (2)");
     expect((await store.get(html.record.id))!.kbSlug).toBeNull();
   });
 });
-

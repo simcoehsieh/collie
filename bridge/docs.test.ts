@@ -1,40 +1,38 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
+  AGENTRY_TIMEOUT_MS,
   DOCUMENT_CSP,
   DOCUMENT_PATH_PREFIX,
-  KB_TIMEOUT_MS,
   MAX_DOCUMENT_BYTES,
+  agentryQueryArgv,
   documentEtag,
   documentResponseHeaders,
+  documentRowSql,
   documentSlugFromPath,
   fetchDocument,
   isDocumentSlug,
-  isKbDocumentId,
-  kbDocumentHtmlUrl,
-  kbHeaders,
-  kbMetadataUrl,
-  normaliseKbOrigin,
-  type KbAnswer,
-  type KbIo,
-  type KbRequestInit,
-  type KbSettings,
+  normaliseAgentry,
+  sqlText,
+  type AgentryIo,
+  type AgentrySettings,
 } from "./docs.ts";
+import type { QuotaRun } from "./quota.ts";
 
-// The route that serves somebody else's HTML from Collie's own origin. Two questions run through
-// every case below, and they are the two the feature lives or dies on:
+// The route that serves somebody else's HTML from Collie's own origin, read out of agentry. Three
+// questions run through every case below, and they are the three the feature lives or dies on:
 //
-//   1. WHAT MAY BECOME A REQUEST — the slug is interpolated into a loopback call carrying the
-//      bridge's kb credential, so the grammar is the boundary and it is asserted by its refusals.
-//   2. WHAT THE BROWSER IS TOLD ABOUT THE BYTES — the sandbox, and the two directives either side
+//   1. WHAT MAY BECOME A QUERY — the slug is quoted into `agentry query`'s SQL, so the grammar is the
+//      boundary and it is asserted by its refusals.
+//   2. WHAT MAY BECOME A READ — the path read is the ROW's, and it must still be inside agentry's
+//      documents directory after symlinks are resolved.
+//   3. WHAT THE BROWSER IS TOLD ABOUT THE BYTES — the sandbox, and the two directives either side
 //      of it whose absence fails silently rather than loudly.
 //
-// Everything is driven through the injected `KbIo`, so nothing here opens a socket. The token in
-// every fixture is a recognisable sentinel precisely so the last test can prove it never escapes.
-
-const TOKEN = "sentinel-token-must-never-escape";
-const ORIGIN = "http://127.0.0.1:8082";
-const ID = "06357161-2e6d-4070-a411-926f3dd2a9d1";
+// `agentry query` is replaced by a scripted `run`; the files are real, in a temporary home.
 
 /**
  * A document shaped like the operator's real ones: a `<base href="about:srcdoc">` left over from
@@ -47,122 +45,78 @@ const HTML =
   "</head><body><h1>Herdr</h1><a href=\"#s\">s</a></body></html>";
 const HTML_SHA256 = "b6b6cc04d6d51db3888f636435a3c7ec82f400a2534c8ca339879e5777f0204e";
 const HTML_ETAG = `"d1:${HTML_SHA256}"`;
+const SLUG = "herdr-interface-anatomy";
+const CLI = "/opt/agentry/bin/agentry";
+const TITLE = "Herdr 介面解剖：五個名詞與各自能做什麼";
 
-/** kb's metadata answer, field for field as the live API returns it. */
-function metadataJson(over: Record<string, string | number> = {}): string {
-  return JSON.stringify({
-    id: ID,
-    folder_id: "61d4d0b9-a974-47ef-b357-493376389628",
-    slug: "herdr-interface-anatomy",
-    title: "Herdr 介面解剖：五個名詞與各自能做什麼",
-    summary: "herdr 0.8.2 的介面與物件模型導覽。",
-    lifecycle_status: "knowledge",
-    html_size_bytes: Buffer.byteLength(HTML, "utf8"),
-    content_sha256: HTML_SHA256,
-    created_at: "2026-09-06T13:46:26Z",
-    updated_at: "2026-09-06T13:46:34Z",
+/** A throwaway `$AGENTRY_HOME` with the one document in `documents/`, and a secret beside it. */
+const HOME = mkdtempSync(join(tmpdir(), "collie-docs-"));
+mkdirSync(join(HOME, "documents"));
+writeFileSync(join(HOME, "documents", `${SLUG}.html`), HTML);
+// Outside `documents/`: what a row whose html_path escapes would reach.
+writeFileSync(join(HOME, "secret.html"), HTML);
+symlinkSync(join(HOME, "secret.html"), join(HOME, "documents", "linked-out.html"));
+afterAll(() => rmSync(HOME, { recursive: true, force: true }));
+
+const settings: AgentrySettings = { home: HOME, cli: CLI };
+
+/** agentry's row, field for field as `documents_latest` returns it. */
+function row(over: Record<string, string | number | null> = {}) {
+  return {
+    slug: SLUG,
+    title: TITLE,
+    html_path: `${SLUG}.html`,
+    html_sha256: HTML_SHA256,
+    html_bytes: Buffer.byteLength(HTML, "utf8"),
     ...over,
-  });
-}
-
-/**
- * One kb answer. `content-length` is supplied the way kb supplies it on every response; passing
- * null for it is how the "kb sent no length" case is written.
- */
-function kbAnswer(
-  status: number,
-  text: string,
-  over: Record<string, string | null> = {},
-): KbAnswer {
-  const headers = new Map<string, string>([
-    ["content-length", String(Buffer.byteLength(text, "utf8"))],
-    ["content-type", "application/json; charset=utf-8"],
-  ]);
-  for (const [name, value] of Object.entries(over)) {
-    if (value === null) headers.delete(name);
-    else headers.set(name, value);
-  }
-  return {
-    status,
-    headers: { get: (name) => headers.get(name.toLowerCase()) ?? null },
-    text: async () => text,
   };
 }
 
-/** A chunked kb answer: no Content-Length, the bytes arrive on a stream in 4 KB pieces. */
-function streamedAnswer(status: number, text: string, contentType: string): KbAnswer {
-  const bytes = Buffer.from(text, "utf8");
-  const headers = new Map<string, string>([["content-type", contentType]]);
-  let offset = 0;
-  const body = new ReadableStream<Uint8Array>({
-    pull(controller) {
-      if (offset >= bytes.byteLength) return controller.close();
-      controller.enqueue(new Uint8Array(bytes.subarray(offset, offset + 4096)));
-      offset += 4096;
-    },
-  });
+/** agentry's success envelope, as `agentry query --format json` prints it. */
+function envelope(rows: object[]): QuotaRun {
+  return { code: 0, stdout: JSON.stringify({ ok: true, data: rows, meta: { truncated: false, rows: rows.length } }), timedOut: false };
+}
+
+/** One scripted agentry plus the record of what it was asked and which files were read. */
+interface Fixture {
+  io: AgentryIo;
+  argv: string[][];
+  reads: string[];
+}
+
+function agentry(answer: QuotaRun): Fixture {
+  const argv: string[][] = [];
+  const reads: string[] = [];
   return {
-    status,
-    headers: { get: (name) => headers.get(name.toLowerCase()) ?? null },
-    text: async () => text,
-    body,
-  };
-}
-
-const htmlAnswer = (text = HTML): KbAnswer =>
-  kbAnswer(200, text, { "content-type": "text/html; charset=utf-8" });
-
-interface Call {
-  url: string;
-  init: KbRequestInit;
-}
-
-/** One scripted kb, plus the record of what it was asked — the assertion half of most cases below. */
-interface KbFixture {
-  io: KbIo;
-  calls: Call[];
-}
-
-/** An io that answers from a URL→answer table and records what it was asked. A miss throws. */
-function kbIo(routes: Record<string, KbAnswer | Error>): KbFixture {
-  const calls: Call[] = [];
-  return {
-    calls,
+    argv,
+    reads,
     io: {
-      fetch: async (url, init) => {
-        calls.push({ url, init });
-        const answer = routes[url];
-        if (answer === undefined) throw new Error(`no fixture for ${url}`);
-        if (answer instanceof Error) throw answer;
+      run: async (args) => {
+        argv.push([...args]);
         return answer;
+      },
+      read: async (path) => {
+        reads.push(path);
+        return readFileSync(path);
       },
     },
   };
 }
 
-/** The io no test may reach: proof that a refusal happened before anything was dialled. */
-const unreachableIo: KbIo = {
-  fetch: async () => {
-    throw new Error("kb must not be contacted for this request");
+/** The io no test may reach: proof that a refusal happened before anything was run or read. */
+const untouchable: AgentryIo = {
+  run: async () => {
+    throw new Error("agentry must not be run for this request");
+  },
+  read: async () => {
+    throw new Error("no file may be read for this request");
   },
 };
 
-const settings: KbSettings = { origin: ORIGIN, token: TOKEN };
-
-const happyRoutes = () => ({
-  [kbMetadataUrl(ORIGIN, "herdr-interface-anatomy")]: kbAnswer(200, metadataJson()),
-  [kbDocumentHtmlUrl(ORIGIN, ID)]: htmlAnswer(),
-});
-
 /** The injected `warn`, so a warning is asserted as a value rather than by capturing the console. */
-interface Warnings {
-  warn: (message: string) => void;
-  lines: string[];
-}
-
-function collectWarnings(): Warnings {
+function collectWarnings() {
   const lines: string[] = [];
-  return { warn: (message) => void lines.push(message), lines };
+  return { warn: (message: string) => void lines.push(message), lines };
 }
 
 const silent = () => {};
@@ -244,43 +198,6 @@ describe("documentSlugFromPath", () => {
   });
 });
 
-describe("normaliseKbOrigin", () => {
-  test.each(["http://127.0.0.1:8082", "http://localhost:8082", "http://[::1]:8082"])(
-    "accepts the loopback form %s",
-    (origin) => {
-      expect(normaliseKbOrigin(origin)).toBe(origin);
-    },
-  );
-
-  test("strips a trailing slash so the built URL has exactly one", () => {
-    // Without this, `${origin}/api/documents/x` is `http://127.0.0.1:8082//api/…` — which kb may or
-    // may not route, and which nobody wants to debug from a phone.
-    expect(normaliseKbOrigin("http://127.0.0.1:8082/")).toBe("http://127.0.0.1:8082");
-  });
-
-  // THE EGRESS BOUNDARY. If this ever admits a public host, one typo in an env var turns the bridge
-  // into an open proxy that pulls arbitrary internet content into Collie's own origin — with the
-  // sandbox as the only remaining thing between that content and the operator.
-  test.each([
-    ["a public host", "https://knowledge.agnex.dev"],
-    ["a LAN address that is not loopback", "http://192.168.1.10:8082"],
-    ["a host that merely starts like loopback", "http://localhost.evil.example"],
-    ["a non-HTTP scheme", "file:///etc/passwd"],
-    ["something that is not a URL at all", "127.0.0.1:8082"],
-    ["nothing", ""],
-  ])("refuses %s", (_why, origin) => {
-    expect(normaliseKbOrigin(origin)).toBeNull();
-  });
-
-  test("refuses an origin that carries a path, a query or a fragment", () => {
-    // `http://127.0.0.1:8082/api` would build `…/api/api/documents/x`; a 404 from a doubled prefix
-    // is a bad way to learn about a config mistake, and a query would ride every call kb receives.
-    expect(normaliseKbOrigin("http://127.0.0.1:8082/api")).toBeNull();
-    expect(normaliseKbOrigin("http://127.0.0.1:8082/?debug=1")).toBeNull();
-    expect(normaliseKbOrigin("http://127.0.0.1:8082/#x")).toBeNull();
-  });
-});
-
 describe("the served document's headers", () => {
   const headers = documentResponseHeaders(HTML_ETAG);
 
@@ -358,433 +275,178 @@ describe("documentEtag", () => {
   });
 });
 
-describe("isKbDocumentId", () => {
-  test("admits the UUID kb returns, and nothing that could be a path", () => {
-    // The id is interpolated into a URL exactly as the slug is. That it arrived from kb rather than
-    // from the phone is not a reason to skip the grammar — a rule with a trusted-source exception
-    // stops being checkable the day the source changes.
-    expect(isKbDocumentId(ID)).toBe(true);
-    expect(isKbDocumentId("herdr-interface-anatomy")).toBe(false);
-    expect(isKbDocumentId(`${ID}/../healthz`)).toBe(false);
-    expect(isKbDocumentId("")).toBe(false);
+describe("normaliseAgentry", () => {
+  test("an absolute home and binary switch the store on; a trailing slash is dropped", () => {
+    expect(normaliseAgentry({ home: "/Users/op/agentry-data/", cli: CLI })).toEqual({ home: "/Users/op/agentry-data", cli: CLI });
+  });
+
+  test.each([
+    ["nothing configured", { home: "", cli: CLI }],
+    ["a relative home, which would resolve against the bridge's cwd", { home: "agentry-data", cli: CLI }],
+    ["a bare binary name, which launchd's PATH would not find", { home: "/x", cli: "agentry" }],
+    ["no binary", { home: "/x", cli: "" }],
+  ])("refuses %s", (_why, value) => {
+    expect(normaliseAgentry(value)).toBeNull();
+  });
+});
+
+describe("the SQL a slug becomes", () => {
+  test("a literal is single-quoted with each quote doubled — the one way to end a DuckDB string", () => {
+    expect(sqlText("plain")).toBe("'plain'");
+    expect(sqlText("it's")).toBe("'it''s'");
+    expect(sqlText("'; SELECT 1; --")).toBe("'''; SELECT 1; --'");
+    // A backslash is NOT an escape in DuckDB's standard strings, so it is left alone.
+    expect(sqlText("a\\'b")).toBe("'a\\''b'");
+  });
+
+  test("the row query names one slug, quoted, and asks for the columns the route checks", () => {
+    expect(documentRowSql(SLUG)).toBe(
+      `SELECT slug, title, html_path, html_sha256, html_bytes FROM documents_latest WHERE slug = '${SLUG}' LIMIT 1`,
+    );
+  });
+
+  test("agentry runs as an argv with the SQL as one argument, never through a shell", () => {
+    expect(agentryQueryArgv({ home: HOME, cli: CLI }, "SELECT 1")).toEqual([
+      CLI, "query", "--home", HOME, "--format", "json", "--no-limit", "SELECT 1",
+    ]);
   });
 });
 
 describe("fetchDocument — the happy path", () => {
-  test("resolves the slug, then fetches the HTML, presenting the token on both hops", async () => {
-    const { io, calls } = kbIo(happyRoutes());
-    const result = await fetchDocument("herdr-interface-anatomy", settings, null, io, silent);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok || result.unchanged) throw new Error("expected a served document");
-    expect(result.html).toBe(HTML);
-    expect(result.metadata.etag).toBe(HTML_ETAG);
-    expect(result.metadata.slug).toBe("herdr-interface-anatomy");
-    // The title comes back because the frame is an opaque origin: the panel cannot read the
-    // document's own <title> across it, so if the bridge does not carry it, nothing can.
-    expect(result.metadata.title).toContain("Herdr");
-
-    // TWO hops, in this order, because kb's /html route answers 400 to a slug — a single-hop
-    // "optimisation" would 400 on every document in the corpus.
-    expect(calls.map((c) => c.url)).toEqual([
-      "http://127.0.0.1:8082/api/documents/herdr-interface-anatomy",
-      `http://127.0.0.1:8082/api/documents/${ID}/html`,
-    ]);
-    for (const call of calls) {
-      expect(call.init.headers["x-internal-token"]).toBe(TOKEN);
-    }
-  });
-
-  test("neither hop will follow a redirect, and both are on a deadline", async () => {
-    // `redirect: "follow"` is the default and it is the leak: the fetch spec strips Authorization,
-    // Cookie and Proxy-Authorization across origins and says nothing about a custom header, so
-    // x-internal-token would travel to whatever host a Location named. The deadline is for the
-    // other failure — a container that is alive but wedged, which without it hangs until Bun closes
-    // the phone's connection with nothing said.
-    const { io, calls } = kbIo(happyRoutes());
-    await fetchDocument("herdr-interface-anatomy", settings, null, io, silent);
-    for (const call of calls) {
-      expect(call.init.redirect).toBe("manual");
-      expect(call.init.signal).toBeInstanceOf(AbortSignal);
-    }
-    expect(KB_TIMEOUT_MS).toBeGreaterThan(0);
-  });
-
-  test("a matching If-None-Match answers after ONE hop and never asks for the body", async () => {
-    // The whole reason the two-hop design is cheap: kb's content_sha256 is taken over the exact
-    // bytes /html returns, so the metadata alone settles a conditional request. Lose this and a
-    // warm phone re-downloads a 2 MB document over a mobile link every time the panel opens.
-    const { io, calls } = kbIo({
-      [kbMetadataUrl(ORIGIN, "herdr-interface-anatomy")]: kbAnswer(200, metadataJson()),
-    });
-    const result = await fetchDocument("herdr-interface-anatomy", settings, HTML_ETAG, io, silent);
+  test("looks the slug up in agentry, then reads the ROW's file from the documents directory", async () => {
+    const fx = agentry(envelope([row()]));
+    const result = await fetchDocument(SLUG, settings, null, fx.io, silent);
     expect(result).toEqual({
       ok: true,
-      unchanged: true,
-      metadata: {
-        slug: "herdr-interface-anatomy",
-        title: "Herdr 介面解剖：五個名詞與各自能做什麼",
-        etag: HTML_ETAG,
-        sizeBytes: Buffer.byteLength(HTML, "utf8"),
-      },
+      unchanged: false,
+      metadata: { slug: SLUG, title: TITLE, etag: HTML_ETAG, sizeBytes: Buffer.byteLength(HTML) },
+      html: HTML,
     });
-    expect(calls).toHaveLength(1);
+    expect(fx.argv).toEqual([agentryQueryArgv({ home: HOME, cli: CLI }, documentRowSql(SLUG))]);
+    expect(fx.reads).toHaveLength(1);
+    expect(fx.reads[0]!.endsWith(`/documents/${SLUG}.html`)).toBe(true);
+  });
+
+  test("a matching If-None-Match answers from the row and never reads the file", async () => {
+    const fx = agentry(envelope([row()]));
+    const result = await fetchDocument(SLUG, settings, HTML_ETAG, fx.io, silent);
+    expect(result).toMatchObject({ ok: true, unchanged: true, metadata: { etag: HTML_ETAG } });
+    expect(fx.reads).toEqual([]);
+  });
+
+  test("the query runs on a deadline", () => {
+    expect(AGENTRY_TIMEOUT_MS).toBeGreaterThan(0);
   });
 });
 
-describe("fetchDocument — refusing before anything is dialled", () => {
-  test.each(["../healthz", "%2e%2e%2fhealthz", "", "Herdr", "x\r\ny"])(
-    "never contacts kb about %s",
-    async (slug) => {
-      // The grammar runs before the configuration check and before any string is concatenated, so
-      // there is no ordering in which an unvalidated segment reaches a URL. If this ever fails, the
-      // failure is not a 404 — it is a credentialled request to an endpoint nobody chose.
-      const result = await fetchDocument(slug, settings, null, unreachableIo, silent);
-      expect(result).toEqual({ ok: false, reason: "bad_slug" });
-    },
-  );
-
-  test("an unconfigured bridge asks nothing and says nothing", async () => {
-    // Silence is the feature being declined by doing nothing (CLAUDE.md's outbound-call posture).
-    // A warning per request would punish every operator who never wanted a document panel.
-    const { warn, lines } = collectWarnings();
-    const off: KbSettings = { origin: "", token: "" };
-    const result = await fetchDocument("herdr-interface-anatomy", off, null, unreachableIo, warn);
-    expect(result).toEqual({ ok: false, reason: "not_configured" });
-    expect(lines).toEqual([]);
+describe("fetchDocument — refusing before anything is run", () => {
+  test.each(["../etc/passwd", "a'b", "UPPER", "", "x".repeat(200)])("a slug outside the grammar (%s) runs nothing", async (slug) => {
+    expect(await fetchDocument(slug, settings, null, untouchable, silent)).toEqual({ ok: false, reason: "bad_slug" });
   });
 
-  test("an origin that is not loopback is refused loudly, and dialled never", async () => {
-    // The opposite case from the one above: the operator meant to switch this on, and it is off for
-    // a reason only this line will tell them. Refusing here is also what keeps the bridge from
-    // proxying the open web into its own origin.
-    const { warn, lines } = collectWarnings();
-    const result = await fetchDocument(
-      "herdr-interface-anatomy",
-      { origin: "https://knowledge.agnex.dev", token: TOKEN },
-      null,
-      unreachableIo,
-      warn,
-    );
+  test("an unconfigured bridge runs nothing and says nothing", async () => {
+    const w = collectWarnings();
+    const result = await fetchDocument(SLUG, { home: "", cli: CLI }, null, untouchable, w.warn);
     expect(result).toEqual({ ok: false, reason: "not_configured" });
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("loopback");
+    expect(w.lines).toEqual([]);
   });
 
-  test("a configured origin with no token is the feature being off, not an auth failure", async () => {
-    // Reporting this as `unauthorised` would send the operator looking at kb's logs for a request
-    // that was never made.
-    const result = await fetchDocument(
-      "herdr-interface-anatomy",
-      { origin: ORIGIN, token: "  " },
-      null,
-      unreachableIo,
-      silent,
-    );
+  test("a relative home is refused loudly, and run never", async () => {
+    const w = collectWarnings();
+    const result = await fetchDocument(SLUG, { home: "agentry-data", cli: CLI }, null, untouchable, w.warn);
     expect(result).toEqual({ ok: false, reason: "not_configured" });
+    expect(w.lines.join("\n")).toContain("absolute");
   });
 });
 
 describe("fetchDocument — telling the failures apart", () => {
-  test("a rejected credential is NEVER reported as a missing document", async () => {
-    // kb's auth middleware runs before routing, so a bad token against a slug that does not exist
-    // answers 401, not 404 — the two can never overlap. Flattening this into "not found" is the
-    // failure that costs a debugging session: the operator goes looking for a deleted document
-    // when the real answer is that this bridge's token is stale.
-    const { io } = kbIo({
-      [kbMetadataUrl(ORIGIN, "herdr-interface-anatomy")]: kbAnswer(401, "unauthorized\n", {
-        "content-type": "text/plain; charset=utf-8",
-      }),
-    });
-    const result = await fetchDocument("herdr-interface-anatomy", settings, null, io, silent);
-    expect(result).toEqual({ ok: false, reason: "unauthorised" });
+  test("no row is a stale link", async () => {
+    expect(await fetchDocument(SLUG, settings, null, agentry(envelope([])).io, silent)).toEqual({ ok: false, reason: "not_found" });
   });
 
-  test("a credential rejected on the SECOND hop is still a misconfiguration", async () => {
-    // Reachable when kb's own secret is rotated between the two calls. It is also where a
-    // classifier that only checks auth on the first hop would fall through and report the document
-    // as corrupt — sending the operator to look at kb's filesystem over a token they just changed.
-    // The 401 body is plain text (`http.Error`), not the JSON envelope every other error uses, so
-    // anything that read the body before the status would throw here rather than answer.
-    const { io } = kbIo({
-      ...happyRoutes(),
-      [kbDocumentHtmlUrl(ORIGIN, ID)]: kbAnswer(401, "unauthorized\n", {
-        "content-type": "text/plain; charset=utf-8",
-      }),
-    });
-    await expect(
-      fetchDocument("herdr-interface-anatomy", settings, null, io, silent),
-    ).resolves.toEqual({ ok: false, reason: "unauthorised" });
+  test("agentry past its deadline is unreachable, with its own line", async () => {
+    const w = collectWarnings();
+    const result = await fetchDocument(SLUG, settings, null, agentry({ code: null, stdout: "", timedOut: true }).io, w.warn);
+    expect(result).toEqual({ ok: false, reason: "unreachable" });
+    expect(w.lines[0]).toContain(String(AGENTRY_TIMEOUT_MS));
   });
 
-  test("an authenticated 404 is a stale link and says so", async () => {
-    const { io } = kbIo({
-      [kbMetadataUrl(ORIGIN, "gone")]: kbAnswer(404, JSON.stringify({ error: "document not found" })),
-    });
-    // The one refusal a client is allowed to see plainly: the operator tapped a link to a document
-    // that has been deleted, and "no such document" is the true and actionable answer.
-    expect(await fetchDocument("gone", settings, null, io, silent)).toEqual({
-      ok: false,
-      reason: "not_found",
-    });
+  test("a binary that is not there is unreachable, never a missing document", async () => {
+    const result = await fetchDocument(SLUG, settings, null, agentry({ code: 127, stdout: "", timedOut: false }).io, silent);
+    expect(result).toEqual({ ok: false, reason: "unreachable" });
   });
 
-  test("containers being down is a throw, and never looks like a 404", async () => {
-    // Nothing listening on loopback is a refused connect — a rejected promise, not a Response — so
-    // this distinction needs no status inspection and cannot be confused with a missing document.
-    // If it were, the phone would say "not found" while the fix is `docker compose up`.
-    const refused = new Error("Unable to connect. Is the computer able to access the url?");
-    const { io } = kbIo({ [kbMetadataUrl(ORIGIN, "herdr-interface-anatomy")]: refused });
-    expect(await fetchDocument("herdr-interface-anatomy", settings, null, io, silent)).toEqual({
-      ok: false,
-      reason: "unreachable",
-    });
+  test("agentry's own error is unusable, and its message (which can quote the SQL) is not logged", async () => {
+    const w = collectWarnings();
+    const failed = { ok: false, error: { code: "USAGE", message: "syntax error near sentinel-must-not-log" } };
+    const result = await fetchDocument(SLUG, settings, null, agentry({ code: 2, stdout: JSON.stringify(failed), timedOut: false }).io, w.warn);
+    expect(result).toEqual({ ok: false, reason: "unusable" });
+    expect(w.lines.join("\n")).toContain("USAGE");
+    expect(w.lines.join("\n")).not.toContain("sentinel-must-not-log");
   });
 
-  test("a wedged container lands in the same bucket, with its own line", async () => {
-    // Alive but not answering (exhausted DB pool, lagging healthcheck) is the failure the deadline
-    // exists for. The operator has one move for both, so the reason is shared; the log line is not,
-    // because "did not answer" and "could not be reached" send you to different places.
-    const timeout = new Error("The operation timed out.");
-    timeout.name = "TimeoutError";
-    const { warn, lines } = collectWarnings();
-    const { io } = kbIo({ [kbMetadataUrl(ORIGIN, "herdr-interface-anatomy")]: timeout });
-    expect(await fetchDocument("herdr-interface-anatomy", settings, null, io, warn)).toEqual({
-      ok: false,
-      reason: "unreachable",
-    });
-    expect(lines[0]).toContain(String(KB_TIMEOUT_MS));
+  test("output that is not the envelope is unusable", async () => {
+    const result = await fetchDocument(SLUG, settings, null, agentry({ code: 0, stdout: "not json", timedOut: false }).io, silent);
+    expect(result).toEqual({ ok: false, reason: "unusable" });
   });
 
-  test("a metadata answer that is not the document contract is refused, not guessed at", async () => {
-    // A 200 whose body has no `id` cannot produce a second hop, and inventing one would build a URL
-    // out of whatever was there instead.
-    const { io } = kbIo({
-      [kbMetadataUrl(ORIGIN, "herdr-interface-anatomy")]: kbAnswer(200, JSON.stringify({ slug: "x" })),
-    });
-    expect(await fetchDocument("herdr-interface-anatomy", settings, null, io, silent)).toEqual({
-      ok: false,
-      reason: "unusable",
-    });
+  test.each([
+    ["a digest that is not hex", { html_sha256: "zz" }],
+    ["no html_path", { html_path: null }],
+    ["an empty html_path", { html_path: "" }],
+    ["a byte count that is not a count", { html_bytes: -1 }],
+    ["a slug outside the grammar", { slug: "../x" }],
+  ])("a row with %s is refused, not guessed at", async (_why, over) => {
+    const fx = agentry(envelope([row(over)]));
+    expect(await fetchDocument(SLUG, settings, null, fx.io, silent)).toEqual({ ok: false, reason: "unusable" });
+    expect(fx.reads).toEqual([]);
   });
 
-  test("an id that is not a UUID never becomes a URL", async () => {
-    // The metadata is data, exactly like the request path was. Without this the second hop's URL is
-    // assembled from a string kb happened to send.
-    const { io, calls } = kbIo({
-      [kbMetadataUrl(ORIGIN, "herdr-interface-anatomy")]: kbAnswer(
-        200,
-        metadataJson({ id: "../../healthz" }),
-      ),
-    });
-    expect(await fetchDocument("herdr-interface-anatomy", settings, null, io, silent)).toEqual({
-      ok: false,
-      reason: "unusable",
-    });
-    expect(calls).toHaveLength(1);
+  test("a document over the ceiling is refused BEFORE its file is read", async () => {
+    const fx = agentry(envelope([row({ html_bytes: MAX_DOCUMENT_BYTES + 1 })]));
+    expect(await fetchDocument(SLUG, settings, null, fx.io, silent)).toEqual({ ok: false, reason: "unusable" });
+    expect(fx.reads).toEqual([]);
   });
 
-  test("a document over the ceiling is refused BEFORE its body is asked for", async () => {
-    // kb publishes the byte count in the metadata, so an oversized document costs a 1 KB JSON
-    // answer rather than a multi-megabyte download that is then thrown away.
-    const { io, calls } = kbIo({
-      [kbMetadataUrl(ORIGIN, "huge")]: kbAnswer(
-        200,
-        metadataJson({ slug: "huge", html_size_bytes: MAX_DOCUMENT_BYTES + 1 }),
-      ),
-    });
-    expect(await fetchDocument("huge", settings, null, io, silent)).toEqual({
-      ok: false,
-      reason: "unusable",
-    });
-    expect(calls).toHaveLength(1);
+  test("bytes that do not hash to the recorded digest are not served", async () => {
+    const fx = agentry(envelope([row({ html_sha256: "0".repeat(64) })]));
+    expect(await fetchDocument(SLUG, settings, null, fx.io, silent)).toEqual({ ok: false, reason: "unusable" });
   });
 
-  test("bytes that do not hash to the advertised digest are not served", async () => {
-    // The ETag this bridge publishes is derived from kb's digest, so if the bytes disagree with it
-    // the phone caches the wrong body under a tag that keeps matching — wrong until the operator
-    // clears site data, which is not a thing anyone does from a phone.
-    const { io } = kbIo({
-      ...happyRoutes(),
-      [kbDocumentHtmlUrl(ORIGIN, ID)]: htmlAnswer(HTML.replace("Herdr", "Tampered")),
-    });
-    expect(await fetchDocument("herdr-interface-anatomy", settings, null, io, silent)).toEqual({
-      ok: false,
-      reason: "unusable",
-    });
+  test("a row whose file is gone is agentry's index ahead of its disk, not a stale link", async () => {
+    const fx = agentry(envelope([row({ html_path: "vanished.html" })]));
+    expect(await fetchDocument(SLUG, settings, null, fx.io, silent)).toEqual({ ok: false, reason: "unusable" });
   });
 
-  test("an answer that is not HTML is refused rather than relabelled", async () => {
-    // These bytes are about to be served as text/html from Collie's own origin. If kb sent JSON,
-    // saying so is better than putting an HTML content-type on it and finding out in the panel.
-    const { io } = kbIo({
-      ...happyRoutes(),
-      [kbDocumentHtmlUrl(ORIGIN, ID)]: kbAnswer(200, HTML),
-    });
-    expect(await fetchDocument("herdr-interface-anatomy", settings, null, io, silent)).toEqual({
-      ok: false,
-      reason: "unusable",
-    });
-  });
-
-  test("a body with no declared length is read chunk by chunk up to the cap", async () => {
-    // kb is Go's net/http: anything past its 4 KB write buffer goes out chunked, with no
-    // Content-Length. That is most tag lists and every full page of documents, so an answer without
-    // a length is ordinary — it is read from the stream and capped as it arrives, never buffered
-    // past the ceiling.
-    const { io } = kbIo({
-      ...happyRoutes(),
-      [kbDocumentHtmlUrl(ORIGIN, ID)]: streamedAnswer(200, HTML, "text/html; charset=utf-8"),
-    });
-    const served = await fetchDocument("herdr-interface-anatomy", settings, null, io, silent);
-    expect(served.ok).toBe(true);
-    if (served.ok && !served.unchanged) expect(served.html).toBe(HTML);
-  });
-
-  test("a streamed body that runs past the cap is dropped where it crosses it", async () => {
-    const oversized = "字".repeat(MAX_DOCUMENT_BYTES / 3 + 1024);
-    const { io } = kbIo({
-      ...happyRoutes(),
-      [kbDocumentHtmlUrl(ORIGIN, ID)]: streamedAnswer(200, oversized, "text/html; charset=utf-8"),
-    });
-    expect(await fetchDocument("herdr-interface-anatomy", settings, null, io, silent)).toEqual({
-      ok: false,
-      reason: "unusable",
-    });
-  });
-
-  test("a declared length that undersells the body does not get the body served", async () => {
-    // The declared length is a claim and the ceiling is measured against the bytes: a peer that
-    // promises 40 and sends megabytes must not be able to walk a document past the cap by lying
-    // about it. Measured in BYTES, not characters — one CJK glyph in these documents is three.
-    const oversized = "字".repeat(MAX_DOCUMENT_BYTES);
-    const { io } = kbIo({
-      ...happyRoutes(),
-      [kbDocumentHtmlUrl(ORIGIN, ID)]: {
-        status: 200,
-        headers: {
-          get: (name) =>
-            name.toLowerCase() === "content-length" ? "40" : "text/html; charset=utf-8",
-        },
-        text: async () => oversized,
-      },
-    });
-    expect(await fetchDocument("herdr-interface-anatomy", settings, null, io, silent)).toEqual({
-      ok: false,
-      reason: "unusable",
-    });
-  });
-
-  test("metadata that resolves and HTML that 404s is corruption, not a stale link", async () => {
-    // The document existed a millisecond ago, so this is kb's DB being ahead of its filesystem —
-    // its own handler names the case. Reporting it as "no such document" would send the operator
-    // looking for a link they deleted instead of at a kb that needs attention.
-    const { warn, lines } = collectWarnings();
-    const { io } = kbIo({
-      ...happyRoutes(),
-      [kbDocumentHtmlUrl(ORIGIN, ID)]: kbAnswer(404, JSON.stringify({ error: "html file missing" })),
-    });
-    expect(await fetchDocument("herdr-interface-anatomy", settings, null, io, warn)).toEqual({
-      ok: false,
-      reason: "unusable",
-    });
-    expect(lines.join(" ")).toContain("404");
+  test("bytes that are not UTF-8 are refused rather than served with replacement characters", async () => {
+    const bad = Buffer.from([0x3c, 0x70, 0x3e, 0xff, 0xfe, 0x3c, 0x2f, 0x70, 0x3e]);
+    const sha = new Bun.CryptoHasher("sha256").update(bad).digest("hex");
+    writeFileSync(join(HOME, "documents", "latin1.html"), bad);
+    const fx = agentry(envelope([row({ html_path: "latin1.html", html_sha256: sha, html_bytes: bad.byteLength })]));
+    expect(await fetchDocument(SLUG, settings, null, fx.io, silent)).toEqual({ ok: false, reason: "unusable" });
   });
 });
 
-describe("fetchDocument — the renamed slug", () => {
-  const stale = kbMetadataUrl(ORIGIN, "old-name");
-  const redirected = (canonical: string): KbAnswer =>
-    kbAnswer(308, JSON.stringify({ canonical_slug: canonical }));
-
-  test("a 308 is followed by hand, to the canonical slug, exactly once", async () => {
-    // Absorbed on a hop this module was making anyway, so a stale knowledge.agnex.dev link tapped
-    // out of months-old scrollback just works. Following it by hand rather than letting fetch do it
-    // is what keeps x-internal-token off any host a Location might name.
-    const { io, calls } = kbIo({
-      [stale]: redirected("herdr-interface-anatomy"),
-      ...happyRoutes(),
-    });
-    const result = await fetchDocument("old-name", settings, null, io, silent);
-    expect(result.ok).toBe(true);
-    if (!result.ok || result.unchanged) throw new Error("expected a served document");
-    // The CANONICAL slug comes back, not the one that was asked for — the caller cannot correct the
-    // address bar, or log the rename, with the stale one.
-    expect(result.metadata.slug).toBe("herdr-interface-anatomy");
-    expect(calls.map((c) => c.url)).toEqual([
-      stale,
-      kbMetadataUrl(ORIGIN, "herdr-interface-anatomy"),
-      kbDocumentHtmlUrl(ORIGIN, ID),
-    ]);
-  });
-
-  test("the canonical slug is re-checked against the same grammar", async () => {
-    // It arrives in a response body and goes straight back into a URL path. Trusting it because it
-    // came from kb would be the same mistake as trusting the request path because it came from a
-    // logged-in phone.
-    const { io, calls } = kbIo({ [stale]: redirected("../../healthz") });
-    expect(await fetchDocument("old-name", settings, null, io, silent)).toEqual({
-      ok: false,
-      reason: "unusable",
-    });
-    expect(calls).toHaveLength(1);
-  });
-
-  test("a 308 body with no canonical_slug is refused, not retried blindly", async () => {
-    // kb's 308 body carries only `canonical_slug` — there is no id in it, so there is no shortcut
-    // and nothing to fall back on when the field is missing.
-    const { io } = kbIo({ [stale]: kbAnswer(308, JSON.stringify({ message: "renamed" })) });
-    expect(await fetchDocument("old-name", settings, null, io, silent)).toEqual({
-      ok: false,
-      reason: "unusable",
-    });
-  });
-
-  test("a 308 that redirects to a 308 stops", async () => {
-    // Alias chains are not something kb creates; a second one means kb is behaving in a way this
-    // module has no model of, and looping forever is the one outcome that must not be possible.
-    const { io, calls } = kbIo({
-      [stale]: redirected("second-name"),
-      [kbMetadataUrl(ORIGIN, "second-name")]: redirected("third-name"),
-    });
-    expect(await fetchDocument("old-name", settings, null, io, silent)).toEqual({
-      ok: false,
-      reason: "unusable",
-    });
-    expect(calls).toHaveLength(2);
+describe("fetchDocument — the row's path stays inside the documents directory", () => {
+  // The path read is the one agentry's ROW names, never one built from the phone's slug — but a row
+  // is still data, and a row that names a path outside `documents/` (or a link out of it) must not
+  // turn this route into a reader of the rest of the disk. The target file hashes correctly on
+  // purpose: only the containment check stands between these rows and a 200.
+  test.each([
+    ["a parent-directory escape", "../secret.html"],
+    ["an absolute path", join(HOME, "secret.html")],
+    ["a symlink inside documents/ that points out of it", "linked-out.html"],
+  ])("%s is refused and never read", async (_why, htmlPath) => {
+    const fx = agentry(envelope([row({ html_path: htmlPath })]));
+    const w = collectWarnings();
+    expect(await fetchDocument(SLUG, settings, null, fx.io, w.warn)).toEqual({ ok: false, reason: "unusable" });
+    expect(fx.reads).toEqual([]);
+    expect(w.lines.join("\n")).toContain("outside the documents directory");
   });
 });
 
-// THE CREDENTIAL LEAVES THIS MODULE IN EXACTLY ONE PLACE: the x-internal-token header. Every other
-// exit — a result the route serialises, a warning that lands in the bridge's log, an error message
-// carried up from a rejection — is checked here in one sweep, because a leak is invisible until
-// somebody reads a log file they should not have to think about.
-describe("the kb token", () => {
-  test("is sent under the header kb's middleware actually matches", () => {
-    // kb matches `X-Internal-Token` and nothing else, and its auth runs before routing — so a typo
-    // in this name is indistinguishable from a wrong token, and both look like 401 on every path.
-    expect(kbHeaders(TOKEN, "application/json")).toEqual({
-      "x-internal-token": TOKEN,
-      accept: "application/json",
-    });
-  });
-
-  test("never appears in a result or a warning, on any path", async () => {
-    const answers: Record<string, KbAnswer | Error>[] = [
-      { [kbMetadataUrl(ORIGIN, "x")]: kbAnswer(401, `unauthorized ${TOKEN}\n`) },
-      { [kbMetadataUrl(ORIGIN, "x")]: kbAnswer(404, JSON.stringify({ error: TOKEN })) },
-      { [kbMetadataUrl(ORIGIN, "x")]: kbAnswer(500, JSON.stringify({ error: TOKEN })) },
-      { [kbMetadataUrl(ORIGIN, "x")]: new Error(`connect failed for ${ORIGIN} with ${TOKEN}`) },
-      { [kbMetadataUrl(ORIGIN, "x")]: kbAnswer(200, metadataJson({ slug: "x", id: TOKEN })) },
-    ];
-    for (const routes of answers) {
-      const { warn, lines } = collectWarnings();
-      const { io } = kbIo(routes);
-      const result = await fetchDocument("x", settings, null, io, warn);
-      // An upstream body is never relayed and an error's own message is never echoed: both can
-      // carry a credential, a host or an account name that this bridge has no business repeating.
-      expect(JSON.stringify(result)).not.toContain(TOKEN);
-      expect(lines.join("\n")).not.toContain(TOKEN);
-    }
+describe("isDocumentSlug covers every live agentry slug shape", () => {
+  test("a long medium-digest slug is admitted", () => {
+    expect(isDocumentSlug("google-l5-level-interview-if-you-join-10-tables-in-an-sql-query-how-would-you-optimize")).toBe(true);
   });
 });

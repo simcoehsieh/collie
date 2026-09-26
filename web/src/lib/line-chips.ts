@@ -44,7 +44,7 @@ export interface LineChips {
 /**
  * The hostnames that mean "this machine".
  *
- * Exact forms only, and the same three bridge/docs.ts's `KB_LOOPBACK_HOSTNAME` names — the point is
+ * Exact forms only (the three bridge/docs.ts once admitted for kb's loopback origin) — the point is
  * not to enumerate 127.0.0.0/8, it is that anything else is somebody else's server and gets the
  * ordinary Open chip. `[::1]` carries its brackets because that is what `URL.hostname` hands back.
  */
