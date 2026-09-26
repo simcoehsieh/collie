@@ -1,29 +1,25 @@
-import type { JsonValue } from "./json.ts";
+import type { JsonObject } from "./json.ts";
 import {
-  ask,
-  body,
+  agentryIo,
+  agentryQuery,
   defaultWarn,
   isDocumentSlug,
-  networkIo,
-  normaliseKbOrigin,
-  parseRecord,
+  sqlText,
+  type AgentryIo,
+  type AgentrySettings,
   type DocumentFailure,
-  type KbIo,
-  type KbSettings,
 } from "./docs.ts";
-import { jsonNumberField, jsonRecord, jsonStringField } from "./stt/json.ts";
+import { jsonNumberField, jsonStringField } from "./stt/json.ts";
 
-// THE BROWSER: a list and a search, through the same door bridge/docs.ts opened.
+// THE BROWSER: a list and a search, over the same store bridge/docs.ts reads.
 //
 // The document route opens ONE document whose slug an agent happened to print. That leaves every
-// document the agent did not print unreachable from the phone, and the operator's knowledge base
-// has hundreds. `GET /api/docs` answers "which documents" — kb's recent list, its search, or one
-// tag's documents — as slugs and titles the panel can draw and tap; `GET /api/docs/tags` is the
-// chip row above it. Same loopback-only origin rule, same credential discipline (the token never
-// reaches a body or a log line), same deadline. The only new thing is that a QUERY the phone typed
-// is carried to kb, and it is carried as a query PARAMETER built by `URLSearchParams`, never
-// spliced into a path — so nothing the operator types can aim the credentialled request anywhere
-// but the two endpoints named here.
+// document the agent did not print unreachable from the phone. `GET /api/docs` answers "which
+// documents" — the recent list, a search, or one tag's documents — as slugs and titles the panel
+// can draw and tap; `GET /api/docs/tags` is the chip row above it. The store is agentry's
+// `documents_latest` view since 2026-09-26 (it was kb's HTTP API before; the wire shape the phone
+// sees did not change). What the phone TYPED reaches `agentry query` only as a quoted SQL literal
+// (`sqlText`), and `agentry query` refuses anything but a read in any case.
 //
 // A separate module rather than more of docs.ts, because docs.ts is the part with the containment
 // argument in it and this part has none to make: nothing here is served as HTML, nothing is framed.
@@ -32,9 +28,9 @@ import { jsonNumberField, jsonRecord, jsonStringField } from "./stt/json.ts";
 export interface DocumentSummary {
   slug: string;
   title: string;
-  /** kb's own summary, cut to {@link SUMMARY_CAP} — a row's second line, not a page. */
+  /** The document's own summary, cut to {@link SUMMARY_CAP} — a row's second line, not a page. */
   summary?: string;
-  /** ISO-8601, from kb's `updated_at`; absent on a search hit (kb's search does not carry it). */
+  /** ISO-8601, from agentry's `updated_at`. */
   updatedAt?: string;
 }
 
@@ -44,14 +40,14 @@ export interface DocumentTag {
   count: number;
 }
 
-/** `GET /api/docs` — the list. `nextCursor` is present when kb may have more. */
+/** `GET /api/docs` — the list. `nextCursor` is present when there may be more. */
 export interface DocumentListBody {
   ok: true;
   documents: DocumentSummary[];
   nextCursor?: string;
 }
 
-/** `GET /api/docs/tags` — every tag kb knows, with counts. */
+/** `GET /api/docs/tags` — every tag a listed document carries, with counts. */
 export interface DocumentTagsBody {
   ok: true;
   tags: DocumentTag[];
@@ -59,16 +55,16 @@ export interface DocumentTagsBody {
 
 /** The most characters of a summary a row carries. */
 export const SUMMARY_CAP = 280;
-/** The most characters of a search query the bridge will carry to kb. */
+/** The most characters of a search query the bridge will carry to agentry. */
 export const QUERY_CAP = 200;
-/** The most rows one page asks kb for; kb's own ceiling is 100. */
+/** The most rows one page asks for (kb's own ceiling, kept). */
 export const LIST_LIMIT_MAX = 100;
 export const LIST_LIMIT_DEFAULT = 30;
 
 /**
- * kb's tag paths are ltree labels: `[a-z0-9_]`, dotted. Checked as an allowlist for the reason the
- * slug is — the value is a query parameter, so it cannot escape the URL, but a tag that fails this
- * grammar is one kb will refuse anyway, and refusing it here costs no round trip.
+ * Tag paths are kb's ltree labels, carried into agentry as they were: `[a-z0-9_]`, dotted. Checked
+ * as an allowlist for the reason the slug is — the value is quoted into SQL, and a tag that fails
+ * this grammar is one no document carries, so refusing it here costs nothing.
  */
 export const TAG_PATTERN = "^[a-z0-9_]+(\\.[a-z0-9_]+)*$";
 
@@ -88,7 +84,7 @@ export interface DocumentQuery {
   /** A tag path, or empty. */
   tag: string;
   limit: number;
-  /** kb's page number for the list; ignored by search, which has no paging. */
+  /** The page number for the list; ignored by search, which has no paging. */
   page: number;
 }
 
@@ -118,23 +114,47 @@ export function normaliseDocumentQuery(params: URLSearchParams): DocumentQuery |
   return { q, tag, limit, page };
 }
 
-/** The URL of the kb call that answers `query`. Exported so the test can pin what is sent. */
-export function kbListUrl(origin: string, query: DocumentQuery): string {
-  const params = new URLSearchParams();
-  params.set("limit", String(query.limit));
-  if (query.q !== "") {
-    params.set("q", query.q);
-    if (query.tag !== "") params.set("tag", query.tag);
-    return `${origin}/api/search?${params.toString()}`;
-  }
-  if (query.tag !== "") params.set("tag", query.tag);
-  if (query.page > 0) params.set("page", String(query.page));
-  return `${origin}/api/documents?${params.toString()}`;
+/**
+ * The filter every browsing query shares: drafts stay out of the list, the search and the tag
+ * counts, as they did in kb (`lifecycle_status = 'knowledge'`). A draft still OPENS by slug.
+ */
+const LISTED = "coalesce(kb_status, '') <> 'draft'";
+
+/**
+ * A tag and its descendants, the way kb's ltree `<@` counted them: `database` matches `database`
+ * and `database.pgvector`, never `databases`. `tag` must already have passed {@link TAG_PATTERN}.
+ */
+function tagClause(tag: string): string {
+  return `EXISTS (SELECT 1 FROM unnest(tags) AS u(t) WHERE t = ${sqlText(tag)} OR starts_with(t, ${sqlText(`${tag}.`)}))`;
 }
 
-export function kbTagsUrl(origin: string): string {
-  return `${origin}/api/tags`;
+/**
+ * The SQL that answers `query`. Exported so the test can pin what is run.
+ *
+ * kb searched its chunks by keyword and by (never-populated) embeddings; agentry keeps no text of
+ * the HTML in a queryable column, so a search here is a case-insensitive substring over the title,
+ * the summary, the slug and the tags. Every value the phone sent reaches the SQL through
+ * {@link sqlText} or as a number the query normaliser already bounded.
+ */
+export function documentListSql(query: DocumentQuery): string {
+  const where = [LISTED];
+  if (query.tag !== "") where.push(tagClause(query.tag));
+  if (query.q !== "") {
+    const needle = sqlText(query.q.toLowerCase());
+    where.push(
+      `(contains(lower(title), ${needle}) OR contains(lower(coalesce(summary, '')), ${needle}) ` +
+        `OR contains(slug, ${needle}) OR list_contains(tags, ${needle}))`,
+    );
+  }
+  const offset = query.q === "" ? query.page * query.limit : 0;
+  return (
+    "SELECT slug, title, summary, epoch_ms(updated_at) AS updated_ms FROM documents_latest " +
+    `WHERE ${where.join(" AND ")} ORDER BY updated_at DESC, slug LIMIT ${String(query.limit)} OFFSET ${String(offset)}`
+  );
 }
+
+/** The SQL behind the tag chips: every listed document's tags, counted on this side. */
+export const TAGS_SQL = `SELECT tags FROM documents_latest WHERE ${LISTED}`;
 
 export type DocumentListResult =
   | { ok: true; body: DocumentListBody }
@@ -144,25 +164,8 @@ export type DocumentTagsResult =
   | { ok: true; body: DocumentTagsBody }
   | { ok: false; reason: DocumentFailure };
 
-/** The largest list answer worth reading: a hundred rows of metadata with summaries. */
-export const MAX_LIST_BYTES = 1024 * 1024;
-
-function settings(kb: KbSettings, warn: (message: string) => void): { origin: string; token: string } | null {
-  const origin = normaliseKbOrigin(kb.origin);
-  const token = kb.token.trim();
-  if (origin === null || token === "") {
-    if (kb.origin.trim() !== "" && origin === null) {
-      warn("ignoring the configured document origin — it must be a loopback base URL with no path");
-    }
-    return null;
-  }
-  return { origin, token };
-}
-
-/** One row of kb's list or search answer, believed field by field, or null when it is not one. */
-function readSummary(value: JsonValue): DocumentSummary | null {
-  const record = jsonRecord(value);
-  if (record === null) return null;
+/** One row of the list or search answer, believed field by field, or null when it is not one. */
+function readSummary(record: JsonObject): DocumentSummary | null {
   const slug = jsonStringField(record.slug);
   if (slug === null || !isDocumentSlug(slug)) return null;
   const title = jsonStringField(record.title) ?? "";
@@ -171,80 +174,65 @@ function readSummary(value: JsonValue): DocumentSummary | null {
   if (summary !== null && summary.trim() !== "") {
     row.summary = summary.length > SUMMARY_CAP ? `${summary.slice(0, SUMMARY_CAP - 1)}…` : summary;
   }
-  const updatedAt = jsonStringField(record.updated_at);
-  if (updatedAt !== null) row.updatedAt = updatedAt;
+  // Epoch milliseconds, turned into ISO-8601 here: DuckDB prints a TIMESTAMPTZ in the session's
+  // zone with a space for the `T`, which Safari's `Date` has refused to parse before.
+  const updatedMs = jsonNumberField(record.updated_ms);
+  if (updatedMs !== null && Number.isFinite(updatedMs)) row.updatedAt = new Date(updatedMs).toISOString();
   return row;
 }
 
-/** kb's `{results: [...]}` envelope, or null when the answer is not one. */
-async function results(
-  answer: Awaited<ReturnType<KbIo["fetch"]>>,
-  warn: (message: string) => void,
-): Promise<JsonValue[] | null> {
-  if (answer.status !== 200) return null;
-  const text = await body(answer, MAX_LIST_BYTES);
-  if (text === null) return null;
-  const record = parseRecord(text);
-  const rows = record === null ? null : record.results;
-  if (!Array.isArray(rows)) {
-    warn("kb answered a list with something that is not `{results: [...]}`");
-    return null;
-  }
-  return rows;
-}
-
 /**
- * The documents kb lists for `query`, over loopback.
+ * The documents agentry lists for `query`.
  *
  * Total, like `fetchDocument`: every failure is a `reason`. A row that does not parse is DROPPED
- * rather than failing the page — one odd record in kb must not blank the browser.
+ * rather than failing the page — one odd record must not blank the browser.
  */
 export async function listDocuments(
   query: DocumentQuery,
-  kb: KbSettings,
-  io: KbIo = networkIo,
+  settings: AgentrySettings,
+  io: AgentryIo = agentryIo,
   warn: (message: string) => void = defaultWarn,
 ): Promise<DocumentListResult> {
-  const conf = settings(kb, warn);
-  if (conf === null) return { ok: false, reason: "not_configured" };
-  const hop = await ask(kbListUrl(conf.origin, query), conf.token, "application/json", io, warn);
-  if (!hop.ok) return hop;
-  const rows = await results(hop.answer, warn);
-  if (rows === null) return { ok: false, reason: "unusable" };
+  const answer = await agentryQuery(documentListSql(query), settings, io, warn);
+  if (!answer.ok) return answer;
   const documents: DocumentSummary[] = [];
-  for (const item of rows) {
+  for (const item of answer.rows) {
     const row = readSummary(item);
     if (row !== null) documents.push(row);
   }
   const out: DocumentListBody = { ok: true, documents };
-  // kb pages the LIST by number and offers nothing past the last page but an empty one; a full page
-  // is the only signal there may be more. Search is unpaged.
-  if (query.q === "" && rows.length >= query.limit) out.nextCursor = String(query.page + 1);
+  // A full page is the only signal there may be more. Search is unpaged, as it was in kb.
+  if (query.q === "" && answer.rows.length >= query.limit) out.nextCursor = String(query.page + 1);
   return { ok: true, body: out };
 }
 
-/** Every tag kb knows, with counts, most-used first. */
+/**
+ * Every tag a listed document carries, with counts, most-used first. A document tagged
+ * `database.pgvector` also counts under `database` — kb's `<@` — and once per document however
+ * many of its tags sit under the same parent.
+ */
 export async function listTags(
-  kb: KbSettings,
-  io: KbIo = networkIo,
+  settings: AgentrySettings,
+  io: AgentryIo = agentryIo,
   warn: (message: string) => void = defaultWarn,
 ): Promise<DocumentTagsResult> {
-  const conf = settings(kb, warn);
-  if (conf === null) return { ok: false, reason: "not_configured" };
-  const hop = await ask(kbTagsUrl(conf.origin), conf.token, "application/json", io, warn);
-  if (!hop.ok) return hop;
-  const rows = await results(hop.answer, warn);
-  if (rows === null) return { ok: false, reason: "unusable" };
+  const answer = await agentryQuery(TAGS_SQL, settings, io, warn);
+  if (!answer.ok) return answer;
   const tagPattern = new RegExp(TAG_PATTERN, "u");
-  const tags: DocumentTag[] = [];
-  for (const item of rows) {
-    const row = jsonRecord(item);
-    if (row === null) continue;
-    const path = jsonStringField(row.path);
-    if (path === null || !tagPattern.test(path)) continue;
-    const count = jsonNumberField(row.doc_count) ?? 0;
-    tags.push({ path, count });
+  const counts = new Map<string, number>();
+  for (const row of answer.rows) {
+    const list = row.tags;
+    if (!Array.isArray(list)) continue;
+    const mine = new Set<string>();
+    for (const value of list) {
+      const path = jsonStringField(value);
+      if (path === null || !tagPattern.test(path)) continue;
+      const labels = path.split(".");
+      for (let i = 1; i <= labels.length; i++) mine.add(labels.slice(0, i).join("."));
+    }
+    for (const path of mine) counts.set(path, (counts.get(path) ?? 0) + 1);
   }
+  const tags: DocumentTag[] = [...counts].map(([path, count]) => ({ path, count }));
   tags.sort((a, b) => b.count - a.count || a.path.localeCompare(b.path));
   return { ok: true, body: { ok: true, tags } };
 }

@@ -191,7 +191,8 @@ export function ArtifactRoute() {
                 onClick={() => window.open(`/api/doc/${encodeURIComponent(artifact.kbSlug ?? "")}`, "_blank", "noopener,noreferrer")}
               >
                 <BookOpen className="size-3" aria-hidden />
-                kb
+                {/* FORK: the archive's name, a proper noun like the "kb" it replaced (2026-09-26). */}
+                Alfred
               </button>
             )}
             {versions.length > 1 && (

@@ -60,7 +60,15 @@ function spawnPiped(argv: readonly string[]) {
   return Bun.spawn([...argv], { stdin: "ignore", stdout: "pipe", stderr: "ignore", env: process.env });
 }
 
-export async function runQuotaCommand(argv: readonly string[], deadlineMs: number): Promise<QuotaRun> {
+/**
+ * Run `argv` under a deadline and a stdout cap. `cap` defaults to the quota command's; bridge/docs.ts
+ * reuses this runner for `agentry query` with its own.
+ */
+export async function runQuotaCommand(
+  argv: readonly string[],
+  deadlineMs: number,
+  cap: number = QUOTA_OUTPUT_CAP,
+): Promise<QuotaRun> {
   let proc: ReturnType<typeof spawnPiped>;
   try {
     proc = spawnPiped(argv);
@@ -82,7 +90,7 @@ export async function runQuotaCommand(argv: readonly string[], deadlineMs: numbe
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > QUOTA_OUTPUT_CAP) {
+      if (size > cap) {
         capped = true;
         proc.kill();
         break;

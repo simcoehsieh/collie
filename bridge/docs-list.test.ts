@@ -1,60 +1,39 @@
 import { describe, expect, test } from "bun:test";
 
-import type { KbAnswer, KbIo, KbRequestInit } from "./docs.ts";
-import type { JsonValue } from "./json.ts";
+import type { AgentryIo } from "./docs.ts";
+import type { QuotaRun } from "./quota.ts";
 import {
   LIST_LIMIT_DEFAULT,
   LIST_LIMIT_MAX,
   QUERY_CAP,
   SUMMARY_CAP,
-  kbListUrl,
+  TAGS_SQL,
+  documentListSql,
   listDocuments,
   listTags,
   normaliseDocumentQuery,
 } from "./docs-list.ts";
 
-// The browser's two proxies. Everything runs through the injected `KbIo`, so nothing opens a
-// socket; the token is a sentinel so the last test can prove it never reaches a body.
+// The browser's two reads. `agentry query` is replaced by a scripted `run` that records the SQL it
+// was handed, so every case can assert both what was asked and what came back.
 
-const TOKEN = "sentinel-token-must-never-escape";
-const ORIGIN = "http://127.0.0.1:8082";
-const KB = { origin: ORIGIN, token: TOKEN };
+const STORE = { home: "/Users/op/agentry-data", cli: "/Users/op/.local/bin/agentry" };
 
-function answer(status: number, json: JsonValue): KbAnswer {
-  const text = JSON.stringify(json);
-  const headers = new Map<string, string>([
-    ["content-length", String(Buffer.byteLength(text, "utf8"))],
-    ["content-type", "application/json; charset=utf-8"],
-  ]);
-  return { status, headers: { get: (name) => headers.get(name.toLowerCase()) ?? null }, text: async () => text };
+function envelope(rows: object[]): QuotaRun {
+  return { code: 0, stdout: JSON.stringify({ ok: true, data: rows }), timedOut: false };
 }
 
-/** kb past Go's 4 KB write buffer: chunked, no Content-Length, bytes on a stream. */
-function chunkedAnswer(status: number, json: JsonValue): KbAnswer {
-  const bytes = Buffer.from(JSON.stringify(json), "utf8");
-  let offset = 0;
-  const body = new ReadableStream<Uint8Array>({
-    pull(controller) {
-      if (offset >= bytes.byteLength) return controller.close();
-      controller.enqueue(new Uint8Array(bytes.subarray(offset, offset + 4096)));
-      offset += 4096;
+function fakeAgentry(reply: (sql: string) => QuotaRun): AgentryIo & { sql: string[] } {
+  const sql: string[] = [];
+  return {
+    sql,
+    run: async (argv) => {
+      const text = argv[argv.length - 1] ?? "";
+      sql.push(text);
+      return reply(text);
     },
-  });
-  return {
-    status,
-    headers: { get: (name) => (name.toLowerCase() === "content-type" ? "application/json; charset=utf-8" : null) },
-    text: async () => bytes.toString("utf8"),
-    body,
-  };
-}
-
-function fakeKb(reply: (url: string, init: KbRequestInit) => KbAnswer): KbIo & { calls: { url: string; init: KbRequestInit }[] } {
-  const calls: { url: string; init: KbRequestInit }[] = [];
-  return {
-    calls,
-    fetch: async (url, init) => {
-      calls.push({ url, init });
-      return reply(url, init);
+    read: async () => {
+      throw new Error("the browser reads no document file");
     },
   };
 }
@@ -85,113 +64,99 @@ describe("normaliseDocumentQuery", () => {
   });
 });
 
-describe("kbListUrl", () => {
-  test("a query goes to search, with the tag alongside; no query goes to the list with a page", () => {
-    expect(kbListUrl(ORIGIN, { q: "a b", tag: "ai", limit: 10, page: 0 })).toBe(`${ORIGIN}/api/search?limit=10&q=a+b&tag=ai`);
-    expect(kbListUrl(ORIGIN, { q: "", tag: "ai", limit: 10, page: 2 })).toBe(`${ORIGIN}/api/documents?limit=10&tag=ai&page=2`);
-    expect(kbListUrl(ORIGIN, { q: "", tag: "", limit: 30, page: 0 })).toBe(`${ORIGIN}/api/documents?limit=30`);
+describe("documentListSql", () => {
+  test("the recent list: drafts out, newest first, paged by OFFSET", () => {
+    expect(documentListSql({ q: "", tag: "", limit: 30, page: 2 })).toBe(
+      "SELECT slug, title, summary, epoch_ms(updated_at) AS updated_ms FROM documents_latest " +
+        "WHERE coalesce(kb_status, '') <> 'draft' ORDER BY updated_at DESC, slug LIMIT 30 OFFSET 60",
+    );
   });
 
-  test("a query is a parameter, so a path-shaped one cannot leave the endpoint", () => {
-    const url = kbListUrl(ORIGIN, { q: "../../healthz?x", tag: "", limit: 5, page: 0 });
-    expect(new URL(url).pathname).toBe("/api/search");
+  test("a tag matches itself and its descendants, the way kb's ltree <@ did", () => {
+    const sql = documentListSql({ q: "", tag: "database", limit: 10, page: 0 });
+    expect(sql).toContain("t = 'database' OR starts_with(t, 'database.')");
+  });
+
+  test("a search is a lower-cased substring over title, summary, slug and tags, and is unpaged", () => {
+    const sql = documentListSql({ q: "Herdr", tag: "", limit: 10, page: 3 });
+    expect(sql).toContain("contains(lower(title), 'herdr')");
+    expect(sql).toContain("contains(lower(coalesce(summary, '')), 'herdr')");
+    expect(sql).toContain("contains(slug, 'herdr')");
+    expect(sql).toContain("list_contains(tags, 'herdr')");
+    expect(sql).toEndWith("LIMIT 10 OFFSET 0");
+  });
+
+  test("what the phone typed stays inside its literal — a quote cannot end it", () => {
+    const sql = documentListSql({ q: "x') OR 1=1 --", tag: "", limit: 5, page: 0 });
+    expect(sql).toContain("'x'') or 1=1 --'");
+    expect(sql).not.toContain("'x')");
   });
 });
 
 describe("listDocuments", () => {
-  test("rows are read field by field; a summary is capped; a search hit carries no date", async () => {
-    const io = fakeKb(() =>
-      answer(200, {
-        results: [
-          { slug: "a-doc", title: "A", summary: "s".repeat(SUMMARY_CAP + 10), updated_at: "2026-09-06T13:46:34Z" },
-          { slug: "b-doc", title: "B" },
-          { slug: "Bad Slug", title: "dropped" },
-          "not a record",
-        ],
-      }),
+  test("rows are read field by field; a summary is capped; the date becomes ISO-8601", async () => {
+    const io = fakeAgentry(() =>
+      envelope([
+        { slug: "a-doc", title: "A", summary: "s".repeat(SUMMARY_CAP + 10), updated_ms: Date.parse("2026-09-06T13:46:34Z") },
+        { slug: "b-doc", title: "B", summary: null, updated_ms: null },
+        { slug: "Bad Slug", title: "dropped" },
+      ]),
     );
-    const res = await listDocuments({ q: "", tag: "", limit: 30, page: 0 }, KB, io, () => {});
+    const res = await listDocuments({ q: "", tag: "", limit: 30, page: 0 }, STORE, io, () => {});
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.body.documents).toHaveLength(2);
     expect(res.body.documents[0]?.slug).toBe("a-doc");
     expect(res.body.documents[0]?.summary?.length).toBe(SUMMARY_CAP);
-    expect(res.body.documents[0]?.updatedAt).toBe("2026-09-06T13:46:34Z");
+    expect(res.body.documents[0]?.updatedAt).toBe("2026-09-06T13:46:34.000Z");
     expect(res.body.documents[1]).toEqual({ slug: "b-doc", title: "B" });
     expect(res.body.nextCursor).toBeUndefined();
-    expect(io.calls[0]?.init.headers["x-internal-token"]).toBe(TOKEN);
-    expect(io.calls[0]?.init.redirect).toBe("manual");
+    expect(io.sql).toEqual([documentListSql({ q: "", tag: "", limit: 30, page: 0 })]);
   });
 
   test("a full page of the list offers the next cursor; a search never does", async () => {
     const rows = Array.from({ length: 5 }, (_, i) => ({ slug: `d-${i}`, title: `${i}` }));
-    const io = fakeKb(() => answer(200, { results: rows }));
-    const list = await listDocuments({ q: "", tag: "", limit: 5, page: 1 }, KB, io, () => {});
+    const io = fakeAgentry(() => envelope(rows));
+    const list = await listDocuments({ q: "", tag: "", limit: 5, page: 1 }, STORE, io, () => {});
     expect(list.ok && list.body.nextCursor).toBe("2");
-    const search = await listDocuments({ q: "x", tag: "", limit: 5, page: 0 }, KB, io, () => {});
+    const search = await listDocuments({ q: "x", tag: "", limit: 5, page: 0 }, STORE, io, () => {});
     expect(search.ok && search.body.nextCursor).toBeUndefined();
   });
 
-  test("off when nothing is configured, without dialling", async () => {
-    const io = fakeKb(() => answer(200, { results: [] }));
-    expect(await listDocuments({ q: "", tag: "", limit: 5, page: 0 }, { origin: "", token: "" }, io)).toEqual({
+  test("off when nothing is configured, without running agentry", async () => {
+    const io = fakeAgentry(() => envelope([]));
+    expect(await listDocuments({ q: "", tag: "", limit: 5, page: 0 }, { home: "", cli: STORE.cli }, io)).toEqual({
       ok: false,
       reason: "not_configured",
     });
-    expect(io.calls).toHaveLength(0);
+    expect(io.sql).toHaveLength(0);
   });
 
-  test("kb's 401 is the bridge's own misconfiguration, and the token is not in the warning", async () => {
-    const warnings: string[] = [];
-    const io = fakeKb(() => answer(401, { error: "unauthorized" }));
-    const res = await listDocuments({ q: "", tag: "", limit: 5, page: 0 }, KB, io, (m) => warnings.push(m));
-    expect(res).toEqual({ ok: false, reason: "unauthorised" });
-    expect(warnings.join("\n")).not.toContain(TOKEN);
-  });
-
-  test("an answer that is not the envelope is unusable, and a throw is unreachable", async () => {
-    const odd = fakeKb(() => answer(200, { documents: [] }));
-    expect(await listDocuments({ q: "", tag: "", limit: 5, page: 0 }, KB, odd, () => {})).toEqual({ ok: false, reason: "unusable" });
-    const down: KbIo = {
-      fetch: async () => {
-        throw new Error("ECONNREFUSED");
-      },
-    };
-    expect(await listDocuments({ q: "", tag: "", limit: 5, page: 0 }, KB, down, () => {})).toEqual({ ok: false, reason: "unreachable" });
+  test("agentry's error is unusable; a deadline is unreachable", async () => {
+    const failed = fakeAgentry(() => ({ code: 2, stdout: JSON.stringify({ ok: false, error: { code: "USAGE" } }), timedOut: false }));
+    expect(await listDocuments({ q: "", tag: "", limit: 5, page: 0 }, STORE, failed, () => {})).toEqual({ ok: false, reason: "unusable" });
+    const slow = fakeAgentry(() => ({ code: null, stdout: "", timedOut: true }));
+    expect(await listDocuments({ q: "", tag: "", limit: 5, page: 0 }, STORE, slow, () => {})).toEqual({ ok: false, reason: "unreachable" });
   });
 });
 
 describe("listTags", () => {
-  test("a chunked tag list — no Content-Length, the ordinary case past 4 KB — is read", async () => {
-    // Measured 2026-09-10: the live kb's tag list is ~10 KB and goes out chunked, and was refused as
-    // "unusable" while a three-row search beside it, under Go's write buffer, came through.
-    const rows = Array.from({ length: 300 }, (_, n) => ({ path: `tag_${n}`, doc_count: n }));
-    const io = fakeKb(() => chunkedAnswer(200, { results: rows }));
-    const got = await listTags(KB, io, () => {});
-    expect(got.ok).toBe(true);
-    if (got.ok) {
-      expect(got.body.tags).toHaveLength(300);
-      expect(got.body.tags[0]).toEqual({ path: "tag_299", count: 299 });
-    }
-  });
-
-  test("tags come back most-used first, with an ill-formed path dropped", async () => {
-    const io = fakeKb(() =>
-      answer(200, {
-        results: [
-          { path: "ai", doc_count: 4 },
-          { path: "ai_agent", doc_count: 20 },
-          { path: "Bad-Tag", doc_count: 99 },
-          { path: "airflow" },
-        ],
-      }),
+  test("a document counts once under each tag and each ancestor of one, most-used first", async () => {
+    const io = fakeAgentry(() =>
+      envelope([
+        { tags: ["database.pgvector", "database.postgres", "ai"] },
+        { tags: ["database"] },
+        { tags: ["ai", "Bad-Tag"] },
+        { tags: null },
+      ]),
     );
-    const res = await listTags(KB, io, () => {});
+    const res = await listTags(STORE, io, () => {});
     expect(res.ok && res.body.tags).toEqual([
-      { path: "ai_agent", count: 20 },
-      { path: "ai", count: 4 },
-      { path: "airflow", count: 0 },
+      { path: "ai", count: 2 },
+      { path: "database", count: 2 },
+      { path: "database.pgvector", count: 1 },
+      { path: "database.postgres", count: 1 },
     ]);
-    expect(io.calls[0]?.url).toBe(`${ORIGIN}/api/tags`);
+    expect(io.sql).toEqual([TAGS_SQL]);
   });
 });

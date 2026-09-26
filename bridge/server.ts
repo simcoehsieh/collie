@@ -45,7 +45,15 @@ import { diffPatch, diffStat } from "./diff.ts";
 import { fileView } from "./file-view.ts";
 import { previewResponseHeaders, readPreview } from "./preview.ts";
 import { listDirs, resolveWithinRoots, type DirsBody } from "./dirs.ts";
-import { documentResponseHeaders, documentSlugFromPath, fetchDocument, type DocumentFailure, DOCUMENT_CSP } from "./docs.ts";
+import {
+  documentResponseHeaders,
+  documentSlugFromPath,
+  fetchDocument,
+  normaliseAgentry,
+  type AgentrySettings,
+  type DocumentFailure,
+  DOCUMENT_CSP,
+} from "./docs.ts";
 import {
   ARTIFACT_TAG,
   type ArtifactInput,
@@ -511,7 +519,7 @@ export function operatorFontResponse(
 }
 
 /**
- * `GET /api/doc/<slug>` — one of the operator's knowledge-base documents, served from Collie's own
+ * `GET /api/doc/<slug>` — one of the operator's archived documents (agentry), served from Collie's own
  * origin so a link an agent printed can open in a panel instead of throwing the operator out of the
  * PWA.
  *
@@ -525,8 +533,9 @@ export function operatorFontResponse(
  * this response inherits none: reusing this file's {@link CSP} would end in `frame-ancestors 'none'`
  * and block Collie's own panel, showing a blank frame with nothing in the log to explain it.
  *
- * `html === null` is the conditional-request answer — the bytes were never fetched from kb at all,
- * because the ETag comes from a digest the metadata call already carried.
+ * `html === null` is the conditional-request answer — the file was never read at all, because the
+ * ETag comes from the digest agentry's row already carried. (The name is kb's, from before the
+ * archive moved to agentry on 2026-09-26; the tests and the fork's merge notes know it by it.)
  */
 export function kbDocumentResponse(html: string | null, etag: string): Response {
   const headers = documentResponseHeaders(etag);
@@ -666,7 +675,7 @@ export function bridgeConfigBody(opts: {
    * Same omit-when-empty rule as `operatorCommands`.
    *
    * Published ONLY when the bridge can actually answer — the caller passes these through solely if
-   * `kbOrigin` and `kbToken` are both set. The client classifies a link as openable-in-app purely
+   * `agentryHome` is set. The client classifies a link as openable-in-app purely
    * from this list, so publishing a host a misconfigured bridge would 404 turns "the panel is off"
    * into "the panel is broken", and the operator cannot tell those apart from the phone.
    */
@@ -1186,8 +1195,8 @@ export function startServer(opts: {
         textTypes: [...TEXT_EXTS, ...cfg.uploadExtraTypes],
       },
       // Gated on the bridge being ABLE to serve a document, not merely on the hostnames being
-      // named — see the field's own comment. Both halves of the credential must be present.
-      docHosts: cfg.kbOrigin !== "" && cfg.kbToken !== "" ? cfg.docHosts : undefined,
+      // named — see the field's own comment.
+      docHosts: normaliseAgentry(agentrySettings(cfg)) !== null ? cfg.docHosts : undefined,
       quota: quota !== null ? true : undefined,
       shot: shot !== null ? true : undefined,
     });
@@ -2691,15 +2700,15 @@ export function startServer(opts: {
       if ((pathname === "/api/docs" || pathname === "/api/docs/tags") && req.method === "GET") {
         const denied = guard(req, cfg, "read", pairing);
         if (denied) return denied;
-        const kb = { origin: cfg.kbOrigin, token: cfg.kbToken };
+        const store = agentrySettings(cfg);
         const ae = req.headers.get("accept-encoding");
         if (pathname === "/api/docs/tags") {
-          const tags = await listTags(kb);
+          const tags = await listTags(store);
           return tags.ok ? json(tags.body, ae) : docsRefusal(tags.reason);
         }
         const query = normaliseDocumentQuery(url.searchParams);
         if (query === null) return text("bad query", 400);
-        const list = await listDocuments(query, kb);
+        const list = await listDocuments(query, store);
         return list.ok ? json(list.body, ae) : docsRefusal(list.reason);
       }
 
@@ -2710,15 +2719,13 @@ export function startServer(opts: {
         const doc =
           slug === null
             ? ({ ok: false, reason: "bad_slug" } as const)
-            : await fetchDocument(slug, { origin: cfg.kbOrigin, token: cfg.kbToken }, req.headers.get("if-none-match"));
+            : await fetchDocument(slug, agentrySettings(cfg), req.headers.get("if-none-match"));
         if (!doc.ok) {
           // ONE answer for the three refusals a client could otherwise probe the store with — a slug
           // that fails the grammar, a document that is not there, and a bridge that serves no
-          // documents at all. The rest are 503 because they are THIS side's fault and the operator's
-          // next move differs: restart the containers, or fix the token. `unauthorised` is
-          // deliberately NOT a 403 — it is not the phone's authorisation that failed but the
-          // bridge's own, and a 403 would send the operator off to re-pair a device over a value in
-          // their own .env.
+          // documents at all. The rest are 503 because they are THIS side's fault: agentry would not
+          // run or answer, or its row and its file disagree — a fix on this machine, never on the
+          // phone.
           const missing =
             doc.reason === "bad_slug" || doc.reason === "not_found" || doc.reason === "not_configured";
           return missing
@@ -3135,6 +3142,11 @@ function quotaRefusal(reason: QuotaFailure): string {
     default:
       return "the quota command failed";
   }
+}
+
+/** FORK: where the document panel reads the archive, as this config states it. */
+function agentrySettings(cfg: Config): AgentrySettings {
+  return { home: cfg.agentryHome, cli: cfg.agentryCli };
 }
 
 function docsRefusal(reason: DocumentFailure): Response {

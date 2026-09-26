@@ -65,8 +65,8 @@ const KEYS = [
   // `loadConfig()` results than CI does.
   "COLLIE_DIR_ROOTS",
   "COLLIE_DOC_HOSTS",
-  "COLLIE_KB_ORIGIN",
-  "COLLIE_KB_TOKEN",
+  "COLLIE_AGENTRY_HOME",
+  "COLLIE_AGENTRY_CLI",
   // FORK: the usage card's command, for the same reason.
   "COLLIE_QUOTA_COMMAND",
 ];

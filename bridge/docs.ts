@@ -1,16 +1,32 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
+
 import type { JsonObject, JsonValue } from "./json.ts";
+import { containedRealpath } from "./journal/files.ts";
+import { runQuotaCommand, type QuotaRun } from "./quota.ts";
 // Three generic readers for a field of an untrusted JSON object. They live under `stt/` because
 // speech-to-text was their first caller, not because they know anything about it — and they are the
 // readers named in .oxlintrc.json's `no-runtime-typeof` boundary override, so reusing them is also
-// what keeps this file's parse of kb's JSON lint-clean without widening that list.
+// what keeps this file's parse of agentry's JSON lint-clean without widening that list.
 import { jsonNumberField, jsonRecord, jsonStringField } from "./stt/json.ts";
 
-// Serving ONE of the operator's knowledge-base documents from Collie's own origin, so a link an
-// agent printed in the mirror can open in a panel beside the terminal instead of throwing the
-// operator out of the PWA.
+// Serving ONE of the operator's archived documents from Collie's own origin, so a link an agent
+// printed in the mirror can open in a panel beside the terminal instead of throwing the operator
+// out of the PWA.
 //
-// ── WHY THIS IS A PROXY AND NOT AN IFRAME OF THE REAL SITE ───────────────────────────────────────
-// The obvious build is `<iframe src="https://knowledge.agnex.dev/d/…">` and it cannot work. Six
+// ── WHERE THE DOCUMENTS LIVE (2026-09-26: agentry, not kb) ───────────────────────────────────────
+// The archive used to be the knowledge system ("kb", a Go API on 127.0.0.1:8082) and this module
+// was a credentialled loopback proxy to it. kb is being shut down; its documents now live in
+// agentry: one row per slug in the `documents_latest` view (title, summary, tags, `html_path`,
+// `html_sha256`, `html_bytes`) and the bytes at `$AGENTRY_HOME/documents/<html_path>`. Alfred
+// (agentry's web front, alfred.agnex.dev) serves the same files, but every request it answers is
+// gated on a Cloudflare Access JWT — loopback included — so there is no door on it this bridge
+// could knock on without holding an Access credential. Reading agentry's own store is the one that
+// needs nothing: `agentry query` for the row, the file for the bytes.
+//
+// ── WHY THIS IS SERVED FROM COLLIE'S ORIGIN AND NOT AN IFRAME OF THE REAL SITE ─────────────────────
+// The obvious build is `<iframe src="https://alfred.agnex.dev/d/…">` and it cannot work. Six
 // representative targets were MEASURED and all six refuse framing outright (github.com,
 // developer.mozilla.org, docs.anthropic.com, news.ycombinator.com, stackoverflow.com, and the
 // operator's own knowledge.agnex.dev). The operator's own services are worse than the strangers':
@@ -18,32 +34,30 @@ import { jsonNumberField, jsonRecord, jsonStringField } from "./stt/json.ts";
 // would be handed the Access LOGIN page — which itself refuses framing. There is no header this
 // repo can set that fixes somebody else's `X-Frame-Options`.
 //
-// Same-origin is what buys the four things the feature needs: Collie controls the framing headers,
-// the Access cookie is first-party so the existing device auth is unchanged, the app's own
-// `default-src 'self'` already permits a same-origin frame with no policy weakened, and loopback
-// bypasses Cloudflare entirely so no service token exists to leak.
+// Same-origin is what buys the three things the feature needs: Collie controls the framing headers,
+// the Access cookie is first-party so the existing device auth is unchanged, and the app's own
+// `default-src 'self'` already permits a same-origin frame with no policy weakened.
 //
-// ── THE OUTBOUND CALL, WHICH CLAUDE.md OTHERWISE FORBIDS ─────────────────────────────────────────
-// "The bridge makes no outbound call … unless the operator ran `collie stt setup`" — this is the
-// second seam of that shape, and it is granted the same three defences rather than an exemption:
-// the call is DECLINED BY DOING NOTHING (no origin configured, no route), it opens no egress
-// (`normaliseKbOrigin` refuses anything but a loopback host, so a mistyped `COLLIE_KB_ORIGIN`
-// cannot turn the bridge into an open proxy for the wider internet), and the credential it carries
-// never leaves the machine. Every failure below is careful never to put that credential in a body
-// or a log line.
+// ── THE SLUG NEVER BECOMES A PATH ───────────────────────────────────────────────────────────────
+// CLAUDE.md allows a client-supplied value to become a path in exactly two places (the journal and
+// the Changes view), and this is not a third, by the shape `GET /api/fonts/<basename>` uses: the
+// slug is LOOKED UP in agentry's rows, and the path read is the one THAT ROW names — a slug nobody
+// wrote is refused before any path exists. The row's path then goes through `containedRealpath`
+// against the documents directory anyway, as an independent second check, so a row whose
+// `html_path` points (or links) outside it is refused rather than read.
+//
+// ── NO OUTBOUND CALL, ONE SHORT-LIVED CHILD ─────────────────────────────────────────────────────
+// Nothing here opens a socket. The one process spawned is `agentry query`, argv-only (no shell),
+// on a deadline and an output cap, the same hygiene `COLLIE_QUOTA_COMMAND` runs under — and it is
+// declined by doing nothing: with `COLLIE_AGENTRY_HOME` unset no process is spawned and no route
+// answers. `agentry query` itself refuses anything but a read, so even SQL this module got wrong
+// could not write; the literals are still built by {@link sqlText} and never spliced raw.
 //
 // ── WHAT ARRIVES IS A PROGRAM, NOT A PAGE ───────────────────────────────────────────────────────
-// A kb document is HTML an AGENT wrote, often out of pages it read on the open web. Served
+// An archived document is HTML an AGENT wrote, often out of pages it read on the open web. Served
 // same-origin with no policy it could run script in Collie's origin, read `localStorage`, and call
 // `/api/*` with the Access header attached by the browser. So the response is dropped into an
 // opaque origin — see {@link DOCUMENT_CSP}, which is the containment and is commented as such.
-//
-// ── TWO HOPS, BECAUSE kb's HTML ROUTE REFUSES A SLUG ─────────────────────────────────────────────
-// `GET /api/documents/{id_or_slug}` accepts either; `GET /api/documents/{id}/html` is strictly a
-// UUID and answers 400 to a slug (measured). So a slug costs a metadata call first. That turns out
-// to pay for itself twice: the metadata carries `content_sha256`, which IS the ETag (below), so a
-// warm phone re-opening a 2 MB document spends one ~1 KB JSON call and a 304; and the alias case —
-// a renamed slug, answered with a 308 — is absorbed on a hop this module was making anyway.
 //
 // ── WHAT THIS MODULE DELIBERATELY DOES NOT DO ───────────────────────────────────────────────────
 // It builds no `Response`. `secure()` in bridge/server.ts is module-private, and every response the
@@ -79,15 +93,14 @@ export const DOCUMENT_PATH_PREFIX = "/api/doc/";
 
 /**
  * The one grammar a document slug must satisfy, as a source string so a reader can see the whole
- * rule at once. kb's own canonical slugs are `^[a-z0-9][a-z0-9-]*$`; this adds only a ceiling.
+ * rule at once. kb's canonical slugs were `^[a-z0-9][a-z0-9-]*$` and every slug agentry holds today
+ * still is (agentry itself also admits `.` and `_`, which no document uses); this adds a ceiling.
  *
- * It is an ALLOWLIST checked before anything is built, not a sanitiser run after. What an
- * unvalidated slug would buy, concretely: this string is interpolated into the path of a loopback
- * request that carries the bridge's kb credential, so `../../healthz`, `%2e%2e%2f`, a `?` or a `#`
- * would each aim that credentialled request at a different kb endpoint than the one this module
- * means to call, and a `\r\n` would aim it at a different request entirely. None of those can be
- * spelled in `[a-z0-9-]`, which is why the answer is a closed charset and not an escaper: an
- * escaper is a thing that can have a bug.
+ * It is an ALLOWLIST checked before anything is built, not a sanitiser run after. The string is
+ * quoted into the SQL of an `agentry query` run (through `sqlText`, which would survive a quote
+ * anyway), and nothing in `[a-z0-9-]` can end a literal, start a comment or name a path segment —
+ * the answer is a closed charset and not only an escaper, because an escaper is a thing that can
+ * have a bug.
  *
  * NOTHING IS EVER PERCENT-DECODED on the way here. `URL.pathname` preserves the escapes, `%` is not
  * in the charset, so an encoded separator is refused as the literal characters it arrives as —
@@ -96,9 +109,9 @@ export const DOCUMENT_PATH_PREFIX = "/api/doc/";
 export const DOCUMENT_SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,127}$";
 
 /**
- * True when `value` is a slug this bridge will ask kb about.
+ * True when `value` is a slug this bridge will ask agentry about.
  *
- * The ceiling is 128 characters. kb's longest live slug is a third of that, and the number exists
+ * The ceiling is 128 characters. The longest live slug is 86 (a medium-digest title), and the number exists
  * so a megabyte of hyphens is refused by the grammar rather than by whatever gives out first.
  */
 export function isDocumentSlug(value: string): boolean {
@@ -180,7 +193,7 @@ export type DocumentHeaders = {
 /**
  * The headers for one served document.
  *
- * `content-type` is the literal, never derived from anything kb said: these bytes are going into a
+ * `content-type` is the literal, never derived from anything the store said: these bytes are going into a
  * frame as HTML and a sniffed or echoed type could only ever be a way to be wrong. `nosniff` is
  * already on every response (`SECURITY_HEADERS`) and stops a browser re-deciding.
  *
@@ -200,217 +213,130 @@ export function documentResponseHeaders(etag: string): DocumentHeaders {
   };
 }
 
+
 /**
  * The largest document this bridge will serve.
  *
- * kb enforces exactly this at push time (`maxHTMLBytes`, mirroring a DB CHECK), so this is not a
- * policy Collie invents — it is the same ceiling, restated on the reading side so a kb that ever
- * stops enforcing it cannot hand the phone something unbounded. The live corpus runs to 2.2 MiB.
+ * kb enforced exactly this at push time (`maxHTMLBytes`), and every document agentry holds came
+ * through that door or is smaller; restated on the reading side so a store that ever stops
+ * enforcing it cannot hand the phone something unbounded. The live corpus runs to 2.2 MiB.
  */
 export const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
 
-/** The largest metadata answer worth reading. kb's is ~1 KB; this is room for a hundred of them. */
-export const MAX_METADATA_BYTES = 64 * 1024;
+/** The most `agentry query` may print before the run is killed: a hundred rows with summaries. */
+export const MAX_QUERY_BYTES = 1024 * 1024;
 
 /**
- * How long either hop may take.
+ * How long `agentry query` may take.
  *
- * Loopback makes the interesting failure the SLOW one, not the absent one: nothing listening on
- * 127.0.0.1 is refused in under a millisecond and arrives here as a throw, while an API container
- * that is alive but wedged (exhausted DB pool, lagging healthcheck) would otherwise hang until
- * Bun's own idle timeout closed the phone's connection with nothing said. Five seconds is roughly
- * 250× the measured cost of the largest document in the corpus (2.3 MB in 18 ms) and still short
- * enough that the operator gets an answer instead of a spinner.
+ * It answers in ~75 ms (a DuckDB open over parquet). The interesting failure is the SLOW one — a
+ * store held by a long compaction — and five seconds is still short enough that the operator gets
+ * an answer instead of a spinner.
  */
-export const KB_TIMEOUT_MS = 5_000;
+export const AGENTRY_TIMEOUT_MS = 5_000;
 
-/** Where kb is, and what proves the bridge may ask it. Both come from config; neither is read here. */
-export interface KbSettings {
-  /** The loopback base URL of kb's API host, e.g. `http://127.0.0.1:8082`. Empty = feature off. */
-  origin: string;
-  /** kb's internal token, sent as `x-internal-token`. Empty = feature off. */
-  token: string;
+/** Where agentry is, as config states it. Neither value is read here from the environment. */
+export interface AgentrySettings {
+  /** `$AGENTRY_HOME` — the data directory holding `documents/`. Empty = feature off. */
+  home: string;
+  /** The `agentry` binary, absolute. Empty = feature off. */
+  cli: string;
 }
 
 /**
- * The hostnames this module will dial. A twin of server.ts's `LOOPBACK_HOST`, which is private to
- * that module and asks a different question anyway (that one reads a `Host` HEADER, this one reads
- * a configured URL's hostname). Exact forms only: the point is not to enumerate 127.0.0.0/8, it is
- * that anything the operator did not obviously mean is refused. The IPv6 form carries its brackets
- * because that is what `URL.hostname` hands back for `http://[::1]:8082`.
+ * The two things this module does to the outside world, injectable so the tests never spawn a
+ * process. `run` is the quota command's runner (argv, deadline, cap); `read` reads a file already
+ * proved to be inside the documents directory.
  */
-const KB_LOOPBACK_HOSTNAME = /^(localhost|127\.0\.0\.1|\[::1\])$/u;
+export interface AgentryIo {
+  run: (argv: readonly string[], deadlineMs: number) => Promise<QuotaRun>;
+  read: (path: string) => Promise<Buffer>;
+}
+
+export const agentryIo: AgentryIo = {
+  run: (argv, deadlineMs) => runQuotaCommand(argv, deadlineMs, MAX_QUERY_BYTES),
+  read: (path) => readFile(path),
+};
 
 /**
- * The configured origin, trimmed of a trailing slash and proved to be loopback — or null, which
- * means the caller must not dial anything.
- *
- * THIS IS THE EGRESS BOUNDARY, and it is a validation rather than a doc note because the difference
- * between "the bridge reads a container on this machine" and "the bridge is an open proxy that
- * fetches arbitrary internet content into its own origin, with a sandbox as the only thing standing
- * between that content and the operator" is one typo in an env var. A path is refused for a duller
- * reason: `http://127.0.0.1:8082/api` would build `…/api/api/documents/x`, and a 404 from a doubled
- * prefix is a bad way to learn about a config mistake.
+ * The configured home and binary, proved absolute — or null, which means the caller must not run
+ * anything. A relative home would resolve against the bridge's cwd, which is nobody's archive.
  */
-export function normaliseKbOrigin(origin: string): string | null {
-  const trimmed = origin.trim().replace(/\/+$/u, "");
-  if (trimmed === "") return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-  if (!KB_LOOPBACK_HOSTNAME.test(parsed.hostname)) return null;
-  // `new URL("http://h:1").pathname` is "/", so "no path" is the only thing that passes, and the
-  // credential-bearing request below is built from a base nobody has added a segment to.
-  if (parsed.pathname !== "/" || parsed.search !== "" || parsed.hash !== "") return null;
-  return trimmed;
+export function normaliseAgentry(settings: AgentrySettings): { home: string; cli: string } | null {
+  const home = settings.home.trim().replace(/\/+$/u, "");
+  const cli = settings.cli.trim();
+  if (home === "" || cli === "") return null;
+  if (!isAbsolute(home) || !isAbsolute(cli)) return null;
+  return { home, cli };
+}
+
+/** The directory `html_path` is relative to, and the containment root for every read. */
+export function documentsDir(home: string): string {
+  return join(home, "documents");
 }
 
 /**
- * The metadata hop's URL. `origin` must be through {@link normaliseKbOrigin} and `slug` through
- * {@link isDocumentSlug} — this function checks neither, which is why it is three lines and why
- * both callers are in this file.
+ * A DuckDB string literal for `value`: single-quoted, with each `'` doubled. DuckDB's standard
+ * strings give a backslash no meaning, so the quote is the only character that can end the literal.
+ *
+ * `agentry query`'s `--param` is a textual `{key}` substitution, not a bound parameter, so it would
+ * buy nothing over this — and this is the one function a test can pin.
  */
-export function kbMetadataUrl(origin: string, slug: string): string {
-  return `${origin}/api/documents/${slug}`;
+export function sqlText(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
 }
 
-/** The HTML hop's URL. `id` must be through {@link isKbDocumentId}, for the same reason. */
-export function kbDocumentHtmlUrl(origin: string, id: string): string {
-  return `${origin}/api/documents/${id}/html`;
+/** The argv for one query. No shell; the SQL is one argument. */
+export function agentryQueryArgv(conf: { home: string; cli: string }, sql: string): string[] {
+  return [conf.cli, "query", "--home", conf.home, "--format", "json", "--no-limit", sql];
 }
-
-/**
- * The headers the bridge presents to kb.
- *
- * The name is `x-internal-token` exactly — kb's middleware matches that header and nothing else,
- * and it runs BEFORE routing, which is the property the failure classification below leans on.
- * `accept` is passed per hop rather than assumed: the two endpoints answer different media, and
- * saying which one is expected is what makes a wrong answer detectable instead of merely odd.
- */
-export function kbHeaders(token: string, accept: string) {
-  // `satisfies`, not an annotation: the two keys stay visible in the type (a caller reading this
-  // sees which headers exist), while the check still says they are all plain string values.
-  return { "x-internal-token": token, accept } satisfies Record<string, string>;
-}
-
-/** kb ids are UUIDs, and the id is interpolated into a path exactly as the slug was. */
-const KB_DOCUMENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
-
-/**
- * True when `value` is a document id this module will put in a URL.
- *
- * Applied to a string kb itself just sent, deliberately. That it came from kb rather than from the
- * phone is not a reason to skip the grammar: the whole rule the slug check exists to state is that
- * no string from outside this process is built into a request path unvalidated, and a rule with an
- * exception for "a trusted source" is a rule that stops being checkable the day the source changes.
- */
-export function isKbDocumentId(value: string): boolean {
-  return KB_DOCUMENT_ID.test(value);
-}
-
-/** kb's `content_sha256` is lowercase hex of exactly 32 bytes. Anything else is not that field. */
-const CONTENT_SHA256 = /^[0-9a-f]{64}$/u;
-
-/**
- * The ETag for a document whose content hashes to `contentSha256`.
- *
- * kb computes that hash over THE EXACT BYTES its `/html` route returns — verified: the served body
- * hashes to the advertised value and `Content-Length` equals `html_size_bytes`. So the metadata hop
- * alone is enough to answer a conditional request, which is the whole reason a two-hop design is
- * cheap rather than expensive.
- *
- * The `d1:` prefix names COLLIE'S representation, not kb's content. Nothing transforms these bytes
- * today, but if this route ever does, bumping the prefix invalidates every cached copy at once —
- * without it, a phone would hold the old representation under an ETag that still matched.
- *
- * The hex is re-checked before it is returned because an ETag is a HEADER VALUE: a newline in it is
- * response-header injection, and "kb only ever sends hex" is a fact about today's kb, not a
- * property of this function. Returns null when the field cannot be believed.
- */
-export function documentEtag(contentSha256: string): string | null {
-  if (!CONTENT_SHA256.test(contentSha256)) return null;
-  return `"d1:${contentSha256}"`;
-}
-
-/** The little of an HTTP answer this module reads. */
-export interface KbAnswer {
-  readonly status: number;
-  readonly headers: { get: (name: string) => string | null };
-  text: () => Promise<string>;
-  /**
-   * The byte stream, when the answer has one (a real `Response` always does). It is how a body with
-   * no declared length is read under the cap instead of buffered whole — see {@link body}.
-   */
-  readonly body?: ReadableStream<Uint8Array> | null;
-}
-
-/** The init this module sends. `redirect` is pinned to the only value it may ever have — see below. */
-export interface KbRequestInit {
-  headers: Record<string, string>;
-  redirect: "manual";
-  signal: AbortSignal;
-}
-
-/**
- * The one call this module makes, injectable so the tests never open a socket.
- *
- * Declared as the CALL this module makes rather than as `typeof fetch`, for the reason `DirsIo` in
- * bridge/dirs.ts gives: naming the global drags its whole overload set in, and the only way to
- * write a fake against that is a cast, which throws the type evidence away. Bun's `fetch` satisfies
- * this narrower signature, so the production value below is checked, not asserted.
- */
-export interface KbIo {
-  fetch: (url: string, init: KbRequestInit) => Promise<KbAnswer>;
-}
-
-export const networkIo: KbIo = { fetch: (url, init) => fetch(url, init) };
 
 /**
  * Why a document could not be served. The route turns these into statuses; nothing else reads them.
  *
  * HOUSE POLICY IS ONE ANSWER FOR EVERY REFUSAL (`/api/fonts` gives every failure the same 404 so a
  * client cannot tell "undeclared" from "missing" from "escaped its directory"), and this list is a
- * deliberate, argued departure from it. There, the distinctions were all answers about the
- * operator's DISK, addressable by a path the client supplies — telling them apart hands out an
- * oracle. Here there is no path space to probe: `bad_slug` and `not_found` collapse into the same
- * answer precisely so that nothing about which slugs are syntactically special is observable. What
- * the rest distinguish is not "which document" but "which machine is broken", and those are the two
- * different things the operator would have to do next — restart the containers, or fix a token, or
- * accept that the link in months-old scrollback is dead. A phone that says "not found" when the
- * real answer is "the kb container is down" costs a debugging session every time.
+ * deliberate, argued departure from it: `bad_slug`, `not_found` and `not_configured` collapse into
+ * the same answer at the route, so nothing about which slugs exist is observable beyond "this one
+ * opens". What the rest distinguish is "which part of this machine is broken", and a phone that says
+ * "not found" when the real answer is "agentry will not start" costs a debugging session every time.
  *
- *  - `bad_slug`      — the path did not carry a slug. Answer it exactly as `not_found` is answered.
- *  - `not_found`     — kb ACCEPTED the credential and says there is no such live document (or it is
- *                      soft-deleted). Never confusable with the auth failure: kb's 401 comes from
- *                      middleware that runs before routing, so a bad token against a non-existent
- *                      slug answers 401, not 404 — verified against the running binary.
- *  - `not_configured`— no origin/token, or an origin this bridge refuses to dial. The feature is
- *                      off, or it is misconfigured; either way nothing was asked of kb.
- *  - `unauthorised`  — kb rejected the bridge's credential. ALWAYS a misconfiguration on this side
- *                      (or a kb that lost its own secret), NEVER a missing document, and never to
- *                      be reported to the phone as one.
- *  - `unreachable`   — the call threw: containers down (connect refused, sub-millisecond) or wedged
- *                      past the deadline. A throw and a resolved 404 are categorically different
- *                      events, which is what makes this distinction free rather than a guess.
- *  - `unusable`      — kb answered, and the answer is not one this module can serve: a status it
- *                      does not know, a body that is not the document contract, a document larger
- *                      than the ceiling, or bytes that do not hash to what the metadata promised.
+ *  - `bad_slug`       — the path did not carry a slug. Answer it exactly as `not_found` is answered.
+ *  - `not_found`      — agentry answered and has no such document.
+ *  - `not_configured` — no home/binary, or one this bridge refuses (not absolute). Nothing was run.
+ *  - `unreachable`    — `agentry query` could not be run, or did not answer before the deadline.
+ *  - `unusable`       — agentry answered, and the answer is not one this module can serve: a failed
+ *                       query, output that is not its JSON envelope, a row that is not the document
+ *                       contract, a file that is missing or outside the documents directory, a
+ *                       document over the ceiling, or bytes that do not hash to what the row says.
  */
-export type DocumentFailure =
-  | "bad_slug"
-  | "not_found"
-  | "not_configured"
-  | "unauthorised"
-  | "unreachable"
-  | "unusable";
+export type DocumentFailure = "bad_slug" | "not_found" | "not_configured" | "unreachable" | "unusable";
+
+/** kb's `content_sha256`, now agentry's `html_sha256`: lowercase hex of exactly 32 bytes. */
+const CONTENT_SHA256 = /^[0-9a-f]{64}$/u;
+
+/**
+ * The ETag for a document whose content hashes to `contentSha256`.
+ *
+ * agentry records the hash of the exact bytes it wrote to `documents/` (`agentry doc push`), so the
+ * row alone is enough to answer a conditional request — a warm phone re-opening a 2 MB document
+ * spends one query and a 304.
+ *
+ * The `d1:` prefix names COLLIE'S representation, not the store's content. Nothing transforms these
+ * bytes today, but if this route ever does, bumping the prefix invalidates every cached copy at
+ * once. It did not move with the kb → agentry switch on purpose: the bytes are the same bytes (the
+ * import copied them one for one), so a phone that cached a document from kb keeps a valid copy.
+ *
+ * The hex is re-checked before it is returned because an ETag is a HEADER VALUE: a newline in it is
+ * response-header injection. Returns null when the field cannot be believed.
+ */
+export function documentEtag(contentSha256: string): string | null {
+  if (!CONTENT_SHA256.test(contentSha256)) return null;
+  return `"d1:${contentSha256}"`;
+}
 
 /** What the route needs to know about a document besides its bytes. */
 export interface DocumentMetadata {
-  /** kb's canonical slug, which is NOT always the one that was asked for — see the 308 case. */
   slug: string;
   /**
    * The document's title, as free text.
@@ -423,7 +349,7 @@ export interface DocumentMetadata {
   title: string;
   /** The strong ETag for these bytes, from {@link documentEtag}. */
   etag: string;
-  /** kb's own byte count, checked against the ceiling BEFORE the body is asked for. */
+  /** agentry's own byte count, checked against the ceiling BEFORE the file is read. */
   sizeBytes: number;
 }
 
@@ -439,292 +365,182 @@ export type DocumentResult =
   | { ok: true; unchanged: false; metadata: DocumentMetadata; html: string }
   | { ok: false; reason: DocumentFailure };
 
-/**
- * Fetch one document from kb, over loopback, for `GET /d/<slug>`.
- *
- * `ifNoneMatch` is the request's own header: when it matches, this returns after ONE hop and the
- * body is never asked for, which on a 2 MB document is the difference between a 304 and a
- * re-download over a mobile link.
- */
-export async function fetchDocument(
-  slug: string,
-  kb: KbSettings,
-  ifNoneMatch: string | null = null,
-  io: KbIo = networkIo,
-  warn: (message: string) => void = defaultWarn,
-): Promise<DocumentResult> {
-  // THE GRAMMAR IS FIRST, before the configuration check and before any string is concatenated, so
-  // that the rule which must never be skipped is also the one with nothing ahead of it to skip it.
-  if (!isDocumentSlug(slug)) return { ok: false, reason: "bad_slug" };
-
-  const origin = normaliseKbOrigin(kb.origin);
-  const token = kb.token.trim();
-  if (origin === null || token === "") {
-    // Silence when NOTHING is configured — an operator who never wanted this feature must not pay a
-    // log line per request for it. A configured-but-refused origin is the opposite case: they meant
-    // to switch it on and it is off for a reason only this line will tell them.
-    if (kb.origin.trim() !== "" && origin === null) {
-      warn("ignoring the configured document origin — it must be a loopback base URL with no path");
-    }
-    return { ok: false, reason: "not_configured" };
-  }
-
-  const first = await ask(kbMetadataUrl(origin, slug), token, "application/json", io, warn);
-  if (!first.ok) return first;
-
-  // ── THE RENAMED-SLUG CASE ──────────────────────────────────────────────────────────────────────
-  // kb answers a stale slug with 308 and a body of exactly `{"canonical_slug":"…"}` — no id, so
-  // there is no shortcut to the HTML hop from here. Bun's `fetch` would follow this on its own and
-  // it is asked NOT to, because a redirect-follower re-sends every header it was given: the fetch
-  // spec strips `Authorization`, `Cookie` and `Proxy-Authorization` across origins and says nothing
-  // about a CUSTOM header, so `x-internal-token` would travel to whatever host a `Location` named.
-  // Loopback kb only ever emits a relative same-origin one today; the whole safety story of this
-  // module is that the credential never leaves the machine, and "today's kb behaves" is not that
-  // story. One hop, re-validated through the same grammar, and never a second.
-  let answer = first.answer;
-  if (answer.status === 308) {
-    const redirect = await body(answer, MAX_METADATA_BYTES);
-    const record = redirect === null ? null : parseRecord(redirect);
-    const canonical = record === null ? null : jsonStringField(record.canonical_slug);
-    if (canonical === null || !isDocumentSlug(canonical)) return { ok: false, reason: "unusable" };
-    const second = await ask(kbMetadataUrl(origin, canonical), token, "application/json", io, warn);
-    if (!second.ok) return second;
-    // A 308 to a 308 is not an alias chain kb creates; it is kb behaving in a way this module has
-    // no model of, and following it forever is the one outcome that must not be possible.
-    if (second.answer.status === 308) return { ok: false, reason: "unusable" };
-    answer = second.answer;
-  }
-
-  const classified = classify(answer.status);
-  if (classified !== null) return { ok: false, reason: classified };
-
-  const metadata = await readMetadata(answer, warn);
-  if (metadata === null) return { ok: false, reason: "unusable" };
-
-  // The ceiling is checked against kb's own byte count BEFORE the body is requested, so an
-  // oversized document costs a 1 KB JSON answer rather than a download that is then thrown away.
-  if (metadata.document.sizeBytes > MAX_DOCUMENT_BYTES) {
-    const { slug: over, sizeBytes } = metadata.document;
-    warn(`${over} is ${sizeBytes} bytes, over the ${MAX_DOCUMENT_BYTES} ceiling — not serving it`);
-    return { ok: false, reason: "unusable" };
-  }
-
-  if (ifNoneMatch !== null && ifNoneMatch === metadata.document.etag) {
-    return { ok: true, unchanged: true, metadata: metadata.document };
-  }
-
-  const htmlAnswer = await ask(kbDocumentHtmlUrl(origin, metadata.id), token, "text/html", io, warn);
-  if (!htmlAnswer.ok) return htmlAnswer;
-  const htmlStatus = htmlAnswer.answer.status;
-  if (htmlStatus === 401) return { ok: false, reason: "unauthorised" };
-  if (htmlStatus !== 200) {
-    // A 404 HERE is not the 404 the first hop means. The metadata resolved a millisecond ago, so
-    // this is kb's DB being ahead of its filesystem (its own handler names the case: a row whose
-    // file went missing after a failed rename) — a corruption the operator can act on, reported as
-    // such rather than flattened into "no such document". The cost is that a document genuinely
-    // deleted BETWEEN the two hops is reported as broken kb instead of a stale link; that race
-    // resolves itself on the retry, and quietly mislabelling real corruption would not.
-    warn(`kb answered ${htmlStatus} for ${metadata.document.slug}'s HTML after resolving its metadata`);
-    return { ok: false, reason: "unusable" };
-  }
-
-  const contentType = htmlAnswer.answer.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().startsWith("text/html")) {
-    // These bytes are about to be labelled `text/html` by this bridge on its own origin. If kb sent
-    // something else, the honest move is to refuse rather than to relabel it and find out later.
-    warn(`kb answered ${metadata.document.slug} as ${contentType || "an unnamed type"}, not HTML`);
-    return { ok: false, reason: "unusable" };
-  }
-
-  const html = await body(htmlAnswer.answer, MAX_DOCUMENT_BYTES);
-  if (html === null) return { ok: false, reason: "unusable" };
-
-  // The hash kb advertised, checked against the bytes it actually sent. Two things fall out of it:
-  // the ETag this bridge publishes is then a fact about the bytes rather than a promise relayed
-  // from another process (a client cached against a wrong ETag stays wrong until it clears its own
-  // storage, which a phone does not do on request), and a document that is not valid UTF-8 is
-  // caught here — decoding it replaced bytes, so what would be served is not what kb holds.
-  const digest = new Bun.CryptoHasher("sha256").update(html).digest("hex");
-  if (digest !== metadata.contentSha256) {
-    warn(`${metadata.document.slug} does not hash to the digest kb advertised — not serving it`);
-    return { ok: false, reason: "unusable" };
-  }
-
-  return { ok: true, unchanged: false, metadata: metadata.document, html };
-}
-
-/** One hop's outcome: the answer, or the failure the caller should return unchanged. */
-type Hop = { ok: true; answer: KbAnswer } | { ok: false; reason: DocumentFailure };
+/** One query's outcome: its rows, or the failure the caller should return unchanged. */
+export type QueryResult = { ok: true; rows: JsonObject[] } | { ok: false; reason: DocumentFailure };
 
 /**
- * One request to kb.
+ * Run one read against agentry and return its rows.
  *
- * EVERY THROW IS "UNREACHABLE" AND EVERY RESOLVED RESPONSE IS A REAL ANSWER — the distinction needs
- * no status inspection because nothing is listening means a refused TCP connect, which `fetch`
- * surfaces as a rejection, while a 404 is a perfectly resolved response. The deadline lands in the
- * same bucket by design: an alive-but-wedged container is unreachable in every sense the caller has
- * a move for.
- *
- * Neither the token nor an upstream body ever reaches `warn`. The status is worth a local line; the
- * body is not, and an error body from another service can name a host, an account or a path.
+ * agentry prints `{"ok": true, "data": [...]}` on success and `{"ok": false, "error": {...}}` on a
+ * failure (exit 2). Neither the SQL nor agentry's error message reaches `warn`: the code is worth
+ * a local line, the message can quote the query, which carries what the operator typed.
  */
-export async function ask(
-  url: string,
-  token: string,
-  accept: string,
-  io: KbIo,
+export async function agentryQuery(
+  sql: string,
+  settings: AgentrySettings,
+  io: AgentryIo,
   warn: (message: string) => void,
-): Promise<Hop> {
-  try {
-    const answer = await io.fetch(url, {
-      headers: kbHeaders(token, accept),
-      redirect: "manual",
-      signal: AbortSignal.timeout(KB_TIMEOUT_MS),
-    });
-    if (answer.status === 401) {
-      // Loud, because it is silent otherwise and it is always a configuration fault: kb's auth
-      // middleware runs before routing, so this can never be a missing document. The token is not
-      // named, not fingerprinted and not logged — a length or a prefix in a log file is a head start.
-      warn("kb rejected this bridge's credential — check the configured document token");
-      return { ok: false, reason: "unauthorised" };
-    }
-    return { ok: true, answer };
-  } catch (err) {
-    const timedOut = err instanceof Error && err.name === "TimeoutError";
-    warn(
-      timedOut
-        ? `kb did not answer within ${KB_TIMEOUT_MS}ms — the API container may be wedged`
-        : "kb could not be reached — its containers may be down",
-    );
+): Promise<QueryResult> {
+  const conf = configured(settings, warn);
+  if (conf === null) return { ok: false, reason: "not_configured" };
+  const run = await io.run(agentryQueryArgv(conf, sql), AGENTRY_TIMEOUT_MS);
+  if (run.timedOut) {
+    warn(`agentry query did not answer within ${AGENTRY_TIMEOUT_MS}ms`);
     return { ok: false, reason: "unreachable" };
   }
+  if (run.code === 127) {
+    warn("agentry could not be run — check the configured agentry binary");
+    return { ok: false, reason: "unreachable" };
+  }
+  const envelope = parseRecord(run.stdout);
+  if (envelope === null) {
+    warn(`agentry query exited ${String(run.code)} without its JSON envelope`);
+    return { ok: false, reason: "unusable" };
+  }
+  if (envelope.ok !== true || !Array.isArray(envelope.data)) {
+    const code = jsonStringField(jsonRecord(envelope.error)?.code) ?? "unknown";
+    warn(`agentry query failed (${code})`);
+    return { ok: false, reason: "unusable" };
+  }
+  const rows: JsonObject[] = [];
+  for (const item of envelope.data) {
+    const row = jsonRecord(item);
+    if (row !== null) rows.push(row);
+  }
+  return { ok: true, rows };
 }
 
-/**
- * A response body as text, refused when it declares more than `limit` or measures more than it.
- *
- * The DECLARED length is checked first and an ABSENT one is refused rather than read: kb sends a
- * `Content-Length` on every answer (measured, both endpoints), so an answer without one is not the
- * thing this module was pointed at, and refusing costs nothing while buffering an undeclared body
- * costs whatever the peer feels like sending.
- *
- * This is not the streamed cap `bridge/stt/transcript.ts` uses, and the difference is the threat
- * model, not an oversight: that peer is an operator-configured endpoint anywhere on the internet,
- * this one is pinned to loopback by {@link normaliseKbOrigin} and is a container the operator runs.
- * The declared-length refusal is what makes a BROKEN kb cheap. If the loopback restriction is ever
- * relaxed, this must become a streamed read — `readCapped` is the existing example.
- */
-export async function body(answer: KbAnswer, limit: number): Promise<string | null> {
-  const declared = answer.headers.get("content-length");
-  if (declared !== null) {
-    // A declared length is a claim: refuse an oversized or malformed one before reading a byte, and
-    // still measure the bytes that arrive, because the claim can undersell them.
-    if (!/^\d+$/u.test(declared) || Number(declared) > limit) return null;
-  } else if (answer.body) {
-    // No length is NOT kb misbehaving. kb is Go's net/http, which switches to chunked transfer for
-    // any body that outgrows its 4 KB write buffer before the handler returns — the tag list and a
-    // full page of documents both do, and were refused here as "unusable" on 2026-09-10 while the
-    // three-row search result beside them, under the buffer, came through. So a chunked answer is
-    // read the only safe way an unbounded one can be: chunk by chunk, dropped the moment it passes
-    // the cap, never buffered past it.
-    return readCapped(answer.body, limit);
+/** The settings, believed, with the one line an operator who MEANT to switch this on needs. */
+function configured(settings: AgentrySettings, warn: (message: string) => void): { home: string; cli: string } | null {
+  const conf = normaliseAgentry(settings);
+  // Silence when NOTHING is configured — an operator who never wanted this feature must not pay a
+  // log line per request for it. A configured-but-refused value is the opposite case.
+  if (conf === null && settings.home.trim() !== "") {
+    warn("ignoring the configured agentry home — it and the agentry binary must be absolute paths");
   }
-  let text: string;
-  try {
-    text = await answer.text();
-  } catch {
-    return null;
-  }
-  return Buffer.byteLength(text, "utf8") > limit ? null : text;
+  return conf;
 }
 
-/** Drains a stream into a string, or returns null (and cancels the stream) once it passes `limit`. */
-async function readCapped(stream: ReadableStream<Uint8Array>, limit: number): Promise<string | null> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > limit) {
-        await reader.cancel().catch(() => {});
-        return null;
-      }
-      chunks.push(value);
-    }
-  } catch {
-    return null;
-  }
-  return Buffer.concat(chunks).toString("utf8");
+/** The query for one document's row. `slug` must already have passed {@link isDocumentSlug}. */
+export function documentRowSql(slug: string): string {
+  return (
+    "SELECT slug, title, html_path, html_sha256, html_bytes FROM documents_latest " +
+    `WHERE slug = ${sqlText(slug)} LIMIT 1`
+  );
 }
 
-/** kb's metadata, once it has been believed: the parts the route needs plus the parts it checks. */
-interface ParsedMetadata {
-  id: string;
+/** A row, once it has been believed: the parts the route needs plus the parts it checks. */
+interface ParsedRow {
+  htmlPath: string;
   contentSha256: string;
   document: DocumentMetadata;
 }
 
 /**
- * Read the metadata answer, or null when it is not one.
- *
- * Every field is checked before it is used, and two of them are checked because of where they are
- * ABOUT to go rather than because kb is doubted: `id` is interpolated into a URL path, and the
- * digest becomes a response header value. `summary`, `source_session` and the rest are omitted by
- * kb whenever they are empty, which is why nothing here reads a field it does not need.
+ * Read one `documents_latest` row, or null when it is not one. Every field is checked before it is
+ * used, and two because of where they are ABOUT to go: `html_path` becomes a file read, and the
+ * digest becomes a response header value.
  */
-async function readMetadata(
-  answer: KbAnswer,
-  warn: (message: string) => void,
-): Promise<ParsedMetadata | null> {
-  const text = await body(answer, MAX_METADATA_BYTES);
-  if (text === null) return null;
-  const record = parseRecord(text);
-  if (record === null) {
-    warn("kb answered the document metadata with something that is not a JSON object");
-    return null;
-  }
-  const id = jsonStringField(record.id);
-  const slug = jsonStringField(record.slug);
-  const contentSha256 = jsonStringField(record.content_sha256);
-  const sizeBytes = jsonNumberField(record.html_size_bytes);
-  if (id === null || slug === null || contentSha256 === null || sizeBytes === null) return null;
-  if (!isKbDocumentId(id) || !isDocumentSlug(slug)) return null;
-  // A byte count that is fractional, negative, or past the safe-integer range is not kb's
-  // `html_size_bytes` — and this number decides whether the body is fetched at all.
+function readRow(row: JsonObject): ParsedRow | null {
+  const slug = jsonStringField(row.slug);
+  const htmlPath = jsonStringField(row.html_path);
+  const contentSha256 = jsonStringField(row.html_sha256);
+  const sizeBytes = jsonNumberField(row.html_bytes);
+  if (slug === null || htmlPath === null || contentSha256 === null || sizeBytes === null) return null;
+  if (!isDocumentSlug(slug) || htmlPath === "") return null;
   if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) return null;
   const etag = documentEtag(contentSha256);
   if (etag === null) return null;
-  // `title` is required by kb's contract, but a document with no title is a cosmetic problem and
-  // not a reason to refuse to show it — the empty string is a caption the panel can decide about.
-  const title = jsonStringField(record.title) ?? "";
-  return { id, contentSha256, document: { slug, title, etag, sizeBytes } };
+  // A document with no title is a cosmetic problem and not a reason to refuse to show it.
+  const title = jsonStringField(row.title) ?? "";
+  return { htmlPath, contentSha256, document: { slug, title, etag, sizeBytes } };
 }
 
 /**
- * Which failure a metadata status is, or null when it is the success this module can continue from.
+ * One document from agentry, for `GET /api/doc/<slug>`.
  *
- * 401 is handled earlier, on every hop, because it is the one answer that means "this bridge is
- * misconfigured" no matter which endpoint produced it.
+ * `ifNoneMatch` is the request's own header: when it matches, this returns after the query and the
+ * file is never read, which on a 2 MB document is the difference between a 304 and a re-download
+ * over a mobile link.
  */
-function classify(status: number): DocumentFailure | null {
-  if (status === 200) return null;
-  if (status === 404) return "not_found";
-  return "unusable";
+export async function fetchDocument(
+  slug: string,
+  settings: AgentrySettings,
+  ifNoneMatch: string | null = null,
+  io: AgentryIo = agentryIo,
+  warn: (message: string) => void = defaultWarn,
+): Promise<DocumentResult> {
+  // THE GRAMMAR IS FIRST, before the configuration check and before any string is built, so that
+  // the rule which must never be skipped is also the one with nothing ahead of it to skip it.
+  if (!isDocumentSlug(slug)) return { ok: false, reason: "bad_slug" };
+  const conf = configured(settings, warn);
+  if (conf === null) return { ok: false, reason: "not_configured" };
+
+  const answer = await agentryQuery(documentRowSql(slug), settings, io, warn);
+  if (!answer.ok) return answer;
+  const first = answer.rows[0];
+  if (first === undefined) return { ok: false, reason: "not_found" };
+  const row = readRow(first);
+  if (row === null) {
+    warn(`agentry's row for ${slug} is not the document contract`);
+    return { ok: false, reason: "unusable" };
+  }
+
+  // The ceiling is checked against agentry's own byte count BEFORE the file is read.
+  if (row.document.sizeBytes > MAX_DOCUMENT_BYTES) {
+    warn(`${slug} is ${row.document.sizeBytes} bytes, over the ${MAX_DOCUMENT_BYTES} ceiling — not serving it`);
+    return { ok: false, reason: "unusable" };
+  }
+
+  if (ifNoneMatch !== null && ifNoneMatch === row.document.etag) {
+    return { ok: true, unchanged: true, metadata: row.document };
+  }
+
+  // The ROW's path, joined under the documents directory and then proved to still be inside it
+  // after every symlink is resolved. A missing file is agentry's index being ahead of its disk —
+  // corruption the operator can act on, reported as such rather than flattened into "not found".
+  const root = documentsDir(conf.home);
+  const real = await containedRealpath(join(root, row.htmlPath), root);
+  if (real === null) {
+    warn(`${slug}'s html_path is missing or outside the documents directory — not serving it`);
+    return { ok: false, reason: "unusable" };
+  }
+  let bytes: Buffer;
+  try {
+    bytes = await io.read(real);
+  } catch {
+    warn(`${slug}'s file could not be read`);
+    return { ok: false, reason: "unusable" };
+  }
+  if (bytes.byteLength > MAX_DOCUMENT_BYTES) {
+    warn(`${slug}'s file is over the ${MAX_DOCUMENT_BYTES} ceiling — not serving it`);
+    return { ok: false, reason: "unusable" };
+  }
+
+  // The hash the row advertised, checked against the bytes actually read. The ETag this bridge
+  // publishes is then a fact about the bytes rather than a promise relayed from another process,
+  // and a file rewritten behind agentry's back is caught instead of served under a stale tag.
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  if (digest !== row.contentSha256) {
+    warn(`${slug} does not hash to the digest agentry recorded — not serving it`);
+    return { ok: false, reason: "unusable" };
+  }
+  // Decoded only after the hash matched, and strictly: a document that is not valid UTF-8 would
+  // otherwise be served with replacement characters, as something other than what the store holds.
+  let html: string;
+  try {
+    html = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    warn(`${slug} is not valid UTF-8 — not serving it`);
+    return { ok: false, reason: "unusable" };
+  }
+  return { ok: true, unchanged: false, metadata: row.document, html };
 }
 
-// ── READING kb's JSON ────────────────────────────────────────────────────────────────────────────
-// The field readers are IMPORTED rather than written again here, and the import path is the one
-// wart in this module: they live under `bridge/stt/` because that is where the repo's second JSON
-// boundary happened to be built. They are feature-agnostic — they know no vendor, no URL and no
-// credential — and `.oxlintrc.json`'s own note on them says the override deliberately "names the
-// readers rather than the two feature modules". So the two alternatives were both worse: a fourth
-// hand-written copy of a three-line narrowing is how two parsers end up disagreeing about what a
-// string is, and naming `bridge/docs.ts` in the `no-runtime-typeof` override would grow exactly the
-// list that note is trying to keep small. Moving that file to a neutral path is a rename this
-// module would welcome.
+// ── READING agentry's JSON ───────────────────────────────────────────────────────────────────────
+// The field readers are IMPORTED from `bridge/stt/` rather than written again here: they are
+// feature-agnostic, and `.oxlintrc.json`'s `no-runtime-typeof` override deliberately names the
+// readers rather than the feature modules that use them.
 
 /** The JSON object inside `text`, or null when it is not parseable or is not an object. */
 export function parseRecord(text: string): JsonObject | null {

@@ -181,7 +181,7 @@ feature: `SSE_PING_MS` (15 s) was longer than Bun's default `idleTimeout` (10 s)
 died every nine quiet seconds and reconnected through the tunnel — the 30 s relaxation the first
 pass built had never held. Everything else is in [`CHANGELOG.fork.md`](./CHANGELOG.fork.md) →
 *On top of 1.8.0*; this table is the map for the next merge. The research itself is at
-`https://knowledge.agnex.dev/d/meow-product-roadmap-2026-09-11`.
+`https://alfred.agnex.dev/doc/meow-product-roadmap-2026-09-11`.
 
 | Piece | Where | On a conflict |
 | --- | --- | --- |

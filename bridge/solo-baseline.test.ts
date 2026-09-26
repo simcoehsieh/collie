@@ -839,8 +839,8 @@ const CONFIG_KEYS = {
   basePath: true,
   uploadExtraTypes: true,
   dirRoots: true,
-  kbOrigin: true,
-  kbToken: true,
+  agentryHome: true,
+  agentryCli: true,
   docHosts: true,
   quotaCommand: true,
   shotCommand: true,
@@ -852,6 +852,8 @@ describe("solo zero-tax — config", () => {
   test("Config carries no crew/peer/lead key", () => {
     const keys = Object.keys(CONFIG_KEYS).toSorted();
     expect(keys).toEqual([
+      "agentryCli",
+      "agentryHome",
       "allowAnyHost",
       "allowNonLoopbackBind",
       "allowedOrigins",
@@ -868,8 +870,6 @@ describe("solo zero-tax — config", () => {
       "fontsDir",
       "host",
       "journalRoots",
-      "kbOrigin",
-      "kbToken",
       "keysFile",
       "launchersFile",
       "maxUploadBytes",
@@ -937,6 +937,10 @@ describe("solo zero-tax — config", () => {
       ),
     ].toSorted();
     expect(keys).toEqual([
+      // FORK: the document panel's store (bridge/docs.ts), which replaced COLLIE_KB_ORIGIN and
+      // COLLIE_KB_TOKEN on 2026-09-26. Off when unset; a solo instance with neither runs nothing.
+      "COLLIE_AGENTRY_CLI",
+      "COLLIE_AGENTRY_HOME",
       "COLLIE_ALLOWED_ORIGINS",
       "COLLIE_ALLOW_ANY_HOST",
       "COLLIE_ALLOW_NON_LOOPBACK_BIND",
@@ -952,8 +956,6 @@ describe("solo zero-tax — config", () => {
       "COLLIE_HERDR_DIAL",
       "COLLIE_HERMES_ROOT",
       "COLLIE_HOST",
-      "COLLIE_KB_ORIGIN",
-      "COLLIE_KB_TOKEN",
       "COLLIE_MAX_UPLOAD_MB",
       "COLLIE_MULTI_SESSION",
       "COLLIE_MUX",

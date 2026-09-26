@@ -57,6 +57,29 @@ larger actions belt with a size setting, and the six catalogs catching up. The u
   (four upstream tests went red, order-dependent). `test/setup.ts` now reloads it after the clear, and
   the three tests that write the prefs mid-case call `__resetDashPrefs()` after the write.
 
+### The document archive moved from kb to agentry (2026-09-26)
+
+- **The document panel reads agentry, not kb.** kb (the knowledge system, 127.0.0.1:8082) was shut
+  down and its documents imported into agentry. `/api/doc/<slug>` now looks the slug up in
+  `documents_latest` with `agentry query` and serves the file that ROW names from
+  `$AGENTRY_HOME/documents/`, through `containedRealpath` and the row's `html_sha256`; `/api/docs`
+  and `/api/docs/tags` run the list, a substring search (title, summary, slug, tags — kb searched
+  text, agentry indexes none) and the tag counts (a child counts under its parent, kb's `<@`) the same
+  way, drafts left out. Alfred itself cannot be asked: every request it answers needs a Cloudflare
+  Access JWT, loopback included. The sandbox and `DOCUMENT_CSP` are unchanged, and so is the ETag
+  (`"d1:<sha>"` over the same bytes), so a phone's cached copies stay valid.
+  `COLLIE_KB_ORIGIN` / `COLLIE_KB_TOKEN` are gone; `COLLIE_AGENTRY_HOME` switches the panel on and
+  `COLLIE_AGENTRY_CLI` (default `~/.local/bin/agentry`) names the binary.
+- **Alfred's links open in the panel too.** `https://<doc host>/doc/<slug>` (Alfred's page) is
+  recognised beside `/d/<slug>` (kb's layout, and Alfred's raw path), on every host in
+  `COLLIE_DOC_HOSTS`; the fallback host list names `alfred.agnex.dev` beside `knowledge.agnex.dev`.
+- **`collie artifact promote` archives with `agentry doc push`.** One call where kb needed push +
+  promote; `--source` (default `report`), dotted `--tag`s, `--slug` (`--kb-slug` still accepted), and
+  `--home` passed through when `COLLIE_AGENTRY_HOME` is set. It prints
+  `https://alfred.agnex.dev/doc/<slug>` (`COLLIE_AGENTRY_PUBLIC_ORIGIN` overrides) and still records
+  the slug in the record's `kbSlug` field, whose name stays to spare artifacts.json a migration. The
+  artifact viewer's archive button says "Alfred". `COLLIE_KB_CLI` / `COLLIE_KB_PUBLIC_ORIGIN` are gone.
+
 ## On top of 1.12.1
 
 Merged upstream v1.12.1 (2026-09-23, with v1.12.0 under it) — 87 commits, 25 conflicted files. The

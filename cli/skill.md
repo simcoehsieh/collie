@@ -57,7 +57,7 @@ collie artifact add out/report.html --title "Q3 report"            # filed under
 collie artifact add plan.html --slug meow-plan --title "Plan v2"    # same slug again = a new version
 collie artifact add notes.md --tag meow --tag ui
 collie artifact list
-collie artifact promote <id> --folder ai --summary "…" --tag meow_ops   # archive it in the knowledge base (HTML only)
+collie artifact promote <id> --folder ai --summary "…" --tag meow_ops   # archive it in agentry → alfred.agnex.dev/doc/<slug> (HTML only)
 ```
 
 The bytes are COPIED (5 MiB cap), so the file may be overwritten or deleted afterwards. The phone
