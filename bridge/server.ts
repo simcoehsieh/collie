@@ -2929,7 +2929,7 @@ export function paneWaitMs(url: URL): number {
 }
 
 async function readPane(
-  rt: SessionRuntime,
+  rt: Pick<SessionRuntime, "herdr">,
   reads: PaneReads,
   cfg: Config,
   paneId: string,
@@ -3530,6 +3530,18 @@ export async function awaitPaneReady(
     previous = current;
     if (elapsed >= ceilingMs) return { ready: false, ms: elapsed };
   }
+}
+
+/**
+ * FORK: upstream's `readPane(herdr, cfg, paneId, url, req)`, which `scripts/harness-canary` calls.
+ * The fork's `readPane` takes the session runtime and the bridge's shared {@link PaneReads} cache
+ * (the live feed's); the canary has neither, so it gets a runtime of just its adapter and a cache of
+ * its own. The canary imports this under upstream's name (`readPaneDirect as readPane`), so its call
+ * sites merge untouched.
+ */
+export function readPaneDirect(herdr: MuxAdapter, cfg: Config, paneId: string, url: URL, req: Request): Promise<Response> {
+  const reads = new PaneReads((id, lines) => paneReadPayload(herdr, id, lines));
+  return readPane({ herdr }, reads, cfg, paneId, url, req);
 }
 
 export async function replyPane(

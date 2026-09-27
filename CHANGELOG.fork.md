@@ -11,6 +11,31 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.13.3
+
+Merged upstream v1.13.3 (2026-09-26) — 9 commits, no conflicts. What it brings that matters here:
+**a Codex pane started with no Herdr client attached is readable again** (0.156.1 paints its status
+separator with no colour when no client answers its colour queries, and every such idle pane showed
+the unread-dialog card), and a fresh Codex pane no longer tells you to reinstall the Herdr
+integration (Codex reports its session only after its first prompt). Upstream's harness canary and
+verified-versions ledger (`bun run canary`, `bun run harness:drift`) come along as dev tooling.
+
+### Fixed in the fork's own tree on the way through
+
+- **Upstream's canary would not typecheck here.** `scripts/harness-canary/transport.ts` calls
+  `readPane(mux, cfg, paneId, url, req)`, but the fork's `readPane` takes the session runtime and the
+  shared `PaneReads` cache (the live feed) and was never exported. `bridge/server.ts` now exports
+  `readPaneDirect` with upstream's signature, and the canary imports it under upstream's name — one
+  import line, so its call sites merge untouched. Dev tooling only; the served bridge is unchanged.
+
+### Kept, and why
+
+- Nothing dropped. The 11 files both sides touched merged on their own and hold different fixes:
+  the Codex blank-paragraph test sits beside upstream's headless status-row tests, and the fork's
+  belt and composer hunks in `agent-chat.tsx` beside upstream's new session-note key.
+- The standing shapes are untouched: the before/after shots show the dashboard with no footer and
+  the belt with no pinned pills on both builds.
+
 ## On top of 1.13.2
 
 Merged upstream v1.13.2 (2026-09-26) — 8 commits, 2 conflicted files. What it brings that matters
