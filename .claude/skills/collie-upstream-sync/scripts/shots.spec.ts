@@ -13,10 +13,12 @@ import { installApiStub } from "./fixtures/api";
 // "after" pictures differ only by what the merge changes.
 //
 // Env (all set by before-after.sh):
-//   SHOTS_SPEC   JSON file: [{ "id", "route"?, "fixture"?, "harness"? }]
+//   SHOTS_SPEC   JSON file: [{ "id", "route"?, "fixture"?, "harness"?, "hasSession"? }]
 //                  fixture = a file name under SHOTS_FIXTURES; it becomes the pane's text and the
 //                  route defaults to that pane. harness = the pane's agent (default: the fixture's
 //                  `<harness>--` prefix), because the harness picks the grammar that reads the screen.
+//                  hasSession = whether Herdr knows the pane's session (default true; false shows
+//                  the "has not reported a session" note, which is otherwise the stub's gap).
 //   SHOTS_FIXTURES  the fixture directory. The AFTER tree's, for both runs, so a capture upstream
 //                  added in this release is shown to the old bundle too — that is the "before".
 //   SHOTS_OUT    where the JPEGs go: <id>--phone.jpg, <id>--desktop.jpg.
@@ -26,6 +28,7 @@ interface Shot {
   route?: string;
   fixture?: string;
   harness?: string;
+  hasSession?: boolean;
 }
 
 const spec: Shot[] = JSON.parse(readFileSync(process.env.SHOTS_SPEC!, "utf8"));
@@ -57,7 +60,7 @@ for (const [device, use] of Object.entries(VIEWPORTS)) {
                 // hasSession: without it the mirror opens with a "has not reported a session to Herdr"
                 // note, which is the stub's gap, not anything either version does.
                 agents: fixtureSnapshot.agents.map((a) =>
-                  a.paneId === PANE ? { ...a, agent: harness, hasSession: true } : a,
+                  a.paneId === PANE ? { ...a, agent: harness, hasSession: shot.hasSession ?? true } : a,
                 ),
               },
             }),
