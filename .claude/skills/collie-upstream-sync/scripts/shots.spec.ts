@@ -13,12 +13,14 @@ import { installApiStub } from "./fixtures/api";
 // "after" pictures differ only by what the merge changes.
 //
 // Env (all set by before-after.sh):
-//   SHOTS_SPEC   JSON file: [{ "id", "route"?, "fixture"?, "harness"?, "hasSession"? }]
+//   SHOTS_SPEC   JSON file: [{ "id", "route"?, "fixture"?, "harness"?, "hasSession"?, "storage"? }]
 //                  fixture = a file name under SHOTS_FIXTURES; it becomes the pane's text and the
 //                  route defaults to that pane. harness = the pane's agent (default: the fixture's
 //                  `<harness>--` prefix), because the harness picks the grammar that reads the screen.
 //                  hasSession = whether Herdr knows the pane's session (default true; false shows
 //                  the "has not reported a session" note, which is otherwise the stub's gap).
+//                  storage = localStorage entries set before the app's first script, for a state
+//                  that lives on the device (a pin: `{"collie:pins:v1": "[…]"}`). Values are strings.
 //   SHOTS_FIXTURES  the fixture directory. The AFTER tree's, for both runs, so a capture upstream
 //                  added in this release is shown to the old bundle too — that is the "before".
 //   SHOTS_OUT    where the JPEGs go: <id>--phone.jpg, <id>--desktop.jpg.
@@ -29,6 +31,7 @@ interface Shot {
   fixture?: string;
   harness?: string;
   hasSession?: boolean;
+  storage?: Record<string, string>;
 }
 
 const spec: Shot[] = JSON.parse(readFileSync(process.env.SHOTS_SPEC!, "utf8"));
@@ -49,6 +52,11 @@ for (const [device, use] of Object.entries(VIEWPORTS)) {
     for (const shot of spec) {
       test(shot.id, async ({ page }) => {
         await installApiStub(page);
+        if (shot.storage !== undefined) {
+          await page.addInitScript((entries: Record<string, string>) => {
+            for (const [k, v] of Object.entries(entries)) localStorage.setItem(k, v);
+          }, shot.storage);
+        }
         if (shot.fixture !== undefined) {
           const text = readFileSync(join(fixtures, shot.fixture), "utf8");
           const harness = shot.harness ?? shot.fixture.split("--")[0]!.replace(/-lab$/, "");
