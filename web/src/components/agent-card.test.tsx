@@ -1,4 +1,4 @@
-import { cleanup, render, within } from "@testing-library/react";
+import { act, cleanup, createEvent, fireEvent, render, within } from "@testing-library/react";
 
 import { AgentCard } from "./agent-card";
 import { fixtureAgents } from "@/test/handlers";
@@ -82,14 +82,13 @@ describe("AgentCard's two lines", () => {
   });
 });
 
-// FORK: the pin glyph and the hold.
-describe("AgentCard — pinned", () => {
-  it("wears the pin glyph only when pinned, and the row carries its pane id for the hotkeys", () => {
-    const { container, rerender } = render(<AgentCard agent={agent()} onClick={() => {}} />);
-    expect(container.querySelector('[aria-label="Pinned"]')).toBeNull();
+// FORK: the row carries its pane id for the desktop hotkeys (hooks/use-hotkeys.ts). No pin glyph:
+// the fork's own pins went at 1.14 for upstream's (ADR 0070), whose Pinned group is the mark.
+describe("AgentCard — the hotkeys' handle", () => {
+  it("carries its pane id on the row, and wears no pin glyph", () => {
+    const { container } = render(<AgentCard agent={agent()} onClick={() => {}} />);
     expect(container.querySelector("[data-pane-row]")!.getAttribute("data-pane-row")).toBe(agent().paneId);
-    rerender(<AgentCard agent={agent()} onClick={() => {}} pinned />);
-    expect(container.querySelector('[aria-label="Pinned"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Pinned"]')).toBeNull();
   });
 });
 
@@ -389,4 +388,79 @@ describe("AgentCard — the meta rides line 1 on every scope", () => {
       expect(name.className).toMatch(/(?:^|\s)self-baseline(?=\s|$)/);
     });
   }
+});
+
+// THE ROW HOLD (ADR 0070): a hold on a dashboard row opens the pane's actions sheet. The click that
+// ends the hold is swallowed, so a hold never also opens the pane.
+describe("AgentCard's hold", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("opens the sheet on a 450ms hold and does not open the pane", () => {
+    vi.useFakeTimers();
+    const onClick = vi.fn();
+    const onHold = vi.fn();
+    const onPress = vi.fn();
+    const { getByRole } = render(
+      <AgentCard agent={agent()} onClick={onClick} onHold={onHold} onPress={onPress} density="row" statusStyle="dot" />,
+    );
+    const row = getByRole("button");
+    fireEvent.pointerDown(row, { button: 0, clientX: 10, clientY: 10 });
+    // The press still starts the pane's read, as a tap does.
+    expect(onPress).toHaveBeenCalledOnce();
+    act(() => vi.advanceTimersByTime(449));
+    expect(onHold).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(onHold).toHaveBeenCalledOnce();
+    fireEvent.pointerUp(row);
+    fireEvent.click(row);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("opens the sheet on contextmenu (right-click, the Menu key, Android's long press) and not the pane", () => {
+    const onClick = vi.fn();
+    const onHold = vi.fn();
+    const { getByRole } = render(<AgentCard agent={agent()} onClick={onClick} onHold={onHold} />);
+    const row = getByRole("button");
+    const menu = createEvent.contextMenu(row);
+    fireEvent(row, menu);
+    expect(menu.defaultPrevented).toBe(true);
+    expect(onHold).toHaveBeenCalledOnce();
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("still opens the pane on a plain tap", () => {
+    const onClick = vi.fn();
+    const onHold = vi.fn();
+    const { getByRole } = render(<AgentCard agent={agent()} onClick={onClick} onHold={onHold} />);
+    fireEvent.click(getByRole("button"));
+    expect(onClick).toHaveBeenCalledOnce();
+    expect(onHold).not.toHaveBeenCalled();
+  });
+
+  it("cancels the hold when the finger moves, so a scroll never opens the sheet", () => {
+    vi.useFakeTimers();
+    const onHold = vi.fn();
+    const { getByRole } = render(<AgentCard agent={agent()} onClick={vi.fn()} onHold={onHold} />);
+    const row = getByRole("button");
+    fireEvent.pointerDown(row, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 10, clientY: 40 });
+    act(() => vi.advanceTimersByTime(600));
+    expect(onHold).not.toHaveBeenCalled();
+  });
+
+  it("keeps its button role and name, and adds no second tab stop", () => {
+    const { container, getByRole } = render(<AgentCard agent={agent()} onClick={vi.fn()} onHold={vi.fn()} />);
+    expect(getByRole("button")).toBeInTheDocument();
+    expect(container.querySelectorAll("button, [tabindex]")).toHaveLength(1);
+  });
+
+  it("has no hold without `onHold`: the native menu stays and the row reads as before", () => {
+    const onClick = vi.fn();
+    const { getByRole } = render(<AgentCard agent={agent()} onClick={onClick} />);
+    const row = getByRole("button");
+    const menu = createEvent.contextMenu(row);
+    fireEvent(row, menu);
+    expect(menu.defaultPrevented).toBe(false);
+    expect(row.className).not.toMatch(/select-none/);
+  });
 });

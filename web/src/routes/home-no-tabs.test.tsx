@@ -19,7 +19,7 @@ import {
 import { withHeaderHost } from "@/test/header-host";
 import { HomeRoute } from "./home";
 
-vi.mock("@/lib/dash-tabs", () => ({ FORK_DASH_TABS_ON: false }));
+vi.mock("@/lib/dash-tabs", () => ({ FORK_DASH_TABS_ON: false, FORK_HEADING_NEW_TAB_ON: false }));
 vi.mock("@/hooks/use-loading-stalled", () => ({
   useLoadingStalled: () => false,
 }));
@@ -83,6 +83,13 @@ describe("dashboard without the footer (fork)", () => {
     ).toBeNull();
     expect(screen.getByRole("heading", { name: "webapp" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "collie" })).toBeInTheDocument();
+  });
+
+  it("draws no \"+\" on a workspace heading (lib/dash-tabs.ts)", async () => {
+    renderHome();
+    await settled();
+    expect(screen.getByRole("heading", { name: "webapp" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /new tab/i })).toBeNull();
   });
 
   // A device that picked Focus or Changes while the bar existed must not be stranded on that list

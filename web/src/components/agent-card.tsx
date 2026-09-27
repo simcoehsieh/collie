@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { Check, Pin, TerminalSquare } from "lucide-react";
+import { Check, TerminalSquare } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,14 @@ interface AgentCardProps {
   /** The finger landed on the row: the moment to start the pane's read (lib/pane-prefetch.ts). */
   onPress?: () => void;
   /**
+   * A hold on the row (450ms, or `contextmenu`: a right-click, the Menu key, Android's own long
+   * press) opens the pane's actions sheet instead of the pane (ADR 0070). The click that ends the hold
+   * is swallowed, so a hold never also opens the pane. Omit and the row has no hold at all.
+   */
+  onHold?: () => void;
+  /** The row button's DOM id, so a list can find the row again after a pin moved it. */
+  id?: string;
+  /**
    * Where the row is being shown. "herd" (default) is a flat list across every space, so line 2
    * carries the place. "tab" is a list already grouped under its space and tab, so line 2 is the
    * path alone. "place" is the dashboard's grouped list, where the heading above already says the
@@ -58,10 +66,6 @@ interface AgentCardProps {
    * signal — see a card, something wants you; all flat, nothing does.
    */
   density?: "card" | "row";
-  /** FORK: the row is one the operator pinned — draws the pin glyph in the trailing column. */
-  pinned?: boolean;
-  /** FORK: a long press on the row (the dashboard's pin sheet). Absent = the row has no hold. */
-  onLongPress?: () => void;
   /**
    * A finished pane the operator hasn't opened yet — see `isUnseen()` (lib/triage.ts). Only the
    * "Ready · unseen" section passes it; every other row leaves it at the default. Draws a small
@@ -166,9 +170,9 @@ export const AgentCard = memo(AgentCardImpl, (a, b) =>
   a.scope === b.scope &&
   a.statusStyle === b.statusStyle &&
   a.density === b.density &&
-  a.pinned === b.pinned &&
+  a.id === b.id &&
   // Presence only, like `onClick`: the dashboard's hold handler is an inline arrow too.
-  (a.onLongPress === undefined) === (b.onLongPress === undefined),
+  (a.onHold === undefined) === (b.onHold === undefined),
 );
 
 function AgentCardImpl({
@@ -176,18 +180,18 @@ function AgentCardImpl({
   onClick,
   glideKey,
   onPress,
+  onHold,
+  id,
   scope = "herd",
   statusStyle = "badge",
   density = "card",
-  pinned = false,
-  onLongPress,
   unseen = false,
   tint = false,
 }: AgentCardProps) {
   useLocale();
-  // FORK: the hold that opens the dashboard's pin sheet. Inert when no handler is passed (the
-  // hook's own contract), so the space view and the sidebar rows are byte-for-byte what they were.
-  const hold = useLongPress(onLongPress);
+  // Inert when `onHold` is undefined: every handler returns at once, the native context menu stays,
+  // and no click is swallowed, so a row with no hold behaves exactly as it did.
+  const hold = useLongPress(onHold);
   const isShell = agent.kind === "shell";
   const blocked = agent.status === "blocked";
   const inTab = scope === "tab";
@@ -354,6 +358,9 @@ function AgentCardImpl({
       )}
     >
       <button
+        // Upstream's row id (ADR 0070): a pin or unpin finds the row again in its new place and
+        // focuses it, so it goes on the element that takes focus — this inner button.
+        id={id}
         type="button"
         // Upstream hands the tap its own button (the glide's origin); the fork's button is this inner
         // one, so the glide attributes and the press ride here rather than on the Shell.
@@ -376,7 +383,7 @@ function AgentCardImpl({
           // its text by default, and losing this line in the 1.9.0 merge centred every row's second
           // line under its name.
           "w-full text-left",
-          onLongPress !== undefined && "select-none [-webkit-touch-callout:none]",
+          onHold !== undefined && "select-none [-webkit-touch-callout:none]",
           // 14px, the same as the card's own padding. A flat row now sits inside a 1px-bordered
           // ListGroup, so its content lands on the same x as a card row's content BY CONSTRUCTION
           // (14 + 1 on both sides) — the hand-computed 15px this replaced was faking exactly that
@@ -457,15 +464,6 @@ function AgentCardImpl({
               session={agent.session}
               className="ml-auto self-baseline"
             />
-            {/* FORK: the pin, muted and small — a mark that the row's place is chosen, not earned. It
-                rides the END of the name line, where the row's other trailing marks now live: 1.9.0
-                moved the meta here and dropped the trailing column this used to sit in. */}
-            {pinned && (
-              <Pin
-                className="ml-1.5 size-3.5 shrink-0 self-center text-muted-foreground"
-                aria-label={t("home.pin.pinned")}
-              />
-            )}
           </div>
 
           {/* Only rendered when there's something to say — a pane with neither a tab nor a name of

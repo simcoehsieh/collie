@@ -226,6 +226,8 @@ export const zhTW: Dictionary = {
   "composer.controls.display": "顯示",
   "composer.controls.collapseAria": "收合控制列",
   "composer.controls.expandAria": "展開控制列",
+  "composer.controls.clear": "清除訊息",
+  "composer.controls.undoClear": "復原清除",
   "composer.sentPreview.label": "已傳送：",
   "composer.recall.button": "暫停，重新編輯剛送出的訊息",
   "composer.status.recalled": "已中斷，訊息放回輸入框了",
@@ -315,7 +317,7 @@ export const zhTW: Dictionary = {
   "chat.scrollback.noSessionReported":
     "{agent} 尚未向 Herdr 回報工作階段。請安裝或更新對應的 Herdr 整合，並在目前窗格重新啟動該 Agent。",
   "chat.scrollback.noSessionYet":
-    "{agent} reports its session to Herdr only after its first message, so there is no history yet. If this note stays after {agent} has replied, review its hooks with /hooks in {agent}, or update the Herdr integration and restart the agent.",
+    "{agent} 僅會在發送第一則訊息後向 Herdr 回報其工作階段，因此目前尚未有歷程記錄。若 {agent} 回覆後此提示仍未消失，請在 {agent} 中使用 /hooks 檢查其掛鉤，或更新 Herdr 整合並重新啟動代理程式。",
   "chat.fullReply.title": "完整回覆",
   "chat.fullReply.fromTranscript": "來自記錄",
   "chat.fullReply.showingTerminal": "正在顯示終端機",
@@ -382,6 +384,10 @@ export const zhTW: Dictionary = {
   "paneActions.focus.labelFallback": "在終端機中聚焦",
   "paneActions.focus.done": "已在終端機中聚焦",
   "paneActions.focus.failed": "無法在終端機中聚焦",
+  "paneActions.pin.label": "置頂",
+  "paneActions.unpin.label": "取消置頂",
+  "paneActions.pin.done": "已置頂",
+  "paneActions.unpin.done": "已取消置頂",
   "paneActions.empty.fallback": "目前多工器不支援窗格操作。",
   "paneActions.status.renamed": "已重新命名",
   "paneActions.status.labelCleared": "已清除標籤",
@@ -419,7 +425,13 @@ export const zhTW: Dictionary = {
   "home.workspace.paneCount.one": "{count} 個窗格",
   "home.workspace.paneCount.other": "{count} 個窗格",
   "home.workspace.hidden": "已隱藏",
+  "home.machineHidden.show": "顯示 {name} 的窗格",
   "home.sidebar.shells": "終端機執行個體",
+  "home.pinned.title": "已釘選",
+  "home.pinHint.hold": "按住窗格以釘選至此處。",
+  "home.pinHint.rightClick": "以滑鼠右鍵點擊窗格以釘選至此處。",
+  "home.pinHint.dismiss": "關閉提示",
+  "home.group.newTab": "在 {name} 中開啟新分頁",
   "home.sidebar.paneActionsTitle": "查看窗格操作選項",
   "home.row.tabPosition": "分頁 {n}",
   "home.row.unseen": "未讀",
@@ -607,6 +619,8 @@ export const zhTW: Dictionary = {
   "connection.session.allAria": "正在顯示所有工作階段。切換工作階段",
   "connection.server.title": "主機",
   "connection.server.aria": "主機：{name}。切換主機",
+  "connection.server.show": "顯示在資訊看板上",
+  "connection.server.showLocked": "一律顯示您目前所在的機器",
 
   // --- crew ---
   "crew.title": "機組",
@@ -709,6 +723,7 @@ export const zhTW: Dictionary = {
   "mirror.copy": "複製",
   "mirror.copyBlock": "複製程式碼區塊",
   "mirror.copied": "已複製",
+  "mirror.turnImageCaption": "代理程式日誌中的最新圖片",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "剛剛",
@@ -828,6 +843,8 @@ export const zhTW: Dictionary = {
   "apiError.tab.workspace_required": "未指定新分頁的工作區。",
   "apiError.launch.not_allowlisted": "此指令不在你的啟動器清單中",
   "apiError.launch.pane_unknown": "找不到此窗格，未啟動任何內容",
+  "apiError.folders.unknown": "該資料夾已不在「最近」中，因此無法加入最愛。",
+  "apiError.folders.favourites_full": "最愛清單已滿 ({max})。請先移除一個項目。",
   "apiError.workspace.create_failed": "建立工作區失敗：{reason}",
   "apiError.upload.too_large": "檔案過大，上限為 {maxMb} MB。",
   "apiError.upload.no_file": "未提供任何檔案。",
@@ -878,6 +895,11 @@ export const zhTW: Dictionary = {
   "space.new.tab.worktree": "Worktree",
   "space.new.repo.label": "儲存庫",
   "space.new.host.label": "主機",
+  "space.new.folders.favourites": "最愛",
+  "space.new.folders.recent": "最近",
+  "space.new.folders.use": "使用 {path}",
+  "space.new.folders.star": "將 {folder} 新增至最愛",
+  "space.new.folders.unstar": "從最愛中移除 {folder}",
   "worktree.orOpenExisting": "或開啟現有 Worktree",
   // --- apiError.update (POST /api/update refusals, M15/05) ---
   "apiError.update.confirm_required": "此次更新需要確認，未啟動任何操作。",
@@ -1107,8 +1129,7 @@ export const zhTW: Dictionary = {
   "connection.signInAgain": "重新登入",
   "connection.restarted": "Collie 已重啟——pane 的 id 可能變了。",
 
-  // --- FORK: overview, pins, hotkeys, low power, read-aloud ---
-  "status.section.pinned": "已釘選",
+  // --- FORK: overview, hotkeys, low power, read-aloud ---
   // FORK: closing a pane from the dashboard — the swipe-revealed button and the same act as a
   // row in the hold sheet. Two taps either way: the first arms, the second closes.
   "home.close.label": "關閉",
@@ -1116,12 +1137,6 @@ export const zhTW: Dictionary = {
   "home.close.closing": "關閉中…",
   "home.close.sheet": "關閉這個 pane",
   "home.close.failed": "關不掉這個 pane。",
-  "home.pin.pinned": "已釘選",
-  "home.pin.open": "開啟",
-  "home.pin.pin": "釘選到最上面",
-  "home.pin.unpin": "取消釘選",
-  "home.pin.moveUp": "上移",
-  "home.pin.moveDown": "下移",
   "overview.title": "總覽",
   // FORK: empty / error states (components/empty-state.tsx).
   "overview.empty.title": "目前沒有任何執行中的窗格",

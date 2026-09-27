@@ -2,7 +2,7 @@ import { fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider, useLocation } from "react-router";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { __resetDashPrefs, setPinned } from "@/hooks/use-dash-prefs";
+import { __resetDashPrefs } from "@/hooks/use-dash-prefs";
 import type { HomeData } from "@/lib/loaders";
 import { fixtureAgents } from "@/test/handlers";
 import { CHORD_MS, isEditable, PALETTE_EVENT, paneOrder, stepRow, useHotkeys } from "./use-hotkeys";
@@ -78,11 +78,8 @@ describe("isEditable", () => {
 });
 
 describe("paneOrder", () => {
-  it("is the dashboard's order, pins first", () => {
-    const last = fixtureAgents[fixtureAgents.length - 1]!.paneId;
+  it("is the dashboard's order", () => {
     expect(paneOrder(data()).length).toBe(fixtureAgents.length);
-    setPinned(last, true);
-    expect(paneOrder(data())[0]!.paneId).toBe(last);
     expect(paneOrder(undefined)).toEqual([]);
   });
 });

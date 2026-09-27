@@ -16,10 +16,7 @@ import { t } from "./i18n";
 /** Which way the Recent section runs. Attention sections never invert. */
 export type RecentDir = "newest" | "oldest";
 
-/** FORK: `pinned` is the operator's own section — see {@link triage}'s third argument. */
-export type TriageKey = "pinned" | "needs" | "ready" | "working" | "recent";
-/** The keys a pane can be CLASSIFIED into — every section but the operator's own. */
-export type BucketKey = Exclude<TriageKey, "pinned">;
+export type TriageKey = "needs" | "ready" | "working" | "recent";
 
 export interface TriageSection {
   key: TriageKey;
@@ -54,7 +51,7 @@ export function isUnseen(a: AgentView): boolean {
 
 /** Which section an agent belongs to. The single classifier — {@link triage} and
  *  {@link worstTriage} both route through it, so a list and a chip can't disagree. */
-export function bucketOf(a: AgentView): BucketKey {
+export function bucketOf(a: AgentView): TriageKey {
   if (a.status === "blocked") return "needs";
   if (isUnseen(a)) return "ready";
   if (a.status === "working") return "working";
@@ -96,9 +93,6 @@ export const TRIAGE_ORDER: readonly TriageKey[] = ["needs", "ready", "working", 
  * chip and a list row all draw the same colour for the same meaning.
  */
 export const TRIAGE_STATUS = {
-  // A pinned row's colour is its own status (the row draws its dot); the section has no colour of
-  // its own to advertise, and `idle` is the quietest one to hand a chip that asks anyway.
-  pinned: "idle",
   needs: "blocked",
   ready: "done",
   working: "working",
@@ -123,7 +117,6 @@ export function worstTriage(agents: readonly AgentView[]): TriageKey | null {
  *  see the `useLocale()` note on every component that calls {@link triage} / {@link sectionHeaderProps}. */
 function sectionMeta() {
   return {
-    pinned: { key: "pinned", label: t("status.section.pinned"), dot: "bg-muted-foreground/40" },
     needs: { key: "needs", label: t("status.section.needsYou"), accent: true, dot: "bg-status-blocked-mark" },
     ready: { key: "ready", label: t("status.section.readyUnseen"), dot: "bg-status-done-mark" },
     working: { key: "working", label: t("status.section.working"), dot: "bg-status-working-mark" },
@@ -150,49 +143,19 @@ function sectionMeta() {
  * `dir` still reverses Recent, because that one is the operator asking, not the clock deciding.
  * "When did I last touch this" has not gone anywhere: it is on the row, as its time.
  */
-export function triage(
-  agents: readonly AgentView[],
-  dir: RecentDir = "newest",
-  pinned?: readonly string[],
-): TriageSection[] {
+export function triage(agents: readonly AgentView[], dir: RecentDir = "newest"): TriageSection[] {
   const needs: AgentView[] = [];
   const ready: AgentView[] = [];
   const working: AgentView[] = [];
   const recent: AgentView[] = [];
 
-  // FORK: THE PINNED ROWS COME FIRST, IN THE OPERATOR'S ORDER, AND NOWHERE ELSE. Four long-lived
-  // panes that shuffle position every time one of them changes status never let muscle memory form;
-  // a pin says "this one lives here". A pinned pane is lifted OUT of its bucket, not duplicated —
-  // a row that appears twice on one list is a row you tap in the wrong place — and it keeps its own
-  // status dot, so "pinned" costs the glance nothing. Pinned ids the herd does not hold are simply
-  // skipped (the store prunes them at edit time; see hooks/use-dash-prefs.ts).
-  //
-  // `bucketOf` is untouched: `worstTriage` and every chip still ask which bucket a pane is IN,
-  // and pinning changes where a row is drawn, not what it needs.
-  const pinnedRows: AgentView[] = [];
-  const lifted = new Set<AgentView>();
-  if (pinned !== undefined && pinned.length > 0) {
-    const byId = new Map<string, AgentView>();
-    for (const a of agents) if (!byId.has(a.paneId)) byId.set(a.paneId, a);
-    for (const id of pinned) {
-      const a = byId.get(id);
-      if (a !== undefined && !lifted.has(a)) {
-        pinnedRows.push(a);
-        lifted.add(a);
-      }
-    }
-  }
-
   const into = { needs, ready, working, recent };
-  for (const a of agents) if (!lifted.has(a)) into[bucketOf(a)].push(a);
+  for (const a of agents) into[bucketOf(a)].push(a);
 
   if (dir === "oldest") recent.reverse();
 
   const meta = sectionMeta();
   return [
-    // Present only when it has rows: an install that never pinned anything renders exactly the
-    // four sections it always did, and callers that filter empties see no new heading either way.
-    ...(pinnedRows.length > 0 ? [{ ...meta.pinned, agents: pinnedRows }] : []),
     { ...meta.needs, agents: needs },
     { ...meta.ready, agents: ready },
     { ...meta.working, agents: working },
@@ -209,21 +172,4 @@ export function flipDir(dir: RecentDir): RecentDir {
  *  re-deriving the rule). */
 export function isAttention(status: AgentStatus): boolean {
   return status === "blocked";
-}
-
-/**
- * FORK: the presentation fields a section header needs. Upstream removed this with ADR 0063, when no
- * list was laid out by bucket any more; the fork keeps ONE such section — the pinned one on the
- * dashboard (components/agent-list.tsx), which is the operator's hand and not a status — and its
- * header spreads this rather than picking fields by hand.
- */
-export function sectionHeaderProps(s: TriageSection) {
-  // `accent` is passed through as-is rather than conditionally spread: the prop is optional, so an
-  // explicit `undefined` and an absent key are the same thing to the component that destructures it.
-  return {
-    label: s.label,
-    count: s.agents.length,
-    dot: s.dot,
-    accent: s.accent,
-  };
 }

@@ -236,6 +236,8 @@ export const ko: Dictionary = {
   "composer.controls.display": "표시",
   "composer.controls.collapseAria": "컨트롤 줄 숨기기",
   "composer.controls.expandAria": "컨트롤 줄 표시",
+  "composer.controls.clear": "메시지 지우기",
+  "composer.controls.undoClear": "지우기 취소",
   "composer.sentPreview.label": "보낸 내용:",
   "composer.recall.button": "멈추고 보낸 메시지 다시 편집",
   "composer.status.recalled": "중단됨 — 메시지를 입력창에 되돌렸습니다",
@@ -327,7 +329,7 @@ export const ko: Dictionary = {
   "chat.scrollback.noSessionReported":
     "{agent}가 Herdr에 세션을 보고하지 않았습니다. 에이전트용 Herdr 연동 패키지를 설치하거나 업데이트한 후 이 창에서 에이전트를 재시작하십시오.",
   "chat.scrollback.noSessionYet":
-    "{agent} reports its session to Herdr only after its first message, so there is no history yet. If this note stays after {agent} has replied, review its hooks with /hooks in {agent}, or update the Herdr integration and restart the agent.",
+    "{agent}은(는) 첫 번째 메시지 이후에만 Herdr에 세션을 보고하므로 아직 기록이 없습니다. {agent}이(가) 응답한 후에도 이 메모가 계속 남아 있으면 {agent}에서 /hooks 명령어로 훅을 확인하거나, Herdr 연동을 업데이트하고 에이전트를 다시 시작하십시오.",
   "chat.fullReply.title": "답변 전체",
   "chat.fullReply.fromTranscript": "로그에서",
   "chat.fullReply.showingTerminal": "터미널 표시 중",
@@ -397,6 +399,10 @@ export const ko: Dictionary = {
   "paneActions.focus.labelFallback": "터미널에서 포커스",
   "paneActions.focus.done": "터미널에 포커스됨",
   "paneActions.focus.failed": "터미널 포커스 실패",
+  "paneActions.pin.label": "상단에 고정",
+  "paneActions.unpin.label": "고정 해제",
+  "paneActions.pin.done": "상단에 고정됨",
+  "paneActions.unpin.done": "고정 해제됨",
   "paneActions.empty.fallback": "이 멀티플렉서는 창 관련 작업을 지원하지 않습니다.",
   "paneActions.status.renamed": "이름 변경됨",
   "paneActions.status.labelCleared": "라벨 삭제됨",
@@ -434,7 +440,13 @@ export const ko: Dictionary = {
   "home.workspace.paneCount.one": "창 {count}개",
   "home.workspace.paneCount.other": "창 {count}개",
   "home.workspace.hidden": "숨김",
+  "home.machineHidden.show": "{name}의 창 표시",
   "home.sidebar.shells": "셸",
+  "home.pinned.title": "고정됨",
+  "home.pinHint.hold": "창을 길게 누르면 여기에 고정됩니다.",
+  "home.pinHint.rightClick": "창을 마우스 오른쪽 버튼으로 클릭하면 여기에 고정됩니다.",
+  "home.pinHint.dismiss": "힌트 닫기",
+  "home.group.newTab": "{name}에서 새 탭 열기",
   "home.sidebar.paneActionsTitle": "창 작업 보기",
   "home.row.tabPosition": "탭 {n}",
   "home.row.unseen": "읽지 않음",
@@ -622,6 +634,8 @@ export const ko: Dictionary = {
   "connection.session.allAria": "전체 세션 표시 중. 세션 전환",
   "connection.server.title": "머신",
   "connection.server.aria": "호스트: {name}. 호스트 전환",
+  "connection.server.show": "대시보드에 표시",
+  "connection.server.showLocked": "현재 사용 중인 머신은 항상 표시됩니다",
 
   // --- crew ---
   "crew.title": "크루",
@@ -724,6 +738,7 @@ export const ko: Dictionary = {
   "mirror.copy": "복사",
   "mirror.copyBlock": "코드 블록 복사",
   "mirror.copied": "복사됨",
+  "mirror.turnImageCaption": "에이전트의 로그에서 가져온 최신 사진",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "방금 전",
@@ -846,6 +861,8 @@ export const ko: Dictionary = {
   "apiError.tab.workspace_required": "새 탭을 생성할 작업 공간이 지정되지 않았습니다.",
   "apiError.launch.not_allowlisted": "해당 명령은 등록된 실행 항목이 아닙니다",
   "apiError.launch.pane_unknown": "해당 창을 찾을 수 없어 실행하지 못했습니다",
+  "apiError.folders.unknown": "해당 폴더가 최근 항목에 없으므로 즐겨찾기에 추가할 수 없습니다.",
+  "apiError.folders.favourites_full": "즐겨찾기가 가득 찼습니다({max}). 먼저 하나를 제거하십시오.",
   "apiError.workspace.create_failed": "작업 공간을 생성하지 못했습니다: {reason}",
   "apiError.upload.too_large": "파일이 너무 큽니다. 제한은 {maxMb}MB입니다.",
   "apiError.upload.no_file": "전송된 파일이 없습니다.",
@@ -896,6 +913,11 @@ export const ko: Dictionary = {
   "space.new.tab.worktree": "Worktree",
   "space.new.repo.label": "저장소",
   "space.new.host.label": "호스트",
+  "space.new.folders.favourites": "즐겨찾기",
+  "space.new.folders.recent": "최근 항목",
+  "space.new.folders.use": "{path} 사용",
+  "space.new.folders.star": "즐겨찾기에 {folder} 추가",
+  "space.new.folders.unstar": "즐겨찾기에서 {folder} 제거",
   "worktree.orOpenExisting": "기존 worktree 열기",
   // --- apiError.update (POST /api/update refusals, M15/05) ---
   "apiError.update.confirm_required": "업데이트 확인이 필요하여 작업을 시작하지 않았습니다.",
@@ -1127,8 +1149,7 @@ export const ko: Dictionary = {
   "connection.signInAgain": "다시 로그인",
   "connection.restarted": "Collie가 재시작됨 — 창 id가 바뀌었을 수 있습니다.",
 
-  // --- FORK: overview, pins, hotkeys, low power, read-aloud ---
-  "status.section.pinned": "고정됨",
+  // --- FORK: overview, hotkeys, low power, read-aloud ---
   // FORK: closing a pane from the dashboard — the swipe-revealed button and the same act as a
   // row in the hold sheet. Two taps either way: the first arms, the second closes.
   "home.close.label": "Close",
@@ -1136,12 +1157,6 @@ export const ko: Dictionary = {
   "home.close.closing": "Closing…",
   "home.close.sheet": "Close pane",
   "home.close.failed": "Couldn't close the pane.",
-  "home.pin.pinned": "고정됨",
-  "home.pin.open": "열기",
-  "home.pin.pin": "맨 위에 고정",
-  "home.pin.unpin": "고정 해제",
-  "home.pin.moveUp": "위로 이동",
-  "home.pin.moveDown": "아래로 이동",
   "overview.title": "한눈에 보기",
   // FORK: empty / error states (components/empty-state.tsx).
   "overview.empty.title": "실행 중인 것이 없습니다",

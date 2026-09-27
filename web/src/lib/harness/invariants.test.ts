@@ -39,6 +39,7 @@ import { codexAdapter } from "./codex";
 import { grokAdapter } from "./grok";
 import { museAdapter } from "./muse";
 import { ompAdapter } from "./omp";
+import { opencodeAdapter } from "./opencode";
 import type { HarnessAdapter } from "./types";
 
 const PANES_DIR = join(import.meta.dirname, "..", "..", "fixtures", "panes");
@@ -306,10 +307,20 @@ const COMPOSERS: Composer[] = [
       "codex--v0156-draft-multiline.txt",
       "codex--v0156-headless-idle.txt",
       "codex--v0156-headless-draft.txt",
+      "codex--v0156-busy-streaming.txt",
+      "codex--v0156-busy-draft.txt",
+      "codex--v0157-idle.txt",
+      "codex--v0157-idle-50.txt",
+      "codex--v0157-draft-notice.txt",
+      "codex--v0157-busy-streaming.txt",
+      "codex--reporter-294-busy-agents-hint.txt",
     ],
     band(texts) {
       let status = texts.length - 1;
       while (status >= 0 && isBlank(texts[status]!)) status--;
+      // 0.157.0 draws one key-hint row straight under the status row (codex--v0157-idle.txt). In
+      // every older frame a blank row sits above the status row.
+      if (status > 0 && !isBlank(texts[status - 1]!)) status--;
       let prompt = status - 1;
       while (prompt >= 0 && !texts[prompt]!.startsWith("› ")) prompt--;
       if (prompt < 0) return null;
@@ -323,7 +334,16 @@ const COMPOSERS: Composer[] = [
   {
     name: "muse",
     adapter: museAdapter,
-    frames: ["muse--fresh-idle.txt", "muse--draft-single.txt", "muse--draft-wrapped.txt", "muse--done.txt"],
+    frames: [
+      "muse--fresh-idle.txt",
+      "muse--draft-single.txt",
+      "muse--draft-wrapped.txt",
+      "muse--done.txt",
+      // The background-tasks popup between the bottom rule and the statusline (#304): the box stays
+      // live over it, so a draft reads back and a repaint keeps it ready here too.
+      "muse--tasks-popup.txt",
+      "muse--tasks-popup-draft.txt",
+    ],
     band(texts) {
       const found = promptAboveCloser(texts, "❯", isBareRule);
       if (found === null) return null;
@@ -388,6 +408,48 @@ const COMPOSERS: Composer[] = [
       return { top: found.prompt - 1, prompt: found.prompt, draftEnd: found.closer, width: 0 };
     },
     // No capture shows how Antigravity paints a wrapped or multi-line draft: paint invariance only.
+  },
+  {
+    name: "opencode",
+    adapter: opencodeAdapter,
+    frames: [
+      "oc--fresh-idle.txt",
+      "oc--draft-single.txt",
+      "oc--draft-wrapped.txt",
+      "oc--draft-multiline.txt",
+      "oc--draft-while-working.txt",
+      "oc--working.txt",
+      "oc--done--tool-run.txt",
+      "oc--composer-plan.txt",
+      "oc--narrow--fresh-idle.txt",
+      "oc--narrow--draft-wrapped.txt",
+      "oc--narrow--done.txt",
+    ],
+    band(texts) {
+      // The `╹▀▀` rule, the model row over any bare bar rows (one at 50 columns), the separator
+      // above it, and the composer's bar run up to its top padding row.
+      let rule = texts.length - 1;
+      while (rule >= 0 && !/^\s*╹▀+\s*$/.test(texts[rule]!)) rule--;
+      if (rule < 1) return null;
+      let model = rule - 1;
+      while (model > 0 && /^\s*┃\s*$/.test(texts[model]!)) model--;
+      let top = model - 1;
+      while (top > 0 && /^\s*┃/.test(texts[top - 1]!)) top--;
+      // The interior: the rule's width less the bar, the two-cell gutter and the right padding.
+      const ruleRow = texts[rule]!.trimEnd();
+      const width = displayWidth(ruleRow) - ruleRow.indexOf("╹") - 5;
+      return { top, prompt: top + 1, draftEnd: model - 1, width };
+    },
+    // oc--draft-wrapped.txt and oc--draft-multiline.txt: every draft row, first or continuation,
+    // is `┃  text` at the composer's indent, and a blank line is the bar alone.
+    draft: {
+      omit: {},
+      rows(wrapped, band, texts) {
+        const topRow = texts[band.top]!;
+        const indent = topRow.slice(0, topRow.indexOf("┃"));
+        return wrapped.map(({ text }) => plainRow(text === "" ? `${indent}┃` : `${indent}┃  ${text}`));
+      },
+    },
   },
   {
     name: "omp (box composer)",
@@ -574,6 +636,12 @@ const CODEX_READ_BY_PAINT = [
   "codex--v0156-draft-multiline.txt",
   "codex--v0156-headless-idle.txt",
   "codex--v0156-headless-draft.txt",
+  "codex--v0156-busy-streaming.txt",
+  "codex--v0157-idle.txt",
+  "codex--v0157-idle-50.txt",
+  "codex--v0157-draft-notice.txt",
+  "codex--v0157-busy-streaming.txt",
+  "codex--reporter-294-busy-agents-hint.txt",
 ];
 
 /**

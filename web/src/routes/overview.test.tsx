@@ -5,7 +5,8 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CrewProvider } from "@/components/crew-provider";
-import { __resetDashPrefs, setPinned } from "@/hooks/use-dash-prefs";
+import { __resetDashPrefs } from "@/hooks/use-dash-prefs";
+import { setPinned } from "@/lib/pins";
 import { ROOT_ROUTE_ID, type HomeData } from "@/lib/loaders";
 import { __resetTails, readTail } from "@/lib/overview";
 import { fixtureAgents, fixtureTabs, fixtureWorkspaces } from "@/test/handlers";
@@ -77,8 +78,9 @@ const cards = () => [...document.querySelectorAll<HTMLElement>('[data-slot="over
 
 describe("OverviewRoute", () => {
   it("draws one card per agent with its tail, in the dashboard's order, pins first", async () => {
-    const pinnedId = fixtureAgents[fixtureAgents.length - 1]!.paneId;
-    setPinned(pinnedId, true);
+    const pinnedPane = fixtureAgents[fixtureAgents.length - 1]!;
+    const pinnedId = pinnedPane.paneId;
+    setPinned(pinnedPane, true, fixtureAgents);
     renderOverview(homeData());
     await waitFor(() => expect(cards().length).toBe(fixtureAgents.length));
     await waitFor(() =>

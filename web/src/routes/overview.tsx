@@ -15,6 +15,7 @@ import { t } from "@/lib/i18n";
 import { homePath, panePath, artifactPath, artifactsPath } from "@/lib/nav";
 import { tailFor, useOverviewTails } from "@/lib/overview";
 import { paneName, panePlaceParts } from "@/lib/pane-name";
+import { pinMatcher, usePins } from "@/lib/pins";
 import { useRootData } from "@/lib/route-data";
 import type { Scope } from "@/lib/scope";
 import { triage } from "@/lib/triage";
@@ -48,10 +49,14 @@ export function OverviewRoute() {
     () => ambientPanes(data.agents, data.shellPanes, data.scope, data.servers, data.sessions).agents,
     [data.agents, data.shellPanes, data.scope, data.servers, data.sessions],
   );
-  const ordered = useMemo(
-    () => triage(panes, prefs.recentDir, prefs.pinned).flatMap((s) => s.agents),
-    [panes, prefs.recentDir, prefs.pinned],
-  );
+  // Pinned panes first, the way they lead the dashboard (upstream's pins, ADR 0070 — the fork's own
+  // pin list went at 1.14), then the rest in the dashboard's order.
+  const pins = usePins();
+  const isPinned = useMemo(() => pinMatcher(pins), [pins]);
+  const ordered = useMemo(() => {
+    const all = triage(panes, prefs.recentDir).flatMap((s) => s.agents);
+    return [...all.filter(isPinned), ...all.filter((a) => !isPinned(a))];
+  }, [panes, prefs.recentDir, isPinned]);
   const version = useOverviewTails(ordered, data.scope, data.ts, prefs.lowPower || saveDataRequested());
 
   // FORK: the five newest artifacts across the herd (lib/artifacts.ts).
@@ -136,7 +141,7 @@ export function OverviewRoute() {
                 pane={pane}
                 scope={data.scope}
                 version={version}
-                pinned={prefs.pinned.includes(pane.paneId)}
+                pinned={isPinned(pane)}
                 onOpen={open}
               />
             ))}
@@ -186,7 +191,7 @@ const OverviewCard = memo(function OverviewCard({
       <div className="flex min-w-0 items-center gap-2">
         <AgentIcon agent={pane.agent} className="size-4" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
-        {pinned && <span className="text-[10px] text-muted-foreground">{t("home.pin.pinned")}</span>}
+        {pinned && <span className="text-[10px] text-muted-foreground">{t("home.pinned.title")}</span>}
         <StatusBadge status={pane.status} />
       </div>
       {parts.space !== title && (

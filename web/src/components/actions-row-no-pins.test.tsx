@@ -20,7 +20,7 @@ const took = async () => true;
 const keys: GeneralAction = { id: "keys", icon: Keyboard, label: "Keys", onSelect: vi.fn() };
 
 describe("the belt without its pinned pills (fork)", () => {
-  it("draws neither the Switch mark nor the Changes pill, even when the pane offers both", () => {
+  it("draws no Switch mark, Changes pill or clear X, even when the pane offers all three", () => {
     render(
       <ActionsRow
         general={[keys]}
@@ -28,8 +28,10 @@ describe("the belt without its pinned pills (fork)", () => {
         onRun={took}
         handle={{ ref: vi.fn(), onClick: vi.fn(), label: "Switch pane", alert: true }}
         changes={{ onClick: vi.fn(), label: "Changes" }}
+        clear={{ mode: "clear", onClick: vi.fn(), label: "Clear message" }}
       />,
     );
+    expect(screen.queryByRole("button", { name: "Clear message" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Switch pane" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Changes" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Keys" })).toBeInTheDocument();

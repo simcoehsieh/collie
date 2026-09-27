@@ -51,7 +51,7 @@ export function isEditable(target: EventTarget | null): boolean {
 /** The dashboard's order, flattened — what a digit indexes into. */
 export function paneOrder(data: HomeData | undefined) {
   if (!data) return [];
-  return triage(data.agents, dashPrefs().recentDir, dashPrefs().pinned).flatMap((s) => s.agents);
+  return triage(data.agents, dashPrefs().recentDir).flatMap((s) => s.agents);
 }
 
 /** The pane rows on the page, in document order. */

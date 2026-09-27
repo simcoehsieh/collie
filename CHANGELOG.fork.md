@@ -11,6 +11,61 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.14.1
+
+Merged upstream v1.14.1 (2026-09-27, with v1.14.0 under it) — 57 commits, 33 conflicted files. What
+it brings that matters here: **Codex 0.157 panes keep their input box** (its full-screen layout puts
+a row under the status row, and every Codex pane had the unread-dialog card and refused sends), **a
+busy Codex pane keeps its input box** while its first reply streams, History stops showing Claude's
+injected text as the operator's turns, `/plugin`'s Marketplaces screens get buttons, a rewrapped row
+no longer leaves one word alone, a hold shows while it is pressed, and the new-space sheet offers
+recent and favourite folders.
+
+### Dropped, because upstream superseded it
+
+- **The fork's pins** (a long press on a dashboard row opened a PinSheet: pin, unpin, move up, move
+  down, open, close; the order lived in `collie:dash-prefs:v1` as pane ids). Upstream's pins
+  (ADR 0070, `lib/pins.ts`) are the same feature done more widely: pinned panes lead Panes, Focus,
+  Changes AND the switcher, a pin is keyed by row and workspace name so a reused pane id cannot
+  inherit it, and the pin row lives in the pane menu every hold already opens. Lost with ours: the
+  hand-set order (upstream orders pins by place). Pins a device made before 1.14 are not carried
+  over; they are re-pinned from the pane menu. Operator's call, 2026-09-27. Removed: `pin-sheet.tsx`,
+  `pinned` / `setPinned` / `movePinned` in the dash prefs, the `triage` third argument and its
+  `pinned` section, the row's pin glyph, the `home.pin.*` strings. The overview grid now reads
+  upstream's pins to put pinned cards first.
+
+### Not taken, on the operator's call
+
+- **The "+" on each dashboard workspace heading** (M40/03). It opens a plain shell; every tab here is
+  opened from a launcher, which the tab strip's "+" hold picks. Off at `lib/dash-tabs.ts`
+  (`FORK_HEADING_NEW_TAB_ON`); headings keep their old height.
+- **The composer's X on the actions belt** (M40/04). It stands at the belt's right end, which the
+  belt's no-pins shape keeps empty; it came in under the same `lib/belt-pins.ts` gate.
+
+### Re-applied on top of upstream's new structure
+
+- **The row stays `Shell > button`** (`agent-card.tsx`): a blocked row carries approve / deny buttons
+  and a button cannot hold a button. Upstream's new `id` and `onHold` go on the inner button, and the
+  memo's comparison now watches `onHold` and `id`.
+- **The tab strip's "+" stays the fork's button**, not upstream's new shared `AddButton`, because a
+  hold on it picks a launcher and `AddButton` takes no hold; its class test allows the hold's pair.
+- **The image card's `rounded-sm`** (the skin's radius), moved into upstream's new `ImageCard`.
+
+### Kept, and why
+
+- **The folder roots boundary on a space create**, beside upstream's recent folders: the folder must
+  resolve inside the operator's roots and exist. Upstream's new tests are run against real temp
+  folders under a declared root instead of made-up `~/proj` paths.
+- **Clearing the box on the Send tap**: upstream's "the X is inert while a send is in flight" case is
+  rewritten to the fork's shape (the words, and so the X, leave on the tap).
+- **Swipe-to-close on dashboard rows**: a hold now opens the pane menu, whose Close row is the same
+  two-tap close.
+
+### Fixed in the fork's own tree on the way through
+
+- **`bridge/journal/claude.test.ts` merged as a binary file** (it holds a NUL byte), so git kept only
+  the fork's side and dropped upstream's new cases. Merged by hand; all 89 cases run.
+
 ## On top of 1.13.3
 
 Merged upstream v1.13.3 (2026-09-26) — 9 commits, no conflicts. What it brings that matters here:

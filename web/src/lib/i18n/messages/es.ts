@@ -239,6 +239,8 @@ export const es: Dictionary = {
   "composer.controls.display": "Pantalla",
   "composer.controls.collapseAria": "Ocultar la fila de controles",
   "composer.controls.expandAria": "Mostrar la fila de controles",
+  "composer.controls.clear": "Borrar mensaje",
+  "composer.controls.undoClear": "Deshacer borrado",
   "composer.sentPreview.label": "Enviado:",
   "composer.recall.button": "Detener y editar lo enviado",
   "composer.status.recalled": "Interrumpido: el mensaje vuelve a estar en el cuadro",
@@ -332,7 +334,7 @@ export const es: Dictionary = {
   "chat.scrollback.noSessionReported":
     "{agent} no ha registrado ninguna sesión en Herdr. Instala o actualiza la integración de Herdr correspondiente y reinicia el agente en este panel.",
   "chat.scrollback.noSessionYet":
-    "{agent} reports its session to Herdr only after its first message, so there is no history yet. If this note stays after {agent} has replied, review its hooks with /hooks in {agent}, or update the Herdr integration and restart the agent.",
+    "{agent} informa de su sesión a Herdr solo después de su primer mensaje, por lo que todavía no hay historial. Si esta nota continúa después de que {agent} haya respondido, revise sus enlaces con /hooks en {agent}, o actualice la integración de Herdr y reinicie el agente.",
   "chat.fullReply.title": "Respuesta completa",
   "chat.fullReply.fromTranscript": "desde el registro",
   "chat.fullReply.showingTerminal": "mostrando la terminal",
@@ -403,6 +405,10 @@ export const es: Dictionary = {
   "paneActions.focus.labelFallback": "Enfocar en el terminal",
   "paneActions.focus.done": "Enfocado en el terminal",
   "paneActions.focus.failed": "No se pudo enfocar en el terminal",
+  "paneActions.pin.label": "Fijar arriba",
+  "paneActions.unpin.label": "Desfijar",
+  "paneActions.pin.done": "Fijado arriba",
+  "paneActions.unpin.done": "Desfijado",
   "paneActions.empty.fallback": "Este multiplexor no admite acciones sobre paneles.",
   "paneActions.status.renamed": "Renombrado",
   "paneActions.status.labelCleared": "Etiqueta eliminada",
@@ -440,7 +446,13 @@ export const es: Dictionary = {
   "home.workspace.paneCount.one": "{count} panel",
   "home.workspace.paneCount.other": "{count} paneles",
   "home.workspace.hidden": "oculto",
+  "home.machineHidden.show": "Mostrar los paneles de {name}",
   "home.sidebar.shells": "Shells",
+  "home.pinned.title": "Fijado",
+  "home.pinHint.hold": "Mantenga presionado un panel para fijarlo aquí.",
+  "home.pinHint.rightClick": "Haga clic derecho en un panel para fijarlo aquí.",
+  "home.pinHint.dismiss": "Descartar sugerencia",
+  "home.group.newTab": "Nueva pestaña en {name}",
   "home.sidebar.paneActionsTitle": "Ver acciones del panel",
   "home.row.tabPosition": "pestaña {n}",
   "home.row.unseen": "sin ver",
@@ -629,6 +641,8 @@ export const es: Dictionary = {
   "connection.session.allAria": "Mostrando todas las sesiones. Cambiar sesión",
   "connection.server.title": "Máquinas",
   "connection.server.aria": "Host: {name}. Cambiar host",
+  "connection.server.show": "Mostrar en el panel de control",
+  "connection.server.showLocked": "La máquina en la que se encuentra siempre se muestra",
 
   // --- crew ---
   "crew.title": "Equipo",
@@ -733,6 +747,7 @@ export const es: Dictionary = {
   "mirror.copy": "Copiar",
   "mirror.copyBlock": "Copiar bloque de código",
   "mirror.copied": "Copiado",
+  "mirror.turnImageCaption": "la imagen más reciente del agente, de su registro",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "ahora mismo",
@@ -860,6 +875,8 @@ export const es: Dictionary = {
   "apiError.tab.workspace_required": "No se especificó un espacio para la nueva pestaña.",
   "apiError.launch.not_allowlisted": "Ese comando no está en tus lanzadores",
   "apiError.launch.pane_unknown": "Ese panel ya no existe, no se inició nada",
+  "apiError.folders.unknown": "Esa carpeta ya no está en Recientes, por lo que no se puede marcar como favorita.",
+  "apiError.folders.favourites_full": "Los favoritos están llenos ({max}). Elimine uno primero.",
   "apiError.workspace.create_failed": "Error al crear el espacio: {reason}",
   "apiError.upload.too_large": "El archivo es demasiado grande, el límite es {maxMb} MB.",
   "apiError.upload.no_file": "No se especificó ningún archivo.",
@@ -913,6 +930,11 @@ export const es: Dictionary = {
   "space.new.tab.worktree": "Worktree",
   "space.new.repo.label": "Repositorio",
   "space.new.host.label": "Host",
+  "space.new.folders.favourites": "Favoritos",
+  "space.new.folders.recent": "Recientes",
+  "space.new.folders.use": "Usar {path}",
+  "space.new.folders.star": "Añadir {folder} a favoritos",
+  "space.new.folders.unstar": "Eliminar {folder} de favoritos",
   "worktree.orOpenExisting": "Abrir worktree existente",
   // --- apiError.update (POST /api/update refusals, M15/05) ---
   "apiError.update.confirm_required": "La actualización requería confirmación; no se inició nada.",
@@ -1144,8 +1166,7 @@ export const es: Dictionary = {
   "connection.signInAgain": "Iniciar sesión de nuevo",
   "connection.restarted": "Collie se reinició: los paneles pueden tener ids nuevos.",
 
-  // --- FORK: overview, pins, hotkeys, low power, read-aloud ---
-  "status.section.pinned": "Fijados",
+  // --- FORK: overview, hotkeys, low power, read-aloud ---
   // FORK: closing a pane from the dashboard — the swipe-revealed button and the same act as a
   // row in the hold sheet. Two taps either way: the first arms, the second closes.
   "home.close.label": "Close",
@@ -1153,12 +1174,6 @@ export const es: Dictionary = {
   "home.close.closing": "Closing…",
   "home.close.sheet": "Close pane",
   "home.close.failed": "Couldn't close the pane.",
-  "home.pin.pinned": "Fijado",
-  "home.pin.open": "Abrir",
-  "home.pin.pin": "Fijar arriba",
-  "home.pin.unpin": "Desfijar",
-  "home.pin.moveUp": "Subir",
-  "home.pin.moveDown": "Bajar",
   "overview.title": "Vista general",
   // FORK: empty / error states (components/empty-state.tsx).
   "overview.empty.title": "No hay nada en marcha",

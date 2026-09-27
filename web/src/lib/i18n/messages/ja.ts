@@ -237,6 +237,8 @@ export const ja: Dictionary = {
   "composer.controls.display": "表示",
   "composer.controls.collapseAria": "操作列を隠す",
   "composer.controls.expandAria": "操作列を表示",
+  "composer.controls.clear": "メッセージを消去",
+  "composer.controls.undoClear": "消去を元に戻す",
   "composer.sentPreview.label": "送信済み:",
   "composer.recall.button": "止めて、送ったメッセージを編集する",
   "composer.status.recalled": "中断しました。メッセージを入力欄に戻しました",
@@ -329,7 +331,7 @@ export const ja: Dictionary = {
   "chat.scrollback.noSessionReported":
     "{agent} のセッションが Herdr に報告されていません。Herdr 連携をインストールまたは更新し、このペインでエージェントを再起動してください。",
   "chat.scrollback.noSessionYet":
-    "{agent} reports its session to Herdr only after its first message, so there is no history yet. If this note stays after {agent} has replied, review its hooks with /hooks in {agent}, or update the Herdr integration and restart the agent.",
+    "{agent}は最初のメッセージの送信後にのみセッションをHerdrに報告するため、履歴はまだありません。{agent}が返信した後もこのメッセージが表示され続ける場合は、{agent}で/hooksを実行してフックを確認するか、Herdr連携を更新してエージェントを再起動してください。",
   "chat.fullReply.title": "返答の全文",
   "chat.fullReply.fromTranscript": "ログより",
   "chat.fullReply.showingTerminal": "ターミナルを表示中",
@@ -399,6 +401,10 @@ export const ja: Dictionary = {
   "paneActions.focus.labelFallback": "ターミナルでフォーカス",
   "paneActions.focus.done": "ターミナルでフォーカスしました",
   "paneActions.focus.failed": "ターミナルでフォーカスできませんでした",
+  "paneActions.pin.label": "トップに固定",
+  "paneActions.unpin.label": "固定を解除",
+  "paneActions.pin.done": "トップに固定しました",
+  "paneActions.unpin.done": "固定を解除しました",
   "paneActions.empty.fallback": "このマルチプレクサにはペイン用のアクションがありません。",
   "paneActions.status.renamed": "名前を変更しました",
   "paneActions.status.labelCleared": "ラベルを消去しました",
@@ -436,7 +442,13 @@ export const ja: Dictionary = {
   "home.workspace.paneCount.one": "{count}ペイン",
   "home.workspace.paneCount.other": "{count}ペイン",
   "home.workspace.hidden": "非表示",
+  "home.machineHidden.show": "{name}のペインを表示",
   "home.sidebar.shells": "シェル",
+  "home.pinned.title": "固定済み",
+  "home.pinHint.hold": "ペインを長押しするとここに固定できます。",
+  "home.pinHint.rightClick": "ペインを右クリックするとここに固定できます。",
+  "home.pinHint.dismiss": "ヒントを閉じる",
+  "home.group.newTab": "{name}で新しいタブを開く",
   "home.sidebar.paneActionsTitle": "タップしてペイン操作を表示",
   "home.row.tabPosition": "タブ {n}",
   "home.row.unseen": "未読",
@@ -624,6 +636,8 @@ export const ja: Dictionary = {
   "connection.session.allAria": "全セッションを表示中。セッションを切り替え",
   "connection.server.title": "マシン",
   "connection.server.aria": "ホスト: {name}。ホストを切り替え",
+  "connection.server.show": "ダッシュボードに表示",
+  "connection.server.showLocked": "現在使用しているマシンは常に表示されます",
 
   // --- crew ---
   "crew.title": "クルー",
@@ -726,6 +740,7 @@ export const ja: Dictionary = {
   "mirror.copy": "コピー",
   "mirror.copyBlock": "コードブロックをコピー",
   "mirror.copied": "コピーしました",
+  "mirror.turnImageCaption": "エージェントのログから取得した最新の画像",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "たった今",
@@ -852,6 +867,8 @@ export const ja: Dictionary = {
   "apiError.tab.workspace_required": "新規タブのスペースが指定されていません。",
   "apiError.launch.not_allowlisted": "そのコマンドはランチャーに登録されていません",
   "apiError.launch.pane_unknown": "そのペインは見つかりません。何も起動されませんでした",
+  "apiError.folders.unknown": "そのフォルダーは「最近使った項目」にないため、お気に入りに追加できません。",
+  "apiError.folders.favourites_full": "お気に入りが上限（{max}）に達しています。先にお気に入りを1つ削除してください。",
   "apiError.workspace.create_failed": "スペースの作成に失敗しました: {reason}",
   "apiError.upload.too_large": "ファイルが大きすぎます。上限は {maxMb} MB です。",
   "apiError.upload.no_file": "ファイルが指定されていません。",
@@ -904,6 +921,11 @@ export const ja: Dictionary = {
   "space.new.tab.worktree": "ワークツリー",
   "space.new.repo.label": "リポジトリ",
   "space.new.host.label": "ホスト",
+  "space.new.folders.favourites": "お気に入り",
+  "space.new.folders.recent": "最近使った項目",
+  "space.new.folders.use": "{path}を使用",
+  "space.new.folders.star": "{folder}をお気に入りに追加",
+  "space.new.folders.unstar": "{folder}をお気に入りから削除",
   "worktree.orOpenExisting": "または既存のものを開く",
   // --- apiError.update (POST /api/update refusals, M15/05) ---
   "apiError.update.confirm_required": "更新の確認が必要なため、処理は開始されませんでした。",
@@ -1135,8 +1157,7 @@ export const ja: Dictionary = {
   "connection.signInAgain": "再サインイン",
   "connection.restarted": "Collie が再起動しました — ペインの id が変わった可能性があります。",
 
-  // --- FORK: overview, pins, hotkeys, low power, read-aloud ---
-  "status.section.pinned": "ピン留め",
+  // --- FORK: overview, hotkeys, low power, read-aloud ---
   // FORK: closing a pane from the dashboard — the swipe-revealed button and the same act as a
   // row in the hold sheet. Two taps either way: the first arms, the second closes.
   "home.close.label": "Close",
@@ -1144,12 +1165,6 @@ export const ja: Dictionary = {
   "home.close.closing": "Closing…",
   "home.close.sheet": "Close pane",
   "home.close.failed": "Couldn't close the pane.",
-  "home.pin.pinned": "ピン留め済み",
-  "home.pin.open": "開く",
-  "home.pin.pin": "先頭にピン留め",
-  "home.pin.unpin": "ピン留めを解除",
-  "home.pin.moveUp": "上へ移動",
-  "home.pin.moveDown": "下へ移動",
   "overview.title": "一覧",
   // FORK: empty / error states (components/empty-state.tsx).
   "overview.empty.title": "実行中のものはありません",

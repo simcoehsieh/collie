@@ -106,12 +106,11 @@ export function routeEnter(
 // routes (home + pane detail) via the router's loader data. Mounted only while unlocked (the
 // idle-lock in App swaps the whole RouterProvider out), so polling pauses when the app is locked.
 // FORK: triage bucket -> what the mark shows. The two vocabularies are deliberately not the same
-// size: `pinned` and `recent` are ORDERING, not urgency, so both land on the rest drawing, and the
+// size: `recent` is ORDERING, not urgency, so it lands on the rest drawing, and the
 // three buckets that mean something is happening each get their own. Written as a Record so a new
 // bucket in lib/triage.ts fails this file at compile time rather than silently falling through to
 // idle — a herd state the mark quietly stops reporting is the worst failure this feature has.
 const HERD_MARK = {
-  pinned: "idle",
   needs: "blocked",
   ready: "done",
   working: "working",

@@ -1,14 +1,15 @@
 import { useCallback, useMemo, useState } from "react";
 import { CircleDot, GitCompare, LayoutGrid, Library, Rows3 } from "lucide-react";
+import { useRevalidator } from "react-router";
 
 import { RouteHeader, SettingsGear } from "@/components/app-header";
 import { SessionSwitcher } from "@/components/session-switcher";
 import { ServerSwitcher } from "@/components/server-switcher";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { AgentList } from "@/components/agent-list";
+import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { SpaceOverview } from "@/components/space-overview";
 import { NewSpaceSheet, type WorktreeRepo } from "@/components/new-space-sheet";
-import { PinSheet } from "@/components/pin-sheet";
 import { QuotaCard } from "@/components/quota-card";
 import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
@@ -24,27 +25,28 @@ import { useSpaceActions } from "@/hooks/use-spaces";
 import { useNav } from "@/hooks/use-nav";
 import { usePaneOpen } from "@/hooks/use-pane-open";
 import { useScrollMemory } from "@/hooks/use-scroll-memory";
-import { FORK_DASH_TABS_ON } from "@/lib/dash-tabs";
+import { FORK_DASH_TABS_ON, FORK_HEADING_NEW_TAB_ON } from "@/lib/dash-tabs";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { useQuotaEnabled } from "@/lib/operator-config";
-import { ambientHost, ambientPanes, paneScope, sessionsOnHost } from "@/lib/hosts";
+import { ambientHost, ambientPanes, isMultiHost, paneRowKey, paneScope, sessionsOnHost } from "@/lib/hosts";
+import { setMachineHidden, useHiddenMachines } from "@/lib/hidden-machines";
 import type { ChangesLookup } from "@/lib/api";
 import type { DashView } from "@/lib/dash-view";
 import { t, tn } from "@/lib/i18n";
 import { glideForward } from "@/lib/glide";
-import { artifactsPath, panePath, spaceChangesPath, spacePath } from "@/lib/nav";
+import { artifactsPath, spaceChangesPath, spacePath } from "@/lib/nav";
 import { overviewPath } from "@/lib/overview";
 import type { WorkspaceGroup } from "@/lib/pane-groups";
 import { scopeKey, type Scope } from "@/lib/scope";
 import { countBlocked, hasReady } from "@/lib/triage";
-import type { AgentView, ServerSummary, SessionSummary } from "@/lib/types";
+import { usePairing } from "@/lib/pairing";
+import { usePins } from "@/lib/pins";
+import { isReadOnly, type AgentView, type ServerSummary, type SessionSummary } from "@/lib/types";
 import { useRootData } from "@/lib/route-data";
 import * as api from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { setStatus } from "@/lib/status";
 import { stampTopology } from "@/lib/poll-intent";
-import { isReadOnly } from "@/lib/types";
-import { useRevalidator } from "react-router";
 
 /**
  * The Changes tab's body (ADR 0066). Mounted only while that tab is selected, so its 5-second
@@ -99,15 +101,13 @@ function ChangesTabBody({
 export function HomeRoute() {
   const data = useRootData();
   const nav = useNav();
-  const { newSpace, newWorktree, showWorktree, creatingSpace } = useSpaceActions();
-  // FORK: the row a long press picked up, for the pin sheet. Null while the sheet is closed.
-  const [held, setHeld] = useState<AgentView | null>(null);
-  const hold = useCallback((pane: AgentView) => setHeld(pane), []);
+  const { newSpace, newWorktree, showWorktree, creatingSpace, newTab, creatingTab } = useSpaceActions();
+  // Declared here rather than beside the pane menu below: `closePane`'s deps read it at once.
   const revalidator = useRevalidator();
   // FORK: CLOSING A PANE FROM THE LIST THAT MADE THE DECISION.
   //
   // Reached two ways, both of which land here: a left swipe on the row (components/swipe-close.tsx)
-  // and the last row of the hold sheet. The REQUEST lives in this route rather than in either of
+  // and the Close row of the pane menu a hold opens. The REQUEST lives in this route rather than in either of
   // them, because the error copy, the topology stamp and the revalidate are one story and neither
   // the list nor the sheet should own a copy of it.
   //
@@ -134,7 +134,6 @@ export function HomeRoute() {
     [data.scope, data.servers, data.sessions, revalidator],
   );
   const mayClose = !isReadOnly(data.device) ? closePane : undefined;
-  const knownIds = useMemo(() => data.agents.map((a) => a.paneId), [data.agents]);
 
   // Which repos a worktree could be branched from: one entry per repo, taken from the space that
   // shows the repo ITSELF (a worktree's own space would branch from the same repo, so listing both
@@ -204,12 +203,6 @@ export function HomeRoute() {
   // right pane name on the wrong terminal. Solo: every pane is untagged, so this is `data.scope`.
   // The tap glides the row into the pane header when the pane's read is in time (use-pane-open.ts).
   const paneOpen = usePaneOpen(data.scope, data.servers, data.sessions);
-  // FORK: the hold sheet's "open" (PaneActionsSheet below) is a plain DOWN move to the pane. Stable,
-  // because the sheet and the memo()'d lists below would otherwise get a new prop every poll tick.
-  const open = useCallback(
-    (pane: AgentView) => nav.down(panePath(pane.paneId, paneScope(data.scope, pane, data.servers, data.sessions))),
-    [nav, data.scope, data.servers, data.sessions],
-  );
   const drillInto = useCallback((id: string) => nav.down(spacePath(id, data.scope)), [nav, data.scope]);
   // The space navigator shows the ADDRESSED machine's spaces — the loader's `ambientSpaces` has
   // already narrowed `data.workspaces`/`data.tabs` to the host `?h=` names (or the lead, absent one;
@@ -231,6 +224,22 @@ export function HomeRoute() {
     () => ambientPanes(data.agents, data.shellPanes, data.scope, data.servers, data.sessions),
     [data.agents, data.shellPanes, data.scope, data.servers, data.sessions],
   );
+
+  // THE ROW HOLD (ADR 0070): a hold on a dashboard row opens that pane's own actions sheet, Pin to
+  // top / Unpin first, then the writes. The sheet writes with the PANE's scope, for the reason a tap
+  // opens with it (`paneScope`). A pin or unpin moves the row right here, so the answer is the row
+  // itself, scrolled into view and focused in its new place (`reveal`), not a toast.
+  const pins = usePins();
+  const [held, setHeld] = useState<AgentView | null>(null);
+  const [reveal, setReveal] = useState<{ rowKey: string } | null>(null);
+  const { refused: notPaired } = usePairing();
+  const readOnly = isReadOnly(data.device) || notPaired;
+  const herd = useMemo(() => [...data.agents, ...data.shellPanes], [data.agents, data.shellPanes]);
+  // THE MACHINE FILTER (issue #288): the machines this device leaves off the list, as stored. The
+  // list itself keeps the addressed machine and drops ids off the roster (lib/hidden-machines.ts). A
+  // solo snapshot reads nothing. The stand-in chip's tap is the second place it is written, beside
+  // the Machines sheet's switch.
+  const hiddenMachines = useHiddenMachines(isMultiHost(data.servers));
 
   // ScreenTransition remounts this whole route on every dashboard<->pane move (both directions), so
   // the scroller below is a fresh DOM node with scrollTop 0 each time — the document itself never
@@ -302,15 +311,32 @@ export function HomeRoute() {
             onPress={paneOpen.press}
             error={data.error}
             lastSeenAt={data.lastSeenAt}
-            pinned={prefs.pinned}
-            onLongPress={hold}
             onClosePane={mayClose}
             tabs={data.tabs}
             servers={data.servers}
+            // Each workspace heading's "+" (M40/03): the list resolves each heading's own machine and
+            // session from these, the way a row's tap does, and sends the create there.
+            // FORK: no heading "+" in production (lib/dash-tabs.ts).
+            newTab={
+              FORK_HEADING_NEW_TAB_ON
+                ? {
+                    scope: data.scope,
+                    sessions: data.sessions,
+                    creating: creatingTab,
+                    onNewTab: (workspaceId, at) => void newTab(workspaceId, at),
+                  }
+                : undefined
+            }
             isolated={prefs.isolatedSpace}
             hidden={prefs.hiddenSpaces}
             onIsolate={setIsolatedSpace}
             onToggleHidden={toggleHiddenSpace}
+            hiddenMachines={hiddenMachines}
+            addressedHost={data.scope.host}
+            onShowMachine={(host) => setMachineHidden(host, false, data.servers)}
+            pins={pins}
+            onHold={setHeld}
+            reveal={reveal}
             needsYouOnly={view === "focus"}
             renderBody={
               view === "changes"
@@ -411,15 +437,19 @@ export function HomeRoute() {
         <StatusArea />
       </ToastViewport>
 
-      {/* FORK: pin / un-pin / reorder, from a long press on a row. */}
-      <PinSheet
+      {/* The pane menu a row's hold opens: the pane pill's sheet, with no read rows, so Pin to top
+          leads. Mounted at the route's root, a sibling of the other sheets, for the stacking reason
+          agent-chat.tsx gives for its own. */}
+      <PaneActionsSheet
         open={held !== null}
-        pane={held}
-        pinned={prefs.pinned}
-        known={knownIds}
         onClose={() => setHeld(null)}
-        onOpen={open}
-        onClosePane={mayClose}
+        pane={held}
+        scope={held === null ? data.scope : paneScope(data.scope, held, data.servers, data.sessions)}
+        readOnly={readOnly}
+        onRenamed={() => revalidator.revalidate()}
+        onClosed={() => revalidator.revalidate()}
+        herd={herd}
+        onPinChange={(pane) => setReveal({ rowKey: paneRowKey(pane) })}
       />
 
       <NewSpaceSheet

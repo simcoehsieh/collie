@@ -5,10 +5,7 @@ import {
   __resetDashPrefs,
   coerceDashPrefs,
   COLLAPSE_THRESHOLD,
-  movePinned,
   openForCount,
-  prunePinned,
-  setPinned,
   useDashPrefs,
   useLowPower,
 } from "./use-dash-prefs";
@@ -39,7 +36,6 @@ describe("coerceDashPrefs", () => {
       recentDir: "newest",
       // `""` is "a plain shell", which is what the tab strip's "+" has always opened.
       newTabLauncher: "",
-      pinned: [],
       lowPower: false,
       quotaOpen: true,
       isolatedSpace: null,
@@ -60,7 +56,6 @@ describe("coerceDashPrefs", () => {
         launchOpen: false,
         recentDir: "oldest",
         newTabLauncher: "claude",
-        pinned: ["w1:p1", "w2:p3"],
         lowPower: true,
         quotaOpen: false,
         isolatedSpace: "k1",
@@ -77,7 +72,6 @@ describe("coerceDashPrefs", () => {
       launchOpen: false,
       recentDir: "oldest",
       newTabLauncher: "claude",
-      pinned: ["w1:p1", "w2:p3"],
       lowPower: true,
       quotaOpen: false,
       isolatedSpace: "k1",
@@ -90,10 +84,11 @@ describe("coerceDashPrefs", () => {
     });
   });
 
-  it("FORK: keeps a pinned list as strings only, de-duplicated, in order", () => {
-    expect(coerceDashPrefs({ pinned: ["a", 3, "b", "a", ""] }).pinned).toEqual(["a", "b"]);
-    expect(coerceDashPrefs({ pinned: "a" }).pinned).toEqual([]);
+  it("FORK: reads a non-boolean Low power as off, and drops the retired `pinned` list", () => {
     expect(coerceDashPrefs({ lowPower: "yes" }).lowPower).toBe(false);
+    // The fork's own pins lived here until 1.14 took upstream's (lib/pins.ts, its own key). A blob a
+    // device stored before then still carries the list; it is read by nothing and not kept.
+    expect(coerceDashPrefs({ pinned: ["w1:p1"] })).not.toHaveProperty("pinned");
   });
 
   it("keeps the Changes depth inside 1..4", () => {
@@ -185,7 +180,6 @@ describe("useDashPrefs", () => {
       launchOpen: null,
       recentDir: "newest",
       newTabLauncher: "",
-      pinned: [],
       lowPower: false,
       quotaOpen: true,
       isolatedSpace: null,
@@ -206,7 +200,6 @@ describe("useDashPrefs", () => {
     act(() => first.result.current.setRecentDir("oldest"));
     act(() => first.result.current.setNewTabLauncher("claude"));
     act(() => first.result.current.setLowPower(true));
-    act(() => first.result.current.setPinned("w1:p1", true));
     act(() => first.result.current.setQuotaOpen(false));
     act(() => first.result.current.setIsolatedSpace("k1"));
     act(() => first.result.current.toggleHiddenSpace("k2"));
@@ -227,7 +220,6 @@ describe("useDashPrefs", () => {
       launchOpen: false,
       recentDir: "oldest",
       newTabLauncher: "claude",
-      pinned: ["w1:p1"],
       lowPower: true,
       quotaOpen: false,
       isolatedSpace: "k1",
@@ -252,46 +244,5 @@ describe("useDashPrefs", () => {
     localStorage.setItem("collie:dash-prefs:v1", "{not json");
     const { result } = renderHook(() => useDashPrefs());
     expect(result.current.prefs.recentDir).toBe("newest");
-  });
-});
-
-describe("FORK: pins", () => {
-  beforeEach(() => {
-    localStorage.clear();
-    __resetDashPrefs();
-  });
-
-  it("a new pin lands at the END of the order, and un-pinning removes it", () => {
-    const { result } = renderHook(() => useDashPrefs());
-    act(() => setPinned("a", true));
-    act(() => setPinned("b", true));
-    expect(result.current.prefs.pinned).toEqual(["a", "b"]);
-    act(() => setPinned("a", false));
-    expect(result.current.prefs.pinned).toEqual(["b"]);
-  });
-
-  it("moves a pin one step, and a move off either end is a no-op", () => {
-    const { result } = renderHook(() => useDashPrefs());
-    act(() => setPinned("a", true));
-    act(() => setPinned("b", true));
-    act(() => setPinned("c", true));
-    act(() => movePinned("c", -1));
-    expect(result.current.prefs.pinned).toEqual(["a", "c", "b"]);
-    act(() => movePinned("a", -1));
-    expect(result.current.prefs.pinned).toEqual(["a", "c", "b"]);
-    act(() => movePinned("b", 1));
-    expect(result.current.prefs.pinned).toEqual(["a", "c", "b"]);
-  });
-
-  it("prunes ids the herd no longer holds — at edit time, never on read", () => {
-    const { result } = renderHook(() => useDashPrefs());
-    act(() => setPinned("gone", true));
-    act(() => setPinned("a", true));
-    // Reading changes nothing: a pane can be absent for one poll during a restart.
-    expect(result.current.prefs.pinned).toEqual(["gone", "a"]);
-    expect(prunePinned(["gone", "a"], ["a"])).toEqual(["a"]);
-    // An edit with the herd in hand drops it.
-    act(() => setPinned("b", true, ["a", "b"]));
-    expect(result.current.prefs.pinned).toEqual(["a", "b"]);
   });
 });

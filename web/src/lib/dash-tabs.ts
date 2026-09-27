@@ -14,3 +14,12 @@
 // routes/home-no-tabs.test.tsx pins the fork's shape by mocking this module. Upstream's
 // `dashboard-footer` e2e spec runs the production bundle and fails here by design.
 export const FORK_DASH_TABS_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO "+" ON THE WORKSPACE HEADINGS (operator, 2026-09-27, at the 1.14 merge). Upstream 1.14.0
+// ends every dashboard heading with a "+" that opens a new tab in that workspace, in a plain shell.
+// Every tab on this install is opened from a launcher (claude / codex / agy), which the tab strip's
+// "+" hold already picks, so a heading "+" would be one more control per heading opening the wrong
+// thing. Off at this gate: routes/home.tsx passes no `newTab`, and agent-list.tsx then draws no "+"
+// and drops the `min-h-7` it reserved for one. Tests run with it (MODE "test"), and
+// routes/home-no-tabs.test.tsx pins the fork's shape.
+export const FORK_HEADING_NEW_TAB_ON: boolean = import.meta.env.MODE === "test";

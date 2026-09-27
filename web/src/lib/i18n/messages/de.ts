@@ -241,6 +241,8 @@ export const de: Dictionary = {
   "composer.controls.display": "Anzeige",
   "composer.controls.collapseAria": "Steuerleiste ausblenden",
   "composer.controls.expandAria": "Steuerleiste einblenden",
+  "composer.controls.clear": "Nachricht löschen",
+  "composer.controls.undoClear": "Löschen rückgängig machen",
   "composer.sentPreview.label": "Gesendet:",
   "composer.recall.button": "Anhalten und das Gesendete bearbeiten",
   "composer.status.recalled": "Unterbrochen – die Nachricht ist wieder im Feld",
@@ -334,7 +336,7 @@ export const de: Dictionary = {
   "chat.scrollback.noSessionReported":
     "{agent} hat keine Sitzung an Herdr gemeldet. Herdr-Integration installieren oder aktualisieren und den Agenten in diesem Pane neu starten.",
   "chat.scrollback.noSessionYet":
-    "{agent} reports its session to Herdr only after its first message, so there is no history yet. If this note stays after {agent} has replied, review its hooks with /hooks in {agent}, or update the Herdr integration and restart the agent.",
+    "{agent} meldet seine Sitzung erst nach seiner ersten Nachricht an Herdr, daher gibt es noch keinen Verlauf. Wenn dieser Hinweis bestehen bleibt, nachdem {agent} geantwortet hat, überprüfen Sie die Hooks mit /hooks in {agent} oder aktualisieren Sie die Herdr-Integration und starten Sie den Agenten neu.",
   "chat.fullReply.title": "Vollständige Antwort",
   "chat.fullReply.fromTranscript": "aus dem Protokoll",
   "chat.fullReply.showingTerminal": "Terminal wird gezeigt",
@@ -404,6 +406,10 @@ export const de: Dictionary = {
   "paneActions.focus.labelFallback": "Im Terminal fokussieren",
   "paneActions.focus.done": "Im Terminal fokussiert",
   "paneActions.focus.failed": "Fokussieren im Terminal fehlgeschlagen",
+  "paneActions.pin.label": "Oben anheften",
+  "paneActions.unpin.label": "Lösen",
+  "paneActions.pin.done": "Oben angeheftet",
+  "paneActions.unpin.done": "Gelöst",
   "paneActions.empty.fallback": "Dieser Multiplexer unterstützt keine Pane-Aktionen.",
   "paneActions.status.renamed": "Umbenannt",
   "paneActions.status.labelCleared": "Label entfernt",
@@ -441,7 +447,13 @@ export const de: Dictionary = {
   "home.workspace.paneCount.one": "{count} Pane",
   "home.workspace.paneCount.other": "{count} Panes",
   "home.workspace.hidden": "ausgeblendet",
+  "home.machineHidden.show": "Bereiche von {name} anzeigen",
   "home.sidebar.shells": "Shells",
+  "home.pinned.title": "Angeheftet",
+  "home.pinHint.hold": "Einen Bereich gedrückt halten, um ihn hier anzuheften.",
+  "home.pinHint.rightClick": "Einen Bereich mit der rechten Maustaste anklicken, um ihn hier anzuheften.",
+  "home.pinHint.dismiss": "Hinweis verwerfen",
+  "home.group.newTab": "Neuer Tab in {name}",
   "home.sidebar.paneActionsTitle": "Pane-Aktionen anzeigen",
   "home.row.tabPosition": "Tab {n}",
   "home.row.unseen": "ungesehen",
@@ -630,6 +642,8 @@ export const de: Dictionary = {
   "connection.session.allAria": "Alle Sitzungen werden angezeigt. Sitzung wechseln",
   "connection.server.title": "Rechner",
   "connection.server.aria": "Host: {name}. Host wechseln",
+  "connection.server.show": "Auf dem Dashboard anzeigen",
+  "connection.server.showLocked": "Der Computer, an dem Sie sich befinden, wird immer angezeigt",
 
   // --- crew ---
   "crew.title": "Crew",
@@ -734,6 +748,7 @@ export const de: Dictionary = {
   "mirror.copy": "Kopieren",
   "mirror.copyBlock": "Codeblock kopieren",
   "mirror.copied": "Kopiert",
+  "mirror.turnImageCaption": "das neueste Bild des Agenten aus seinem Protokoll",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "gerade eben",
@@ -863,6 +878,8 @@ export const de: Dictionary = {
   "apiError.tab.workspace_required": "Für den neuen Tab wurde kein Space angegeben.",
   "apiError.launch.not_allowlisted": "Dieser Befehl ist kein definierter Launcher",
   "apiError.launch.pane_unknown": "Dieses Pane ist nicht mehr da, nichts wurde gestartet",
+  "apiError.folders.unknown": "Dieser Ordner ist nicht mehr unter „Zuletzt verwendet“, daher kann er nicht als Favorit markiert werden.",
+  "apiError.folders.favourites_full": "Die Favoriten sind voll ({max}). Entfernen Sie zuerst einen Eintrag.",
   "apiError.workspace.create_failed": "Space konnte nicht erstellt werden: {reason}",
   "apiError.upload.too_large": "Die Datei ist zu groß, maximal sind {maxMb} MB erlaubt.",
   "apiError.upload.no_file": "Es wurde keine Datei übermittelt.",
@@ -917,6 +934,11 @@ export const de: Dictionary = {
   "space.new.tab.worktree": "Worktree",
   "space.new.repo.label": "Repository",
   "space.new.host.label": "Host",
+  "space.new.folders.favourites": "Favoriten",
+  "space.new.folders.recent": "Zuletzt verwendet",
+  "space.new.folders.use": "{path} verwenden",
+  "space.new.folders.star": "{folder} zu Favoriten hinzufügen",
+  "space.new.folders.unstar": "{folder} aus Favoriten entfernen",
   "worktree.orOpenExisting": "Oder bestehenden öffnen",
   // --- apiError.update (POST /api/update refusals, M15/05) ---
   "apiError.update.confirm_required": "Das Update erfordert eine Bestätigung. Es wurde nichts gestartet.",
@@ -1148,8 +1170,7 @@ export const de: Dictionary = {
   "connection.signInAgain": "Erneut anmelden",
   "connection.restarted": "Collie wurde neu gestartet – Panes haben möglicherweise neue IDs.",
 
-  // --- FORK: overview, pins, hotkeys, low power, read-aloud ---
-  "status.section.pinned": "Angeheftet",
+  // --- FORK: overview, hotkeys, low power, read-aloud ---
   // FORK: closing a pane from the dashboard — the swipe-revealed button and the same act as a
   // row in the hold sheet. Two taps either way: the first arms, the second closes.
   "home.close.label": "Close",
@@ -1157,12 +1178,6 @@ export const de: Dictionary = {
   "home.close.closing": "Closing…",
   "home.close.sheet": "Close pane",
   "home.close.failed": "Couldn't close the pane.",
-  "home.pin.pinned": "Angeheftet",
-  "home.pin.open": "Öffnen",
-  "home.pin.pin": "Oben anheften",
-  "home.pin.unpin": "Lösen",
-  "home.pin.moveUp": "Nach oben",
-  "home.pin.moveDown": "Nach unten",
   "overview.title": "Übersicht",
   // FORK: empty / error states (components/empty-state.tsx).
   "overview.empty.title": "Nichts läuft gerade",

@@ -55,6 +55,7 @@ import { createOperatorNotifyRules } from "./operator-notify.ts";
 import { ArtifactStore } from "./artifacts.ts";
 import { peekBinaryPrompt } from "./prompt-peek.ts";
 import { replyLine, type ReplyLine } from "./reply-peek.ts";
+import { FolderStore } from "./folders.ts";
 import { filePairingIo, PairingStore } from "./pairing.ts";
 import { createSttGate } from "./stt/index.ts";
 import { runBootGate } from "./crew/boot-gate.ts";
@@ -614,6 +615,12 @@ const paneCache =
 // the file does not exist until an operator toggles something or a warning actually goes out.
 const cacheWatch = new CacheWatchStore(cfg);
 await cacheWatch.load();
+
+// The folders a new space was created in on THIS machine, and the ones the operator starred — the
+// new-space sheet's list (#289, bridge/folders.ts). One per machine, whatever the session. Loading
+// writes nothing: the file appears on the first create with a folder or the first star.
+const folders = new FolderStore(cfg);
+await folders.load();
 
 // The warden that judges them. A DEPS LITERAL WITH NO LOGIC IN IT, for the reason
 // `bridge/update.ts`'s monitor is built the same way: there is no `bridge/index.test.ts`, so every gate
@@ -1839,6 +1846,7 @@ const server = startServer({
   journals: journals ?? undefined,
   cache: paneCache ?? undefined,
   cacheWatch,
+  folders,
   crew,
   pairing,
   stt,

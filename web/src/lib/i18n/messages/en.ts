@@ -255,6 +255,8 @@ export const en = {
   "composer.controls.display": "Display",
   "composer.controls.collapseAria": "Hide the controls row",
   "composer.controls.expandAria": "Show the controls row",
+  "composer.controls.clear": "Clear message",
+  "composer.controls.undoClear": "Undo clear",
   "composer.sentPreview.label": "You sent:",
   "composer.recall.button": "Stop and edit what you sent",
   "composer.status.recalled": "Interrupted — your message is back in the box",
@@ -421,6 +423,10 @@ export const en = {
   "paneActions.focus.labelFallback": "Focus in the terminal",
   "paneActions.focus.done": "Focused in the terminal",
   "paneActions.focus.failed": "Couldn't focus in the terminal",
+  "paneActions.pin.label": "Pin to top",
+  "paneActions.unpin.label": "Unpin",
+  "paneActions.pin.done": "Pinned to the top",
+  "paneActions.unpin.done": "Unpinned",
   "paneActions.empty.fallback": "This multiplexer offers no actions for a pane.",
   "paneActions.status.renamed": "Renamed",
   "paneActions.status.labelCleared": "Label cleared",
@@ -458,7 +464,13 @@ export const en = {
   "home.workspace.paneCount.one": "{count} pane",
   "home.workspace.paneCount.other": "{count} panes",
   "home.workspace.hidden": "hidden",
+  "home.machineHidden.show": "Show {name}'s panes",
   "home.sidebar.shells": "Shells",
+  "home.pinned.title": "Pinned",
+  "home.pinHint.hold": "Hold a pane to pin it here.",
+  "home.pinHint.rightClick": "Right-click a pane to pin it here.",
+  "home.pinHint.dismiss": "Dismiss hint",
+  "home.group.newTab": "New tab in {name}",
   "home.sidebar.paneActionsTitle": "Tap for pane actions",
   "home.row.tabPosition": "tab {n}",
   "home.row.unseen": "unseen",
@@ -655,6 +667,8 @@ export const en = {
   "connection.session.allAria": "Showing every session. Switch session",
   "connection.server.title": "Machines",
   "connection.server.aria": "Host: {name}. Switch host",
+  "connection.server.show": "Show on the dashboard",
+  "connection.server.showLocked": "The machine you are on is always shown",
 
   // --- crew (the read-only /crew census; role names stay English, ADR 0030) ---
   "crew.title": "Crew",
@@ -760,6 +774,7 @@ export const en = {
   "mirror.copy": "Copy",
   "mirror.copyBlock": "Copy code block",
   "mirror.copied": "Copied",
+  "mirror.turnImageCaption": "the agent's newest picture, from its log",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "just now",
@@ -890,6 +905,8 @@ export const en = {
   "apiError.tab.workspace_required": "No space was named for the new tab.",
   "apiError.launch.not_allowlisted": "That command isn't one of your launchers",
   "apiError.launch.pane_unknown": "That pane is gone, nothing was launched",
+  "apiError.folders.unknown": "That folder is no longer in Recent, so it can't be starred.",
+  "apiError.folders.favourites_full": "Favourites are full ({max}). Remove one first.",
   "apiError.workspace.create_failed": "The space couldn't be created: {reason}",
   "apiError.upload.too_large": "That file is too large, {maxMb} MB is the limit.",
   "apiError.upload.no_file": "No file was sent.",
@@ -941,6 +958,11 @@ export const en = {
   "space.new.tab.worktree": "Worktree",
   "space.new.repo.label": "Repository",
   "space.new.host.label": "Host",
+  "space.new.folders.favourites": "Favourites",
+  "space.new.folders.recent": "Recent",
+  "space.new.folders.use": "Use {path}",
+  "space.new.folders.star": "Add {folder} to favourites",
+  "space.new.folders.unstar": "Remove {folder} from favourites",
   "worktree.orOpenExisting": "Or open one that already exists",
   // --- apiError.update (POST /api/update refusals, M15/05) ---
   "apiError.update.confirm_required": "That update needed a confirm, so nothing was started.",
@@ -1217,8 +1239,7 @@ export const en = {
   "connection.tunnelDown": "Can't reach Collie through the tunnel",
   "connection.signInAgain": "Sign in again",
   "connection.restarted": "Collie restarted — panes may have new ids.",
-  // --- FORK: overview, pins, hotkeys, low power, read-aloud ---
-  "status.section.pinned": "Pinned",
+  // --- FORK: overview, hotkeys, low power, read-aloud ---
   // FORK: closing a pane from the dashboard — the swipe-revealed button and the same act as a
   // row in the hold sheet. Two taps either way: the first arms, the second closes.
   "home.close.label": "Close",
@@ -1226,12 +1247,6 @@ export const en = {
   "home.close.closing": "Closing…",
   "home.close.sheet": "Close pane",
   "home.close.failed": "Couldn't close the pane.",
-  "home.pin.pinned": "Pinned",
-  "home.pin.open": "Open",
-  "home.pin.pin": "Pin to top",
-  "home.pin.unpin": "Unpin",
-  "home.pin.moveUp": "Move up",
-  "home.pin.moveDown": "Move down",
   "overview.title": "Overview",
   // FORK: empty / error states (components/empty-state.tsx).
   "overview.empty.title": "Nothing is running",
