@@ -91,6 +91,7 @@ import { SessionStream } from "@/components/session-stream";
 import { PaneSettingsSheet } from "@/components/pane-settings-sheet";
 import { CompactStripLabels } from "@/components/ui/labelled-strip";
 import { HitArea } from "@/components/ui/hit-area";
+import { CodexFactsContext } from "@/components/codex-model-group";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { HostStaleBanner } from "@/components/host-stale-banner";
 import { useHostHealth } from "@/components/crew-provider";
@@ -1637,6 +1638,9 @@ export function AgentChat({
   // Same square recipe as the "+" beside it, transparent border included (the reach's numbers assume
   // one): they are two controls of the same rank in the same row, and drawing them differently would
   // rank them. Memoised on its label so the strip sees one element.
+  // FORK: one object per change of the two facts, so the Quick dock's Codex row re-renders when the
+  // pane's model or effort moves and not on every poll (components/codex-model-group.tsx).
+  const codexFacts = useMemo(() => ({ model: agent?.model, effort: agent?.effort }), [agent?.model, agent?.effort]);
   const foldLabel = t(foldLabelKey(stripTabs.length, tabPanes.length));
   const foldControl = useMemo(
     () => (
@@ -2850,6 +2854,9 @@ export function AgentChat({
 
                 {/* FORK: the sends waiting for the link, above the composer they came from. */}
                 <QueuedSends paneId={paneId} scope={scope} />
+                {/* FORK: the pane's model and effort, for the Quick dock's Codex row
+                    (components/codex-model-group.tsx) — handed past the composer, which never reads it. */}
+                <CodexFactsContext.Provider value={codexFacts}>
                 <Composer
                   ref={composerRef}
                   paneId={paneId}
@@ -2901,6 +2908,7 @@ export function AgentChat({
                   }
                   draftNoticeSlot={draftNoticeSlot}
                 />
+                </CodexFactsContext.Provider>
                 </Collapse>
               </div>
             </div>
