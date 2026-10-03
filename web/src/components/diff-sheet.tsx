@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronLeft, Copy, FileCode, Loader2, RefreshCw } from "lucide-react";
+import { Check, ChevronLeft, Copy, FileCode, GitCompare, Loader2, RefreshCw } from "lucide-react";
 
 import { AddNoteButton, NotePinSlot } from "@/components/note-badge";
 import { NoteSheet } from "@/components/notes-sheet";
@@ -48,6 +48,19 @@ interface DiffSheetProps {
    * file that most often needs reading is the one with no row here at all.
    */
   onOpenFile?: (path: string) => void;
+  /**
+   * FORK: leave for upstream's workspace Changes view (`/pane/:id/changes`, ADR 0065) — every repo
+   * this pane's workspace holds, as a list or a tree, with a filter and the last commit when the tree
+   * is clean.
+   *
+   * This sheet reads ONE repo, the pane's own, because that is what hunk notes and the file viewer
+   * hang off. The Changes view reads the WORKSPACE. Both stay (operator, 2026-09-24); the belt's
+   * Changes pill and the dashboard footer were the only doors to the second, and both are off by
+   * standing decision (lib/belt-pins.ts, lib/dash-tabs.ts), which left a whole view reachable only by
+   * typing its URL. FORK.md had said all along that it was reachable from the pane menu's diff row —
+   * this is what makes that true. Absent (a pane with no folder) draws nothing.
+   */
+  onWorkspaceChanges?: () => void;
 }
 
 type Loaded<T> = { phase: "loading" } | { phase: "ready"; data: T } | { phase: "failed"; message: string };
@@ -74,7 +87,17 @@ function describeFailure<TThrown>(e: TThrown): string {
   return t("diff.error.failed");
 }
 
-export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, home = "", onOpenFile }: DiffSheetProps) {
+export function DiffSheet({
+  open,
+  onClose,
+  paneId,
+  scope,
+  fontSize,
+  mirrorFace,
+  home = "",
+  onOpenFile,
+  onWorkspaceChanges,
+}: DiffSheetProps) {
   useLocale();
   const [stat, setStat] = useState<Loaded<PaneDiffStatResponse>>({ phase: "loading" });
   const [file, setFile] = useState<string | null>(null);
@@ -169,9 +192,12 @@ export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, 
   const ready = stat.phase === "ready" ? stat.data : null;
   const subtitle = ready ? t("diff.subtitle", { branch: ready.branch, root: shortenHome(ready.repoRoot, home) }) : undefined;
 
+  // FORK: the `branch · repo` line stays under the title in a patch too — a path alone does not say
+  // which checkout it is in, and the line no longer comes and goes as the operator moves between the
+  // list and a file.
   return (
     <>
-    <RightSheet open={open} onClose={onClose} title={file ?? t("diff.title")} subtitle={file ? undefined : subtitle}>
+    <RightSheet open={open} onClose={onClose} title={file ?? t("diff.title")} subtitle={subtitle}>
       <div className="flex h-full flex-col">
         {/* The tool row: back (in a patch), refresh, copy path (in a patch).
             FORK: 44px tall (`py-1.5` around 32px buttons) so every button's hit area reaches the
@@ -179,6 +205,22 @@ export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, 
             gives each side of a gap 4px of reach, so no two buttons share a pixel. The buttons
             keep their 32px faces (ui/hit-area.tsx; measured in e2e/hit-areas.spec.ts). */}
         <div className="flex shrink-0 items-center gap-2 border-b border-rule px-2 py-1.5">
+          {/* FORK: the door to the workspace's Changes view, first on the list's row, labelled —
+              an icon alone would be one more glyph to learn for a view the operator has never seen
+              here. The list only: a patch's row already carries four tools. */}
+          {file === null && onWorkspaceChanges !== undefined && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="relative h-8 gap-1 px-2"
+              onClick={onWorkspaceChanges}
+              title={tf("diff.workspaceChangesAria")}
+            >
+              <HitArea top={6} bottom={6} left={4} right={4} border={1} />
+              <GitCompare className="size-4" />
+              {tf("diff.workspaceChanges")}
+            </Button>
+          )}
           {file !== null && (
             // FORK: a short face and the full name. "Back to the file list" drew 164px, and with
             // Open file, Copy path and Refresh beside it the row came to 445px on a 390px phone —

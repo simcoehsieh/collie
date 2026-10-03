@@ -3071,6 +3071,18 @@ export function AgentChat({
           fontSize={prefs.fontSize}
           mirrorFace={mirrorFace}
           home={launchersHome}
+          // FORK: the door to upstream's workspace Changes view — the one the belt's pill and the
+          // dashboard footer used to be, both off by standing decision. Close first, then go down a
+          // level, so Back from Changes returns to this pane. Gated as that pill was: a pane that
+          // reports no folder (zellij's empty cwd) has no workspace for the view to read.
+          onWorkspaceChanges={
+            agent?.cwd
+              ? () => {
+                  closeDrawer();
+                  nav.down(changesPath(paneId, scope));
+                }
+              : undefined
+          }
           // FORK: a row's second affordance — the file itself rather than its patch. It hands over
           // to the viewer rather than growing a third view inside the sheet, because an UNCHANGED
           // file has no row here at all and the viewer has to stand on its own anyway.

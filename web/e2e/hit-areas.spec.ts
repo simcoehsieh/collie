@@ -168,8 +168,11 @@ test("the diff sheet and the file viewer: every tool owns 44px, keeps its 32px f
   await page.getByRole("button", { name: en["chat.paneMenu.aria"] }).click();
   await page.getByRole("button", { name: en["diff.row.label"] }).click();
 
-  // The list: refresh alone on the right.
-  await expectRow([{ locator: page.getByRole("button", { name: en["diff.refresh"] }), name: "refresh", face: { h: 32 } }]);
+  // The list: the door to the workspace's Changes on the left, refresh on the right.
+  await expectRow([
+    { locator: page.getByRole("button", { name: "Workspace changes" }), name: "workspace changes", face: { h: 32 } },
+    { locator: page.getByRole("button", { name: en["diff.refresh"] }), name: "refresh", face: { w: 38, h: 32 } },
+  ]);
 
   // One file's patch: four tools on one row.
   await page.getByText("src/app.ts", { exact: true }).click();
