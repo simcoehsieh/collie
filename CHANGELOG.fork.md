@@ -98,6 +98,10 @@ default.
 - **Quick on a Codex pane folds its model picker into one row.** "Model / effort: …" names what the
   pane is on and sits under the operator's phrases (`components/codex-model-group.tsx`); the row,
   the models it opens and the folded "others" are drawn 44px, measured in `e2e/hit-areas.spec.ts`.
+- **The fork's own strings go through one `t()`.** The pane menu's group names, the diff sheet's
+  door and short Back, and Quick's model row moved from `lib/i18n/fork-strings.ts` (`tf()`,
+  removed) into `lib/i18n/fork-messages.ts` as `fork.*` keys, so they change language in step with
+  the rest of the screen instead of ahead of it while the zh-TW bundle loads.
 
 ## On top of 1.14.1
 
