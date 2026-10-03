@@ -82,6 +82,8 @@ export const codexAdapter: HarnessAdapter = {
   // `codex/APPROVAL_NOTES.md`: `3. No, and tell Codex what to do differently (esc)` and
   // `Press enter to confirm or esc to cancel`.
   cancelKey: "Escape",
+  // FORK: fixtures/panes/codex--working.txt prints `Working (… • esc to interrupt)`.
+  interruptKeys: ["Escape"],
   composerPrompt,
   draftCarriesSend: codexDraftCarriesSend,
 };

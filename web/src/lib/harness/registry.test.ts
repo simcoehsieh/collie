@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { adapterFor, hasBlockGrammar } from "./registry";
+import { adapterFor, hasBlockGrammar, registeredAgents } from "./registry";
+
+it("only Claude and Codex declare a working-turn interrupt recipe", () => {
+  expect(registeredAgents().filter((agent) => adapterFor(agent)?.interruptKeys !== undefined)).toEqual(["claude", "codex"]);
+  expect(adapterFor("claude")?.interruptKeys).toEqual(["Escape"]);
+  expect(adapterFor("codex")?.interruptKeys).toEqual(["Escape"]);
+});
 
 // The single source of truth for "which agents get the block grammars". Both gates (the render
 // pipeline's buildBlocks and agent-chat's status strip) route through the registry, so it is worth

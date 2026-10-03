@@ -30,6 +30,12 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ## [Unreleased]
 
+### Added
+
+- **A working Claude or Codex pane offers a deliberate interrupt.** With no draft or message to
+  recall, tap the muted square twice within two seconds to stop the turn. Switching panes, opening
+  a modal or leaving the page disarms it; the existing stop-and-edit action keeps its behavior.
+
 ## [1.15.3] - 2026-10-02
 
 ### Fixed

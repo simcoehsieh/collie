@@ -1,5 +1,6 @@
 import type { Locale } from "./locale";
 import type { Dictionary, MessageKey } from "./messages/en";
+import { forkEn, forkZhTW, type ForkDictionary } from "./fork-messages";
 
 // FORK — THE CAT SPEAKS CAT.
 //
@@ -58,13 +59,16 @@ const OVERRIDES = {
  * import's resolution for the rest), never per lookup: `t()` runs on every rendered string, and a
  * spread there would allocate a dictionary per call.
  */
-export function withForkOverrides(locale: Locale, dictionary: Dictionary): Dictionary {
+export type ForkRuntimeDictionary = Dictionary & ForkDictionary;
+
+export function withForkOverrides(locale: Locale, dictionary: Dictionary): ForkRuntimeDictionary {
+  const additions = locale === "zh-TW" ? forkZhTW : forkEn;
   // Narrowed by `in`, not by an assertion: most locales carry no entry at all (that is the point of
   // the layer being small), and the guard is what tells the compiler which ones do. `satisfies`
   // above has already proved every key here IS a Locale, so this cannot select something that is not.
-  if (!(locale in OVERRIDES)) return dictionary;
+  if (!(locale in OVERRIDES)) return { ...dictionary, ...additions };
   // SAFETY: the `in` guard on the line above is the check — `locale` is a key of OVERRIDES at this
   // point, and `satisfies` has already proved every key of OVERRIDES is itself a Locale.
   const patch: Partial<Record<MessageKey, string>> = OVERRIDES[locale as keyof typeof OVERRIDES];
-  return { ...dictionary, ...patch };
+  return { ...dictionary, ...patch, ...additions };
 }

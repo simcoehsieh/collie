@@ -1,7 +1,8 @@
 import { hasDocument } from "../env";
 import { DEFAULT_LOCALE, isLocale, type Locale } from "./locale";
-import { en, type Dictionary, type MessageKey } from "./messages/en";
-import { withForkOverrides } from "./fork-overrides";
+import { en, type Dictionary, type MessageKey as UpstreamMessageKey } from "./messages/en";
+import { withForkOverrides, type ForkRuntimeDictionary } from "./fork-overrides";
+import type { ForkMessageKey } from "./fork-messages";
 import { interpolate, type TemplateVars } from "./template";
 
 // The translation runtime: one module-scoped store, one lookup function, one plural function.
@@ -25,7 +26,8 @@ import { interpolate, type TemplateVars } from "./template";
 
 export type { Locale } from "./locale";
 export { LOCALES, DEFAULT_LOCALE, isLocale, type LocaleOption } from "./locale";
-export type { MessageKey, Messages, Dictionary } from "./messages/en";
+export type { Messages, Dictionary } from "./messages/en";
+export type MessageKey = UpstreamMessageKey | ForkMessageKey;
 
 export type { TemplateVars } from "./template";
 
@@ -53,7 +55,7 @@ const LOADERS = {
   "zh-TW": async () => (await import("./messages/zh-TW")).zhTW,
 } satisfies Record<Exclude<Locale, typeof DEFAULT_LOCALE>, () => Promise<Dictionary>>;
 
-const loaded = new Map<Locale, Dictionary>();
+const loaded = new Map<Locale, ForkRuntimeDictionary>();
 const loading = new Map<Locale, Promise<void>>();
 
 function storage(): Storage | null {
@@ -135,10 +137,10 @@ function ensureDictionary(locale: Locale): Promise<void> {
 // FORK: English is in the main chunk and never passes through `fetchDictionary`, so its overrides
 // are applied once at module scope. The type widens from `typeof en`'s literals to `Dictionary`,
 // which changes nothing that matters: `MessageKey` is derived from `en` itself, not from this.
-const EN: Dictionary = withForkOverrides(DEFAULT_LOCALE, en);
+const EN: ForkRuntimeDictionary = withForkOverrides(DEFAULT_LOCALE, en);
 
 /** The dictionary `t()` is actually reading: the active locale's if it has landed, else English. */
-function activeDictionary(): Dictionary {
+function activeDictionary(): ForkRuntimeDictionary {
   return loaded.get(state.locale) ?? EN;
 }
 
