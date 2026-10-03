@@ -4,6 +4,7 @@ import { Check, ChevronLeft, Copy, FileCode, Loader2, RefreshCw } from "lucide-r
 import { AddNoteButton, NotePinSlot } from "@/components/note-badge";
 import { NoteSheet } from "@/components/notes-sheet";
 import { Button } from "@/components/ui/button";
+import { HitArea } from "@/components/ui/hit-area";
 import { RightSheet } from "@/components/ui/right-sheet";
 import type { MirrorFont } from "@/hooks/use-display-prefs";
 import { useLocale } from "@/hooks/use-locale";
@@ -13,6 +14,7 @@ import * as api from "@/lib/api";
 import { isApiErrorStatus } from "@/lib/api";
 import { buzz } from "@/lib/haptics";
 import { t } from "@/lib/i18n";
+import { tf } from "@/lib/i18n/fork-messages";
 import { anchorKey, type Note, type NoteAnchor } from "@/lib/notes";
 import type { Scope } from "@/lib/scope";
 import { shortenHome } from "@/lib/shorten-home";
@@ -171,30 +173,43 @@ export function DiffSheet({ open, onClose, paneId, scope, fontSize, mirrorFace, 
     <>
     <RightSheet open={open} onClose={onClose} title={file ?? t("diff.title")} subtitle={file ? undefined : subtitle}>
       <div className="flex h-full flex-col">
-        {/* The tool row: back (in a patch), refresh, copy path (in a patch). */}
-        <div className="flex shrink-0 items-center gap-1 border-b border-rule px-2 py-1">
+        {/* The tool row: back (in a patch), refresh, copy path (in a patch).
+            FORK: 44px tall (`py-1.5` around 32px buttons) so every button's hit area reaches the
+            floor INSIDE the row — 6px up and down — and never over the list row below it; `gap-2`
+            gives each side of a gap 4px of reach, so no two buttons share a pixel. The buttons
+            keep their 32px faces (ui/hit-area.tsx; measured in e2e/hit-areas.spec.ts). */}
+        <div className="flex shrink-0 items-center gap-2 border-b border-rule px-2 py-1.5">
           {file !== null && (
-            <Button variant="ghost" size="sm" className="h-8 gap-1 px-2" onClick={back}>
+            // FORK: a short face and the full name. "Back to the file list" drew 164px, and with
+            // Open file, Copy path and Refresh beside it the row came to 445px on a 390px phone —
+            // Refresh was off the glass. The accessible name is still the whole sentence.
+            <Button variant="ghost" size="sm" className="relative h-8 gap-1 px-2" onClick={back} aria-label={t("diff.back")}>
+              <HitArea top={6} bottom={6} left={4} right={4} border={1} />
               <ChevronLeft className="size-4" />
-              {t("diff.back")}
+              {tf("diff.backShort")}
             </Button>
           )}
           <span className="flex-1" />
           {/* FORK: the same hop the row offers, from inside a patch — the hunk's three lines of
               context is exactly where the question "what does the rest of this say" arrives. */}
           {file !== null && onOpenFile !== undefined && (
-            <Button variant="ghost" size="sm" className="h-8 gap-1 px-2" onClick={() => onOpenFile(file)}>
+            <Button variant="ghost" size="sm" className="relative h-8 gap-1 px-2" onClick={() => onOpenFile(file)}>
+              <HitArea top={6} bottom={6} left={4} right={4} border={1} />
               <FileCode className="size-4" />
               {t("diff.openFile")}
             </Button>
           )}
           {file !== null && (
-            <Button variant="ghost" size="sm" className="h-8 gap-1 px-2" onClick={() => void copyPath()}>
+            <Button variant="ghost" size="sm" className="relative h-8 gap-1 px-2" onClick={() => void copyPath()}>
+              <HitArea top={6} bottom={6} left={4} right={4} border={1} />
               {copied ? <Check className="size-4 text-status-done" /> : <Copy className="size-4" />}
               {copied ? t("diff.copied") : t("diff.copyPath")}
             </Button>
           )}
-          <Button variant="ghost" size="sm" className="h-8 gap-1 px-2" onClick={refresh} aria-label={t("diff.refresh")}>
+          {/* Last in the row: its right reach is the row's own 8px of padding, which is what takes a
+              32px icon to 44. */}
+          <Button variant="ghost" size="sm" className="relative h-8 gap-1 px-2" onClick={refresh} aria-label={t("diff.refresh")}>
+            <HitArea top={6} bottom={6} left={4} right={8} border={1} />
             <RefreshCw className="size-4" />
           </Button>
         </div>

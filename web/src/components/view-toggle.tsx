@@ -1,5 +1,6 @@
 import { MessagesSquare, SquareTerminal } from "lucide-react";
 
+import { HitArea, type HitReach } from "@/components/ui/hit-area";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import type { PaneView } from "@/hooks/use-display-prefs";
@@ -31,6 +32,19 @@ import type { PaneView } from "@/hooks/use-display-prefs";
 // Folding the strips takes this with them: the 24px summary bar that stands in for the rows has
 // no room for a 32px control, and a folded band is the operator asking for the mirror's space,
 // not for more chrome. Unfold to switch.
+//
+// THE 44px FLOOR, AS HIT AREA (survey round 3). Each 28px option reaches the 44px line the tab row's
+// other controls reach — up to the row's top edge (the route's scroller clips above it) and down 14px
+// over the mirror, raised over it — and sideways only into room nobody else claims: 1px toward its
+// twin (half the 2px between them) and 15px outward. The outward room is bought with the capsule's
+// own margins: `ml-1` plus the slot's and the scroller's padding leaves 15px clear of the "+"'s 9px
+// reach even when the "+" is scrolled hard against the slot, and `mr-3` leaves 15px clear of the fold
+// chevron's 2px left reach (agent-chat.tsx). The drawn circles do not change size; the capsule moves.
+// `e2e/hit-areas.spec.ts` measures all of it in a browser.
+const REACH = {
+  transcript: { top: 2, bottom: 14, left: 15, right: 1 },
+  terminal: { top: 2, bottom: 14, left: 1, right: 15 },
+} satisfies Record<PaneView, HitReach>;
 
 export function ViewToggle({
   value,
@@ -54,7 +68,7 @@ export function ViewToggle({
       aria-label={t("chat.view.label")}
       // 32px tall, the same square recipe as the "+" and the fold chevron it sits beside: three
       // controls of one rank in one row, drawn to one height so none of them outranks the others.
-      className="flex h-8 shrink-0 items-center gap-0.5 rounded-full bg-muted/60 p-0.5"
+      className="ml-1 mr-3 flex h-8 shrink-0 items-center gap-0.5 rounded-full bg-muted/60 p-0.5"
     >
       {options.map(({ view, label, Icon }) => {
         const on = value === view;
@@ -69,11 +83,12 @@ export function ViewToggle({
             disabled={disabled}
             onClick={() => onChange(view)}
             className={cn(
-              "flex size-7 items-center justify-center rounded-full transition-colors",
+              "relative flex size-7 items-center justify-center rounded-full transition-colors",
               on ? "bg-background text-foreground shadow-xs" : "text-muted-foreground active:bg-muted",
               disabled && "opacity-60",
             )}
           >
+            <HitArea {...REACH[view]} raised />
             <Icon className="size-4 shrink-0" aria-hidden />
           </button>
         );

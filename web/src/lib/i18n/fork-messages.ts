@@ -24,7 +24,10 @@ const EN = {
   "paneActions.group.output": "Output",
   "paneActions.group.manage": "Manage",
   "paneActions.more": "More",
-  // The diff sheet's door to upstream's workspace Changes view (components/diff-sheet.tsx).
+  // The diff sheet's tool row (components/diff-sheet.tsx): Back's face, short enough that four tools
+  // fit a phone's row (its accessible name stays the full sentence), and the door to upstream's
+  // workspace Changes view.
+  "diff.backShort": "Back",
   "diff.workspaceChanges": "Workspace changes",
   "diff.workspaceChangesAria": "Open every repo's changes in this workspace",
   // The Codex model row in Quick (components/codex-model-group.tsx).
@@ -42,6 +45,7 @@ const TABLES = {
     "paneActions.group.output": "產出",
     "paneActions.group.manage": "管理",
     "paneActions.more": "更多",
+    "diff.backShort": "返回",
     "diff.workspaceChanges": "工作區變更",
     "diff.workspaceChangesAria": "開啟這個工作區每個 repo 的變更",
     "quick.codexModel.row": "模型／推理強度：{current}",

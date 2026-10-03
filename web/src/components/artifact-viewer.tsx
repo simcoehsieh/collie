@@ -3,6 +3,7 @@ import { ExternalLink, RefreshCw } from "lucide-react";
 
 import { MarkdownText } from "@/components/markdown-text";
 import { Button } from "@/components/ui/button";
+import { HitArea } from "@/components/ui/hit-area";
 import { useLocale } from "@/hooks/use-locale";
 import { artifactRawSrc } from "@/lib/api";
 import { t } from "@/lib/i18n";
@@ -57,18 +58,24 @@ export function ArtifactViewer({
   if (artifact.kind === "html") {
     return (
       <div data-slot="artifact-viewer" className={cn("flex min-h-0 flex-1 flex-col", className)}>
-        <div className="flex items-center gap-1 px-2 py-1">
+        {/* FORK: two 32px icons that owe the 44px floor. The row is 44px tall (`py-1.5`) so the
+            reach stays inside it above the frame; `gap-2` splits 4px to each icon between them,
+            reload reaches 8px back over the slug (text, nothing to hit) and open-in-tab 8px into the
+            row's own padding (ui/hit-area.tsx; e2e/hit-areas.spec.ts). */}
+        <div className="flex items-center gap-2 px-2 py-1.5">
           <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{artifact.slug}</span>
-          <Button variant="ghost" size="icon" className="size-8" aria-label={t("artifacts.viewer.refresh")} onClick={() => setNonce((n) => n + 1)}>
+          <Button variant="ghost" size="icon" className="relative size-8" aria-label={t("artifacts.viewer.refresh")} onClick={() => setNonce((n) => n + 1)}>
+            <HitArea top={6} bottom={6} left={8} right={4} border={1} />
             <RefreshCw className="size-4" />
           </Button>
           <Button
             variant="ghost"
             size="icon"
-            className="size-8"
+            className="relative size-8"
             aria-label={t("artifacts.viewer.openTab")}
             onClick={() => window.open(src, "_blank", "noopener,noreferrer")}
           >
+            <HitArea top={6} bottom={6} left={4} right={8} border={1} />
             <ExternalLink className="size-4" />
           </Button>
         </div>

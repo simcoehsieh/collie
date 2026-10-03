@@ -89,7 +89,8 @@ import { NewTabSheet } from "@/components/new-tab-sheet";
 import { CardWaitingCtx } from "@/components/chat-cards";
 import { SessionStream } from "@/components/session-stream";
 import { PaneSettingsSheet } from "@/components/pane-settings-sheet";
-import { CompactStripLabels, TAB_ROW_SQUARE_TAP_TARGET } from "@/components/ui/labelled-strip";
+import { CompactStripLabels } from "@/components/ui/labelled-strip";
+import { HitArea } from "@/components/ui/hit-area";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { HostStaleBanner } from "@/components/host-stale-banner";
 import { useHostHealth } from "@/components/crew-provider";
@@ -1644,11 +1645,14 @@ export function AgentChat({
         onClick={onToggleStrips}
         aria-expanded={true}
         aria-label={foldLabel}
-        className={cn(
-          TAB_ROW_SQUARE_TAP_TARGET,
-          "flex size-7 shrink-0 items-center justify-center rounded-full border border-transparent text-muted-foreground transition-colors hover:bg-accent active:scale-95",
-        )}
+        className="relative flex size-7 shrink-0 items-center justify-center rounded-full border border-transparent text-muted-foreground transition-colors hover:bg-accent active:scale-95"
       >
+        {/* FORK: the row's 44px floor, reached the way TAB_ROW_SQUARE_TAP_TARGET reaches it — up to
+            the row's top, down 14px over the mirror — but sideways mostly to the RIGHT, into the
+            row's own 16px of padding before the screen edge. The symmetric 9px it used to take to the
+            left lay over the view switch beside it (view-toggle.tsx), so a tap on "Terminal"'s right
+            edge folded the strips. e2e/hit-areas.spec.ts measures both. */}
+        <HitArea top={2} bottom={14} left={2} right={16} border={1} raised />
         <ChevronUp className="size-4" />
       </button>
     ),

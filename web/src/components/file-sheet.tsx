@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, Loader2, MonitorPlay, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { HitArea } from "@/components/ui/hit-area";
 import { RightSheet } from "@/components/ui/right-sheet";
 import type { MirrorFont } from "@/hooks/use-display-prefs";
 import { useLocale } from "@/hooks/use-locale";
@@ -166,25 +167,31 @@ export function FileSheet({ open, onClose, paneId, path, scope, fontSize, mirror
   return (
     <RightSheet open={open} onClose={onClose} title={path ?? t("file.title")} subtitle={subtitle}>
       <div className="flex h-full flex-col">
-        <div className="flex shrink-0 items-center gap-1 border-b border-rule px-2 py-1">
+        {/* FORK: the diff sheet's tool row, measured the same way: 44px tall so each 32px button's
+            hit area reaches the floor inside the row, and `gap-2` so neighbours split the gap
+            (ui/hit-area.tsx; e2e/hit-areas.spec.ts). */}
+        <div className="flex shrink-0 items-center gap-2 border-b border-rule px-2 py-1.5">
           {path !== null && onPreview !== undefined && previewable(path) && (
-            <Button variant="ghost" size="sm" className="h-8 gap-1 px-2" onClick={() => onPreview(path)}>
+            <Button variant="ghost" size="sm" className="relative h-8 gap-1 px-2" onClick={() => onPreview(path)}>
+              <HitArea top={6} bottom={6} left={4} right={4} border={1} />
               <MonitorPlay className="size-4" />
               {t("file.preview")}
             </Button>
           )}
           <span className="flex-1" />
-          <Button variant="ghost" size="sm" className="h-8 gap-1 px-2" onClick={() => void copyPath()}>
+          <Button variant="ghost" size="sm" className="relative h-8 gap-1 px-2" onClick={() => void copyPath()}>
+            <HitArea top={6} bottom={6} left={4} right={4} border={1} />
             {copied ? <Check className="size-4 text-status-done" /> : <Copy className="size-4" />}
             {copied ? t("file.copied") : t("file.copyPath")}
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 gap-1 px-2"
+            className="relative h-8 gap-1 px-2"
             onClick={() => path !== null && void load(path)}
             aria-label={t("file.refresh")}
           >
+            <HitArea top={6} bottom={6} left={4} right={8} border={1} />
             <RefreshCw className="size-4" />
           </Button>
         </div>
