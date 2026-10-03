@@ -51,7 +51,7 @@ import {
   documentResponseHeaders,
   documentSlugFromPath,
   fetchDocument,
-  normaliseAgentry,
+  agentryPresent,
   type AgentrySettings,
   type DocumentFailure,
   DOCUMENT_CSP,
@@ -79,6 +79,7 @@ import { jsonRecord, jsonStringField } from "./stt/json.ts";
 import { listDocuments, listTags, normaliseDocumentQuery } from "./docs-list.ts";
 import { QuotaSource, parseQuotaCommand, type QuotaFailure } from "./quota.ts";
 import { ShotRunner, parseShotCommand, type ShotFailure } from "./shot.ts";
+import { commandPathsPresent } from "./command-paths.ts";
 import {
   DEFAULT_PROMPT_TAIL_LINES,
   verifyExpectedPrompt,
@@ -1219,10 +1220,14 @@ export function startServer(opts: {
         textTypes: [...TEXT_EXTS, ...cfg.uploadExtraTypes],
       },
       // Gated on the bridge being ABLE to serve a document, not merely on the hostnames being
-      // named — see the field's own comment.
-      docHosts: normaliseAgentry(agentrySettings(cfg)) !== null ? cfg.docHosts : undefined,
+      // named — see the field's own comment. FORK: and on agentry's own files still being on disk
+      // (bridge/command-paths.ts), so a removed CLI takes the panel off the phone instead of
+      // leaving a door that only answers "unreachable".
+      docHosts: agentryPresent(agentrySettings(cfg)) ? cfg.docHosts : undefined,
       quota: quota !== null ? true : undefined,
-      shot: shot !== null ? true : undefined,
+      // FORK: a configured shot command is advertised only while the files it names exist — a
+      // command left pointing at a retired checkout is a row the pane menu must not draw.
+      shot: shot !== null && shotArgv !== null && commandPathsPresent(shotArgv) ? true : undefined,
     });
   };
 

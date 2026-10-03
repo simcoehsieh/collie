@@ -337,7 +337,8 @@ describe("the routes", () => {
     expect(src).toContain("const shotArgv = parseShotCommand(cfg.shotCommand);");
     expect(src).toContain("const shot = shotArgv === null ? null : new ShotRunner(shotArgv, cfg.shotHosts);");
     expect(src).toContain('if (shot === null) return text("no shot command", 404);');
-    expect(src).toContain("shot: shot !== null ? true : undefined,");
+    // Advertised only while the files the command names are on disk (bridge/command-paths.ts).
+    expect(src).toContain("shot: shot !== null && shotArgv !== null && commandPathsPresent(shotArgv) ? true : undefined,");
     expect(src).toContain("if (opts.shot === true) wire.shot = true;");
   });
 

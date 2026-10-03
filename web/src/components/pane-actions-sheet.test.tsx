@@ -449,6 +449,8 @@ describe("PaneActionsSheet — hand off", () => {
     unmount();
     const onHandoff = vi.fn();
     const props = renderSheet({ onHandoff });
+    // FORK: the row lives behind "More" on the ⋮ (survey round 3) — folded on every opening.
+    await user.click(screen.getByRole("button", { name: "More" }));
     await user.click(screen.getByRole("button", { name: "Hand off to another agent" }));
     expect(props.onClose).toHaveBeenCalled();
     expect(onHandoff).toHaveBeenCalledTimes(1);

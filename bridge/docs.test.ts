@@ -15,6 +15,7 @@ import {
   documentSlugFromPath,
   fetchDocument,
   isDocumentSlug,
+  agentryPresent,
   normaliseAgentry,
   sqlText,
   type AgentryIo,
@@ -287,6 +288,30 @@ describe("normaliseAgentry", () => {
     ["no binary", { home: "/x", cli: "" }],
   ])("refuses %s", (_why, value) => {
     expect(normaliseAgentry(value)).toBeNull();
+  });
+});
+
+describe("agentryPresent — a panel is offered only while its files are on disk", () => {
+  test("configured, with the CLI and the archive both there", () => {
+    const there = new Set([CLI, "/Users/op/agentry-data"]);
+    expect(agentryPresent({ home: "/Users/op/agentry-data/", cli: CLI }, (p) => there.has(p))).toBe(true);
+  });
+
+  test("configured, but the CLI is gone — the setting outlived the thing it names", () => {
+    expect(agentryPresent({ home: "/Users/op/agentry-data", cli: CLI }, (p) => p !== CLI)).toBe(false);
+  });
+
+  test("configured, but the archive is gone", () => {
+    expect(agentryPresent({ home: "/Users/op/agentry-data", cli: CLI }, (p) => p === CLI)).toBe(false);
+  });
+
+  test("not configured at all is not offered, whatever the disk says", () => {
+    expect(agentryPresent({ home: "", cli: CLI }, () => true)).toBe(false);
+  });
+
+  test("is what /api/config asks before it advertises the panel's hosts", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    expect(src).toContain("docHosts: agentryPresent(agentrySettings(cfg)) ? cfg.docHosts : undefined,");
   });
 });
 

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 import type { JsonObject, JsonValue } from "./json.ts";
+import { commandPathsPresent } from "./command-paths.ts";
 import { containedRealpath } from "./journal/files.ts";
 import { runQuotaCommand, type QuotaRun } from "./quota.ts";
 // Three generic readers for a field of an untrusted JSON object. They live under `stt/` because
@@ -268,6 +269,18 @@ export function normaliseAgentry(settings: AgentrySettings): { home: string; cli
   if (home === "" || cli === "") return null;
   if (!isAbsolute(home) || !isAbsolute(cli)) return null;
   return { home, cli };
+}
+
+/**
+ * Whether the panel can be OFFERED: configured, and the CLI and the archive both still on disk.
+ *
+ * Configured alone is what `/api/config` used to ask, and it is the question that keeps a door open
+ * after the thing behind it has gone — every request would then answer "unreachable" from a panel
+ * the phone had no reason to draw (bridge/command-paths.ts says why the check is a stat and no more).
+ */
+export function agentryPresent(settings: AgentrySettings, exists?: (path: string) => boolean): boolean {
+  const conf = normaliseAgentry(settings);
+  return conf !== null && commandPathsPresent([conf.cli, conf.home], exists);
 }
 
 /** The directory `html_path` is relative to, and the containment root for every read. */

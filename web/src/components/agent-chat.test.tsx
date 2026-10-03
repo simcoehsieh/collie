@@ -3166,6 +3166,8 @@ describe("AgentChat: hand off", () => {
     const user = userEvent.setup();
     renderChat();
     await openPaneMenu(user);
+    // FORK: hand off is one of the rows behind "More" (survey round 3).
+    await user.click(screen.getByRole("button", { name: "More" }));
     await user.click(await screen.findByRole("button", { name: "Hand off to another agent" }));
     expect(await screen.findByRole("radiogroup", { name: "Who takes over" })).toHaveTextContent("codex");
   });
@@ -3180,6 +3182,9 @@ describe("AgentChat: hand off", () => {
     renderChat();
     await openPaneMenu(user);
     expect(screen.getByRole("button", { name: "Rename" })).toBeInTheDocument();
+    // Unfolded, so the absence below is the row's and not the fold's.
+    const more = screen.queryByRole("button", { name: "More" });
+    if (more !== null) await user.click(more);
     expect(screen.queryByRole("button", { name: "Hand off to another agent" })).not.toBeInTheDocument();
   });
 });

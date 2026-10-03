@@ -26,6 +26,8 @@ test("handoff exposes usable model and effort controls on a narrow screen", asyn
   await page.goto("/pane/w1%3Ap1");
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
   await page.getByRole("button", { name: "Pane actions" }).click();
+  // FORK: hand off and the screenshot sit behind "More" on the ⋮ (survey round 3).
+  await page.getByRole("button", { name: "More" }).click();
   await page.getByRole("button", { name: "Hand off to another agent" }).click();
   await page.getByLabel("Codex model").selectOption("codex-test");
   await page.getByLabel("Reasoning effort").selectOption("high");
@@ -44,6 +46,7 @@ test("screenshot explains its steps and leaves health endpoints out of the addre
   await page.goto("/pane/w1%3Ap1");
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
   await page.getByRole("button", { name: "Pane actions" }).click();
+  await page.getByRole("button", { name: "More" }).click();
   await page.getByRole("button", { name: "Screenshot & annotate…" }).click();
   await expect(page.getByLabel("Page address")).toHaveValue("");
   await expect(page.getByText("Capture a website running on your Mac")).toBeVisible();
