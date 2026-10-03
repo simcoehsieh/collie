@@ -40,6 +40,79 @@ function harness(screen: () => string) {
 
 const instant = { sleep: async () => {} }; // no real waiting; the bounded loop still runs its attempts
 
+describe("Reply delivery evidence for the send queue", () => {
+  it.each([null, "claude"])("a lost POST acknowledgement is uncertain for %j", async (agent) => {
+    let posted = false;
+    harness(() => paneWithDraft(""));
+    server.use(http.post(/\/api\/pane\/[^/]+\/reply$/, () => {
+      posted = true;
+      return HttpResponse.error();
+    }));
+    const outcome = await sendGuardedReply({ paneId: "w1:p1", text: "do this once", agent, ...instant });
+    expect(posted).toBe(true);
+    expect(outcome).toMatchObject({ status: "error", transport: "network", possiblyDelivered: true });
+  });
+
+  it.each([502, 504, 520, 522, 524])( "a POST answered with %i is held as possibly delivered", async (status) => {
+    server.use(http.post(/\/api\/pane\/[^/]+\/reply$/, () => new HttpResponse("edge failure", { status })));
+    const outcome = await sendGuardedReply({ paneId: "w1:p1", text: "do this once", agent: null, ...instant });
+    expect(outcome).toMatchObject({ status: "error", transport: "server", possiblyDelivered: true });
+  });
+
+  it("a timed-out POST is possibly delivered", async () => {
+    const api = await import("./api");
+    const spy = vi.spyOn(api, "sendReply").mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+    try {
+      const outcome = await sendGuardedReply({ paneId: "w1:p1", text: "only once", agent: null, ...instant });
+      expect(spy).toHaveBeenCalledOnce();
+      expect(outcome).toMatchObject({ status: "error", transport: "network", possiblyDelivered: true });
+    } finally { spy.mockRestore(); }
+  });
+
+  it("an explicit authentication refusal is known unsent", async () => {
+    server.use(http.post(/\/api\/pane\/[^/]+\/reply$/, () => new HttpResponse("sign in", { status: 401 })));
+    const outcome = await sendGuardedReply({ paneId: "w1:p1", text: "do this once", agent: null, ...instant });
+    expect(outcome).toMatchObject({ status: "error", transport: "auth" });
+    expect(outcome).not.toHaveProperty("possiblyDelivered");
+  });
+
+  it("a failure before a multipart POST is known unsent and does not dispatch text", async () => {
+    const real = registry.adapterFor("claude")!;
+    const original = registry.adapterFor;
+    const spy = vi.spyOn(registry, "adapterFor").mockImplementation((agent) => agent === "claude"
+      ? { ...real, replyChunks: () => ["first", "second"] } : original(agent));
+    const calls: string[] = [];
+    server.use(
+      http.get(/\/api\/pane\/[^/]+$/, () => HttpResponse.error()),
+      http.post(/\/api\/pane\/[^/]+\/reply$/, () => { calls.push("POST"); return HttpResponse.json({ ok: true }); }),
+    );
+    try {
+      const outcome = await sendGuardedReply({ paneId: "w1:p1", text: "firstsecond", agent: "claude", ...instant });
+      expect(outcome).toMatchObject({ status: "error", transport: "network" });
+      expect(outcome).not.toHaveProperty("possiblyDelivered");
+      expect(calls).toEqual([]);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("an auth refusal after an acknowledged multipart paste still needs review", async () => {
+    const real = registry.adapterFor("claude")!;
+    const original = registry.adapterFor;
+    const spy = vi.spyOn(registry, "adapterFor").mockImplementation((agent) => agent === "claude"
+      ? { ...real, replyChunks: () => ["first", "second"] } : original(agent));
+    let echo = "";
+    harness(() => paneWithDraft(echo));
+    server.use(http.post<never, { text: string }>(/\/api\/pane\/[^/]+\/reply$/, async ({ request }) => {
+      const body = await request.json();
+      if (body.text === "first") { echo = "first"; return HttpResponse.json({ ok: true }); }
+      return new HttpResponse("sign in", { status: 401 });
+    }));
+    try {
+      const outcome = await sendGuardedReply({ paneId: "w1:p1", text: "firstsecond", agent: "claude", ...instant });
+      expect(outcome).toMatchObject({ status: "error", transport: "auth", possiblyDelivered: true });
+    } finally { spy.mockRestore(); }
+  });
+});
+
 describe("draftCarriesSend", () => {
   it("accepts the exact text, and the space-joined form of a wrapped draft", () => {
     expect(draftCarriesSend("ship it please", "ship it please")).toBe(true);

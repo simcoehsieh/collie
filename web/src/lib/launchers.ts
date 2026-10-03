@@ -26,6 +26,8 @@ import type { Launcher } from "@/lib/types";
  * file is not the one they edited.
  *
  * Pure, and exported for its own test — the rule matters more than the one line it takes.
+ * FORK: pass this same result to the tab strip as well as its launch callback so its mark and
+ * accessible name describe exactly the row the tap opens, including a renamed or removed pin.
  */
 export function pinnedLauncher(
   launchers: readonly Launcher[],

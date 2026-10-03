@@ -974,7 +974,9 @@ describe("the action row while an update is being asked for and driven", () => {
   it("keeps the button on screen — disabled — for the whole run, instead of unmounting it", async () => {
     renderCard(info({ run: runAt("restarting") }));
     const button = await screen.findByRole("button", { name: "Update to 1.4.0" });
-    expect(button).toBeDisabled();
+    // The router's snapshot reaches the shared run store in an effect. Wait for that reading,
+    // rather than asserting on the intermediate render with only the card's green preflight.
+    await waitFor(() => expect(button).toBeDisabled());
     expect(screen.getByText("Restarting. This is not an outage.")).toBeInTheDocument();
   });
 

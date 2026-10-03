@@ -66,6 +66,9 @@ export interface HarnessAdapter {
    * assumed.
    */
   cancelKey?: string;
+  /** FORK: stop a running turn, separately from exiting a modal. Only declare a recipe verified
+   * in this harness's working-screen captures; absent means no composer interrupt control. */
+  interruptKeys?: readonly string[];
   /**
    * Positive evidence that one of THIS harness's modals is on screen, asked by the unread-dialog pass
    * before it offers `cancelKey` (.adr/0053, addendum 2026-09-26). `composerReady` answering `false`

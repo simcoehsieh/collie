@@ -9,6 +9,7 @@ import { useNav } from "@/hooks/use-nav";
 import { t } from "@/lib/i18n";
 import { settingsPath } from "@/lib/nav";
 import { useScope } from "@/lib/session";
+import { MAINTAINER_MANAGED_UPDATES } from "@/lib/fork-shape";
 
 // ── THE UPDATES PAGE ────────────────────────────────────────────────────────────────────────────
 //
@@ -55,7 +56,7 @@ export function UpdatesRoute() {
             >
               <ArrowLeft className="size-5" />
             </Button>
-            <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">{t("updates.title")}</h1>
+            <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">{t(MAINTAINER_MANAGED_UPDATES ? "fork.updates.title" : "updates.title")}</h1>
           </>
         }
       />

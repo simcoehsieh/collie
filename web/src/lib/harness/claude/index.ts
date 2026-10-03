@@ -204,6 +204,8 @@ export const claudeAdapter: HarnessAdapter = {
   // the `/effort` slider all print it, and `claude/markers.ts` treats the phrase as background chrome
   // precisely because it is on so many of them.
   cancelKey: "Escape",
+  // FORK: fixtures/panes/claude--working-esc-to-interrupt.txt prints `esc to interrupt`.
+  interruptKeys: ["Escape"],
   // Every Claude modal the card has ever been right about names a key in its last rows: "Esc to
   // cancel", "Esc to close", "enter to return", "Enter to select" (the allow-list in
   // unread-dialog.test.ts), and a missed select still shows its `❯ N.` pointer. The shell prompt

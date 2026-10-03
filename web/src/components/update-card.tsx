@@ -35,6 +35,7 @@ import { legStillFailed, memberBehind } from "@/lib/crew-level";
 import { BUILD } from "@/lib/build";
 import { earlierRunOnHand } from "@/lib/update-screen";
 import { cn } from "@/lib/utils";
+import { MAINTAINER_MANAGED_UPDATES, upstreamReleaseUrl } from "@/lib/fork-shape";
 import type {
   PreflightCheck,
   PreflightReport,
@@ -297,8 +298,34 @@ export function UpdateCard() {
           <ArrowUpCircle className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
         )}
         <div className="min-w-0 flex-1">
-          <div className="font-medium">{t("settings.updateCard.title")}</div>
-          {upToDate ? (
+          <div className="font-medium">{t(MAINTAINER_MANAGED_UPDATES ? "fork.updates.card" : "settings.updateCard.title")}</div>
+          {MAINTAINER_MANAGED_UPDATES ? (
+            <>
+              <p className="text-sm text-muted-foreground">
+                {updateAvailable && (releaseAvailable ? latest : majorAvailable) !== null
+                  ? t("fork.updates.available", { version: (releaseAvailable ? latest : majorAvailable)?.replace(/^v/, "") ?? "" })
+                  : t("fork.updates.managed")}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {t("settings.updateCard.running", { current: current || t("settings.updateCard.versionUnknown") })}
+              </p>
+              {(latest !== null || majorAvailable !== null) && (
+                <a
+                  className="inline-flex min-h-11 items-center text-sm text-primary underline underline-offset-2"
+                  href={releaseAvailable || majorAvailable === null
+                    ? (snapshot?.latestUrl ?? check?.latestUrl ?? upstreamReleaseUrl(latest ?? ""))
+                    : (snapshot?.majorUrl ?? check?.majorUrl ?? upstreamReleaseUrl(majorAvailable))}
+                  target="_blank" rel="noopener noreferrer"
+                >{t("fork.updates.notes")}</a>
+              )}
+              {(snapshot?.bridgeStale || snapshot?.restartNeeded || check?.bridgeStale || check?.restartNeeded) && (
+                <p className="text-sm text-status-blocked">{t("fork.updates.restart")}</p>
+              )}
+              {checked && preflight === null && !running && (
+                <p className="text-sm text-status-blocked">{t("settings.updateCard.preflightUnavailable")}</p>
+              )}
+            </>
+          ) : upToDate ? (
             <>
               <p className="text-sm text-muted-foreground">{t("settings.updateCard.upToDate")}</p>
               <p className="text-sm text-muted-foreground">
@@ -355,7 +382,7 @@ export function UpdateCard() {
           without moving to a second surface, which is the principle the old ordering comment argued
           for. What that principle needs is the same card, not a place above the button, and the
           one-line summary beside the button carries the deciding fact into the row itself. */}
-      {(action !== "none" || majorAvailable !== null) && (
+      {!MAINTAINER_MANAGED_UPDATES && (action !== "none" || majorAvailable !== null) && (
           <div className="flex flex-col gap-2 border-t border-border p-3">
             {/* The same sentence, in the state before the confirm is open — so it is on screen when
                 the operator decides to tap at all, not only once they are being asked. */}
@@ -466,7 +493,7 @@ export function UpdateCard() {
             run={shownRun}
             // Retry re-opens the SAME confirm the first attempt went through. A dead end with no next
             // action is what sends the operator to a terminal they may not have.
-            onRetry={() =>
+            onRetry={MAINTAINER_MANAGED_UPDATES ? undefined : () =>
               openUpdateMode({
                 kind: hasPeers ? "crew" : "single",
                 version: shownRun.to ?? latest ?? current,
@@ -497,7 +524,7 @@ export function UpdateCard() {
             // dials every member with an open leg on every sweep, whatever backoff it was on, so the
             // member is due without this browser clearing anything. Spec 02's reset is reserved for
             // the crew link's own two-factor admission, and a browser is not that.
-            onRetry={() => openUpdateMode(retryAsk)}
+            onRetry={MAINTAINER_MANAGED_UPDATES ? undefined : () => openUpdateMode(retryAsk)}
           />
         ) : null}
       </Collapse>
@@ -544,7 +571,7 @@ function PeerSection({
   failed: UpdatePeerLeg | null;
   /** The run has passed the patience window, so the page says waiting is the whole job. */
   slow: boolean;
-  onRetry: () => void;
+  onRetry?: () => void;
 }) {
   return (
     <div className="border-t border-border px-4 py-3">
@@ -594,10 +621,10 @@ function PeerSection({
               reason: failed.reason ?? t("settings.updateCard.peer.unknownReason"),
             })}
           </p>
-          <Button variant="outline" size="sm" onClick={onRetry}>
+          {onRetry !== undefined && <Button variant="outline" size="sm" onClick={onRetry}>
             <RotateCcw className="size-4" />
             {t("settings.updateCard.retryNow")}
-          </Button>
+          </Button>}
         </div>
       )}
     </div>
@@ -726,7 +753,7 @@ function PreflightSection({
  * a failure that names the version still installed, shows the log tail and offers a Retry. A
  * progress state that looked like a failure state would be read as one.
  */
-function RunSection({ run, onRetry }: { run: UpdateRun; onRetry: () => void }) {
+function RunSection({ run, onRetry }: { run: UpdateRun; onRetry?: () => void }) {
   const inFlight = runInFlight(run);
   const version = run.to ?? run.from ?? "";
   const still = run.from ?? "";
@@ -786,7 +813,7 @@ function RunSection({ run, onRetry }: { run: UpdateRun; onRetry: () => void }) {
         <p className="mt-1 text-xs text-muted-foreground">{t("settings.updateCard.progressNote")}</p>
       )}
 
-      {run.state === "stuck" && run.recovery !== undefined && (
+      {!MAINTAINER_MANAGED_UPDATES && run.state === "stuck" && run.recovery !== undefined && (
         <pre className="mt-2 overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs">{run.recovery}</pre>
       )}
 
@@ -797,7 +824,7 @@ function RunSection({ run, onRetry }: { run: UpdateRun; onRetry: () => void }) {
         </details>
       )}
 
-      {(run.state === "rolled-back" || run.state === "interrupted") && (
+      {onRetry !== undefined && (run.state === "rolled-back" || run.state === "interrupted") && (
         <Button variant="outline" size="sm" className="mt-3" onClick={onRetry}>
           <RotateCcw className="size-4" />
           {t("settings.updateCard.retry")}

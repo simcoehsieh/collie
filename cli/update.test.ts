@@ -1107,6 +1107,17 @@ describe("the origin assertion", () => {
     expect(gitRuns(h.exec).join("\n")).not.toContain("checkout");
   });
 
+  test("the informational maintainer-managed fork is still refused before fetch or checkout", async () => {
+    const h = harness({ answers: [
+      [`${GIT} remote get-url origin`, { stdout: "git@github.com:simcoehsieh/collie.git\n" }],
+      ...MANAGED,
+    ], installed: "1.15.3" });
+    expect(await cmdUpdate(h.deps)).toBe(EXIT.FAIL);
+    expect(gitRuns(h.exec).join("\n")).not.toContain("fetch");
+    expect(gitRuns(h.exec).join("\n")).not.toContain("checkout");
+    expect(h.io.stderr.join("\n")).toContain("simcoehsieh/collie");
+  });
+
   test("a checkout that cannot say where it came from is refused too", async () => {
     const h = harness({
       answers: [[`${GIT} remote get-url origin`, { code: 2 }], ...MANAGED],

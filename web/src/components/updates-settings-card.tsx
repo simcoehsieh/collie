@@ -12,6 +12,7 @@ import { useOptionalRootData } from "@/lib/route-data";
 import { useScope } from "@/lib/session";
 import { peersBehind } from "@/lib/update-crew";
 import type { UpdateInfo, UpdateCrewMember } from "@/lib/types";
+import { MAINTAINER_MANAGED_UPDATES } from "@/lib/fork-shape";
 
 /**
  * The ONE update row Settings keeps (M16/01).
@@ -96,6 +97,12 @@ export function updatesStatusLine(a: {
   behind: number;
 }): string {
   if (a.running) return t("updates.entry.status.updating");
+  if (MAINTAINER_MANAGED_UPDATES) {
+    if (a.update?.run?.state === "rolled-back" || a.update?.run?.state === "stuck" || a.update?.run?.state === "interrupted") {
+      return t("fork.updates.failed");
+    }
+    return updateNotice(a.update)?.line ?? t("fork.updates.managed");
+  }
   if (a.behind > 0) return tn("updates.entry.status.peersBehind", a.behind);
   const notice = updateNotice(a.update);
   if (notice === null) return t("updates.entry.status.upToDate");

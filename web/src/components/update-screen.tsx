@@ -12,6 +12,7 @@ import { scopeFromUrl } from "@/lib/scope";
 import { beginAskedUpdate } from "@/lib/update-ask";
 import { STEP_COUNT, formatClock, phaseFailed, phaseInFlight, type UpdateScreenRow } from "@/lib/update-screen";
 import { cn } from "@/lib/utils";
+import { MAINTAINER_MANAGED_UPDATES } from "@/lib/fork-shape";
 import { router } from "@/router";
 import type { UpdateScreen as UpdateScreenState } from "@/hooks/use-update-screen";
 
@@ -289,7 +290,7 @@ function Note({ screen, error }: { screen: UpdateScreenState; error: string | nu
         </Button>
       </>
     );
-  } else if (view.recovery !== null) {
+  } else if (!MAINTAINER_MANAGED_UPDATES && view.recovery !== null) {
     const command = view.recovery;
     actions = (
       <div className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-muted px-3">
@@ -315,7 +316,7 @@ function Note({ screen, error }: { screen: UpdateScreenState; error: string | nu
           error !== null ? "text-status-blocked" : "text-muted-foreground",
         )}
       >
-        {error ?? view.note}
+        {error ?? (MAINTAINER_MANAGED_UPDATES && view.recovery !== null ? t("fork.updates.managed") : view.note)}
       </p>
       <div className="flex h-11 gap-2">{actions}</div>
     </div>
@@ -350,7 +351,10 @@ function Footer({
       {t("updateScreen.action.showLog")}
     </Button>
   );
-  if (view.phase === "ready") {
+  if (MAINTAINER_MANAGED_UPDATES && !phaseInFlight(view.phase)) {
+    first = <Button size="lg" className="flex-1" onClick={screen.back}>{t("updateScreen.action.back")}</Button>;
+    second = showLog;
+  } else if (view.phase === "ready") {
     first = (
       <Button size="lg" className="flex-1" disabled={busy} onClick={onStart}>
         {busy && <Loader2 aria-hidden="true" className="size-4 motion-safe:animate-spin" />}

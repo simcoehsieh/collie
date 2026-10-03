@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Clock, Loader2, Send, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Clock, Loader2, Send, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Collapse } from "@/components/ui/collapse";
@@ -24,6 +24,7 @@ export function QueuedSends({ paneId, scope }: QueuedSendsProps) {
   useLocale();
   const rows = useQueuedSends(scope, paneId);
   const [busy, setBusy] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   async function sendNow(id: string) {
     setBusy(id);
@@ -43,38 +44,75 @@ export function QueuedSends({ paneId, scope }: QueuedSendsProps) {
         </p>
         <ul className="mt-1 flex flex-col gap-1.5">
           {rows.map((row) => (
-            <li key={row.id} className="flex items-start gap-2">
-              <div className="min-w-0 flex-1">
-                <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm">{row.text}</p>
+            <li key={row.id} className="flex min-w-0 flex-col gap-1.5">
+              <div className="min-w-0">
+                <button
+                  type="button"
+                  className="flex min-h-11 w-full items-start gap-2 py-1 text-left"
+                  aria-expanded={expanded === row.id}
+                  aria-label={t(expanded === row.id ? "fork.queue.hideFull" : "fork.queue.showFull")}
+                  onClick={() => setExpanded((current) => current === row.id ? null : row.id)}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block whitespace-pre-wrap break-words text-sm">
+                      {expanded === row.id ? t("fork.queue.hideFull") : queuePreview(row.text)}
+                    </span>
+                    {expanded !== row.id && <span className="block text-xs text-muted-foreground">
+                      {t("fork.queue.showFull")}
+                    </span>}
+                  </span>
+                  {expanded === row.id ? <ChevronUp className="mt-1 size-4 shrink-0" /> : <ChevronDown className="mt-1 size-4 shrink-0" />}
+                </button>
+                {expanded === row.id && (
+                  // Outside the button so its accessible name does not hide the message. A long
+                  // message scrolls here, keeping the actions reachable on the phone.
+                  <textarea
+                    readOnly rows={8}
+                    aria-label={t("fork.queue.fullText")}
+                    value={row.text}
+                    className="max-h-48 w-full resize-none overflow-y-auto overscroll-contain bg-transparent text-sm focus-visible:outline-2 focus-visible:outline-ring"
+                  />
+                )}
                 <p className="text-xs text-muted-foreground">
                   {timeAgoShort(row.queuedAt)}
-                  {row.held !== undefined ? ` · ${row.held}` : row.kind === "answer" ? ` · ${t("queue.held")}` : ""}
+                  {row.possiblyDelivered ? ` · ${t("fork.queue.possiblyDelivered")}` :
+                    row.held !== undefined ? ` · ${row.held}` : row.kind === "answer" ? ` · ${t("queue.held")}` : ""}
                 </p>
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1 px-2"
-                disabled={busy !== null}
-                onClick={() => void sendNow(row.id)}
-                aria-label={t("queue.sendNow")}
-              >
-                {busy === row.id ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-8 px-2 text-muted-foreground"
-                disabled={busy === row.id}
-                onClick={() => discardSend(row.id)}
-                aria-label={t("queue.discard")}
-              >
-                <Trash2 className="size-4" />
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="min-w-11 gap-1.5 px-3 text-sm"
+                  disabled={busy !== null}
+                  onClick={() => void sendNow(row.id)}
+                  aria-label={t("queue.sendNow")}
+                >
+                  {busy === row.id ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                  {t("queue.sendNow")}
+                </Button>
+                <Button
+                  size="lg"
+                  variant="ghost"
+                  className="min-w-11 px-3 text-sm text-muted-foreground"
+                  disabled={busy === row.id}
+                  onClick={() => discardSend(row.id)}
+                  aria-label={t("queue.discard")}
+                >
+                  <Trash2 className="size-4" />
+                  {t("queue.discard")}
+                </Button>
+              </div>
             </li>
           ))}
         </ul>
       </div>
     </Collapse>
   );
+}
+
+/** Keep a small readable preview; expanding renders the untouched full message as React text. */
+function queuePreview(text: string): string {
+  const preview = Array.from(text.split("\n").slice(0, 2).join("\n")).slice(0, 160).join("");
+  return preview === text ? text : `${preview}…`;
 }

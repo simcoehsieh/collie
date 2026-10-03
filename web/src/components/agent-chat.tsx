@@ -2315,6 +2315,7 @@ export function AgentChat({
                     selected={agent.tabId}
                     onSelect={onTabSelect}
                     onNewTab={onNewTab}
+                    newTabLauncher={pinned}
                     onNewTabHold={launchers.length > 0 ? onNewTabHold : undefined}
                     creatingTab={creatingTab.has(tabCreateKey(agent.workspaceId, scope))}
                     allowAll={false}
