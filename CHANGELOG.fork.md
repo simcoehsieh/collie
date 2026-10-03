@@ -61,6 +61,25 @@ default.
   `shot.test.ts` pinned the pane-route regex as a substring (now pins the intent);
   `solo-baseline` was missing the `model` route.
 
+### Survey UI — C1–C4 (2026-10-03)
+
+- **The pane menu leads with four read tiles.** History, Find, Copy output and What changed as a
+  2×2 grid, then View / Output / Manage; hand off, screenshot and show-in-terminal fold behind
+  More, folded on every opening; Close is still last and two taps. A configured seam that cannot
+  run is no longer advertised by `/api/config`: the shot command needs its program on the bridge's
+  PATH and every file it names on disk, the document panel its agentry CLI and archive
+  (`bridge/command-paths.ts`; looked up, never spawned).
+- **The reading toolbars answer a 44px tap.** A hit-area primitive (`ui/hit-area.tsx`) on the view
+  switch, the diff and file viewers' tool rows and an HTML artifact's two icons; the fold chevron no
+  longer covers the Terminal option, and a patch's tool row fits a 390px phone again. Measured in
+  `e2e/hit-areas.spec.ts`.
+- **The diff sheet opens the workspace's Changes view.** A labelled "Workspace changes" on the
+  list's tool row goes down to `/pane/:id/changes`, the view the belt pill and the dashboard footer
+  used to open.
+- **Quick on a Codex pane folds its model picker into one row.** "Model / effort: …" names what the
+  pane is on and sits under the operator's phrases (`components/codex-model-group.tsx`); the row,
+  the models it opens and the folded "others" are drawn 44px, measured in `e2e/hit-areas.spec.ts`.
+
 ## On top of 1.14.1
 
 Merged upstream v1.14.1 (2026-09-27, with v1.14.0 under it) — 57 commits, 33 conflicted files. What
