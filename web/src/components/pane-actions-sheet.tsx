@@ -13,7 +13,6 @@ import { useLocale } from "@/hooks/use-locale";
 import * as api from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { t } from "@/lib/i18n";
-import { tf } from "@/lib/i18n/fork-strings";
 import { useMuxCapability, useMuxName } from "@/lib/mux-capability";
 import { setStatus } from "@/lib/status";
 import { stampTopology } from "@/lib/poll-intent";
@@ -425,7 +424,7 @@ export function PaneActionsSheet({
               may not write, or a member machine that has stopped answering, takes away nothing either
               one needs. */}
           {pane && (
-            <ReadTiles label={tf("paneActions.group.read")}>
+            <ReadTiles label={t("fork.paneActions.group.read")}>
               {onHistory && (
                 <ReadTile
                   icon={<ScrollText className="size-4 shrink-0 text-muted-foreground" />}
@@ -459,7 +458,7 @@ export function PaneActionsSheet({
             </ReadTiles>
           )}
           {pane && (
-            <MenuGroup label={tf("paneActions.group.view")}>
+            <MenuGroup label={t("fork.paneActions.group.view")}>
               {/* THE BODY SWITCH. The label names WHERE IT TAKES YOU. */}
               {paneView !== undefined && onPaneViewChange && (
                 <ActionRow
@@ -501,7 +500,7 @@ export function PaneActionsSheet({
             </MenuGroup>
           )}
           {pane && (
-            <MenuGroup label={tf("paneActions.group.output")}>
+            <MenuGroup label={t("fork.paneActions.group.output")}>
               {onDocs && (
                 <ActionRow
                   icon={<BookOpen className="size-4 shrink-0 text-muted-foreground" />}
@@ -542,7 +541,7 @@ export function PaneActionsSheet({
               {focusRow}
             </MoreRows>
           )}
-          <MenuGroup label={tf("paneActions.group.manage")}>
+          <MenuGroup label={t("fork.paneActions.group.manage")}>
             {/* Pin to top / Unpin (ADR 0070) leads Manage: it changes this device and types into no
                 terminal, so a read-only device and a pane on a quiet machine can still pin. */}
             {pane && (
@@ -694,7 +693,7 @@ function MoreRows({ open, onToggle, children }: { open: boolean; onToggle: () =>
         className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent active:bg-muted"
       >
         <Ellipsis className="size-4 shrink-0" />
-        <span className="flex-1">{tf("paneActions.more")}</span>
+        <span className="flex-1">{t("fork.paneActions.more")}</span>
         <ChevronDown className={cn("size-4 shrink-0 transition-transform", open && "rotate-180")} aria-hidden />
       </button>
       <Collapse open={open}>

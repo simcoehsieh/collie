@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { en } from "@/lib/i18n/messages/en";
-import { tf } from "@/lib/i18n/fork-strings";
+import { t } from "@/lib/i18n";
 import { fixtureArtifact } from "@/test/artifacts";
 import { fixtureSnapshot } from "@/test/handlers";
 import { installApiStub } from "./fixtures/api";
@@ -268,7 +268,7 @@ test("Quick on a Codex pane: the folded rows, the models and their efforts own 4
 
   const commit = page.getByRole("button", { name: "commit and push", exact: true });
   const others = page.getByRole("button", { name: en["quickActions.group.others"], exact: true });
-  const modelRow = page.getByRole("button", { name: tf("quick.codexModel.row", { current: "gpt-6-astra·high" }) });
+  const modelRow = page.getByRole("button", { name: t("fork.quick.codexModel.row", { current: "gpt-6-astra·high" }) });
 
   // Folded: the operator's phrase, the folded group under it, and the model row last.
   await toTopOfDock(commit);

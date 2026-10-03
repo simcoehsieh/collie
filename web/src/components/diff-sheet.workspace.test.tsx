@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { server } from "@/test/setup";
 import { __resetDiffCache } from "@/lib/api";
-import { __resetLocale, setLocale } from "@/lib/i18n";
+import { __resetLocale, setLocale, whenLocaleReady } from "@/lib/i18n";
 import { __resetNotes } from "@/lib/notes";
 import { DiffSheet } from "./diff-sheet";
 
@@ -91,6 +91,7 @@ describe("DiffSheet — the workspace's Changes", () => {
 
   it("says it in Traditional Chinese", async () => {
     setLocale("zh-TW");
+    await whenLocaleReady();
     try {
       renderSheet(vi.fn());
       expect(await screen.findByRole("button", { name: "工作區變更" })).toBeInTheDocument();

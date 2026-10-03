@@ -4,7 +4,7 @@ import { http, HttpResponse } from "msw";
 
 import { server } from "@/test/setup";
 import { __resetOperatorCommands } from "@/lib/operator-config";
-import { __resetLocale, setLocale } from "@/lib/i18n";
+import { __resetLocale, setLocale, whenLocaleReady } from "@/lib/i18n";
 import type { AgentView, MuxCapability, MuxConfig } from "@/lib/types";
 import { PaneActionsSheet } from "./pane-actions-sheet";
 
@@ -185,8 +185,9 @@ describe("PaneActionsSheet — the operator's language", () => {
     __resetLocale();
   });
 
-  it("names the groups and the fold in Traditional Chinese", () => {
+  it("names the groups and the fold in Traditional Chinese", async () => {
     setLocale("zh-TW");
+    await whenLocaleReady();
     render(<PaneActionsSheet {...paneDoor()} />);
     expect(screen.getByRole("group", { name: "閱讀這個窗格" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "檢視" })).toBeInTheDocument();

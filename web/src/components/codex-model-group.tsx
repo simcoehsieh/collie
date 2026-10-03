@@ -4,9 +4,9 @@ import { Check, ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapse } from "@/components/ui/collapse";
 import type { EchoPhase } from "@/hooks/use-action-echo";
+import { useLocale } from "@/hooks/use-locale";
 import * as api from "@/lib/api";
 import { t as translate } from "@/lib/i18n";
-import { tf } from "@/lib/i18n/fork-strings";
 import { modelLabel, type ModelFacts } from "@/lib/model-label";
 import { scopeKey, type Scope } from "@/lib/scope";
 import type { CodexHandoffModel } from "@/lib/types";
@@ -51,6 +51,7 @@ export function CodexModelGroup({
   phaseOf: (id: string) => EchoPhase;
   onFire: (model: string, effort: string) => void;
 }) {
+  useLocale();
   const facts = useContext(CodexFactsContext);
   const [models, setModels] = useState<readonly CodexHandoffModel[] | null>(null);
   const [open, setOpen] = useState(false);
@@ -76,7 +77,7 @@ export function CodexModelGroup({
 
   // No catalog on this host: say nothing — the harness row's Model button still opens the picker.
   if (models !== null && models.length === 0) return null;
-  const current = modelLabel(facts ?? {}) ?? tf("quick.codexModel.unknown");
+  const current = modelLabel(facts ?? {}) ?? translate("fork.quick.codexModel.unknown");
   const model = models?.find((m) => m.id === chosen);
 
   return (
@@ -91,7 +92,7 @@ export function CodexModelGroup({
         onClick={() => setOpen((v) => !v)}
         className="h-11 w-full justify-between gap-1.5 px-3 text-sm font-medium"
       >
-        <span className="min-w-0 truncate">{tf("quick.codexModel.row", { current })}</span>
+        <span className="min-w-0 truncate">{translate("fork.quick.codexModel.row", { current })}</span>
         <ChevronDown className={cn("size-4 shrink-0 transition-transform", open && "rotate-180")} aria-hidden />
       </Button>
       <Collapse open={open}>

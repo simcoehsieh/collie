@@ -4,7 +4,7 @@ import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { server } from "@/test/setup";
-import { __resetLocale, setLocale } from "@/lib/i18n";
+import { __resetLocale, setLocale, whenLocaleReady } from "@/lib/i18n";
 import type { ModelFacts } from "@/lib/model-label";
 import { CodexFactsContext } from "./codex-model-group";
 import { QuickActionsContent } from "./quick-actions";
@@ -103,6 +103,7 @@ describe("QuickActionsContent — Codex model group", () => {
 
     it("names the row in Traditional Chinese", async () => {
       setLocale("zh-TW");
+      await whenLocaleReady();
       server.use(http.get("/api/launchers", () => HttpResponse.json(catalog)));
       renderCodex();
       expect(await screen.findByRole("button", { name: "模型／推理強度：gpt-6-sol·high" })).toBeInTheDocument();

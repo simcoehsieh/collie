@@ -24,6 +24,21 @@ export const forkEn = {
   "fork.queue.sendNowFor": "Send now, message {number}: {preview}",
   "fork.queue.sendAgainFor": "Send again, message {number}: {preview}",
   "fork.queue.discardFor": "Discard message {number}: {preview}",
+  // The ⋮ pane menu's sections (components/pane-actions-sheet.tsx).
+  "fork.paneActions.group.read": "Read this pane",
+  "fork.paneActions.group.view": "View",
+  "fork.paneActions.group.output": "Output",
+  "fork.paneActions.group.manage": "Manage",
+  "fork.paneActions.more": "More",
+  // The diff sheet's tool row (components/diff-sheet.tsx): Back's face, short enough that four tools
+  // fit a phone's row (its accessible name stays the full sentence), and the door to upstream's
+  // workspace Changes view.
+  "fork.diff.backShort": "Back",
+  "fork.diff.workspaceChanges": "Workspace changes",
+  "fork.diff.workspaceChangesAria": "Open every repo's changes in this workspace",
+  // The Codex model row in Quick (components/codex-model-group.tsx).
+  "fork.quick.codexModel.row": "Model / effort: {current}",
+  "fork.quick.codexModel.unknown": "not read yet",
 } as const;
 
 export type ForkMessageKey = keyof typeof forkEn;
@@ -53,4 +68,14 @@ export const forkZhTW = {
   "fork.queue.sendNowFor": "立即送出訊息 {number}：{preview}",
   "fork.queue.sendAgainFor": "再送一次訊息 {number}：{preview}",
   "fork.queue.discardFor": "丟棄訊息 {number}：{preview}",
+  "fork.paneActions.group.read": "閱讀這個窗格",
+  "fork.paneActions.group.view": "檢視",
+  "fork.paneActions.group.output": "產出",
+  "fork.paneActions.group.manage": "管理",
+  "fork.paneActions.more": "更多",
+  "fork.diff.backShort": "返回",
+  "fork.diff.workspaceChanges": "工作區變更",
+  "fork.diff.workspaceChangesAria": "開啟這個工作區每個 repo 的變更",
+  "fork.quick.codexModel.row": "模型／推理強度：{current}",
+  "fork.quick.codexModel.unknown": "尚未讀到",
 } satisfies ForkDictionary;

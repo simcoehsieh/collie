@@ -135,8 +135,9 @@ function ensureDictionary(locale: Locale): Promise<void> {
 }
 
 // FORK: English is in the main chunk and never passes through `fetchDictionary`, so its overrides
-// are applied once at module scope. The type widens from `typeof en`'s literals to `Dictionary`,
-// which changes nothing that matters: `MessageKey` is derived from `en` itself, not from this.
+// are applied once at module scope. Every runtime dictionary is upstream's plus the fork's own
+// `fork.*` keys (fork-messages.ts), which is why `MessageKey` above is upstream's union widened by
+// `ForkMessageKey`.
 const EN: ForkRuntimeDictionary = withForkOverrides(DEFAULT_LOCALE, en);
 
 /** The dictionary `t()` is actually reading: the active locale's if it has landed, else English. */

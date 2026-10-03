@@ -14,7 +14,6 @@ import * as api from "@/lib/api";
 import { isApiErrorStatus } from "@/lib/api";
 import { buzz } from "@/lib/haptics";
 import { t } from "@/lib/i18n";
-import { tf } from "@/lib/i18n/fork-strings";
 import { anchorKey, type Note, type NoteAnchor } from "@/lib/notes";
 import type { Scope } from "@/lib/scope";
 import { shortenHome } from "@/lib/shorten-home";
@@ -214,11 +213,11 @@ export function DiffSheet({
               size="sm"
               className="relative h-8 gap-1 px-2"
               onClick={onWorkspaceChanges}
-              title={tf("diff.workspaceChangesAria")}
+              title={t("fork.diff.workspaceChangesAria")}
             >
               <HitArea top={6} bottom={6} left={4} right={4} border={1} />
               <GitCompare className="size-4" />
-              {tf("diff.workspaceChanges")}
+              {t("fork.diff.workspaceChanges")}
             </Button>
           )}
           {file !== null && (
@@ -228,7 +227,7 @@ export function DiffSheet({
             <Button variant="ghost" size="sm" className="relative h-8 gap-1 px-2" onClick={back} aria-label={t("diff.back")}>
               <HitArea top={6} bottom={6} left={4} right={4} border={1} />
               <ChevronLeft className="size-4" />
-              {tf("diff.backShort")}
+              {t("fork.diff.backShort")}
             </Button>
           )}
           <span className="flex-1" />
