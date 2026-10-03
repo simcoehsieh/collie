@@ -27,6 +27,10 @@ import { cn } from "@/lib/utils";
 // and `effort`), handed down by the pane view through `CodexFactsContext` — the composer between them
 // never needed the value and is not asked to carry it. A switch lands in the log with the pane's next
 // turn, so the row can trail a pick by one turn; the dock closes on the pick's ✓ anyway.
+//
+// Every target here is at least 44px tall (DESIGN.md §6): the row and the models `h-11`, the efforts
+// `h-12` like the phrases. They are drawn that size rather than reaching out with a hit area — a
+// dock row has the room, and `web/e2e/hit-areas.spec.ts` measures it in a browser.
 
 /** The open pane's model and effort, as its own log last stated them. Null outside a pane view. */
 export const CodexFactsContext = createContext<ModelFacts | null>(null);
@@ -85,7 +89,7 @@ export function CodexModelGroup({
         aria-expanded={open}
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        className="h-10 w-full justify-between gap-1.5 px-3 text-sm font-medium"
+        className="h-11 w-full justify-between gap-1.5 px-3 text-sm font-medium"
       >
         <span className="min-w-0 truncate">{tf("quick.codexModel.row", { current })}</span>
         <ChevronDown className={cn("size-4 shrink-0 transition-transform", open && "rotate-180")} aria-hidden />
@@ -107,7 +111,7 @@ export function CodexModelGroup({
                   aria-pressed={m.id === chosen}
                   disabled={disabled || busy}
                   onClick={() => setChosen((prev) => (prev === m.id ? "" : m.id))}
-                  className="h-10 text-sm font-medium"
+                  className="h-11 text-sm font-medium"
                 >
                   {m.label}
                 </Button>

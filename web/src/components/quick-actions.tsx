@@ -235,7 +235,7 @@ export function QuickActionsContent({
               aria-expanded={othersOpen}
               disabled={disabled || echo.pending}
               onClick={() => setOthersOpen((v) => !v)}
-              className="h-10 w-full justify-center gap-1.5 text-sm font-medium text-muted-foreground"
+              className="h-11 w-full justify-center gap-1.5 text-sm font-medium text-muted-foreground"
             >
               {groupTitle(g.title)}
               <ChevronDown className={cn("size-4 transition-transform", othersOpen && "rotate-180")} />
