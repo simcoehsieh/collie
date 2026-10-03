@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { en } from "@/lib/i18n/messages/en";
+import { tf } from "@/lib/i18n/fork-strings";
 import { fixtureArtifact } from "@/test/artifacts";
 import { fixtureSnapshot } from "@/test/handlers";
 import { installApiStub } from "./fixtures/api";
@@ -16,6 +17,9 @@ import { installApiStub } from "./fixtures/api";
 //  - every point of that box — corners, edges, middle — answers `elementFromPoint` with the control
 //    itself, so nothing paints over the reach;
 //  - no two neighbours claim the same pixel.
+//
+// A control drawn at 44px needs no reach, and then its box is its own rounded face: a browser hit-tests
+// the curve, so its four corner points sit just inside it rather than 1px in from a square corner.
 
 const PANE = "w1:p1";
 
@@ -30,6 +34,8 @@ interface Measured {
   name: string;
   drawn: { w: number; h: number };
   box: Box;
+  /** How far in from the box's corners the corner points sit: 1px, or inside a rounded face. */
+  corner: number;
 }
 
 async function measure(control: Locator, name: string): Promise<Measured> {
@@ -37,6 +43,8 @@ async function measure(control: Locator, name: string): Promise<Measured> {
     const own = el.getBoundingClientRect();
     const area = el.querySelector(':scope > [data-slot="hit-area"]');
     const reach = area === null ? own : area.getBoundingClientRect();
+    // A point (d, d) in from a corner rounded at radius r is on the face once d ≥ r(1 − 1/√2).
+    const radius = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
     return {
       drawn: { w: Math.round(own.width), h: Math.round(own.height) },
       box: {
@@ -45,6 +53,7 @@ async function measure(control: Locator, name: string): Promise<Measured> {
         right: Math.max(own.right, reach.right),
         bottom: Math.max(own.bottom, reach.bottom),
       },
+      corner: area === null ? Math.max(1, Math.ceil(radius * 0.3) + 1) : 1,
     };
   });
   return { name, ...m };
@@ -60,16 +69,20 @@ async function expectHittable(control: Locator, m: Measured): Promise<void> {
   const { left, top, right, bottom } = m.box;
   const xs = [left + 1, (left + right) / 2, right - 1];
   const ys = [top + 1, (top + bottom) / 2, bottom - 1];
-  for (const x of xs) {
-    for (const y of ys) {
+  for (const [i, x] of xs.entries()) {
+    for (const [j, y] of ys.entries()) {
+      // A corner is the one point with both coordinates on an edge; it moves in by `m.corner`.
+      const corner = i !== 1 && j !== 1;
+      const px = corner ? (i === 0 ? left + m.corner : right - m.corner) : x;
+      const py = corner ? (j === 0 ? top + m.corner : bottom - m.corner) : y;
       const mine = await control.evaluate(
-        (el, [px, py]) => {
-          const under = document.elementFromPoint(px, py);
+        (el, [cx, cy]) => {
+          const under = document.elementFromPoint(cx, cy);
           return under !== null && el.contains(under);
         },
-        [x, y] as const,
+        [px, py] as const,
       );
-      expect(mine, `${m.name}: the point (${x.toFixed(1)}, ${y.toFixed(1)}) lands on it`).toBe(true);
+      expect(mine, `${m.name}: the point (${px.toFixed(1)}, ${py.toFixed(1)}) lands on it`).toBe(true);
     }
   }
 }
@@ -214,4 +227,74 @@ test("an HTML artifact's two icons own 44px each, apart, at 32px drawn", async (
     { locator: page.getByRole("button", { name: en["artifacts.viewer.refresh"] }), name: "reload", face: { w: 32, h: 32 } },
     { locator: page.getByRole("button", { name: en["artifacts.viewer.openTab"] }), name: "open in tab", face: { w: 32, h: 32 } },
   ]);
+});
+
+// ── Quick on a Codex pane (survey round 3's C3, floored at 44px in round 5) ───────────────────────
+// Every target in this dock is DRAWN at 44px or more, so there is no reach to measure: the face is
+// the box. The dock body scrolls (`max-h-[45dvh]`), so each group is brought to the top of it before
+// its points are asked about — a point under the scroller's edge belongs to nothing.
+
+const MODELS = [
+  { id: "gpt-6-sol", label: "GPT-6-Sol", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "medium" },
+  { id: "gpt-6-astra", label: "GPT-6-Astra", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultEffort: "medium" },
+  { id: "gpt-6-luna", label: "GPT-6-Luna", efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+  { id: "gpt-5.5", label: "GPT-5.5", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "medium" },
+] as const;
+
+async function toTopOfDock(control: Locator): Promise<void> {
+  // After any opening has finished: a collapse still growing has no room yet to scroll into.
+  await control.page().waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running"));
+  await control.evaluate((el) => el.scrollIntoView({ block: "start", behavior: "instant" }));
+}
+
+test("Quick on a Codex pane: the folded rows, the models and their efforts own 44px, apart", async ({ page }) => {
+  await page.route(/\/api\/snapshot(\?|$)/, (route) =>
+    route.fulfill({
+      json: {
+        ...fixtureSnapshot,
+        agents: fixtureSnapshot.agents.map((a) =>
+          a.paneId === PANE
+            ? Object.assign({}, a, { agent: "codex", status: "idle", model: "gpt-6-astra", effort: "high", hasSession: true })
+            : a,
+        ),
+      },
+    }),
+  );
+  await page.route((url) => url.pathname === "/api/launchers", (route) =>
+    route.fulfill({ json: { launchers: [], home: "/home/you", handoffModels: MODELS } }),
+  );
+  await page.goto(`/pane/${PANE}`);
+  await page.getByRole("button", { name: en["composer.controls.quick"] }).click();
+
+  const commit = page.getByRole("button", { name: "commit and push", exact: true });
+  const others = page.getByRole("button", { name: en["quickActions.group.others"], exact: true });
+  const modelRow = page.getByRole("button", { name: tf("quick.codexModel.row", { current: "gpt-6-astra·high" }) });
+
+  // Folded: the operator's phrase, the folded group under it, and the model row last.
+  await toTopOfDock(commit);
+  await expectRow([
+    { locator: commit, name: "commit and push", face: { h: 48 } },
+    { locator: others, name: "others", face: { h: 44 } },
+    { locator: modelRow, name: "model row", face: { h: 44 } },
+  ]);
+
+  // Open: the row, and the catalog under it.
+  await modelRow.click();
+  const models = MODELS.map((m) => ({
+    locator: page.getByRole("button", { name: m.label, exact: true }),
+    name: m.label,
+    face: { h: 44 },
+  }));
+  await toTopOfDock(modelRow);
+  await expectRow([{ locator: modelRow, name: "model row", face: { h: 44 } }, ...models]);
+
+  // A model picked: its efforts under the catalog.
+  await page.getByRole("button", { name: "GPT-6-Astra", exact: true }).click();
+  const efforts = MODELS[1].efforts.map((effort) => ({
+    locator: page.getByRole("button", { name: effort, exact: true }),
+    name: `effort ${effort}`,
+    face: { h: 48 },
+  }));
+  await toTopOfDock(models[0]!.locator);
+  await expectRow([...models, ...efforts]);
 });

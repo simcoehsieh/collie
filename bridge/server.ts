@@ -78,8 +78,7 @@ import {
 import { jsonRecord, jsonStringField } from "./stt/json.ts";
 import { listDocuments, listTags, normaliseDocumentQuery } from "./docs-list.ts";
 import { QuotaSource, parseQuotaCommand, type QuotaFailure } from "./quota.ts";
-import { ShotRunner, parseShotCommand, type ShotFailure } from "./shot.ts";
-import { commandPathsPresent } from "./command-paths.ts";
+import { ShotRunner, parseShotCommand, shotCapability, type ShotFailure } from "./shot.ts";
 import {
   DEFAULT_PROMPT_TAIL_LINES,
   verifyExpectedPrompt,
@@ -1225,9 +1224,9 @@ export function startServer(opts: {
       // leaving a door that only answers "unreachable".
       docHosts: agentryPresent(agentrySettings(cfg)) ? cfg.docHosts : undefined,
       quota: quota !== null ? true : undefined,
-      // FORK: a configured shot command is advertised only while the files it names exist — a
-      // command left pointing at a retired checkout is a row the pane menu must not draw.
-      shot: shot !== null && shotArgv !== null && commandPathsPresent(shotArgv) ? true : undefined,
+      // FORK: a configured shot command is advertised only while it could start — its program on
+      // this process's PATH and the files it names on disk (bridge/shot.ts `shotCapability`).
+      shot: shotCapability(shotArgv),
     });
   };
 
