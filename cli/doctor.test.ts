@@ -912,6 +912,21 @@ describe("collie doctor — the local checks", () => {
     expect(byCheck.get("update-source")?.detail).toContain("COLLIE_UPDATE_REPO");
     expect(code).toBe(EXIT.OK);
   });
+
+  test("update-source: this deployment's maintainer-managed fork is informational", async () => {
+    const h = harness(null, [], {
+      answers: [
+        ...HEALTHY_ANSWERS.filter(([prefix]) => !prefix.includes("remote get-url")),
+        [`git -C ${ROOT} remote get-url origin`, { stdout: "git@github.com:simcoehsieh/collie.git\n" }],
+      ],
+    });
+    const { byCheck, code } = await findings(h);
+    const finding = byCheck.get("update-source");
+    expect(finding?.status).toBe("ok");
+    expect(finding?.detail).toContain("maintainer-managed merges");
+    expect(finding?.remedy).toBeNull();
+    expect(code).toBe(EXIT.OK);
+  });
 });
 
 // ── The clock ────────────────────────────────────────────────────────────────

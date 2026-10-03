@@ -42,6 +42,7 @@ import { crewRuntimePath, parseMarker, rosterDrift, type CrewRuntimeMarker } fro
 import { enrollmentOf, TrustStore, type TrustedMember, type TrustStoreData } from "../bridge/crew/trust-store.ts";
 import { collieVersionBare, type CliContext } from "./context.ts";
 import { aboutCrew, bad, ok, skipped, warn, type DoctorStatus, type Finding } from "./finding.ts";
+import { FORK_UPDATE_POLICY } from "../web/src/lib/fork-shape.ts";
 import { explicitMux, probeMuxes, refusedMux, type MuxSighting } from "./mux.ts";
 import { cacheFindings } from "./cache-findings.ts";
 import { historyFindings, type SnapshotRead } from "./history.ts";
@@ -690,6 +691,13 @@ function updateSource(deps: DoctorDeps, install: InstallKind): Finding {
         );
   }
   const origin = originOf(deps.exec, deps.ctx.root);
+  // FORK: upstream releases are observed, and the known fork is advanced by maintainer merges.
+  // This is an informational boundary, not a broken update source. Unknown origins still fail;
+  // assertOrigin in update.ts remains unchanged and refuses to overwrite even this known fork.
+  if (FORK_UPDATE_POLICY.maintainerManaged && repo === DEFAULT_UPDATE_REPO &&
+      originMatches(origin, FORK_UPDATE_POLICY.repository)) {
+    return ok("update-source", `github.com/${FORK_UPDATE_POLICY.repository} — maintainer-managed merges from github.com/${repo}`);
+  }
   if (originMatches(origin, repo)) {
     return repo === DEFAULT_UPDATE_REPO
       ? ok("update-source", `github.com/${repo}`)

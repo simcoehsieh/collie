@@ -6,6 +6,7 @@ import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { UpdateInfo } from "@/lib/types";
 import { useOptionalRootData } from "@/lib/route-data";
+import { MAINTAINER_MANAGED_UPDATES, upstreamReleaseUrl } from "@/lib/fork-shape";
 
 // The footer "update available" chip, sitting next to the build stamp. It reads the snapshot's
 // optional `update` field (surfaced on the root loader data) and, when there's something to do,
@@ -32,6 +33,15 @@ export interface UpdateNotice {
  */
 export function updateNotice(update: UpdateInfo | undefined): UpdateNotice | null {
   if (!update) return null;
+  if (MAINTAINER_MANAGED_UPDATES) {
+    if (update.restartNeeded || update.bridgeStale) return { line: t("fork.updates.restart") };
+    const version = update.releaseAvailable && update.latest ? update.latest : update.majorAvailable;
+    if (version === null) return null;
+    return {
+      line: t("fork.updates.available", { version: version.replace(/^v/, "") }),
+      href: (version === update.latest ? update.latestUrl : update.majorUrl) ?? upstreamReleaseUrl(version),
+    };
+  }
   // The command spelling is a function of the install kind (M14/01 §5.3): Herdr's plugin actions
   // reach only a Herdr-managed (detached) checkout — on a binary install, a linked dev clone or an
   // unknown layout they name a plugin Herdr does not manage, so those get the `collie` verbs, which

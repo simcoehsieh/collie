@@ -39,6 +39,12 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
   and label to the control; holding it shows the current target and explains that picking opens
   and pins a row. A removed pin falls back to the plain shell.
 
+### Changed
+
+- **This fork explains that its maintainer merges upstream releases.** Updates link to release notes
+  without offering a self-update that would refuse the fork's origin. Doctor treats the known fork
+  source as informational; other origin problems and updater failures remain visible.
+
 ## [1.15.3] - 2026-10-02
 
 ### Fixed
