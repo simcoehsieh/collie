@@ -7,6 +7,7 @@ import { classifyInstall, probeInstall } from "../cli/install-kind.ts";
 import { realLinkFs } from "../cli/link.ts";
 import { packageCommand } from "../cli/package-command.ts";
 import { realExec, realFiles } from "../cli/sys.ts";
+import { collieBinary as collieBinaryOf } from "../cli/unit.ts";
 import { ActivityLedger } from "./activity.ts";
 import { trackActivity } from "./activity-tracking.ts";
 import { CacheTracker } from "./cache/tracker.ts";
@@ -50,6 +51,7 @@ import { ZELLIJ_BINARY_OPTION } from "./mux/zellij/adapter.ts";
 import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
 import { TranscriptStore } from "./journal/store.ts";
 import { NotificationCoordinator, makeNotifySink, type NotifyClock } from "./notifications.ts";
+import { pushTitle } from "./push-titles.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
 import { createOperatorNotifyRules } from "./operator-notify.ts";
 import { ArtifactStore } from "./artifacts.ts";
@@ -774,7 +776,7 @@ const updateMonitor = new UpdateMonitor({
       // release page carry the location-independent Herdr actions. Keeps this off the cwd-dependent path.
       // The TITLE never moves, not even for an urgent release (ADR 0046): the notification is the same
       // kind of thing it always was, and what makes it urgent is the first sentence of the body.
-      title: "Collie update available",
+      ...pushTitle("update.available"),
       body: updateDigestBody(currentVersion, versions, linkChange, urgent),
       target: "settings",
     }),
@@ -791,7 +793,7 @@ const updateMonitor = new UpdateMonitor({
 // fallback matters for the source-mode bridge (`bun bridge/index.ts`), where `execPath` is Bun
 // itself: there, with no compiled binary present, there is nothing honest to spawn, and the route
 // answers 503 rather than shelling out to something that is not Collie.
-const collieBinary = join(rootDir, "bin", "collie");
+const collieBinary = collieBinaryOf(rootDir);
 const canRunUpdate = existsSync(collieBinary);
 // How long `collie update --check --json` may take before the bridge stops waiting. It asks git for
 // the remote's tags over the network, so it is not instant; past this, "no report" is the answer,

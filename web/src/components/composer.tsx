@@ -59,7 +59,6 @@ function heldModifiers(event: { ctrlKey: boolean; altKey: boolean; shiftKey: boo
 }
 
 import { ActionsRow } from "@/components/actions-row";
-import { DisplayPrefsContent } from "@/components/display-prefs";
 import { SectionLabel } from "@/components/ui/section-label";
 import { Collapse } from "@/components/ui/collapse";
 import { ActionRow } from "@/components/action-sheet-rows";
@@ -112,10 +111,10 @@ export interface ComposerHandle {
   /** Focus the input and put the caret at the end — used by the mirror-tap-to-focus in AgentChat. */
   focusInput: () => void;
   /**
-   * FORK: open the display-prefs dock. The prefs left the actions belt for the pane menu
-   * (`⋮ → Display settings`), and the menu lives in AgentChat while the dock lives here — so the
-   * one crossing is this method rather than lifting the composer's drawer state up a level for a
-   * single row. Routed through `requestDrawer`, so a staged key queue still raises its confirm.
+   * FORK: open the Display sheet. The prefs left the actions belt for the pane menu
+   * (`⋮ → Display settings`); since upstream 1.15 the sheet itself is AgentChat's (`display` below),
+   * but the row still crosses through here so the composer can close its own dock first — routed
+   * through `requestDrawer`, so a staged key queue still raises its confirm.
    */
   openDisplay: () => void;
 }
@@ -182,17 +181,19 @@ interface ComposerProps {
    * text tracks this live so host typing streams into it; it also drives the send()-time pre-clear (the
    * actual current "❯" line) and unmounts the preview when it goes null. Never written into the input. */
   rawTerminalDraft: string | null;
-  /** Mirror display prefs — the View row lives here, but the mirror (in AgentChat) reads the same
-   * single instance, so they're threaded through rather than each calling useDisplayPrefs. */
+  /** Mirror display prefs — the mirror (in AgentChat) reads the same single instance, so they're
+   * threaded through rather than each calling useDisplayPrefs. Only the DRAFT field's own size and
+   * the terminal face are read here; the rows that write any of this moved to AgentChat's ⚙ sheet. */
   prefs: DisplayPrefs;
-  setWrap: (wrap: boolean) => void;
-  stepFontSize: (delta: number) => void;
-  setRawTerminal: (raw: boolean) => void;
-  setTapToFocus: (tapToFocus: boolean) => void;
-  /** This pane's mirror-inversion override, resolved and owned by AgentChat. */
-  mirrorNative: boolean;
-  setMirrorNative: (native: boolean) => void;
-  setExpandClippedReply: (expandClippedReply: boolean) => void;
+  /**
+   * The Display sheet, which AgentChat owns and mounts.
+   *
+   * FORK: upstream draws a ⚙ for it on the belt; this fork does not (the pane menu's row reaches it
+   * through `openDisplay` on the handle), so this is read only there. The PANEL lives in AgentChat: a sheet is a `fixed inset-0` element with no portal, so it must not be mounted
+   * inside the composer's animated, sticky ancestry (see the note beside the pane-menu sheet in
+   * agent-chat.tsx).
+   */
+  display: { open: boolean; onToggle: () => void };
   /** Snap the mirror to the live tail (follow + revalidate + scroll) after a successful send. */
   onSent: () => void;
   /** FORK: the pane's rendered name, for the `## Feedback:` heading of a send carrying notes. The
@@ -242,7 +243,7 @@ interface ComposerProps {
 // decode. They now live behind the ⚙ on the actions row, as labelled rows in the same
 // in-flow dock (they change how the mirror LOOKS, so the mirror has to stay visible while you flip
 // them). Find moved the other way — to the header, where its find bar already takes over the row.
-type ComposerDrawer = "quick" | "cmd" | "keys" | "display" | null;
+type ComposerDrawer = "quick" | "cmd" | "keys" | null;
 
 
 // Pause after clearing a stranded terminal draft so the TUI settles before pane.send_text. Exported
@@ -360,7 +361,7 @@ interface ClearedDraft {
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { paneId, scope, agent, isShell, status, gone, readOnly, hostBlock, composing, dialogPresent, dialogUnread, mirrorNative, setMirrorNative, draftNoticeSlot, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, onSent, paneName, pullHandle, changesPill },
+  { paneId, scope, agent, isShell, status, gone, readOnly, hostBlock, composing, dialogPresent, dialogUnread, draftNoticeSlot, text, terminalDraft, rawTerminalDraft, prefs, display, onSent, paneName, pullHandle, changesPill },
   ref,
 ) {
   const revalidator = useRevalidator();
@@ -968,7 +969,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useImperativeHandle(ref, () => ({
     focusInput: focusInputImmediately,
     openDisplay: () => {
-      requestDrawer("display");
+      // Close whatever dock is open first (upstream's gear does the same): the sheet covers the
+      // composer, so a Keys tray left open under it would only be found on dismissal. A refused
+      // close — staged keys, first tap — leaves the sheet shut, so the confirm is what you see.
+      if (requestDrawer(null) && !display.open) display.onToggle();
     },
   }));
 
@@ -2021,20 +2025,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             />
           </ComposerDock>
         )}
-        {drawer === "display" && (
-          <ComposerDock title={translate("composer.controls.display")} onClose={closeDrawer}>
-            <DisplayPrefsContent
-              prefs={prefs}
-              mirrorNative={mirrorNative}
-              setMirrorNative={setMirrorNative}
-              setWrap={setWrap}
-              stepFontSize={stepFontSize}
-              setRawTerminal={setRawTerminal}
-              setTapToFocus={setTapToFocus}
-              setExpandClippedReply={setExpandClippedReply}
-            />
-          </ComposerDock>
-        )}
         {/* The one action row: Keys · Quick · Agent · ⚙ (Agent only when the pane's agent has
             commands). Display prefs used to sit on a second, permanent icon-only "View" row above
             this one; folding them behind the ⚙ gives the mirror that row back. The gear is icon-only
@@ -2162,8 +2152,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               // the ⋮ at the top right"). Wrap, font size, raw terminal and tap-to-focus are set
               // once and then left alone for weeks, and this belt is the row the thumb uses every
               // minute — a permanent pill for a settle-once control is the wrong trade at phone
-              // width. The dock itself is unchanged and still opens here; what opens it is now a
-              // row in the pane menu, through `openDisplay` on this component's handle.
+              // width. Since upstream 1.15 the panel is AgentChat's Display sheet; what opens it is a row
+              // in the pane menu, through `openDisplay` on this component's handle (so a staged
+              // key queue still raises its discard confirm first). Upstream's ⚙ belt item is not
+              // re-added here.
           ]}
           agent={agent}
           mine={operatorCommands}

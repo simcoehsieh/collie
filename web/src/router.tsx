@@ -2,6 +2,7 @@ import { lazy, Suspense, type ComponentType, type ReactNode } from "react";
 import { createBrowserRouter, replace } from "react-router";
 
 import { basePath } from "@/lib/base-path";
+import { pairLandingPath } from "@/lib/nav";
 import { listenForInAppOpen, markBooted, openPendingTarget, probeStandalone, seedColdEntry, type OpenGate } from "@/lib/nav-entry";
 import { isReloadInFlight } from "@/lib/pwa";
 import { UPDATE_MODE_HOLD, isReloadHeldBy, subscribeReloadHeld } from "@/lib/reload-guard";
@@ -70,6 +71,18 @@ const settingsRoute = lazyRoute(
   () => import("@/routes/settings").then((m) => ({ default: m.SettingsRoute })),
   <SettingsSkeleton />,
 );
+// FORK: upstream's four Settings sections (7527b53e) are one module, so one chunk; each borrows the
+// Settings skeleton, which is the same column of cards they draw.
+function settingsSection(
+  pick: (m: typeof import("@/routes/settings-sections")) => ComponentType,
+): ReactNode {
+  return lazyRoute(() => import("@/routes/settings-sections").then((m) => ({ default: pick(m) })), <SettingsSkeleton />);
+}
+const settingsAppearanceRoute = settingsSection((m) => m.SettingsAppearanceRoute);
+const settingsDeviceRoute = settingsSection((m) => m.SettingsDeviceRoute);
+const settingsAlertsRoute = settingsSection((m) => m.SettingsAlertsRoute);
+const settingsExperimentsRoute = settingsSection((m) => m.SettingsExperimentsRoute);
+const settingsSystemRoute = settingsSection((m) => m.SettingsSystemRoute);
 // Updates is Settings' own shape one level down — a column of cards — so it borrows that skeleton
 // rather than growing a sixth one for a screen nobody waits on twice.
 const updatesRoute = lazyRoute(
@@ -145,9 +158,30 @@ export const router = createBrowserRouter([
         path: "pane/last",
         loader: ({ request }) => replace(lastPanePath(new URL(request.url).search) ?? "/"),
       },
-      // Settings carries the paired-device registry, so it gets its own loader — a revoke or a pair
-      // is then the app's standard mutation shape (api call → revalidate), with no second data path.
-      { path: "settings", loader: devicesLoader, element: settingsRoute },
+      // Settings is an INDEX of four sections (routes/settings.tsx). Its only loader is the pairing
+      // forward: the QR `collie pair` prints still names `/settings?pair=<code>`, and the form now
+      // lives on System. `replace`, as for `/pack` below, so Back does not land on the index and
+      // bounce forward again. No `pair`, no redirect, and the registry stays on System's loader.
+      {
+        path: "settings",
+        loader: ({ request }) => {
+          const target = pairLandingPath(new URL(request.url).search);
+          return target === null ? null : replace(target);
+        },
+        element: settingsRoute,
+      },
+      { path: "settings/appearance", element: settingsAppearanceRoute },
+      { path: "settings/device", element: settingsDeviceRoute },
+      { path: "settings/alerts", element: settingsAlertsRoute },
+      // The fifth section. It is routable whether or not the index offers a row for it — a page
+      // reachable only by URL is the ordinary case for a section that comes and goes, and it is
+      // what an operator who bookmarked it gets after the last experiment graduates: an empty page
+      // rather than a 404.
+      { path: "settings/experiments", element: settingsExperimentsRoute },
+      // The System section carries the paired-device registry, so it gets the loader Settings used
+      // to hold — a revoke or a pair is then the app's standard mutation shape (api call →
+      // revalidate), with no second data path.
+      { path: "settings/system", loader: devicesLoader, element: settingsSystemRoute },
       // The Updates page, a sibling of settings and crew. No loader of its own: everything on it is
       // either the snapshot (root loader) or the card's own read of /api/update/check. It is
       // deliberately ON the poll loop for `crew`'s stated reason — a run in progress and a member

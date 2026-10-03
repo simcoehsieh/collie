@@ -1,6 +1,6 @@
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
@@ -13,7 +13,7 @@ const HOME = "/home/tester";
 
 describe("searchDirs", () => {
   test("PATH entries come first, then the absolute fallbacks", () => {
-    const dirs = searchDirs("/opt/x/bin:/opt/y/bin", HOME);
+    const dirs = searchDirs(["/opt/x/bin", "/opt/y/bin"].join(delimiter), HOME);
     expect(dirs.slice(0, 2)).toEqual(["/opt/x/bin", "/opt/y/bin"]);
     expect(dirs).toContain("/usr/bin");
   });
@@ -26,19 +26,19 @@ describe("searchDirs", () => {
   test("relative and empty PATH entries are dropped", () => {
     // An empty entry means "the current directory" — resolving `git` through it would let whatever
     // directory we happen to be in supply the binary.
-    const dirs = searchDirs(":.:relative/bin:/opt/ok", HOME);
-    expect(dirs.filter((d) => !d.startsWith("/"))).toEqual([]);
+    const dirs = searchDirs(["", ".", "relative/bin", "/opt/ok"].join(delimiter), HOME);
+    expect(dirs.filter((d) => !isAbsolute(d))).toEqual([]);
     expect(dirs).toContain("/opt/ok");
   });
 
   test("every fallback dir is absolute and home-derived ones use the resolved home", () => {
-    for (const d of fallbackDirs(HOME)) expect(d.startsWith("/")).toBe(true);
-    expect(fallbackDirs(HOME)).toContain(`${HOME}/.bun/bin`);
-    expect(fallbackDirs(HOME)).toContain(`${HOME}/.local/bin`);
+    for (const d of fallbackDirs(HOME)) expect(isAbsolute(d)).toBe(true);
+    expect(fallbackDirs(HOME)).toContain(join(HOME, ".bun", "bin"));
+    expect(fallbackDirs(HOME)).toContain(join(HOME, ".local", "bin"));
   });
 
   test("a dir named twice is searched once", () => {
-    const dirs = searchDirs("/usr/bin:/usr/bin", HOME);
+    const dirs = searchDirs(["/usr/bin", "/usr/bin"].join(delimiter), HOME);
     expect(dirs.filter((d) => d === "/usr/bin")).toHaveLength(1);
   });
 });
@@ -58,11 +58,12 @@ describe("findTool", () => {
 
 describe("findIn", () => {
   test("returns the first hit as an absolute path", () => {
-    expect(findIn("git", ["/a", "/b"], (p) => p === "/b/git")).toBe("/b/git");
+    const hit = join("/b", "git");
+    expect(findIn("git", ["/a", "/b"], (p) => p === hit)).toBe(hit);
   });
 
   test("earlier dirs win", () => {
-    expect(findIn("git", ["/a", "/b"], () => true)).toBe("/a/git");
+    expect(findIn("git", ["/a", "/b"], () => true)).toBe(join("/a", "git"));
   });
 
   test("nothing found is null, not a throw — the caller reports `X not found`", () => {
@@ -76,16 +77,19 @@ describe("findIn", () => {
   // On Windows the executable is `git.exe`, and a lookup for the bare name finds nothing — which
   // reads downstream as "git is not installed" rather than "we looked for the wrong filename".
   test("every suffix is tried within a directory before moving to the next one", () => {
-    expect(findIn("git", ["/a", "/b"], (p) => p === "/b/git.exe", ["", ".exe"])).toBe("/b/git.exe");
+    const hit = join("/b", "git.exe");
+    expect(findIn("git", ["/a", "/b"], (p) => p === hit, ["", ".exe"])).toBe(hit);
   });
 
   test("the bare name wins over a suffixed sibling in the same directory", () => {
-    expect(findIn("git", ["/a"], () => true, ["", ".exe"])).toBe("/a/git");
+    expect(findIn("git", ["/a"], () => true, ["", ".exe"])).toBe(join("/a", "git"));
   });
 
   test("PATH order still decides — an earlier dir's suffixed hit beats a later dir's bare one", () => {
-    expect(findIn("git", ["/a", "/b"], (p) => p === "/a/git.exe" || p === "/b/git", ["", ".exe"])).toBe(
-      "/a/git.exe",
+    const earlierSuffixed = join("/a", "git.exe");
+    const laterBare = join("/b", "git");
+    expect(findIn("git", ["/a", "/b"], (p) => p === earlierSuffixed || p === laterBare, ["", ".exe"])).toBe(
+      earlierSuffixed,
     );
   });
 });
@@ -129,6 +133,17 @@ describe("findTool on win32, from a host that is not Windows", () => {
 
   test("a `.cmd` shim on PATH resolves", () => {
     expect(findTool("herdr", env, HOME, "win32")).toBe(shim);
+  });
+
+  // Bun's compiler writes `collie.exe`; a caller holding the bare absolute path means that file. The
+  // suffix is lowercase for the same reason as above: this runs on a case-sensitive filesystem.
+  test("an absolute name without its suffix finds the file beside it, as `collie.exe` is found", () => {
+    const exe = join(dir, "collie.exe");
+    writeFileSync(exe, "MZ");
+    chmodSync(exe, 0o755);
+    expect(findTool(join(dir, "collie"), { PATHEXT: ".exe" }, HOME, "win32")).toBe(exe);
+    expect(findTool(join(dir, "collie"), { PATHEXT: ".exe" }, HOME, "linux")).toBeNull();
+    expect(findTool(join(dir, "nothing"), { PATHEXT: ".exe" }, HOME, "win32")).toBeNull();
   });
 
   test("the same shim is not matched on linux — there the bare name is the only candidate", () => {

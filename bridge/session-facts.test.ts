@@ -30,11 +30,15 @@ function fake(opts: { path?: string | null; facts?: SessionFacts | null } = {}) 
       return Promise.resolve(state.path === null ? null : { size: state.size, mtimeMs: state.mtimeMs });
     },
     load: () => Promise.reject(new Error("the facts store must never load a whole log")),
+    readSince: () => Promise.reject(new Error("the facts store never reads a live window")),
   };
   const adapter: JournalAdapter = {
     agent: "claude",
     source,
     parse: () => [],
+    reducer: () => {
+      throw new Error("the facts store never folds rows");
+    },
     facts: (text) => {
       state.parses++;
       if (opts.facts !== undefined) return opts.facts;
@@ -131,7 +135,14 @@ describe("SessionFactsStore", () => {
 
   test("answers null, and schedules nothing, for an adapter with no facts reader", async () => {
     const f = fake();
-    const bare: JournalAdapter = { agent: "pi", source: f.adapter.source, parse: () => [] };
+    const bare: JournalAdapter = {
+      agent: "pi",
+      source: f.adapter.source,
+      parse: () => [],
+      reducer: () => {
+        throw new Error("never folded");
+      },
+    };
     const store = new SessionFactsStore({ tail: f.tail });
     expect(store.get(bare, ref)).toBeNull();
     await settle();

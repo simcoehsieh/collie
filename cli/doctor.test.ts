@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import { CREW_PROTOCOL_VERSION } from "../bridge/crew/enrollment.ts";
 import { leadStore, member, CREW, peerStore, T0 } from "../bridge/crew/fixtures.ts";
@@ -28,6 +28,7 @@ import {
   STATE,
 } from "./fakes.ts";
 import { EXIT } from "./io.ts";
+import { collieBinary } from "./unit.ts";
 import {
   configFilePaths,
   readConfigFilesSync,
@@ -43,9 +44,11 @@ import {
 // this verb is safe to run on a machine that is already misbehaving.
 
 const HANDLER = `${CONFIG}/tailscale-managed-handler`;
-/** The name `collie link` publishes, and the directory it lives in (ADR 0021). */
-const LINK_DIR = `${HOME}/.local/bin`;
-const LINK_AT = `${LINK_DIR}/collie`;
+/** The name `collie link` publishes, and the directory it lives in (ADR 0021). Built with `join`, as the code builds it. */
+const LINK_DIR = join(HOME, ".local", "bin");
+const LINK_AT = join(LINK_DIR, "collie");
+/** This checkout's compiled binary: `bin/collie` on POSIX, `bin/collie.exe` on Windows. */
+const OWN_BINARY = collieBinary(ROOT);
 const SOCKET = "/home/pat/.config/herdr/herdr.sock";
 const HOSTPORT = "laptop.tail.ts.net:443";
 const PROXY = "http://127.0.0.1:8787";
@@ -337,14 +340,14 @@ describe("collie doctor — the contract", () => {
     expect(raw[0]?.check).toBe("collie");
     expect(raw[0]?.status).toBe("ok");
     expect(raw[0]?.remedy).toBeNull();
-    // "v1.0.0-beta.49 · linux-x64" — a version and a platform, nothing else.
-    expect(raw[0]?.detail).toMatch(/^v\S+ · [a-z]+-[a-z0-9]+$/);
+    // "v1.0.0-beta.49 · linux-x64" (or "win32-x64") — a version and a platform, nothing else.
+    expect(raw[0]?.detail).toMatch(/^v\S+ · [a-z0-9]+-[a-z0-9]+$/);
 
     const code = await cmdDoctor(h.deps, []);
     expect(code).toBe(EXIT.OK);
     const first = h.io.stdout.find((l) => l.includes("collie") && l.trim().startsWith("✓"));
     expect(first).toBeDefined();
-    expect(first).toMatch(/v\S+ · [a-z]+-[a-z0-9]+/);
+    expect(first).toMatch(/v\S+ · [a-z0-9]+-[a-z0-9]+/);
   });
 
   test("`remedy` is null EXACTLY when the status is ok — including for a skipped check", async () => {
@@ -469,7 +472,8 @@ describe("collie doctor — the section sets", () => {
   // warn-only checks grows a `bad(` — which is the point where ADR 0050 asks for a fresh argument,
   // not a silent downgrade to amber. The positive half keeps it from passing by extracting nothing.
   test("`secret-generation` and `member-versions` cannot return an error", async () => {
-    const source = await Bun.file(new URL("./doctor.ts", import.meta.url)).text();
+    // A Windows checkout may carry CRLF line endings; the body's closing brace is found on `\n}\n`.
+    const source = (await Bun.file(new URL("./doctor.ts", import.meta.url)).text()).replaceAll("\r\n", "\n");
     const bodyOf = (name: string): string => {
       const start = source.indexOf(`function ${name}(`);
       expect(start, `${name} not found`).toBeGreaterThan(-1);
@@ -528,8 +532,8 @@ describe("collie doctor — the local checks", () => {
 
   test("path-link: linked here, with the directory on PATH, is ok", async () => {
     const h = harness(null, [], {
-      env: { PATH: `/usr/bin:${LINK_DIR}` },
-      link: { [LINK_AT]: { kind: "symlink", target: `${ROOT}/bin/collie` } },
+      env: { PATH: ["/usr/bin", LINK_DIR].join(delimiter) },
+      link: { [LINK_AT]: { kind: "symlink", target: OWN_BINARY } },
     });
     const f = (await findings(h)).byCheck.get("path-link");
     expect(f?.status).toBe("ok");
@@ -539,7 +543,7 @@ describe("collie doctor — the local checks", () => {
   test("path-link: linked here but the directory is off PATH warns — the shell cannot find it", async () => {
     const h = harness(null, [], {
       env: { PATH: "/usr/bin" },
-      link: { [LINK_AT]: { kind: "symlink", target: `${ROOT}/bin/collie` } },
+      link: { [LINK_AT]: { kind: "symlink", target: OWN_BINARY } },
     });
     const f = (await findings(h)).byCheck.get("path-link");
     expect(f?.status).toBe("warn");
@@ -996,15 +1000,55 @@ describe("collie doctor — the crew checks", () => {
     expect(CREW.secretGeneration).toBe(1);
   });
 
-  test("member-reach: an unreachable member is an error naming `collie reconnect`", async () => {
+  test("member-reach: an unreachable member is an error naming `collie crew set-address`", async () => {
     const { code, byCheck } = await findings(
       harness(LEAD, [new Error("connection refused")], { files: { ...healthyFiles(), ...markerFile(LEAD) } }),
     );
     const f = byCheck.get("member-reach");
     expect(f?.status).toBe("error");
     expect(f?.detail).toContain("laptop");
-    expect(f?.remedy).toContain("collie reconnect");
+    // The lead's verb: it refuses an address the crew cannot dial, where `reconnect` takes anything.
+    expect(f?.remedy).toContain("collie crew set-address <member> <host:port>");
+    expect(f?.remedy).not.toContain("collie reconnect");
     expect(code).toBe(EXIT.FAIL);
+  });
+
+  test("member-reach: a silent peer with a portless address gets the exact set-address command", async () => {
+    const portless = leadStore({ peers: [member({ memberId: "laptop", address: "100.64.0.9" })] });
+    const { byCheck } = await findings(
+      harness(portless, [new Error("connection refused")], { files: { ...healthyFiles(), ...markerFile(portless) } }),
+    );
+    const f = byCheck.get("member-reach");
+    expect(f?.detail).toContain(
+      "laptop at 100.64.0.9 — ",
+    );
+    expect(f?.detail).toContain("→ `collie crew set-address laptop 100.64.0.9:8787` (8787 unless that machine set COLLIE_PORT)");
+    // The generic remedy is still there for the rest.
+    expect(f?.remedy).toContain("collie crew set-address <member> <host:port>");
+  });
+
+  test("member-reach: a silent peer at host:port, with a scheme or an IPv6 literal gets no suggestion", async () => {
+    for (const address of ["laptop.example:8787", "https://laptop.example", "fd7a:115c::9"]) {
+      const store = leadStore({ peers: [member({ memberId: "laptop", address })] });
+      const { byCheck } = await findings(
+        harness(store, [new Error("connection refused")], { files: { ...healthyFiles(), ...markerFile(store) } }),
+      );
+      expect(byCheck.get("member-reach")?.detail).not.toContain("→");
+    }
+  });
+
+  test("lead-reach: an unreachable lead keeps `collie reconnect`, the verb that runs on a peer", async () => {
+    const peer = peerStore();
+    const { byCheck } = await findings(
+      harness(peer, [new Error("connection refused")], {
+        env: { COLLIE_HOST: "laptop.tail.ts.net" },
+        files: without({ ...healthyFiles(), ...markerFile(peer) }, HANDLER),
+      }),
+    );
+    const f = byCheck.get("lead-reach");
+    expect(f?.status).toBe("error");
+    expect(f?.remedy).toContain("collie reconnect <address>");
+    expect(f?.remedy).not.toContain("set-address");
   });
 
   test("member-reach: a member that answers `hello` and then starves is an error about the BUDGET", async () => {
@@ -1125,8 +1169,6 @@ describe("collie doctor — the crew checks", () => {
 
 /** The Claude settings file `hooks install claude` writes on a default host. */
 const SETTINGS = `${HOME}/.claude/settings.json`;
-/** The binary an install pins to when nothing is linked: this checkout's own. */
-const OWN_BINARY = `${ROOT}/bin/collie`;
 
 /** A settings document carrying our entry on every registered event, at `version`. */
 function settingsWith(command: string): string {
@@ -1214,7 +1256,7 @@ describe("mux", () => {
     const finding = byCheck.get("mux")!;
     expect(finding.status).toBe("error");
     expect(finding.detail).toContain("no multiplexers are running");
-    expect(finding.remedy).toContain("COLLIE_MUX=<herdr|tmux|zellij> collie start");
+    expect(finding.remedy).toContain("COLLIE_MUX=<herdr|tmux|tuios|zellij> collie start");
   });
 
   test("nothing configured and two multiplexers running is an error naming both", async () => {
@@ -1614,7 +1656,7 @@ describe("collie doctor — a packaged install", () => {
     const h = systemOwned();
     // `/opt/collie` is the fake's root; a PATH name pointing into it is what a package installs.
     expect((await findings(h)).byCheck.get("install")?.detail ?? "").toContain("no PATH name points at it");
-    const linked = systemOwned({ "/usr/bin/collie": { kind: "symlink", target: `${ROOT}/bin/collie` } });
+    const linked = systemOwned({ "/usr/bin/collie": { kind: "symlink", target: OWN_BINARY } });
     expect((await findings(linked)).byCheck.get("install")?.detail ?? "").toContain("via /usr/bin/collie");
   });
 
@@ -1641,7 +1683,7 @@ describe("collie doctor — a packaged install", () => {
   const MAIN_PID = "systemctl --user show collie --property=MainPID --value";
   const PID = 4242;
   const EXE = `/proc/${String(PID)}/exe`;
-  const BINARY = `${ROOT}/bin/collie`;
+  const BINARY = OWN_BINARY;
   const supervised = (link: Record<string, LinkProbe> = {}) =>
     systemOwned(link, [[MAIN_PID, { stdout: `${String(PID)}\n` }]]);
 

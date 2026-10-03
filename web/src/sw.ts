@@ -11,6 +11,7 @@ import {
   type PushPayload,
 } from "./lib/push-decision";
 import { askInApp, openNotificationTarget, type OpenOutcome, type OpenTargetClient } from "./lib/notification-open";
+import { readPushTitles } from "./lib/push-title-store";
 import { FONT_URLS, navigationNetworkOnlyUnder } from "./lib/sw-routes";
 import {
   RESUBSCRIBED_MESSAGE,
@@ -290,11 +291,19 @@ async function handlePush(event: PushEvent): Promise<void> {
     payload = { body: event.data?.text() };
   }
 
-  // Both reads in one round trip: WebKit revokes a subscription whose handler fails to post a
-  // notification "in a timely manner", so the two questions that decide whether to post are asked
-  // together rather than one after the other.
-  const [visible, mustShow] = await Promise.all([anyVisibleClient(), mustShowNotification()]);
-  const decision = decidePush(payload, visible, mustShow);
+  // Every read in one round trip: WebKit revokes a subscription whose handler fails to post a
+  // notification "in a timely manner", so the questions that decide whether and what to post are
+  // asked together rather than one after the other (FORK). The title table (lib/push-titles.ts,
+  // ADR 0074) is read only for a push that names a code: a retraction or an operator-typed test has
+  // nothing to translate, and must not wait on storage. `readPushTitles` never throws.
+  const [visible, mustShow, templates] = await Promise.all([
+    anyVisibleClient(),
+    mustShowNotification(),
+    payload.titleCode === undefined
+      ? Promise.resolve({})
+      : readPushTitles(self.caches, self.location.origin, MOUNT),
+  ]);
+  const decision = decidePush(payload, visible, mustShow, templates);
   if (decision.kind === "suppress") return; // a visible Collie tab already surfaces it in-app
   if (decision.kind === "clear") {
     // Retraction: close the slot and show nothing. Only reached on a push service that tolerates a

@@ -201,6 +201,18 @@ the status row and the hint row are byte-faithful, with the reporter's theme col
 |---|---|---|
 | `codex--reporter-294-busy-agents-hint.txt` | An echo `› herdr pane read …` band, `• Working (6s • esc to interrupt)`, the empty composer, `  GPT-6-Luna medium · ~/Code/project · Read recent pane output`, and `  ← for agents · ? for shortcuts` as the last row. `composerReady` must be TRUE, the lowest `›` row is the composer, no card | `working` |
 
+## Codex reporter capture (#317, 2026-09-28, macOS, Codex 0.158.0, Herdr 0.9.1, SCRUBBED)
+
+The reporter's `herdr pane read <pane-id> --source recent --lines 200 --format ansi`, taken from
+inside the Codex session while it worked, and redacted by the reporter (equal-display-width
+placeholders, published in a gist with the exact bytes as Base64). **Cut further here**: only the
+Working row and the composer band below it are kept, so none of the redacted chat is in the tree.
+The kept rows are byte-faithful to the reporter's file, theme colours included.
+
+| Fixture | State / what's in it | Herdr status |
+|---|---|---|
+| `codex--v0158-goal-notice.txt` | `• Working (5m 47s • esc to interrupt)`, the empty composer, and a status row whose third field carries the padding in its own purple before a right-aligned `Pursuing goal (17h 43m)` (a Codex `/goal`). `  ? for shortcuts` is the last row. Collie 1.14.x refused that row, so the pane had no composer: the unread-dialog card and every send refused. `composerReady` must be TRUE, no card | `working` |
+
 ## Codex mobile chrome (reconstructed 2026-09-03)
 
 **Not a capture.** This one file is RECONSTRUCTED from the two rows reported in
@@ -324,6 +336,7 @@ Grok's composer is a rounded box at the tail: `╭─…─╮` / `│ ❯ … �
 | `claude--select-multiselect-single.txt` | **Single-question multiSelect** AskUserQuestion: checkbox `[ ]` options under a `←  ☐ Toppings  ✔ Submit  →` stepper, "Enter to select · ↑/↓ · Esc" footer. Lifted to a `multi-select` block — the verified interaction is **DIGIT N toggles option N** (pointer-independent); the closed-loop Submit macro walks the pointer to Submit and confirms | `blocked` |
 | `claude--select-multiselect-checked.txt` | Same dialog **mid-selection**: some boxes `[✔]` (Mushrooms, Olives), the stepper's question chip flipped to `☒` (answered). Exercises the checked-glyph lift (`[✔]`/`[x]`/`[✓]` → `checked: true`; terminal is source of truth) | `blocked` |
 | `claude--select-multiselect-review.txt` | The multiSelect **review/confirm** screen: `←  ☐ Toppings  ✔ Submit  →` stepper, "Ready to submit your answers?" over `❯ 1. Submit answers / 2. Cancel`, with a `⚠ You have not answered all questions` line (`incomplete`). Lifts the `review` phase (submit = key `1`, cancel = key `2`) | `blocked` |
+| `claude--workflow-view.txt` | Claude Code 2.1.285's **dynamic-workflow view**, captured 2026-09-30 at 226 columns from a throwaway `/tmp` lab run, paused with `p`. A two-pane box: five phases on the left with a partial `3 Verify the classification 1/3`, the running agent on the right with its model and token count. The lid is TITLED (`╭ Phases ───┬ Read the corpus · 1 agent ───╮`), so the floor's `┴` is what anchors the table run. The screen of [discussion #301](https://github.com/AltanS/collie/discussions/301): before [ADR 0072](../../../../.adr/0072-a-two-pane-box-pans.md) every `│ … │` row of it was CLIPPED on a phone, which is why the report shows a band of stacked rules and a `· 74…` cut off the right edge. Nothing in it is this machine's: the workflow's name, phases and agent labels were all authored for the lab | `working` |
 
 ## In-flight send / self-race corpus (captured 2026-07-18, `collie-demo` sandbox pane)
 
@@ -893,6 +906,43 @@ cwd. The session had no provider signed in, so there is no vendor account state 
 
 `/tree` was dismissed with `Escape`; nothing in the tree was ever switched to.
 
+## OMP empty-editor key hint (captured 2026-09-30, oh-my-pi `omp` v18.4.4, herdr 0.9.2, throwaway Herdr panes)
+
+Four byte-faithful `pane.read format:ansi` captures, taken with `scripts/capture-fixture.sh`. The
+first three come from fresh omp sessions in `/tmp`, one per composer shape. The rule and pi shapes ran under a
+`--config` overlay that set only `composer.shape`. omp 18.4 paints a key hint into an EMPTY editor:
+the Shift+Tab key glyphs in the accent colour, one space, then `to change thinking effort` in dim
+italic, right-aligned in the draft row. The hint is not in the input buffer and goes away with the
+first typed character. Read as text, the row was a draft of the two key glyphs, so every fresh
+session showed "Draft in terminal". `draftPlaceholder` (`harness/omp/markers.ts`) now recognises
+the hint by the renderer's shape.
+
+omp's `composer-hints.ts` builds a second hint from the same parts, and it wins over the effort
+hint: `← ← to see N running agents`, painted while a background subagent runs. Its key run is two
+glyphs with a space between them, which the effort hint never tests. `omp--fresh-agents-hint.txt`
+pins it in the boxed shape. It was captured 2026-10-02 on omp v18.4.10 and herdr 0.9.3, after one
+`task` subagent was started in the background. omp retires a hint after its gesture is used three
+times, and the capturing operator's own count had retired it, so this session ran on a copy of the
+agent directory (`PI_CODING_AGENT_DIR`) with the hint counter cleared.
+
+The operator's statusline template shows the model and the context meter, plus the subagent count
+and git branch when there are any. The agents capture ran in a fresh `git init` sandbox, so its row
+shows `1` and `main`. No cwd, host or account appears. **No sanitization pass was needed.** All four are CRLF with no trailing
+newline; their `wc -l` counts are 2, 4, 4 and 2.
+
+**The two boxed captures are deliberately outside the `extractStatusLines` content assertion.**
+Every other boxed fixture is held to a status row that starts with `π`, ends with `▶` and names the
+branch (`chrome.test.ts`). That is the default powerline template the rest of the corpus carries.
+These two carry the operator's own template, which is neither, so they are held only to the shape
+half of that test: exactly one styled row with more than one segment.
+
+| Fixture | State / what's in it | Herdr status |
+|---|---|---|
+| `omp--fresh-effort-hint.txt` | Boxed composer on a fresh session: the hint right-aligned in the `╰─ … ─╯` bottom border | `idle` |
+| `omp--v18-rule-effort-hint.txt` | `rule` composer: the hint right-aligned on the empty `❯` row, then the blank gap and the status row | `idle` |
+| `omp--v18-pi-effort-hint.txt` | `pi` composer: the hint right-aligned on the single draft row between the two rules, status row below | `idle` |
+| `omp--fresh-agents-hint.txt` | Boxed composer with a background subagent running: `← ← to see 1 running agent` right-aligned in the bottom border | `idle` |
+
 ## Lessons already encoded here (don't re-learn them)
 
 - **Match on parsed text, not raw bytes**: SGR codes sit *between* glyphs (`❯` and `1.` are in
@@ -1060,6 +1110,7 @@ wrap, Tab does nothing, Enter confirms, Escape declines, no digit).
 | `oc--fresh-idle.txt` | Splash logo, empty composer with an `Ask anything… "…"` placeholder, model row, rule, `tab agents  ctrl+p commands`, the cwd/version row at the foot | `idle` |
 | `oc--draft-single.txt` | One draft row on a two-space-gutter interior row | `idle` |
 | `oc--draft-wrapped.txt` | A long draft word-wrapped onto three interior rows | `idle` |
+| `oc--draft-tree-glyphs.txt` | A four-line draft holding a pasted `tree`: a line, `├── src`, `└── web`, a last line. Captured at 226 columns on opencode 1.18.32, 2026-09-30, for the panel-border rule: a junction alone must not end the draft run, or three of these four lines are lost | `done` |
 | `oc--draft-multiline.txt` | A six-line draft typed with hard breaks: a line, a blank line (a bare bar row inside the composer), an indented line, `❯ ls -la`, a `────` rule, a last line. The draft reads whole across the blank line | `done` |
 | `oc--draft-while-working.txt` | A draft typed while `sleep 10 && echo done` ran: the running command and its spinner sit in the transcript above, the status row reads `esc interrupt` | `working` |
 | `oc--working.txt` | The same run with an empty composer | `working` |
@@ -1084,3 +1135,54 @@ wrap, Tab does nothing, Enter confirms, Escape declines, no digit).
 | `oc--narrow--done.txt` | 50 columns, after a rejected command: the cwd/tokens/cost status row folds onto two rows | `done` |
 | `oc--narrow--permission-bash.txt` | 50 columns: the chips on a bar row of their own, a bare bar row, then the hints on a row of their own | `blocked` |
 | `oc--narrow--permission-always-bash.txt` | 50 columns, the second step: the body wraps over two rows, chips and hints on rows of their own | `blocked` |
+
+## opencode question corpus (captured 2026-10-01, opencode 1.18.33, herdr 0.9.3, private Herdr session)
+
+Captures of the `question` tool's dialog on **opencode 1.18.33**, in a private Herdr session run
+headless (no client attached, so the pane is Herdr's own 120 by 40), with the user's normal opencode
+config and a free model. The narrow files come from the same session with a client attached through
+a private tmux, sized so the pane reads 50 by 40. Read with `herdr pane read --ansi --source recent
+--lines 300`, which is the call the bridge's `readPane` makes (checked byte-equal against `/api/pane`
+on a live pane), because the dev bridge does not watch a private session. Byte-faithful, no
+substitutions: every file was checked for user and host names, home paths and keys, and holds only
+probe strings, the model name and `/tmp/oc-question-lab`. The recipe, the focus marker and the
+journal shapes are in `web/src/lib/harness/opencode/QUESTION_NOTES.md`. The status column was read
+with `herdr pane get` once on the single-select dialog (`blocked`) and once after `Escape` (`idle`);
+the other `blocked` cells repeat that by shape and were not read one by one.
+
+The dialog paints in its own bar run (`┃`, purple here, `157;124;216`) at the buffer's tail, in
+place of the composer: no model row, no rule, no status row. The pointer is a background chip on
+the option's `N. label` run, one step lighter than the dialog (`30;30;30` on `20;20;20`).
+
+| Fixture | State / what's in it | Herdr status |
+| --- | --- | --- |
+| `oc--question--single.txt` | One single-select question, three options with descriptions plus `4. Type your own answer`, pointer on `1. Red`, footer `↑↓ select  enter submit  esc dismiss`. No tab bar and no header row | `blocked` |
+| `oc--question--single--moved.txt` | After one `Down`: the chip is on `2. Green`, nothing else changed | `blocked` |
+| `oc--question--single--narrow.txt` | 50 columns: the same dialog, the same rows and footer, only the user message above it wraps | `blocked` |
+| `oc--question--free-text.txt` | Digit `4` on the free-text row: it opened an input row under it that shows the placeholder `Type your own answer` in the description grey, one row taller | `blocked` |
+| `oc--question--free-text--typed.txt` | The same input with `hello` typed: the text sits on the input row in the bright foreground | `blocked` |
+| `oc--question--multi.txt` | One multi-select question, four options: a tab bar (` Colour ` chip, `Confirm`), `(select all that apply)` after the question, `[ ]` boxes, footer `⇆ tab  ↑↓ select  enter toggle  esc dismiss` | `blocked` |
+| `oc--question--multi--toggled.txt` | After `Enter` on `1. [ ] Red`: the row reads `1. [✓] Red`, the pointer stays on it | `blocked` |
+| `oc--question--multi--confirm.txt` | After `Tab`: the `Confirm` chip is active, the body is `Review` and `Colour: Red`, footer `⇆ tab  enter submit  esc dismiss` | `blocked` |
+| `oc--question--multi--narrow.txt` | 50 columns, a long question: the question wraps over four rows, the footer's two-space gaps shrink to one space, and two bare bar rows close the dialog | `blocked` |
+| `oc--question--two--q1.txt` | Two questions in one call: tab bar ` Colour ` chip, `Size`, `Confirm`; footer `⇆ tab  ↑↓ select  enter confirm  esc dismiss` | `blocked` |
+| `oc--question--two--q1-answered.txt` | Back on the first tab after answering it: the answered option reads `1. Red ✓` (green), the pointer chip stays where it was, the tab `Size` is bright | `blocked` |
+| `oc--question--two--q2.txt` | After `Enter` on the first tab: the `Size` chip is active, `Which size?`, the first tab `Colour` is bright | `blocked` |
+| `oc--question--two--review.txt` | After `Enter` on the last question: the `Confirm` chip, `Review`, `Colour: Red`, `Size: Small` | `blocked` |
+| `oc--question--tall8.txt` | Eight options with descriptions: the question row sits 20 rows above the footer, past the permission lift's 16-row bound | `blocked` |
+| `oc--question--tall9.txt` | Nine options: the pointer started on `2. Two`, not on `1`. Reproduced three times, see the notes | `blocked` |
+| `oc--question--tall14.txt` | Fourteen options: the dialog fills the pane (rows 1 to 38), the pointer started on `7. Seven`, the user message above is cut to its first row | `blocked` |
+| `oc--question--answered.txt` | After `Enter` on `1. Red` and the model's reply: the dialog is gone, a `# Questions` block shows `Which colour?` and `Red`, then `You chose Red (warm).` and the empty composer | not read |
+| `oc--question--dismissed.txt` | After `Escape`: the dialog is gone, the transcript keeps `→ Asked 1 question`, nothing answers it, the turn has ended | `idle` |
+| `oc--question--three--q2-multi.txt` | Round two, **opencode 1.18.34**. Three questions, `Colour` answered, now on `Toppings` (multi, untouched): tab bar `Colour   Toppings   Size   Confirm` with `Toppings` active and `Colour` bright, `(select all that apply)`, four `[ ]` rows plus the free-text row, footer `⇆ tab  ↑↓ select  enter toggle  esc dismiss` while the other two question tabs say `enter confirm` | `idle` (read on this shape, not `blocked`) |
+| `oc--question--three--q2-multi--toggled.txt` | The same tab after digit `2`: `2. [✓] Olives`, the chip on it, still on `Toppings`. A digit toggles and never advances here | `idle` |
+| `oc--question--three--review.txt` | The `Confirm` tab with all three answered: `Review`, `Colour: Red`, `Toppings: Ham`, `Size: Large`, footer `⇆ tab  enter submit  esc dismiss` | `idle` |
+| `oc--question--three--review--incomplete.txt` | The `Confirm` tab with `Size` not answered: `Size: (not answered)` in red (`224;108;117`), `Colour: Green`, `Toppings: Olives`. `Enter` still submits, journal `[["Green"],["Olives"],[]]`. Only answered tabs are bright, `Size` is grey although it was visited | `idle` |
+| `oc--question--multi--free-text.txt` | Round two, 1.18.34. A lone multi call, digit `5` on the free-text row: the input row under `5. [ ] Type your own answer` shows the placeholder `Type your own answer`, no toggle yet | not read |
+| `oc--question--multi--free-text--committed.txt` | After `mine` and `Enter`: `5. [✓] Type your own answer`, the input closed, `mine` under the row in grey (`128`) | not read |
+| `oc--question--multi--confirm--empty.txt` | The `Confirm` tab of a lone multi call with nothing toggled: `Review`, `Colour: (not answered)` in red, footer `⇆ tab  enter submit  esc dismiss` | not read |
+
+The last seven rows were captured on opencode 1.18.34, the rest of this corpus on 1.18.33. Herdr read
+`idle`, not `blocked`, under the question dialogs probed in round two (see "Round two" in
+`QUESTION_NOTES.md`). Each of the seven was checked for user and host names, home paths, tokens and
+session ids and holds only probe strings and the model name.

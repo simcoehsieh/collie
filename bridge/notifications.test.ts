@@ -98,6 +98,8 @@ describe("NotificationCoordinator — debounce", () => {
     clock.fireAll();
     expect(sink.last).toEqual({
       title: "claude needs you",
+      titleCode: "agent.blocked",
+      titleDetail: { agent: "claude" },
       body: "demo",
       // FORK: the half the sink keeps when a `done` push carries the agent's own line instead of
       // the place (see HerdSummary.bodyLead). Present on every single-pane summary, spent on none
@@ -125,6 +127,7 @@ describe("NotificationCoordinator — debounce", () => {
     coord.onTransition(agent("p1", "done"), "working", "done");
     clock.fireAll();
     expect(sink.last?.title).toBe("claude is done");
+    expect(sink.last?.titleCode).toBe("agent.done");
   });
 });
 
@@ -139,6 +142,8 @@ describe("NotificationCoordinator — coalescing", () => {
     // otherwise repeat the same word).
     expect(sink.renders.at(-1)).toEqual({
       title: "2 agents need you",
+      titleCode: "herd.blocked",
+      titleDetail: { count: 2 },
       body: "api, web",
       paneId: undefined,
       renotify: true,
@@ -152,6 +157,8 @@ describe("NotificationCoordinator — coalescing", () => {
     coord.onTransition(agentNamed("p2", "codex", "done"), "working", "done");
     clock.fireAll();
     expect(sink.last?.title).toBe("2 agents need attention");
+    expect(sink.last?.titleCode).toBe("herd.mixed");
+    expect(sink.last?.titleDetail).toEqual({ count: 2 });
   });
 
   test("resolving one of two falls back to the named single, silently", () => {
@@ -162,6 +169,8 @@ describe("NotificationCoordinator — coalescing", () => {
     coord.onTransition(agentNamed("p2", "codex", "idle"), "blocked", "idle"); // codex handled
     expect(sink.last).toEqual({
       title: "claude needs you",
+      titleCode: "agent.blocked",
+      titleDetail: { agent: "claude" },
       body: "demo",
       // FORK: the half the sink keeps when a `done` push carries the agent's own line instead of
       // the place (see HerdSummary.bodyLead). Present on every single-pane summary, spent on none
@@ -274,6 +283,8 @@ describe("NotificationCoordinator — multi-agent digest labels (#215)", () => {
     // The claim this test makes is upstream's and unchanged: a pane LABEL does not alter the body.
     expect(sink.last).toEqual({
       title: "claude needs you",
+      titleCode: "agent.blocked",
+      titleDetail: { agent: "claude" },
       body: "demo",
       bodyLead: "demo",
       paneId: "p1",
@@ -381,6 +392,8 @@ describe("NotificationCoordinator — type preferences", () => {
 describe("makeNotifySink", () => {
   const summary: HerdSummary = {
     title: "claude needs you",
+    titleCode: "agent.blocked",
+    titleDetail: { agent: "claude" },
     body: "demo",
     paneId: "p1",
     renotify: true,
@@ -396,7 +409,15 @@ describe("makeNotifySink", () => {
     const push = new RecordingPush();
     makeNotifySink(push, { isMuted: () => false }, "collie:herd").render(summary);
     expect(push.sent).toEqual([
-      { title: "claude needs you", body: "demo", tag: "collie:herd", paneId: "p1", renotify: true },
+      {
+        title: "claude needs you",
+        titleCode: "agent.blocked",
+        titleDetail: { agent: "claude" },
+        body: "demo",
+        tag: "collie:herd",
+        paneId: "p1",
+        renotify: true,
+      },
     ]);
   });
 
@@ -457,6 +478,7 @@ describe("makeNotifySink — Yes/No buttons", () => {
   }
   const blocked: HerdSummary = {
     title: "claude needs you",
+    titleCode: "agent.blocked",
     body: "demo · /home/you/demo",
     paneId: "p1",
     agent: "claude",
@@ -478,6 +500,7 @@ describe("makeNotifySink — Yes/No buttons", () => {
     expect(peeked).toEqual(["p1"]);
     expect(push.sent[0]).toEqual({
       title: "claude needs you",
+      titleCode: "agent.blocked",
       body: "demo · /home/you/demo",
       tag: "collie:herd",
       paneId: "p1",
@@ -502,7 +525,7 @@ describe("makeNotifySink — Yes/No buttons", () => {
     sink.render(blocked); // peek 1 → null
     sink.render(blocked); // peek 2 → throws
     sink.render({ ...blocked, status: "done", title: "claude is done" }); // never peeked
-    sink.render({ title: "2 agents need you", body: "claude, codex", renotify: true }); // digest
+    sink.render({ title: "2 agents need you", titleCode: "herd.blocked", body: "claude, codex", renotify: true }); // digest
     await flush();
     expect(peeks).toBe(2);
     expect(push.sent).toHaveLength(4);
@@ -539,6 +562,7 @@ describe("makeNotifySink — the reply's first line", () => {
   }
   const done: HerdSummary = {
     title: "claude is done",
+    titleCode: "agent.done",
     body: "demo · /home/you/demo",
     bodyLead: "demo",
     paneId: "p1",
@@ -563,6 +587,10 @@ describe("makeNotifySink — the reply's first line", () => {
     // makes iOS draw the app's name instead), and the space in it tells two panes of one agent apart.
     expect(push.sent[0]!.body).toBe("All 114 tests pass.");
     expect(push.sent[0]!.title).toBe("demo · claude");
+    // The catalogue code goes with the catalogue's sentence: left on, the worker would re-say
+    // "claude is done" in the device's language over the pane's address (ADR 0074).
+    expect(push.sent[0]!.titleCode).toBeUndefined();
+    expect(push.sent[0]!.titleDetail).toBeUndefined();
     // Everything else about the message is untouched — same tag, same deep link, same buzz.
     expect(push.sent[0]).toMatchObject({ tag: "collie:herd", paneId: "p1", renotify: true });
   });
@@ -594,7 +622,7 @@ describe("makeNotifySink — the reply's first line", () => {
     sink.render(done); // peek 1 → null
     sink.render(done); // peek 2 → throws
     sink.render({ ...done, status: "blocked", title: "claude needs you" }); // never peeked
-    sink.render({ title: "2 agents done", body: "claude, codex", renotify: true }); // digest
+    sink.render({ title: "2 agents done", titleCode: "herd.done", body: "claude, codex", renotify: true }); // digest
     await flush();
     expect(peeks).toBe(2);
     // FOUR pushes for four renders. A body is never a reason to withhold a notification.
@@ -635,7 +663,7 @@ describe("makeNotifySink — the reply's first line", () => {
     const push = new RecordingPush();
     const sink = makeNotifySink(push, { isMuted: () => false }, "collie:herd");
     sink.render({ ...done, count: 1 });
-    sink.render({ title: "2 agents done", body: "claude, codex", renotify: true, count: 2 });
+    sink.render({ title: "2 agents done", titleCode: "herd.done", body: "claude, codex", renotify: true, count: 2 });
     sink.render(done); // no count on the summary → no badge on the message
     sink.clear();
     expect(push.sent.map((m) => m.badge)).toEqual([1, 2, undefined, 0]);

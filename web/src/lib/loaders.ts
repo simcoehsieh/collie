@@ -662,6 +662,12 @@ export interface DevicesData {
   error: boolean;
 }
 
+/**
+ * What a route renders when the loader did not run or threw. Exported because two callers need the
+ * same fallback: the Settings System page's `useLoaderData()` default, and its tests.
+ */
+export const EMPTY_DEVICES: DevicesData = { enforced: false, current: null, devices: [], error: false };
+
 // The nav-vs-revalidate discriminator for the settings and crew loaders — the same shape the root
 // loader's is (see the header comment): a revalidation re-runs at the SAME url, a navigation at a
 // different one, and the first run has no previous url and reads as a navigation.

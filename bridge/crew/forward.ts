@@ -1,6 +1,6 @@
 import type { JsonObject } from "../json.ts";
 import { MAX_UPLOAD_OVERHEAD, uploadTooLarge } from "../uploads.ts";
-import { DEVICE_HEADER } from "./admission.ts";
+import { DEVICE_HEADER, encodeDeviceHeader } from "./admission.ts";
 import { type CrewLink, type PeerFailure, type PeerOutcome, WRITE_BUDGET_MS } from "./peer-client.ts";
 import { HOST_PARAM, type PeerState } from "./registry.ts";
 
@@ -54,8 +54,8 @@ export function crewRouteFor(pathname: string): string | null {
 const FORWARDABLE: readonly RegExp[] = [
   // FORK: `diff`, `file`, `shot`, `probe`, `handoff` and `model` are the fork's own pane routes, on
   // the same literal in server.ts — each is answered by the member that owns the pane (its screen, its
-  // journal, its launchers), so each rides the link exactly as `reply` does. `changes` is upstream's.
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|changes|focus|diff|file|shot|probe|handoff|model))?$/,
+  // journal, its launchers), so each rides the link exactly as `reply` does. `changes` and `chat` are upstream's.
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|focus|diff|file|shot|probe|handoff|model))?$/,
   /^tab$/,
   /^tab\/[^/]+\/(?:rename|close)$/,
   /^workspace$/,
@@ -125,11 +125,14 @@ export function forwardKind(route: string): ForwardKind {
   if (!route.startsWith("pane/")) return "write";
   const action = route.split("/")[2];
   // `changes` is read-only git over the owning member's folder (ADR 0065): a read, like history.
+  // `chat` is the same log `history` reads, asked for its newest end (journal/live.ts): a read too,
+  // and the one on the poll path — so it must never be refused before it is tried (§10.3).
   // `diff` is the fork's read-only `git diff` of the pane's work tree — the same shape: a GET that
   // changes nothing, answered by whichever member owns the pane's disk. `file` is that same read one
   // step further in: the bytes of one file in that tree, never written.
   return action === undefined ||
     action === "history" ||
+    action === "chat" ||
     action === "changes" ||
     action === "diff" ||
     action === "file"
@@ -172,13 +175,15 @@ export function forwardAuditAction(route: string): string | null {
   if (
     action === undefined ||
     action === "history" ||
+    action === "chat" ||
     action === "changes" ||
     action === "diff" ||
     action === "file"
-  )
-    return null;
+  ) {
+    return null; // reads, and a read is audited on neither side
+  }
   if (action === "close" || action === "rename" || action === "handoff") return `pane.${action}`;
-  return action; // reply | keys | upload | shot | probe (FORK)
+  return action; // reply | keys | upload | shot | probe | model (FORK)
 }
 
 /**
@@ -244,7 +249,9 @@ export function forwardHeaders(req: Request, device?: string | null): Headers {
     const value = req.headers.get(name);
     if (value !== null) headers.set(name, value);
   }
-  if (device !== null && device !== undefined && device !== "") headers.set(DEVICE_HEADER, device);
+  if (device !== null && device !== undefined && device !== "") {
+    headers.set(DEVICE_HEADER, encodeDeviceHeader(device));
+  }
   headers.set("accept-encoding", "identity");
   return headers;
 }

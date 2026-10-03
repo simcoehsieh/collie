@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { JsonValue } from "./json.ts";
+import { isPaneReadAction } from "./server.ts";
 import {
   SHOT_IMAGE_CAP,
   SHOT_OUTPUT_CAP,
@@ -319,9 +320,17 @@ describe("the routes", () => {
   const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
 
   test("both verbs are in the pane family, so they are session-scoped and write-gated", () => {
-    expect(src).toContain("reply|keys|upload|close|rename|history|focus|diff|file|shot|probe");
-    // NOT in `isRead`: a read-only device may watch a terminal, it may not start a browser.
-    expect(src).toContain('const isRead = !action || action === "history" || action === "diff" || action === "file";');
+    // Pinned on the intent, not the regex's spelling: upstream adds segments to PANE_ROUTE between
+    // releases (`changes` at 1.13.1, `chat` at 1.15.0), and a substring pin broke on each one.
+    const route = src.match(/const PANE_ROUTE = \/\^.*?\(\?:\\\/\(([^)]*)\)\)/);
+    expect(route).not.toBeNull();
+    const verbs = route![1]!.split("|");
+    expect(verbs).toContain("shot");
+    expect(verbs).toContain("probe");
+    // NOT a read: a read-only device may watch a terminal, it may not start a browser.
+    expect(src).toContain("const isRead = !action || isPaneReadAction(action);");
+    expect(isPaneReadAction("shot")).toBe(false);
+    expect(isPaneReadAction("probe")).toBe(false);
   });
 
   test("unset is no route and no capability — declined by doing nothing", () => {

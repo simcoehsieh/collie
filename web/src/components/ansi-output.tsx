@@ -197,6 +197,14 @@ function preClass(
     // changed line no longer invalidates layout beyond the pre, and its paint is clipped to its
     // box — which is what lets the browser skip it entirely when the composer repaints over it.
     "[contain:layout_paint]",
+    // Opt the mirror back INTO text selection, so an operator can long-press a line and Copy it
+    // straight off the phone. An installed iOS PWA (display:standalone, which Collie is) suppresses
+    // long-press selection app-wide unless the element sets -webkit-user-select:text — the exact
+    // inverse of the `select-none [-webkit-touch-callout:none]` the strip pills carry to STOP the
+    // loupe. Both spellings, like those pills, so the -webkit prefix is present whatever the build
+    // does. The pane menu's "Copy output" is the one-tap path (robust while output keeps arriving);
+    // this is the direct-selection one, best on a pane you have scrolled up to freeze.
+    "select-text [-webkit-user-select:text]",
     // A harness that paints its own light-mode palette (muse, upstream 1.9.1 / ADR 0047) keeps it:
     // the mirror sits on the page ground and only its bright foregrounds resolve dark. Every other
     // pane takes the inverted mirror space, on the containment island above.

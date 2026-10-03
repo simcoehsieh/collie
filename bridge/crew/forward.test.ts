@@ -18,6 +18,7 @@ import {
   type ForwardErrorCode,
   type ForwardTransport,
 } from "./forward.ts";
+import { crewDeviceOf } from "./peer-gate.ts";
 import { crewTimeoutBudget, WRITE_BUDGET_MS, type CrewLink, type PeerOutcome } from "./peer-client.ts";
 import type { PeerState } from "./registry.ts";
 
@@ -222,9 +223,11 @@ describe("which routes cross a link", () => {
     const tab = server.match(/^const TAB_ACTION_ROUTE = (.+);$/m)![1]!;
     const alternation = /\(([a-z]+(?:\|[a-z]+)+)\)/;
     const paneActions = pane.match(alternation)![1]!.split("|").toSorted();
+    // The list IS the inventory of what crosses a link; `chat` joined it with the live window.
     // FORK: `handoff`, `model`, `probe` and `shot` are fork routes on the same literal, as are `diff` and `file`.
     expect(paneActions).toEqual([
       "changes",
+      "chat",
       "close",
       "diff",
       "file",
@@ -263,6 +266,9 @@ describe("which routes cross a link", () => {
   test("read vs write is decided exactly as server.ts decides it — history is a READ", () => {
     expect(forwardKind("pane/w1:p1")).toBe("read");
     expect(forwardKind("pane/w1:p1/history")).toBe("read");
+    // `chat` is the same log read at its newest end, and it is the one READ on the poll path — so it
+    // must be attempted against a stale member rather than refused before it is tried (§10.3).
+    expect(forwardKind("pane/w1:p1/chat")).toBe("read");
     expect(forwardKind("pane/w1:p1/changes")).toBe("read");
     expect(forwardKind("pane/w1:p1/diff")).toBe("read");
     // FORK: the file viewer reads the same work tree `diff` describes and writes nothing.
@@ -538,6 +544,16 @@ describe("request shaping", () => {
     // Identity bytes only, and ASKED FOR rather than merely not-forwarded: Bun's `fetch` supplies its
     // own `accept-encoding: gzip, …` when the init carries none, so an absent header is a gzipped hop.
     expect(headers.get("accept-encoding")).toBe("identity");
+  });
+
+  test("a device name outside ASCII is forwarded, not thrown on (#324)", () => {
+    // `Headers.set` throws on a value that is not a ByteString, so a phone paired as `폰` turned every
+    // forwarded call into a 500. The name travels percent-encoded and the peer reads it back whole.
+    const req = new Request("https://lead.example/api/pane/w1:p9/reply", { method: "POST" });
+    const headers = forwardHeaders(req, "폰");
+    expect(headers.get("x-crew-device")).toBe("UTF-8''%ED%8F%B0");
+    const atPeer = new Request("https://peer.example/api/pane/w1:p9/reply", { headers });
+    expect(crewDeviceOf(atPeer)).toBe("폰");
   });
 
   test("no device header at all when the lead's device gate is off", () => {

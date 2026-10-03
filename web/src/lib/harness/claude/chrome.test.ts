@@ -821,6 +821,7 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "done", statusRows: 2, draft: null, stripped: 28 },
     { fixture: "ghost-suggestion", statusRows: 4, draft: null, stripped: 21 },
     { fixture: "ghost-typed-over", statusRows: 4, draft: "hello real draft text", stripped: 21 },
+    { fixture: "idle-background-shell", statusRows: 1, draft: null, stripped: 5 },
     { fixture: "draft-footer-empty", statusRows: 2, draft: null, stripped: 9 },
     { fixture: "draft-footer-single", statusRows: 2, draft: "remember to update the changelo", stripped: 9 },
     { fixture: "draft-footer-wrapped", statusRows: 2, draft: "this stranded draft is long eno", stripped: 11 },
@@ -968,7 +969,12 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "wizard-q2", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-submit", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-submit-unanswered", statusRows: 0, draft: null, stripped: 3 },
+    // The dynamic-workflow view (discussion #301, ADR 0072). A full-screen TUI: no statusline, no
+    // input box and nothing to strip, because the view replaces the whole screen rather than sitting
+    // under it. All three zeros are the honest reading, not a gap.
+    { fixture: "workflow-view", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "working", statusRows: 2, draft: null, stripped: 6 },
+    { fixture: "working-esc-to-interrupt", statusRows: 1, draft: null, stripped: 5 },
   ];
 
   it("pins every claude fixture on disk, so a new capture can't slip past this table", () => {

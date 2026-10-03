@@ -112,6 +112,11 @@ export const ACK_MANIFEST = {
     // is not spinning, why?"
     why: "Same as closePane, and the blast radius makes it matter more: the tab leaving the strip is the outcome, the echo is the acceptance of a tap that kills every pane inside it. Closing the tab you are IN navigates, so that path adds a status — see the note above it.",
   },
+  // FORK (4f435d26c): Quick on a Codex pane picks the model and the effort for this session.
+  codexModel: {
+    channel: "echo",
+    why: "Fired from the tapped Quick button, which carries its own phase (components/quick-actions.tsx `echo.run`); the model chip on the pane header only moves on the next poll, so the button is where the eye is when the bridge accepts.",
+  },
   createTab: {
     channel: "status",
     why: "The app navigates to the new pane, so the operator's eye has already left the control that was tapped; the status line is what names WHAT was created on arrival (hooks/use-spaces.ts).",

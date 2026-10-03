@@ -48,6 +48,12 @@ answers where one exists (`Thanks @handle (#147).`), and with **no commit hash**
 exist yet, and the release commit adds it. The lead is what the GitHub Release page prints, so
 write it as the sentence an operator reads there. Do not touch the three version files.
 
+**A release needs something to ship.** Before you cut one, read `git log --oneline <last tag>..HEAD`.
+If the range holds only docs, tests and chores, do not release: the docs go out with the next real
+release, and the site's docs sync follows it. A docs-only release makes every self-updating lane
+and crew member update for nothing. Never offer a release as "put the docs live"; name it as a
+release. 1.14.2 was cut this way on 2026-09-28.
+
 **Cutting a release is one `chore(release): x.y.z` commit** that does all of this and nothing else:
 
 1. **Pick the axis** from the *sum* of the Unreleased entries — what the operator has to do, not how
@@ -288,8 +294,21 @@ page to be skimmed.
   opens a browser, the browser tier is separate, see "Browser tests" below.
   A **pre-push hook** (`scripts/git-hooks/pre-push`) runs **both** before
   every push — override once with `SKIP_TESTS=1 git push` (see *Linting* → escape hatches). The bits that genuinely need `Bun.serve` /
-  `Bun.connect` (HTTP handlers, the socket client) stay unit-untested — Vitest-on-Node can't run them,
-  so keep new backend logic pure/injectable enough for `bun test`, or exercise it through `web/`.
+  `Bun.connect` (HTTP handlers, the socket client) stay out of the VITEST tier — Vitest-on-Node can't
+  run them — so keep new backend logic pure/injectable enough for `bun test`, or exercise it through
+  `web/`. Bun's own runner *can* run them, and the drill below is where that happens.
+- **The integration lane, `integration/`.** One file today,
+  `integration/crew-harness.test.ts`: two real bridges as child processes, over real pinned mutual
+  TLS, through the real enrollment path. It is **not** in `bun run test` and **not** on the push
+  path. `bun run test:crew` runs it, and CI gives it a job of its own. The reason is measured, not
+  aesthetic: it was `bridge/crew/harness.test.ts` until 2026-10-01 and cost 58.3s of a 67.0s backend
+  run, because it boots twenty child processes and a certificate cannot be re-pinned on a reload.
+  Run it by hand when you touch the crew transport. Do not move it back under `bridge/`.
+- **The frontend suite is two Vitest projects** (`web/vitest.config.ts`). `logic` is
+  `src/lib/harness/**` under `environment: "node"` with no DOM setup: 44 files, 9,474 tests, ~6s.
+  `dom` is everything else under jsdom. The boundary is ONE path with no exception list, because the
+  first cut had two exceptions and a wrong `exclude` glob dropped both files from both projects and
+  the run went green 18 tests short. `cd web && bunx vitest --project logic` is the fast inner loop.
 - **`flake.nix` is the build environment, and `nix develop` is the reference.** It pins the five
   tools this tree is built and checked with — Bun, Node, git, tmux, zellij — at one nixpkgs
   revision, and `release.yml` builds every published payload inside it. Build and check through the
@@ -445,7 +464,8 @@ lint guard, the crew-wire guard or the `flake.lock` guard.
   (`web/src/lib/loaders.ts`) fetch the snapshot + pane; **polling is `useRevalidator()` on an
   adaptive interval** (`web/src/hooks/use-polling.ts`); mutations are direct `lib/api.ts` calls
   followed by `revalidator.revalidate()`. There is **no TanStack Query** — don't reintroduce it.
-- Routes (`web/src/router.tsx`): `/`, `/space/:spaceId`, `/settings`, `/pane/:paneId`,
+- Routes (`web/src/router.tsx`): `/`, `/space/:spaceId`, `/settings` (an INDEX of four sections:
+  `/settings/appearance`, `/settings/device`, `/settings/alerts`, `/settings/system`), `/pane/:paneId`,
   `/pane/:paneId/history`, `/pane/:paneId/changes` and `/space/:spaceId/changes` (both matched as
   `changes/*`, so the commit view `…/changes/commit` shares the list's component). The router
   instance is module-scoped so it keeps its location.
@@ -508,9 +528,11 @@ lint guard, the crew-wire guard or the `flake.lock` guard.
   calls them subscribes via `useLocale()` so it re-renders on a locale (or lazy-dictionary) change.
   `messages/en.ts` is the source of truth; all six dictionary files change together, enforced by
   `tsc`. Not translated: terminal/agent output, quick replies, menu/dialog labels the screen printed,
-  key caps, crew role names, push notifications, service-worker strings, crew-link errors, and the
-  slash-command descriptions in `web/src/lib/agent-commands.ts` (another tool's vocabulary — deferred)
-  ([ADR 0030](./.adr/0030-the-ui-is-translated-by-a-typed-dictionary-not-a-library.md)).
+  key caps, crew role names, push notification bodies, service-worker strings, crew-link errors, and
+  the slash-command descriptions in `web/src/lib/agent-commands.ts` (another tool's vocabulary —
+  deferred) ([ADR 0030](./.adr/0030-the-ui-is-translated-by-a-typed-dictionary-not-a-library.md)).
+  A push TITLE is translated, through a code the bridge sends beside its English — never by the
+  bridge itself ([ADR 0074](./.adr/0074-a-push-title-is-a-code-the-phone-translates.md)).
 - **PWA** via `vite-plugin-pwa` (`web/vite.config.ts`): manifest + `sw.js`, registered manually
   from `virtual:pwa-register` in `main.tsx` (bundled = CSP-safe). Install/SW need a **secure
   context** — over plain HTTP they no-op silently (Chrome insecure-origin flag, or HTTPS, to test).

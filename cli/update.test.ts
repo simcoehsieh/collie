@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
 import {
   BINARY,
@@ -12,11 +13,13 @@ import {
   type FakeLinkFs,
   fakeLinkFs,
   HOME,
+  posixKey,
   ROOT,
   type Scripted,
   type SeededFiles,
 } from "./fakes.ts";
 import type { Net } from "./sys.ts";
+import { collieBinary } from "./unit.ts";
 import { crewTurnStart, parseUpdateRun, STALE_AFTER_MS, UPDATE_RUN_SCHEMA } from "../bridge/update-run.ts";
 import {
   boundTail,
@@ -61,6 +64,31 @@ import {
   wantsRunId,
   wantsToTag,
 } from "./update.ts";
+
+// The fakes model a POSIX box and every fixture here is spelled that way (`/opt/collie`, `/inst`), but
+// the code under test builds its paths with `join`, which hands back `\opt\collie\cli\main.ts` on
+// Windows. `fakeFiles` and `fakeLinkFs` already fold every path through `posixKey`; `posixExec` does
+// the same for the exec seam, so a recorded call line and a scripted answer's prefix are POSIX
+// whichever way the host spells a path. Where a test compares a string the CODE built (a run
+// record's recovery command, an operator-facing sentence), it builds the expected value with `join`
+// instead, because that string really does carry the host's separators. Off Windows `posixKey`
+// returns its input, so nothing here changes what Linux and macOS record.
+const posixArg = (s: string): string => (s.includes("\\") ? posixKey(s) : s);
+
+function posixExec(scripted: Scripted = {}): FakeExec {
+  const inner = fakeExec(scripted);
+  const args = (a: readonly string[]): string[] => a.map(posixArg);
+  return {
+    ...inner,
+    capture: (tool, a, ...rest) => inner.capture(posixArg(tool), args(a), ...rest),
+    inherit: (tool, a) => inner.inherit(posixArg(tool), args(a)),
+    runIn: (tool, a, cwd, pathPrefix, ...rest) =>
+      inner.runIn(posixArg(tool), args(a), posixArg(cwd), pathPrefix === undefined ? undefined : posixArg(pathPrefix), ...rest),
+    runLogged: (command, opts) =>
+      inner.runLogged(args(command), { ...opts, cwd: posixArg(opts.cwd), logPath: posixArg(opts.logPath) }),
+    spawnDetached: (command, opts) => inner.spawnDetached(args(command), { ...opts, logPath: posixArg(opts.logPath) }),
+  };
+}
 
 // `update` against fakes. The shell suite proves the git grammar against REAL throwaway repos
 // (scripts/collie-cli.test.sh) — what is proved here is the branching: one predicate, two strategies,
@@ -157,7 +185,7 @@ function harness(
   > = {},
 ): Harness {
   const io = capture();
-  const exec = fakeExec({
+  const exec = posixExec({
     ...over,
     answers: [...(over.answers ?? []), ["/fake/bun --version", { stdout: "1.4.0\n" }], ...ORIGIN],
   });
@@ -199,10 +227,10 @@ const gitRuns = (exec: FakeExec): string[] =>
 
 describe("one predicate, both decisions", () => {
   test("no branch means Herdr-managed", () => {
-    expect(isManagedCheckout(fakeExec({ answers: MANAGED }), ROOT)).toBe(true);
-    expect(isManagedCheckout(fakeExec({ answers: LINKED }), ROOT)).toBe(false);
+    expect(isManagedCheckout(posixExec({ answers: MANAGED }), ROOT)).toBe(true);
+    expect(isManagedCheckout(posixExec({ answers: LINKED }), ROOT)).toBe(false);
     // git missing entirely reads as managed, and `updateCheckout` refuses before it matters.
-    expect(isManagedCheckout(fakeExec({ absent: ["git"] }), ROOT)).toBe(true);
+    expect(isManagedCheckout(posixExec({ absent: ["git"] }), ROOT)).toBe(true);
   });
 });
 
@@ -743,6 +771,15 @@ describe("_apply-update", () => {
     expect(h.io.stderr.join("\n")).toContain("the checkout advanced but the build failed");
     expect(h.io.stdout.join("\n")).not.toContain("update complete");
   });
+
+  // This path has no health gate of its own (ADR 0006), so the restart's code is the whole verdict:
+  // a failed one must not end on `✓ update complete`, and `update` then records no `pass` either.
+  test("a failed restart stops before the ✓", async () => {
+    const h = harness({ answers: [...LINKED, ...SHALLOW], restart: EXIT.FAIL });
+    expect(await cmdApplyUpdate(h.deps)).toBe(EXIT.FAIL);
+    expect(h.restarts).toBe(1);
+    expect(h.io.stdout.join("\n")).not.toContain("update complete");
+  });
 });
 
 describe("update", () => {
@@ -924,6 +961,27 @@ describe("update", () => {
     const h = noop();
     stamp(h, "0.32.0");
     h.files.entries.delete(BINARY);
+    expect(await cmdUpdate(h.deps)).toBe(EXIT.OK);
+    expect(built(h)).toBe(true);
+  });
+
+  // On Windows the binary is `bin/collie.exe`, so a check for the bare name was never true there and
+  // every update rebuilt, even one with nothing to take.
+  test("Windows: an intact install is found at bin/collie.exe, so nothing to take builds nothing", async () => {
+    const h = noop();
+    h.deps.platform = "win32";
+    stamp(h, "0.32.0");
+    h.files.entries.delete(BINARY);
+    h.files.entries.set(`${BINARY}.exe`, { text: "" });
+    expect(await cmdUpdate(h.deps)).toBe(EXIT.OK);
+    expect(built(h)).toBe(false);
+    expect(h.restarts).toBe(0);
+  });
+
+  test("Windows: an extensionless bin/collie is not an install there, so it still builds", async () => {
+    const h = noop();
+    h.deps.platform = "win32";
+    stamp(h, "0.32.0");
     expect(await cmdUpdate(h.deps)).toBe(EXIT.OK);
     expect(built(h)).toBe(true);
   });
@@ -1206,7 +1264,7 @@ function binaryHarness(over: BinaryOptions = {}): Harness {
   };
   for (const v of over.others ?? []) seed[`${INST}/versions/${v}/bin/collie`] = "OLDER BINARY";
   const files = fakeFiles(seed);
-  const exec = fakeExec({
+  const exec = posixExec({
     answers: [...answers, ...(over.answers ?? [])],
     logged: over.logged,
     // The client's own output goes where the runner's would have — the file `--status` points at.
@@ -1529,11 +1587,13 @@ describe("the hooks nudge", () => {
   });
 
   test("the checkout path asks the binary `build` just wrote, for the same reason", async () => {
+    // `nudgeHooks` names the binary by the injected platform's spelling, the harness's pinned "linux".
+    const built = posixKey(collieBinary(ROOT, "linux"));
     const h = harness({
-      answers: [...LINKED, ...SHALLOW, [`${BINARY} hooks status --check`, { code: EXIT.STATE }]],
+      answers: [...LINKED, ...SHALLOW, [`${built} hooks status --check`, { code: EXIT.STATE }]],
     });
     expect(await cmdApplyUpdate(h.deps)).toBe(EXIT.OK);
-    expect(h.exec.calls).toContain(`${BINARY} hooks status --check`);
+    expect(h.exec.calls).toContain(`${built} hooks status --check`);
     expect(h.io.stdout.join("\n")).toContain(NUDGE);
   });
 
@@ -1599,7 +1659,7 @@ function stagedHarness(over: StagedOptions = {}): Harness {
   const versions = over.versions ?? { "v1.0.0": "1.0.0" };
   const root = WT(current);
   const io = capture();
-  const exec = fakeExec({
+  const exec = posixExec({
     answers: [
       ...(over.answers ?? []),
       // A worktree of a tag is detached — which is exactly why the layout, not the HEAD, decides
@@ -1688,12 +1748,15 @@ describe("the staged checkout path", () => {
   test("migrates a legacy in-place checkout with no manual step, and says it has no rollback target", async () => {
     const h = legacyClone();
     // The name on PATH was published at the clone's own binary before the migration (ADR 0021).
-    h.link.entries.set(`${HOME}/.local/bin/collie`, { kind: "symlink", target: BINARY });
-    // The flip is what makes this path resolve; the fake filesystem is flat, so it is seeded.
+    // A link target is compared as a string against the path the code built, so it is spelled that way.
+    h.link.entries.set(`${HOME}/.local/bin/collie`, { kind: "symlink", target: collieBinary(ROOT) });
+    // The flip is what makes this path resolve; the fake filesystem is flat, so it is seeded. `link`
+    // names the binary by the host's spelling (`collie.exe` on Windows), so that is the file it looks for.
     h.files.entries.set(`${CURRENT}/bin/collie`, { text: "NEW BINARY" });
+    h.files.entries.set(collieBinary(CURRENT), { text: "NEW BINARY" });
     expect(await cmdUpdate(h.deps)).toBe(EXIT.OK);
     const said = h.io.stdout.join("\n");
-    expect(said).toContain(`${VERSIONS} and ${CURRENT} are created now`);
+    expect(said).toContain(`${join(VERSIONS)} and ${join(CURRENT)} are created now`);
     // Nothing to fall back to yet, and the transcript says exactly that rather than implying one.
     expect(said).toContain("nothing to roll back to yet");
     // The pointer follows the flip — and the flip is the RUNNER's, so the republish is too.
@@ -1701,7 +1764,7 @@ describe("the staged checkout path", () => {
     expect(
       await runner(h, { to: "v0.32.0", from: null, version: "0.32.0", commit: "b2peeled", kind: "checkout" }),
     ).toBe(EXIT.OK);
-    expect(h.link.ops).toContain(`symlink ${CURRENT}/bin/collie ${HOME}/.local/bin/collie`);
+    expect(h.link.ops).toContain(`symlink ${posixKey(collieBinary(CURRENT))} ${HOME}/.local/bin/collie`);
     // And Herdr is re-registered at `current`, so a plugin action runs whatever is live.
     expect(h.exec.calls).toContain(`herdr plugin link ${CURRENT}`);
   });
@@ -2020,6 +2083,28 @@ describe("the detached updater's health gate", () => {
     expect(parseUpdateRun(h.files.read(RUN_FILE))?.state).toBe("rolled-back");
   });
 
+  // `collie restart` may exit non-zero over a bridge that is merely slow (the Windows tier does, after
+  // its own wait). The runner must neither trust that code nor skip its gate and its one rollback.
+  test("a restart that exits non-zero still gets the health gate, and the one rollback", async () => {
+    const restartFails: NonNullable<BinaryOptions["answers"]> = [
+      [`${INST}$ ${INST}/current/bin/collie restart`, { code: 1 }],
+    ];
+    const late = binaryHarness({ answers: restartFails });
+    expect(await runner(late, BINARY_APPLY)).toBe(EXIT.OK);
+    // The scripted failure was the call actually made, so the gate below is what decided.
+    expect(late.exec.calls).toContain(`${INST}$ ${INST}/current/bin/collie restart`);
+    expect(parseUpdateRun(late.files.read(RUN_FILE))?.state).toBe("done");
+
+    const dead = binaryHarness({
+      answers: restartFails,
+      env: { COLLIE_UPDATE_HEALTH_TIMEOUT_MS: "1000" },
+      health: [{ down: true }, { down: true }, { version: "1.0.0" }],
+    });
+    expect(await runner(dead, BINARY_APPLY)).toBe(EXIT.FAIL);
+    expect(parseUpdateRun(dead.files.read(RUN_FILE))?.state).toBe("rolled-back");
+    expect(dead.exec.calls.filter((c) => c.endsWith("current/bin/collie restart")).length).toBe(2);
+  });
+
   test("a deposed peer answering health is not a success — it is rolled back like any other failure", async () => {
     const h = binaryHarness({
       env: { COLLIE_UPDATE_HEALTH_TIMEOUT_MS: "1000" },
@@ -2036,7 +2121,8 @@ describe("the detached updater's health gate", () => {
     expect(await runner(h, BINARY_APPLY)).toBe(EXIT.FAIL);
     const run = parseUpdateRun(h.files.read(RUN_FILE));
     expect(run?.state).toBe("stuck");
-    expect(run?.recovery).toBe(`${INST}/versions/1.0.0/bin/collie update --rollback`);
+    // The recovery command is a string the code built with `join`, so it carries the host's separators.
+    expect(run?.recovery).toBe(`${join(INST, "versions", "1.0.0", "bin", "collie")} update --rollback`);
     // Two restarts and no more: forward, then the one rollback.
     expect(h.exec.calls.filter((c) => c.endsWith("current/bin/collie restart")).length).toBe(2);
     expect(h.io.stderr.join("\n")).toContain("Nothing will restart again");
@@ -2587,14 +2673,25 @@ describe("#283: another install's collie runs under its own root", () => {
     expect(reason.endsWith("…")).toBe(true);
   });
 
+  test("the smoke runs the binary under the injected platform's name, `collie.exe` on Windows", () => {
+    const exec = posixExec();
+    expect(smoke({ exec, platform: "win32" }, "/c", NEW).ok).toBe(false);
+    expect(smoke({ exec, platform: "linux" }, "/c", NEW).ok).toBe(false);
+    expect(exec.calls).toEqual(["/c/bin/collie.exe version", "/c/bin/collie version"]);
+  });
+
   test("a signal and a hang are named as such, not as an exit code", () => {
     const killed = smoke(
-      { exec: fakeExec({ answers: [["/c/bin/collie version", { code: 124, signal: "SIGKILL" }]] }) },
+      { exec: posixExec({ answers: [["/c/bin/collie version", { code: 124, signal: "SIGKILL" }]] }), platform: "linux" },
       "/c",
       NEW,
     );
     expect(killed.ok || smokeReason(killed)).toBe("the new version did not start here (killed by SIGKILL)");
-    const hung = smoke({ exec: fakeExec({ answers: [["/c/bin/collie version", { code: 124 }]] }) }, "/c", NEW);
+    const hung = smoke(
+      { exec: posixExec({ answers: [["/c/bin/collie version", { code: 124 }]] }), platform: "linux" },
+      "/c",
+      NEW,
+    );
     expect(hung.ok || smokeReason(hung)).toBe("the new version did not start here (no answer in 20s)");
   });
 

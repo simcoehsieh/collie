@@ -7,6 +7,7 @@ import {
   enforcesUserVisible,
   honouredActions,
   hostSlot,
+  localisedTitle,
   notificationPath,
   tagFor,
 } from "@/lib/push-decision";
@@ -215,6 +216,48 @@ describe("enforcesUserVisible", () => {
     expect(enforcesUserVisible(null)).toBe(true);
     expect(enforcesUserVisible("")).toBe(true);
     expect(enforcesUserVisible("not a url")).toBe(true);
+  });
+});
+
+describe("localisedTitle — the headline in this device's language (ADR 0074)", () => {
+  const korean = { "agent.blocked": "{agent} 입력 대기", "herd.done": "에이전트 {count}개 작업 완료" };
+
+  test("a known code with a stored template is filled from the push's own detail", () => {
+    const push = { title: "claude needs you", titleCode: "agent.blocked", titleDetail: { agent: "claude" } };
+    expect(localisedTitle(push, korean)).toBe("claude 입력 대기");
+    expect(decidePush(push, false, false, korean)).toMatchObject({ kind: "show", title: "claude 입력 대기" });
+  });
+
+  test("a number fills its slot as written", () => {
+    const push = { title: "3 agents done", titleCode: "herd.done", titleDetail: { count: 3 } };
+    expect(decidePush(push, false, false, korean)).toMatchObject({ title: "에이전트 3개 작업 완료" });
+  });
+
+  test("every miss falls through to the bridge's English, never to a key or a blank", () => {
+    // No code: an older bridge, or a title the operator typed with `collie push-test`.
+    expect(decidePush({ title: "hello" }, false, false, korean)).toMatchObject({ title: "hello" });
+    // A code a newer bridge invented, which this build cannot know.
+    const newer = { title: "claude is thinking", titleCode: "agent.thinking", titleDetail: { agent: "claude" } };
+    expect(decidePush(newer, false, false, korean)).toMatchObject({ title: "claude is thinking" });
+    // A known code the stored table has no template for (the page has not run since install).
+    const unstored = { title: "claude is done", titleCode: "agent.done", titleDetail: { agent: "claude" } };
+    expect(decidePush(unstored, false, false, korean)).toMatchObject({ title: "claude is done" });
+    // No table at all: the call every existing caller makes.
+    expect(decidePush(unstored, false)).toMatchObject({ title: "claude is done" });
+  });
+
+  // FORK: Apple's must-show path and the title table compose — the catalogue still names the alert
+  // when the platform forces a visible notification over an open tab.
+  test("a forced show over a visible tab is still in this device's language", () => {
+    const push = { title: "claude needs you", titleCode: "agent.blocked", titleDetail: { agent: "claude" } };
+    expect(decidePush(push, true, true, korean)).toMatchObject({ kind: "show", title: "claude 입력 대기", renotify: false });
+  });
+
+  test("a retraction is untouched by a table", () => {
+    expect(decidePush({ type: "clear", tag: "collie:herd" }, false, false, korean)).toEqual({
+      kind: "clear",
+      tag: "collie:herd",
+    });
   });
 });
 

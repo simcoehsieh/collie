@@ -4,12 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resolvePluginRoot } from "../bridge/root.ts";
-import { fakeExec, fakeFiles, fakeLinkFs, HOME } from "./fakes.ts";
+import { fakeExec, fakeFiles, fakeLinkFs, HOME, posixKey } from "./fakes.ts";
 import { realExec, realFiles } from "./sys.ts";
 import {
   classifyInstall,
   detectInstall,
   isGitCheckout,
+  isInside,
+  isSameOrInside,
   type InstallProbe,
   originMatches,
   originOf,
@@ -140,17 +142,71 @@ describe("probeInstall / detectInstall", () => {
   });
 });
 
+// Bun's compiler writes `collie.exe` on Windows (see `collieBinary`), and the answer is joined with the
+// host separator, so the expectation is spelled the same way rather than as a POSIX literal.
+const BINARY_NAME = process.platform === "win32" ? "collie.exe" : "collie";
+
 describe("publishedBinary — the PATH name is a pointer (ADR 0021)", () => {
   test("a binary install publishes `current/bin/collie`, so a flip needs no re-link", () => {
     const root = "/inst/versions/1.1.0";
     const link = fakeLinkFs({ "/inst/current": { kind: "symlink", target: root } });
-    expect(publishedBinary(root, link)).toBe("/inst/current/bin/collie");
+    expect(publishedBinary(root, link)).toBe(join("/inst", "current", "bin", BINARY_NAME));
   });
 
   test("a checkout still publishes its own binary, byte for byte as before", () => {
-    expect(publishedBinary("/src/collie", fakeLinkFs())).toBe("/src/collie/bin/collie");
+    expect(publishedBinary("/src/collie", fakeLinkFs())).toBe(join("/src/collie", "bin", BINARY_NAME));
     // A versions/ parent with no `current` is not a layout to point through.
-    expect(publishedBinary("/inst/versions/1.1.0", fakeLinkFs())).toBe("/inst/versions/1.1.0/bin/collie");
+    expect(publishedBinary("/inst/versions/1.1.0", fakeLinkFs())).toBe(join("/inst/versions/1.1.0", "bin", BINARY_NAME));
+  });
+});
+
+// The layout checks ran on `startsWith(`${dir}/`)`, which a backslash path can never satisfy. These
+// pin the Windows answer from Linux with the `platform` argument, so CI sees what a Windows host sees.
+describe("isInside / isSameOrInside — a path test that holds on both separators", () => {
+  const VERSIONS = "C:\\Users\\pat\\.collie\\versions";
+
+  test("a Windows path below the directory is inside, whichever slash it is spelled with", () => {
+    expect(isInside(VERSIONS, `${VERSIONS}\\1.2.3`, "win32")).toBe(true);
+    expect(isInside(VERSIONS, `${VERSIONS}\\1.2.3\\bin\\collie.exe`, "win32")).toBe(true);
+    expect(isInside("C:/Users/pat/.collie/versions", `${VERSIONS}\\1.2.3`, "win32")).toBe(true);
+    // The drive letter and the case are not part of a Windows path's identity.
+    expect(isInside("c:\\users\\PAT\\.collie\\versions", `${VERSIONS}\\1.2.3`, "win32")).toBe(true);
+  });
+
+  test("the directory itself is the same, not inside; a sibling or another drive is outside", () => {
+    expect(isInside(VERSIONS, VERSIONS, "win32")).toBe(false);
+    expect(isSameOrInside(VERSIONS, VERSIONS, "win32")).toBe(true);
+    expect(isSameOrInside(VERSIONS, `${VERSIONS}-old\\1.2.3`, "win32")).toBe(false);
+    expect(isSameOrInside(VERSIONS, "C:\\Users\\pat\\.collie", "win32")).toBe(false);
+    expect(isSameOrInside(VERSIONS, "D:\\Users\\pat\\.collie\\versions\\1.2.3", "win32")).toBe(false);
+  });
+
+  test("a name that merely starts with two dots is inside, not an escape", () => {
+    expect(isInside(VERSIONS, `${VERSIONS}\\..hidden`, "win32")).toBe(true);
+  });
+
+  test("POSIX answers are the ones the string prefix gave: case counts, a longer sibling name is outside", () => {
+    expect(isInside("/inst/versions", "/inst/versions/1.2.3", "linux")).toBe(true);
+    expect(isSameOrInside("/inst/versions", "/inst/versions", "linux")).toBe(true);
+    expect(isInside("/inst/versions", "/inst/versions", "linux")).toBe(false);
+    expect(isSameOrInside("/inst/versions", "/inst/versions-old/1.2.3", "linux")).toBe(false);
+    expect(isSameOrInside("/inst/Versions", "/inst/versions/1.2.3", "linux")).toBe(false);
+    expect(isInside("/home/pat", "/home/patrick/x", "darwin")).toBe(false);
+  });
+});
+
+describe("publishedBinary on win32, from a host that is not Windows", () => {
+  test("a binary install publishes `current/bin/collie.exe`, the name Bun's compiler writes", () => {
+    const root = "/inst/versions/1.1.0";
+    const link = fakeLinkFs({ "/inst/current": { kind: "symlink", target: root } });
+    expect(posixKey(publishedBinary(root, link, "win32"))).toBe("/inst/current/bin/collie.exe");
+    expect(posixKey(publishedBinary(root, link, "linux"))).toBe("/inst/current/bin/collie");
+  });
+
+  test("a checkout, or a `current` that points elsewhere, publishes its own `bin/collie.exe`", () => {
+    expect(posixKey(publishedBinary("/src/collie", fakeLinkFs(), "win32"))).toBe("/src/collie/bin/collie.exe");
+    const elsewhere = fakeLinkFs({ "/inst/current": { kind: "symlink", target: "/somewhere/else" } });
+    expect(posixKey(publishedBinary("/inst/versions/1.1.0", elsewhere, "win32"))).toBe("/inst/versions/1.1.0/bin/collie.exe");
   });
 });
 
@@ -204,9 +260,11 @@ describe("process.execPath is realpath-resolved", () => {
       mkdirSync(version, { recursive: true });
       // The running Bun, reached through BOTH a symlinked directory component and a symlinked name —
       // exactly the two indirections a binary install introduces.
-      symlinkSync(process.execPath, join(version, "probe"));
+      // Windows will not launch a name without `.exe`, symlink or not.
+      const probeName = process.platform === "win32" ? "probe.exe" : "probe";
+      symlinkSync(process.execPath, join(version, probeName));
       symlinkSync(join("versions", "1.1.0"), join(root, "current"));
-      const r = Bun.spawnSync([join(root, "current", "bin", "probe"), "-e", "console.log(process.execPath)"]);
+      const r = Bun.spawnSync([join(root, "current", "bin", probeName), "-e", "console.log(process.execPath)"]);
       expect(r.exitCode).toBe(0);
       expect(r.stdout.toString().trim()).toBe(realpathSync(process.execPath));
     } finally {

@@ -71,14 +71,8 @@ function baseComposerProps(): ComponentProps<typeof Composer> {
     text: "pane output",
     terminalDraft: null,
     rawTerminalDraft: null,
-    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
-    setWrap: vi.fn(),
-    stepFontSize: vi.fn(),
-    setRawTerminal: vi.fn(),
-    setTapToFocus: vi.fn(),
-    mirrorNative: false,
-    setMirrorNative: vi.fn(),
-    setExpandClippedReply: vi.fn(),
+    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
+    display: { open: false, onToggle: vi.fn() },
     onSent: vi.fn(),
   };
 }
@@ -128,14 +122,8 @@ function renderComposerWithStatus(
     text: "pane output",
     terminalDraft: null,
     rawTerminalDraft: null,
-    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
-    setWrap: vi.fn(),
-    stepFontSize: vi.fn(),
-    setRawTerminal: vi.fn(),
-    setTapToFocus: vi.fn(),
-    mirrorNative: false,
-    setMirrorNative: vi.fn(),
-    setExpandClippedReply: vi.fn(),
+    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
+    display: { open: false, onToggle: vi.fn() },
     onSent: vi.fn(),
     ...overrides,
   };
@@ -572,14 +560,8 @@ describe("Composer — send", () => {
               text="pane output"
               terminalDraft={null}
               rawTerminalDraft="leftover"
-              prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
-              setWrap={vi.fn()}
-              stepFontSize={vi.fn()}
-              setRawTerminal={vi.fn()}
-              setTapToFocus={vi.fn()}
-              mirrorNative={false}
-              setMirrorNative={vi.fn()}
-              setExpandClippedReply={vi.fn()}
+              prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
+              display={{ open: false, onToggle: vi.fn() }}
               onSent={vi.fn()}
             />
           </>
@@ -668,14 +650,8 @@ describe("Composer — send", () => {
       text: "pane output",
       terminalDraft: null,
       rawTerminalDraft: null,
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
-      setWrap: vi.fn(),
-      stepFontSize: vi.fn(),
-      setRawTerminal: vi.fn(),
-      setTapToFocus: vi.fn(),
-    mirrorNative: false,
-    setMirrorNative: vi.fn(),
-      setExpandClippedReply: vi.fn(),
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
+      display: { open: false, onToggle: vi.fn() },
       onSent: vi.fn(),
     };
     const router = createMemoryRouter([
@@ -767,14 +743,8 @@ describe("Composer — typing into the terminal", () => {
             text="pane output"
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
-            setWrap={vi.fn()}
-            stepFontSize={vi.fn()}
-            setRawTerminal={vi.fn()}
-            setTapToFocus={vi.fn()}
-              mirrorNative={false}
-              setMirrorNative={vi.fn()}
-            setExpandClippedReply={vi.fn()}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
+            display={{ open: false, onToggle: vi.fn() }}
             onSent={vi.fn()}
           />
         </>
@@ -902,14 +872,8 @@ describe("Composer — typing into the terminal", () => {
             text="pane output"
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
-            setWrap={vi.fn()}
-            stepFontSize={vi.fn()}
-            setRawTerminal={vi.fn()}
-            setTapToFocus={vi.fn()}
-              mirrorNative={false}
-              setMirrorNative={vi.fn()}
-            setExpandClippedReply={vi.fn()}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
+            display={{ open: false, onToggle: vi.fn() }}
             onSent={vi.fn()}
           />
         </>
@@ -1096,14 +1060,8 @@ describe("Composer — typing into the terminal", () => {
             text="pane output"
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
-            setWrap={vi.fn()}
-            stepFontSize={vi.fn()}
-            setRawTerminal={vi.fn()}
-            setTapToFocus={vi.fn()}
-              mirrorNative={false}
-              setMirrorNative={vi.fn()}
-            setExpandClippedReply={vi.fn()}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
+            display={{ open: false, onToggle: vi.fn() }}
             onSent={vi.fn()}
           />
         </>
@@ -1209,6 +1167,7 @@ describe("Composer — the draft field wears its own size", () => {
         wrap: true,
         fontSize: 11,
         draftFontSize: 13,
+        chatFontSize: 14,
         fontFamily: "jetbrains",
         expandClippedReply: true,
         rawTerminal: false,
@@ -1621,14 +1580,8 @@ function renderDraftHarness(overrides: Partial<ComponentProps<typeof Composer>> 
       readOnly: false,
       dialogPresent: false,
       text: "pane output",
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
-      setWrap: vi.fn(),
-      stepFontSize: vi.fn(),
-      setRawTerminal: vi.fn(),
-      setTapToFocus: vi.fn(),
-    mirrorNative: false,
-    setMirrorNative: vi.fn(),
-      setExpandClippedReply: vi.fn(),
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
+      display: { open: false, onToggle: vi.fn() },
       onSent: vi.fn(),
       ...rest,
       terminalDraft: stable,
@@ -1958,14 +1911,8 @@ describe("Composer — in-flight echo suppression (match-last-sent)", () => {
       text: "pane output",
       terminalDraft: draft,
       rawTerminalDraft: draft,
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
-      setWrap: vi.fn(),
-      stepFontSize: vi.fn(),
-      setRawTerminal: vi.fn(),
-      setTapToFocus: vi.fn(),
-    mirrorNative: false,
-    setMirrorNative: vi.fn(),
-      setExpandClippedReply: vi.fn(),
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
+      display: { open: false, onToggle: vi.fn() },
       onSent: vi.fn(),
     };
     return (
@@ -2461,10 +2408,12 @@ describe("Composer — quick dock (in-flow, matches the keys dock)", () => {
 });
 
 /**
- * The display prefs left the actions belt for the pane menu (⋮ → Display settings, 2026-09-19), and
- * the menu lives in AgentChat while the dock lives in Composer — so the one crossing is
- * `ComposerHandle.openDisplay`. This file renders Composer alone, so it renders the DOOR the menu
- * row is: a plain button that calls the handle. `agent-chat.test.tsx` pins the real row.
+ * The display prefs left the actions belt for the pane menu (⋮ → Display settings, 2026-09-19).
+ * Since upstream 1.15 the sheet they live in is AgentChat's (a BottomSheet cannot be mounted inside
+ * the composer's animated, sticky ancestry), so the composer holds neither a ⚙ nor a panel — only
+ * `ComposerHandle.openDisplay`, which closes the composer's own dock and then asks its owner to open
+ * the sheet. This file renders Composer alone, so it renders the DOOR the menu row is: a plain
+ * button that calls the handle. What the sheet's rows draw is pinned in display-prefs.test.tsx.
  */
 function renderComposerWithDisplayDoor(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
   const props: ComponentProps<typeof Composer> = { ...baseComposerProps(), ...overrides };
@@ -2486,46 +2435,54 @@ function renderComposerWithDisplayDoor(overrides: Partial<ComponentProps<typeof 
   return props;
 }
 
-describe("Composer — display prefs behind the gear", () => {
-  it("the belt carries no display pill at all; wrap/raw/font live behind the pane menu's row", async () => {
-    const user = userEvent.setup();
+describe("Composer — display prefs behind the pane menu", () => {
+  it("the belt carries no display pill at all (upstream's ⚙ is not re-added)", () => {
     renderComposerWithDisplayDoor();
-
-    // Nothing display-related is on the permanent rows any more — and since 2026-09-19 that
-    // includes the pill itself: the belt is Keys / Type / Quick / Agent and nothing else. The
-    // button tapped below is this file's stand-in for the pane-menu row (see the harness above).
+    // Nothing display-related is on the permanent rows — and since 2026-09-19 that includes the
+    // pill itself. The door button rendered by the harness sits OUTSIDE the belt.
     expect(screen.queryByRole("button", { name: "Decrease font size" })).not.toBeInTheDocument();
-    const belt = document.querySelector('[data-slot="composer-actions"]')!;
-    expect(belt.querySelector('[aria-label="Display settings"]')).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: "Display settings" }));
-
-    // Named controls, not bare glyphs — the whole point of the move.
-    expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "Raw terminal" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Decrease font size" })).toBeInTheDocument();
-  });
-
-  it("the Display dock shares the single drawer slot with Keys", async () => {
-    const user = userEvent.setup();
-    renderComposerWithDisplayDoor();
-
-    await user.click(screen.getByRole("button", { name: "Display settings" }));
-    expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Keys" }));
     expect(screen.queryByRole("switch", { name: "Wrap lines" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Esc" })).toBeInTheDocument();
+    const belt = document.querySelector('[data-slot="composer-actions"]')!;
+    expect(belt).not.toBeNull();
+    expect(belt.querySelector('[aria-label="Display settings"]')).toBeNull();
   });
 
-  it("display prefs stay reachable on a read-only device", async () => {
+  it("the door asks the sheet's owner to open it", async () => {
     const user = userEvent.setup();
-    renderComposerWithDisplayDoor({ readOnly: true });
+    const onToggle = vi.fn();
+    renderComposerWithDisplayDoor({ display: { open: false, onToggle } });
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    expect(onToggle).toHaveBeenCalledOnce();
+  });
+
+  it("an already-open sheet is not toggled shut by the door", async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn();
+    renderComposerWithDisplayDoor({ display: { open: true, onToggle } });
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
+  it("the door closes the Keys tray under the sheet", async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn();
+    renderComposerWithDisplayDoor({ display: { open: false, onToggle } });
+    await user.click(screen.getByRole("button", { name: "Keys" }));
+    expect(screen.getByRole("button", { name: "Esc" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    expect(screen.queryByRole("button", { name: "Esc" })).not.toBeInTheDocument();
+    expect(onToggle).toHaveBeenCalledOnce();
+  });
+
+  it("the door stays usable on a read-only device", async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn();
+    renderComposerWithDisplayDoor({ readOnly: true, display: { open: false, onToggle } });
 
     // Keys/Quick are write affordances and lock; the prefs are local view state and must not.
     expect(screen.getByRole("button", { name: "Keys" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Display settings" }));
-    expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
+    expect(onToggle).toHaveBeenCalledOnce();
   });
 });
 
@@ -2588,16 +2545,19 @@ describe("Composer — a composed key queue is guarded on the way out", () => {
   // drawer directly. Its own case, because it arrives through the handle rather than off the belt.
   it("the pane menu's Display row also needs a second tap while keys are staged", async () => {
     const user = userEvent.setup();
-    renderComposerWithDisplayDoor();
+    const onToggle = vi.fn();
+    renderComposerWithDisplayDoor({ display: { open: false, onToggle } });
     await stageAKey(user);
 
     const row = () => screen.getByRole("button", { name: "Display settings" });
     await user.click(row());
     expect(screen.getByRole("button", { name: "Remove Ctrl Tab" })).toBeInTheDocument();
+    // A refused close opens nothing: the confirm is what is on screen, not a sheet over it.
+    expect(onToggle).not.toHaveBeenCalled();
 
     await user.click(row());
     expect(screen.queryByRole("button", { name: "Remove Ctrl Tab" })).not.toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
+    expect(onToggle).toHaveBeenCalledOnce();
   });
 
   // Over-guarding trains you to double-tap through the confirm reflexively, which kills its value
@@ -3134,14 +3094,8 @@ describe("Composer — draft persistence", () => {
       text: "pane output",
       terminalDraft: null,
       rawTerminalDraft: null,
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
-      setWrap: vi.fn(),
-      stepFontSize: vi.fn(),
-      setRawTerminal: vi.fn(),
-      setTapToFocus: vi.fn(),
-    mirrorNative: false,
-    setMirrorNative: vi.fn(),
-      setExpandClippedReply: vi.fn(),
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
+      display: { open: false, onToggle: vi.fn() },
       onSent: vi.fn(),
       ...overrides,
     };
@@ -3519,17 +3473,11 @@ describe("Composer — the field clears on the tap", () => {
             gone={false}
             readOnly={false}
             dialogPresent={false}
-            mirrorNative={false}
-            setMirrorNative={() => {}}
             text={text}
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
-            setWrap={vi.fn()}
-            stepFontSize={vi.fn()}
-            setRawTerminal={vi.fn()}
-            setTapToFocus={vi.fn()}
-            setExpandClippedReply={vi.fn()}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
+            display={{ open: false, onToggle: vi.fn() }}
             onSent={vi.fn()}
           />
           <button type="button" onClick={() => setText((t) => `${t}\n⠋ working…`)}>
@@ -4320,14 +4268,8 @@ describe("Composer — the belt's clear control (M40 spec 04, #291)", () => {
           text="pane output"
           terminalDraft={null}
           rawTerminalDraft={null}
-          prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
-          setWrap={vi.fn()}
-          stepFontSize={vi.fn()}
-          setRawTerminal={vi.fn()}
-          setTapToFocus={vi.fn()}
-          mirrorNative={false}
-          setMirrorNative={vi.fn()}
-          setExpandClippedReply={vi.fn()}
+          prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} }}
+          display={{ open: false, onToggle: vi.fn() }}
           onSent={vi.fn()}
         />
       );

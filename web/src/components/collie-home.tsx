@@ -341,6 +341,11 @@ export function CollieHome({ onHome, trouble, lost = false, state = "idle", clas
       {/* The ramp's scope, and the reason this wrapper carries a ref at all: `getAnimations` is
           collected from HERE and not from the button, so the button's own `transition-opacity` — and
           anything a caller's `className` animates — is never handed a playback rate. */}
+      {/* `data-slot` is a HANDLE FOR MEASUREMENT as well as skin.css's hook: the agent-start handoff
+          (agent-start.tsx `aimAtHeaderMark`) flies a second mark out of this box, so it needs it on
+          screen and reads the `<svg>` inside for the true size. FORK: upstream names this slot
+          `collie-mark`; here it keeps `header-mark`, which skin.css styles, and agent-start's lookup
+          names it instead. */}
       <span data-slot="header-mark" ref={mark} className="grid size-11 shrink-0 place-items-center">
         <MeowMark
           size={40}

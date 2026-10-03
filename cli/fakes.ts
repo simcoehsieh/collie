@@ -21,6 +21,44 @@ export const HOME = "/home/pat";
 export const HANDLER_FILE = `${CONFIG}/tailscale-managed-handler`;
 export const STATE = "/state";
 
+/**
+ * The key a fake filesystem stores a path under: POSIX, no drive. On Windows `join` and `resolve`
+ * return `C:\opt\collie\bin\collie`; the fakes model a POSIX box, so that folds back to
+ * `/opt/collie/bin/collie`. The platform is a parameter so Linux CI pins the Windows branch.
+ */
+export function posixKey(p: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? p.replace(/^[A-Za-z]:/, "").replaceAll("\\", "/") : p;
+}
+
+/** A map that folds its keys with {@link posixKey}, so a test may name a path in either spelling. */
+class PathMap<V> extends Map<string, V> {
+  override get(key: string): V | undefined {
+    return super.get(posixKey(key));
+  }
+  override set(key: string, value: V): this {
+    return super.set(posixKey(key), value);
+  }
+  override has(key: string): boolean {
+    return super.has(posixKey(key));
+  }
+  override delete(key: string): boolean {
+    return super.delete(posixKey(key));
+  }
+}
+
+/** A set of paths that folds its members the same way. */
+class PathSet extends Set<string> {
+  override add(value: string): this {
+    return super.add(posixKey(value));
+  }
+  override has(value: string): boolean {
+    return super.has(posixKey(value));
+  }
+  override delete(value: string): boolean {
+    return super.delete(posixKey(value));
+  }
+}
+
 export interface FakeExec extends Exec {
   /**
    * `<tool> <args…>` for every call, in order. A {@link Exec.runIn} call is recorded with its
@@ -30,6 +68,8 @@ export interface FakeExec extends Exec {
    */
   calls: string[];
   killed: number[];
+  /** Every {@link Exec.processCommand} probe, with the bound it asked for (absent = the default). */
+  probed: { pid: number; timeoutMs?: number }[];
   spawned: { command: string[]; env: Record<string, string>; logPath: string }[];
   /**
    * Every {@link Exec.runLogged} call — the command, its log path and the bound it was given. The
@@ -84,6 +124,7 @@ export interface Scripted {
 export function fakeExec(scripted: Scripted = {}): FakeExec {
   const calls: string[] = [];
   const killed: number[] = [];
+  const probed: { pid: number; timeoutMs?: number }[] = [];
   const timeouts: { call: string; ms: number }[] = [];
   const spawned: { command: string[]; env: Record<string, string>; logPath: string }[] = [];
   const ran: {
@@ -124,6 +165,7 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
   return {
     calls,
     killed,
+    probed,
     spawned,
     ran,
     timeouts,
@@ -161,7 +203,10 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
       spawned.push({ command: [...command], env: opts.env, logPath: opts.logPath });
       return scripted.spawnPid === undefined ? 4242 : scripted.spawnPid;
     },
-    processCommand: (pid) => scripted.ps?.[pid] ?? null,
+    processCommand: (pid, timeoutMs) => {
+      probed.push(timeoutMs === undefined ? { pid } : { pid, timeoutMs });
+      return scripted.ps?.[pid] ?? null;
+    },
     kill: (pid) => void killed.push(pid),
   };
 }
@@ -206,25 +251,25 @@ export interface FakeFiles extends Files {
 }
 
 export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
-  const entries = new Map<string, { text: string; mode?: number }>();
+  const entries = new PathMap<{ text: string; mode?: number }>();
   for (const [p, text] of Object.entries(seed)) entries.set(p, { text });
-  const undeletable = new Set<string>();
-  const rootOwned = new Set<string>();
-  const readOnly = new Set<string>();
-  const notExecutable = new Set<string>();
-  const stats = new Map<string, { inode: number; mtimeMs: number }>();
-  const links = new Map<string, string>();
-  const entryTypes = new Map<string, "directory" | "symlink" | "other">();
-  const realPaths = new Map<string, string>();
-  const unlistable = new Set<string>();
-  const unrenamable = new Set<string>();
+  const undeletable = new PathSet();
+  const rootOwned = new PathSet();
+  const readOnly = new PathSet();
+  const notExecutable = new PathSet();
+  const stats = new PathMap<{ inode: number; mtimeMs: number }>();
+  const links = new PathMap<string>();
+  const entryTypes = new PathMap<"directory" | "symlink" | "other">();
+  const realPaths = new PathMap<string>();
+  const unlistable = new PathSet();
+  const unrenamable = new PathSet();
   const ops: string[] = [];
   let tempDirs = 0;
   // Paths are a flat set, so a "directory" is whatever entries sit under it — enough to model the
   // staging swap, whose whole content is `web/dist/**`.
   const under = (p: string): string[] =>
     [...new Set([...entries.keys(), ...entryTypes.keys()])].filter((k) => k === p || k.startsWith(`${p}/`));
-  return {
+  const raw: FakeFiles = {
     entries,
     undeletable,
     rootOwned,
@@ -297,6 +342,33 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
       }
     },
   };
+  // The seeded keys are POSIX. Code under test builds paths with `join` and `resolve`, which hand
+  // back `C:\opt\collie\bin` on Windows, so every path that comes in is folded to the key a test wrote.
+  const one = <A extends unknown[], R>(f: (p: string, ...rest: A) => R) =>
+    (p: string, ...rest: A): R => f(posixKey(p), ...rest);
+  return {
+    ...raw,
+    ownerUid: one(raw.ownerUid),
+    writable: one(raw.writable),
+    exists: one(raw.exists),
+    executable: one(raw.executable),
+    read: one(raw.read),
+    entryType: one(raw.entryType),
+    list: one(raw.list),
+    listStrict: one(raw.listStrict),
+    // These two RETURN a path the code under test then compares with one it built itself (`compilePaths`:
+    // `realpath(bin) !== bin`; `createOwnedDirectory`: `dirname(mkdtemp(prefix)) !== bin`), so the answer
+    // keeps the caller's spelling; only the lookup is folded.
+    realpath: (p) => (raw.realpath(posixKey(p)) === null ? null : (raw.realPaths.get(p) ?? p)),
+    mkdtemp: (prefix) => `${prefix}${raw.mkdtemp(posixKey(prefix)).slice(posixKey(prefix).length)}`,
+    write: one(raw.write),
+    mkdirp: one(raw.mkdirp),
+    remove: one(raw.remove),
+    removeTree: one(raw.removeTree),
+    stat: one(raw.stat),
+    readlink: one(raw.readlink),
+    rename: (from, to) => raw.rename(posixKey(from), posixKey(to)),
+  };
 }
 
 export interface FakeLinkFs extends LinkWriter {
@@ -313,22 +385,27 @@ export interface FakeLinkFs extends LinkWriter {
  * because every decision this seam feeds is made from the destination alone.
  */
 export function fakeLinkFs(seed: Record<string, LinkProbe> = {}): FakeLinkFs {
-  const entries = new Map<string, LinkProbe>(Object.entries(seed));
+  // Keys fold through `posixKey` like every other fake path (see `fakeFiles`): a seed or a probe may
+  // spell a path either way. A link TARGET is stored as written, because the code under test compares
+  // it against a path it built itself (`classifyLink`: `probe.target === own`) and a folded target
+  // would never match on Windows.
+  const entries = new PathMap<LinkProbe>();
+  for (const [p, probe] of Object.entries(seed)) entries.set(p, probe);
   const ops: string[] = [];
-  const readonlyPaths = new Set<string>();
+  const readonlyPaths = new PathSet();
   return {
     entries,
     ops,
     readonly: readonlyPaths,
     probe: (p) => entries.get(p) ?? { kind: "absent" },
-    mkdirp: (p) => void ops.push(`mkdirp ${p}`),
+    mkdirp: (p) => void ops.push(`mkdirp ${posixKey(p)}`),
     symlink(target, at) {
-      ops.push(`symlink ${target} ${at}`);
+      ops.push(`symlink ${posixKey(target)} ${posixKey(at)}`);
       if (readonlyPaths.has(at)) throw new Error("EACCES: permission denied");
       entries.set(at, { kind: "symlink", target });
     },
     remove(at) {
-      ops.push(`rm ${at}`);
+      ops.push(`rm ${posixKey(at)}`);
       if (readonlyPaths.has(at)) throw new Error("EACCES: permission denied");
       entries.delete(at);
     },
@@ -387,4 +464,84 @@ export function context(
     stateDir: STATE,
     ...over,
   };
+}
+
+// ── THE LEG-1 PROBE'S OWN FIELD LIST ────────────────────────────────────────
+//
+// `cli/testdata/leg1-probe.sh` is the golden script a real member runs, and it emits one
+// `collie-probe:<field>=<value>` line per fact. Three suites build a fake probe payload from a
+// `PROBE_DEFAULTS` table of their own, and on 2026-10-01 those tables held 21, 20 and 15 of the 21
+// fields. Two of them were therefore testing their consumers against a payload NO REAL MEMBER
+// SENDS, which is the one thing a fake must never do.
+//
+// So the field list lives here, once, and `cli/probe-contract.test.ts` holds it against the golden
+// script: add a `say` line there and that test fails until this table learns the field. A suite
+// still chooses its own VALUES — a deputy mid-update and a fresh member disagree about almost every
+// one — but it can no longer be short a field, because it spreads this first.
+
+/** Every fact leg 1 reports, in the order the golden script says them. `probe` is the terminator. */
+export const PROBE_FIELDS = [
+  "home",
+  "git",
+  "bun",
+  "herdr",
+  "curl",
+  "tar",
+  "sha256",
+  "configdir",
+  "envhost",
+  "envport",
+  "envmux",
+  "checkout",
+  "checkoutgit",
+  "installroot",
+  "commit",
+  "branch",
+  "dirty",
+  "dirtyfiles",
+  "version",
+  "address",
+  "port",
+] as const;
+
+export type ProbeField = (typeof PROBE_FIELDS)[number];
+
+/**
+ * A complete payload for a member that has been started once and is otherwise untouched.
+ *
+ * `envmux: "herdr"` and not empty, because `collie start` writes `COLLIE_MUX` into the config-dir
+ * `.env` and a solo collie leaves `COLLIE_HOST` unset (`cli/mux.ts`, F23). So the default member has
+ * already chosen, and a case that means to ask its machine seeds `envmux: ""` itself.
+ */
+export function probeDefaults() {
+  return {
+    home: HOME,
+    git: "/usr/bin/git",
+    bun: `${HOME}/.bun/bin/bun`,
+    herdr: "/usr/local/bin/herdr",
+    curl: "/usr/bin/curl",
+    tar: "/usr/bin/tar",
+    sha256: "/usr/bin/sha256sum",
+    configdir: `${HOME}/.config/herdr/plugins/config/herdr.collie`,
+    envhost: "",
+    envport: "",
+    envmux: "herdr",
+    checkout: "",
+    checkoutgit: "",
+    installroot: "",
+    commit: "",
+    branch: "",
+    dirty: "",
+    dirtyfiles: "",
+    version: "",
+    address: "100.64.0.9",
+    port: "free",
+  } satisfies Record<ProbeField, string>;
+}
+
+/** The payload as leg 1 prints it: one line per field, then the terminator. */
+export function probeOutput(over: Partial<Record<ProbeField, string>> = {}): string {
+  const all = { ...probeDefaults(), ...over };
+  const lines = PROBE_FIELDS.map((field) => `collie-probe:${field}=${all[field]}`);
+  return [...lines, "collie-probe:probe=ok", ""].join("\n");
 }

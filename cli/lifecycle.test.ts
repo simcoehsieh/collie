@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
 import {
-  BINARY,
   capture,
   CONFIG,
   context,
@@ -17,6 +17,16 @@ import {
 import { leadStore, member, peerStore } from "../bridge/crew/fixtures.ts";
 import { serializeTrustStore } from "../bridge/crew/trust-store.ts";
 import { EXIT, type Io } from "./io.ts";
+import { PROCESS_QUERY_SLOW_START_MS } from "./sys.ts";
+import { collieBinary } from "./unit.ts";
+
+// The binary, spelled the way the code under test spells it. `collieBinary` joins with the host
+// separator, so a POSIX literal like `/opt/collie/bin/collie` never matches on a Windows host, and it
+// names `bin/collie.exe` for a `win32` platform. Everything here asks for the binary of the platform
+// the harness injects (`deps.platform`), never the host's: `BINARY` is the one every non-Windows
+// harness platform shares, and `binaryOn` is the one for a platform a test pins.
+const binaryOn = (platform: NodeJS.Platform): string => collieBinary(ROOT, platform);
+const BINARY = binaryOn("linux");
 
 /** The `Io` a nested `serve` was handed — `null` until it has been called. */
 interface SeenIo {
@@ -38,6 +48,7 @@ import {
   resolveTailscaleHosts,
   supervisionTier,
   systemdUserReachable,
+  windowsProcessRecordPath,
   writeUnit,
 } from "./lifecycle.ts";
 
@@ -72,7 +83,7 @@ function harness(over: HarnessOptions = {}): Harness {
   const exec = fakeExec(over);
   // The binary exists unless a test deliberately removes it — every other test would otherwise be
   // asserting the "no binary" guard by accident.
-  const files = fakeFiles({ [BINARY]: "", ...over.files });
+  const files = fakeFiles({ [BINARY]: "", [binaryOn(over.platform ?? "linux")]: "", ...over.files });
   const readyCalls: Array<{ port: number; host: string }> = [];
   const deps: LifecycleDeps = {
     // Every fixture here is a Collie that has already chosen its multiplexer, so `start`'s first-run
@@ -261,6 +272,26 @@ describe("the pidfile guard", () => {
     stopPidfileProcess(h.deps);
     expect(h.exec.killed).toEqual([4242]);
     expect(h.files.exists(`${CONFIG}/collie.pid`)).toBe(false);
+    // A plain liveness question keeps the short default bound (#309 review).
+    expect(h.exec.probed).toEqual([{ pid: 4242 }]);
+  });
+
+  test("recognises its bridge by the injected platform's binary name, `collie.exe` on win32", () => {
+    const win = harness({
+      platform: "win32",
+      files: { [`${CONFIG}/collie.pid`]: "4242\n" },
+      ps: { 4242: `${binaryOn("win32")} _exec-bridge` },
+    });
+    stopPidfileProcess(win.deps);
+    expect(win.exec.killed).toEqual([4242]);
+    // Under win32 the binary this install has is `collie.exe`; the bare name is somebody else's.
+    const bare = harness({
+      platform: "win32",
+      files: { [`${CONFIG}/collie.pid`]: "4242\n" },
+      ps: { 4242: `${binaryOn("linux")} _exec-bridge` },
+    });
+    stopPidfileProcess(bare.deps);
+    expect(bare.exec.killed).toEqual([]);
   });
 
   test("never signals a pid the OS recycled to something else", () => {
@@ -297,9 +328,9 @@ describe("start, on systemd", () => {
 
   test("refuses to install a unit pointing at a binary that isn't there", async () => {
     const h = harness();
-    h.files.remove(BINARY);
+    h.files.remove(binaryOn("linux"));
     expect(await cmdStart(h.deps)).toBe(EXIT.FAIL);
-    expect(h.io.stderr.join("\n")).toContain(`no collie binary at ${BINARY}`);
+    expect(h.io.stderr.join("\n")).toContain(`no collie binary at ${binaryOn("linux")}`);
     expect(h.exec.calls).not.toContain("systemctl --user enable --now collie");
   });
 
@@ -340,7 +371,8 @@ describe("start, on systemd", () => {
     expect(await cmdStart(h.deps)).toBe(EXIT.OK);
     expect(h.io.stdout.join("\n")).toContain("building web UI (first run)");
 
-    const broken = harness({ answers: [[`${ROOT}/web$ bun run build --`, { code: 1 }]] });
+    // The answer is matched against the raw call line, which spells the cwd with `join`.
+    const broken = harness({ answers: [[`${join(ROOT, "web")}$ bun run build --`, { code: 1 }]] });
     expect(await cmdStart(broken.deps)).toBe(EXIT.OK);
     expect(broken.io.stderr.join("\n")).toContain("the UI will 503");
     expect(broken.io.stdout.join("\n")).toContain("bridge started");
@@ -362,7 +394,7 @@ describe("start, on launchd", () => {
     expect(h.exec.calls).toContain("launchctl bootout gui/501/herdr.collie");
     expect(h.exec.calls).toContain("launchctl enable gui/501/herdr.collie");
     expect(h.exec.calls).toContain(
-      `launchctl bootstrap gui/501 ${HOME}/Library/LaunchAgents/herdr.collie.plist`,
+      `launchctl bootstrap gui/501 ${join(HOME, "Library", "LaunchAgents", "herdr.collie.plist")}`,
     );
     expect(h.io.stdout).toContain("bridge started (launchd: herdr.collie)");
   });
@@ -422,7 +454,7 @@ describe("start, unsupervised", () => {
     expect(h.exec.spawned[0]?.command).toEqual([BINARY, "_exec-bridge"]);
     expect(h.exec.spawned[0]?.env.COLLIE_PLUGIN_ROOT).toBe(ROOT);
     expect(h.exec.spawned[0]?.env.COLLIE_PORT).toBe("8787");
-    expect(h.exec.spawned[0]?.logPath).toBe(`${CONFIG}/collie.log`);
+    expect(h.exec.spawned[0]?.logPath).toBe(join(CONFIG, "collie.log"));
     expect(h.io.stdout).toContain("bridge started (pid 4242, unsupervised)");
   });
 
@@ -447,7 +479,7 @@ describe("the first-run multiplexer gate", () => {
     expect(await cmdStart(h.deps)).toBe(EXIT.FAIL);
     expect(h.exec.spawned).toHaveLength(0);
     expect(h.io.stderr.join("\n")).toContain("no COLLIE_MUX is set");
-    expect(h.io.stderr.join("\n")).toContain(`${CONFIG}/.env`);
+    expect(h.io.stderr.join("\n")).toContain(join(CONFIG, ".env"));
   });
 
   test("auto-selects the only multiplexer running, writes it down, and hands it to the bridge", async () => {
@@ -475,7 +507,165 @@ describe("the first-run multiplexer gate", () => {
     expect(h.exec.spawned).toHaveLength(0);
     const said = h.io.stderr.join("\n");
     expect(said).toContain("no COLLIE_MUX is set, and 2 multiplexers are running");
-    expect(said).toContain("  COLLIE_MUX=<herdr|tmux|zellij> collie start");
+    expect(said).toContain("  COLLIE_MUX=<herdr|tmux|tuios|zellij> collie start");
+  });
+});
+
+// On Windows the bridge is supervised by `contrib/windows/collie-ctl.ps1` from Task Scheduler, which
+// records `<launcher pid>|<bridge pid>` in `collie-processes`. `restart` stops that bridge ALONE and
+// lets the script's loop relaunch it: stopping the task could take the phone's detached `collie
+// update` down with it, half way through its own restart (#213 on macOS).
+describe("restart, under the Windows community supervisor", () => {
+  const RECORD = windowsProcessRecordPath(CONFIG);
+  const BRIDGE_CMD = `C:\\Users\\pat\\.bun\\bin\\bun.exe run "${ROOT}/bridge/index.ts"`;
+  const windows = (over: HarnessOptions = {}): Harness =>
+    harness({
+      ...over,
+      platform: "win32",
+      answers: [...NO_SYSTEMD, ...(over.answers ?? [])],
+      files: { [binaryOn("win32")]: "", ...over.files },
+    });
+
+  test("kills the recorded bridge and nothing else, then leaves the relaunch to the supervisor", async () => {
+    const h = windows({ files: { [RECORD]: "7100|7200" }, ps: { 7200: BRIDGE_CMD } });
+    expect(await cmdRestart(h.deps)).toBe(EXIT.OK);
+    // The bridge only: the launcher (7100) is the loop that brings it back.
+    expect(h.exec.killed).toEqual([7200]);
+    // The restart can wait out a slow PowerShell start; the liveness probes keep the short default.
+    expect(h.exec.probed).toEqual([{ pid: 7200, timeoutMs: PROCESS_QUERY_SLOW_START_MS }]);
+    // No second bridge beside the supervised one, and no service manager asked.
+    expect(h.exec.spawned).toHaveLength(0);
+    expect(h.exec.calls.some((c) => c.startsWith("systemctl --user enable"))).toBe(false);
+    expect(h.io.stdout.join("\n")).toContain("the Task Scheduler supervisor relaunches it");
+    // The record is the script's, not ours to drop.
+    expect(h.files.exists(RECORD)).toBe(true);
+  });
+
+  test("matches the checkout's bridge whatever the case or separators Windows reports", async () => {
+    const reported = `bun.exe run "${ROOT.toUpperCase().replaceAll("/", "\\")}\\BRIDGE\\index.ts"`;
+    const h = windows({ files: { [RECORD]: "7100|7200" }, ps: { 7200: reported } });
+    expect(await cmdRestart(h.deps)).toBe(EXIT.OK);
+    expect(h.exec.killed).toEqual([7200]);
+  });
+
+  test("never kills a recorded pid that is no longer this checkout's bridge", async () => {
+    const strangers: Record<number, string>[] = [
+      { 7200: "C:\\Windows\\notepad.exe" },
+      { 7200: 'bun.exe run "D:\\other\\bridge\\index.ts"' },
+      // The pid is gone: no command line at all.
+      {},
+    ];
+    for (const ps of strangers) {
+      const h = windows({ files: { [RECORD]: "7100|7200" }, ps });
+      expect(await cmdRestart(h.deps)).toBe(EXIT.FAIL);
+      expect(h.exec.killed).toEqual([]);
+      expect(h.exec.spawned).toHaveLength(0);
+      expect(h.io.stderr.join("\n")).toContain("not this checkout's bridge");
+    }
+  });
+
+  test("a bridge the loop is already relaunching is left to it", async () => {
+    const h = windows({ files: { [RECORD]: "7100|0" } });
+    expect(await cmdRestart(h.deps)).toBe(EXIT.OK);
+    expect(h.exec.killed).toEqual([]);
+    expect(h.exec.spawned).toHaveLength(0);
+  });
+
+  test("an unreadable record fails without killing or starting anything", async () => {
+    const h = windows({ files: { [RECORD]: "not a record" } });
+    expect(await cmdRestart(h.deps)).toBe(EXIT.FAIL);
+    expect(h.exec.killed).toEqual([]);
+    expect(h.exec.spawned).toHaveLength(0);
+  });
+
+  test("waits for the relaunched bridge before it reports", async () => {
+    const h = windows({ files: { [RECORD]: "7100|7200" }, ps: { 7200: BRIDGE_CMD } });
+    let probes = 0;
+    h.deps.ready = () => Promise.resolve(++probes >= 4);
+    expect(await cmdRestart(h.deps)).toBe(EXIT.OK);
+    // Three misses, then the answer; the banner's own probe comes after.
+    expect(probes).toBeGreaterThanOrEqual(4);
+  });
+
+  // The in-place update stops on this code, so a dead bridge must not read as `✓ update complete`.
+  // The detached runner ignores it and polls its own gate (pinned in cli/update.test.ts).
+  test("a relaunched bridge that never answers is a failure, after the whole wait", async () => {
+    const h = windows({ files: { [RECORD]: "7100|7200" }, ps: { 7200: BRIDGE_CMD }, ready: false });
+    let slept = 0;
+    h.deps.sleep = () => {
+      slept++;
+      return Promise.resolve();
+    };
+    expect(await cmdRestart(h.deps)).toBe(EXIT.FAIL);
+    expect(h.exec.killed).toEqual([7200]);
+    expect(slept).toBe(30);
+    // The banner still prints what it sees, and the error comes last, naming where to look.
+    expect(h.io.stderr.join("\n")).toContain("did not answer on 127.0.0.1:8787 within 30s; it may still be starting");
+    expect(h.io.stderr.join("\n")).toContain("`collie status`");
+    expect(h.io.stderr.at(-1)).toContain("collie-ctl.ps1 logs");
+    // Still no second bridge started beside the supervised one.
+    expect(h.exec.spawned).toHaveLength(0);
+  });
+
+  test("the wait follows COLLIE_UPDATE_HEALTH_TIMEOUT_MS, the update gate's own budget", async () => {
+    const h = windows({
+      files: { [RECORD]: "7100|7200" },
+      ps: { 7200: BRIDGE_CMD },
+      env: { COLLIE_UPDATE_HEALTH_TIMEOUT_MS: "3000" },
+      ready: false,
+    });
+    let slept = 0;
+    h.deps.sleep = () => {
+      slept++;
+      return Promise.resolve();
+    };
+    expect(await cmdRestart(h.deps)).toBe(EXIT.FAIL);
+    expect(slept).toBe(3);
+    expect(h.io.stderr.join("\n")).toContain("within 3s");
+
+    // A slow bridge that answers inside the raised budget is a success, and the wait stops there.
+    const late = windows({
+      files: { [RECORD]: "7100|7200" },
+      ps: { 7200: BRIDGE_CMD },
+      env: { COLLIE_UPDATE_HEALTH_TIMEOUT_MS: "60000" },
+    });
+    let probes = 0;
+    late.deps.ready = () => Promise.resolve(++probes >= 35);
+    expect(await cmdRestart(late.deps)).toBe(EXIT.OK);
+    expect(probes).toBeGreaterThanOrEqual(35);
+  });
+
+  test("a probe that throws reads as no answer, not as a crashed restart", async () => {
+    const h = windows({ files: { [RECORD]: "7100|7200" }, ps: { 7200: BRIDGE_CMD } });
+    h.deps.sleep = () => Promise.resolve();
+    // Throws on every probe of the wait; the banner's own probe afterwards just answers no.
+    let probes = 0;
+    h.deps.ready = () => {
+      if (++probes <= 30) throw new Error("connect refused");
+      return Promise.resolve(false);
+    };
+    expect(await cmdRestart(h.deps)).toBe(EXIT.FAIL);
+    expect(h.io.stderr.join("\n")).toContain("did not answer");
+  });
+
+  test("with no record, restart keeps the path it had, and finds bin/collie.exe", async () => {
+    const h = windows();
+    expect(await cmdRestart(h.deps)).toBe(EXIT.OK);
+    expect(h.exec.killed).toEqual([]);
+    // The unsupervised tier, as before — which now finds the Windows binary instead of refusing.
+    expect(h.exec.spawned).toHaveLength(1);
+    expect(h.io.stderr.join("\n")).not.toContain("no collie binary");
+  });
+
+  test("off Windows the record means nothing, and restart is untouched", async () => {
+    const h = harness({
+      answers: NO_SYSTEMD,
+      files: { [RECORD]: "7100|7200" },
+      ps: { 7200: BRIDGE_CMD },
+    });
+    expect(await cmdRestart(h.deps)).toBe(EXIT.OK);
+    expect(h.exec.killed).toEqual([]);
+    expect(h.exec.spawned).toHaveLength(1);
   });
 });
 
@@ -597,12 +787,12 @@ describe("the status banner", () => {
 
     expect(
       serviceDescription(
-        darwin([["launchctl print", { stdout: "\tstate = running\n\tpid = 4242\n" }]]),
+        darwin([["launchctl print gui/501/herdr.collie", { stdout: "\tstate = running\n\tpid = 4242\n" }]]),
       ),
-    ).toBe("launchd (herdr.collie) · active (pid 4242)");
+    ).toBe("launchd (gui/501/herdr.collie) · active (pid 4242)");
     expect(
-      serviceDescription(darwin([["launchctl print", { stdout: "\tstate = waiting\n" }]])),
-    ).toBe("launchd (herdr.collie) · loaded, not running");
+      serviceDescription(darwin([["launchctl print gui/501/herdr.collie", { stdout: "\tstate = waiting\n" }]])),
+    ).toBe("launchd (gui/501/herdr.collie) · loaded, not running");
     expect(serviceDescription(darwin([["launchctl print", { code: 1 }]]))).toBe(
       "launchd (herdr.collie) · not loaded",
     );
@@ -613,6 +803,77 @@ describe("the status banner", () => {
         darwin([["launchctl print", { code: 1 }]], { [`${CONFIG}/collie.pid`]: "4242\n" }),
       ),
     ).toBe("pid 4242 (unsupervised — launchd bootstrap refused)");
+  });
+
+  test.each([
+    ["active (pid 4242)", "\tstate = running\n\tpid = 4242\n"],
+    ["loaded, not running", "\tstate = waiting\n"],
+  ])("discovers background user agents: %s", (state, stdout) => {
+    const h = harness({
+      platform: "darwin",
+      answers: [
+        ...NO_SYSTEMD,
+        ["launchctl print gui/501/herdr.collie", { code: 1 }],
+        ["launchctl print user/501/herdr.collie", { stdout }],
+      ],
+      // An old fallback pidfile must not hide the now-supervised agent.
+      files: { [`${CONFIG}/collie.pid`]: "9999\n" },
+    });
+    expect(serviceDescription(h.deps)).toBe(`launchd (user/501/herdr.collie) · ${state}`);
+  });
+
+  test("reports both domains instead of hiding a running user agent behind a stopped GUI agent", () => {
+    const h = harness({
+      platform: "darwin",
+      answers: [
+        ...NO_SYSTEMD,
+        ["launchctl print gui/501/herdr.collie", { stdout: "\tstate = waiting\n" }],
+        ["launchctl print user/501/herdr.collie", { stdout: "\tpid = 4242\n" }],
+      ],
+    });
+    expect(serviceDescription(h.deps)).toBe(
+      "launchd (gui/501/herdr.collie) · loaded, not running; " +
+      "launchd (user/501/herdr.collie) · active (pid 4242)",
+    );
+  });
+
+  test("does not treat failed launchctl output as a loaded service", () => {
+    const h = harness({
+      platform: "darwin",
+      answers: [
+        ...NO_SYSTEMD,
+        ["launchctl print gui/501/herdr.collie", { code: 1, stdout: "\tpid = 9999\n" }],
+        ["launchctl print user/501/herdr.collie", { stdout: "\tpid = 4242\n" }],
+      ],
+    });
+    expect(serviceDescription(h.deps)).toBe("launchd (user/501/herdr.collie) · active (pid 4242)");
+  });
+
+  test("status of a Home Manager agent is read-only and targets only the selected instance", async () => {
+    const plist = `${HOME}/Library/LaunchAgents/herdr.collie-next.plist`;
+    const h = harness({
+      instance: "next",
+      platform: "darwin",
+      env: { COLLIE_SKIP_SERVE: "1" },
+      answers: [
+        ...NO_SYSTEMD,
+        ["launchctl print gui/501/herdr.collie-next", { code: 1 }],
+        ["launchctl print user/501/herdr.collie-next", { stdout: "\tpid = 4242\n" }],
+      ],
+      files: { [plist]: "Home Manager owns this agent" },
+    });
+    h.files.readOnly.add(plist);
+    const before = new Map(h.files.entries);
+    expect(await cmdStatus(h.deps)).toBe(EXIT.OK);
+    expect(h.io.stdout.join("\n")).toContain("launchd (user/501/herdr.collie-next) · active (pid 4242)");
+    expect(h.exec.calls.filter((call) => call.startsWith("launchctl "))).toEqual([
+      "launchctl print gui/501/herdr.collie-next",
+      "launchctl print user/501/herdr.collie-next",
+    ]);
+    expect(h.files.entries).toEqual(before);
+    expect(h.files.ops).toEqual([]);
+    expect(h.exec.killed).toEqual([]);
+    expect(h.exec.spawned).toEqual([]);
   });
 
   test("prints the tailnet URL, or the proxy line under COLLIE_SKIP_SERVE", async () => {
@@ -719,7 +980,7 @@ describe("uninstall", () => {
     // `uninstall` removes only what `start` created.
     expect(h.files.exists(`${CONFIG}/.env`)).toBe(true);
     expect(h.io.stdout.join("\n")).toContain("✓ uninstalled:");
-    expect(h.io.stdout.join("\n")).toContain(`kept: ${CONFIG}/.env and the checkout`);
+    expect(h.io.stdout.join("\n")).toContain(`kept: ${join(CONFIG, ".env")} and the checkout`);
   });
 
   test("on launchd: the plist goes, then `enable` clears the disable record a reinstall would inherit", () => {

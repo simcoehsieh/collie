@@ -45,6 +45,11 @@ describe("coerceDashPrefs", () => {
       changesLayout: "list",
       beltScale: 1.15,
       dashView: "panes",
+      showToolCalls: false,
+      showCompactions: false,
+      paneOrder: "place",
+      chatExperiment: false,
+      paneView: "chat",
     });
   });
 
@@ -65,6 +70,10 @@ describe("coerceDashPrefs", () => {
         changesLayout: "tree",
         beltScale: 1.5,
         dashView: "changes",
+        showToolCalls: true,
+        paneOrder: "activity",
+        chatExperiment: true,
+        paneView: "terminal",
       }),
     ).toEqual({
       spacesOpen: false,
@@ -81,6 +90,11 @@ describe("coerceDashPrefs", () => {
       changesLayout: "tree",
       beltScale: 1.5,
       dashView: "changes",
+      showToolCalls: true,
+      showCompactions: false,
+      paneOrder: "activity",
+      chatExperiment: true,
+      paneView: "terminal",
     });
   });
 
@@ -155,6 +169,11 @@ describe("coerceDashPrefs", () => {
       changesLayout: "list",
       beltScale: 1.15,
       dashView: "panes",
+      showToolCalls: false,
+      showCompactions: false,
+      paneOrder: "place",
+      chatExperiment: false,
+      paneView: "chat",
     });
     // FORK: toMatchObject, not toEqual — this fork's DashPrefs carries fields upstream's does not
     // (the new-tab launcher, low power, the quota fold). What the case pins is unchanged: the rest of
@@ -189,6 +208,11 @@ describe("useDashPrefs", () => {
       changesLayout: "list",
       beltScale: 1.15,
       dashView: "panes",
+      showToolCalls: false,
+      showCompactions: false,
+      paneOrder: "place",
+      chatExperiment: false,
+      paneView: "chat",
     });
   });
 
@@ -210,6 +234,10 @@ describe("useDashPrefs", () => {
     act(() => first.result.current.setChangesLayout("tree"));
     act(() => first.result.current.setBeltScale(1.3));
     act(() => first.result.current.setDashView("focus"));
+    act(() => first.result.current.setShowToolCalls(true));
+    act(() => first.result.current.setPaneOrder("activity"));
+    act(() => first.result.current.setChatExperiment(true));
+    act(() => first.result.current.setPaneView("terminal"));
 
     // A remount AND a fresh page (the store re-reads storage) both see the same values.
     __resetDashPrefs();
@@ -229,6 +257,11 @@ describe("useDashPrefs", () => {
       changesLayout: "tree",
       beltScale: 1.3,
       dashView: "focus",
+      showToolCalls: true,
+      showCompactions: false,
+      paneOrder: "activity",
+      chatExperiment: true,
+      paneView: "terminal",
     });
   });
 

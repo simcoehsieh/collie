@@ -64,7 +64,9 @@ const FIXTURES = join(import.meta.dir, "fixtures", "solo-baseline");
 const REGEN = process.env.COLLIE_REGEN_SOLO_BASELINE === "1";
 
 function golden(name: string): string {
-  return readFileSync(join(FIXTURES, name), "utf8");
+  // A Windows checkout may turn the committed LF into CRLF (core.autocrlf); the bytes the code
+  // produces are LF, so the fixture is read as the LF text that was committed.
+  return readFileSync(join(FIXTURES, name), "utf8").replace(/\r\n/g, "\n");
 }
 
 /** Compare against a committed golden, or rewrite it under COLLIE_REGEN_SOLO_BASELINE=1. */
@@ -625,7 +627,9 @@ describe("solo zero-tax — routes", () => {
       // journal named the file (CREW_PROTOCOL.md §9.1).
       "/^\\/api\\/blobs\\/([^/]+)$/",
       // `changes` is the Changes view (ADR 0065): read-only git over the pane's folder, read-gated
-      // like `history` beside it and forwarded to the member that owns the pane.
+      // like `history` beside it and forwarded to the member that owns the pane. `chat` is the live
+      // half of `history` (journal/live.ts): the same log, asked "anything after this?" — a read, on
+      // the poll path, forwarded to the owning member and taxing a solo instance with nothing.
       // `diff` is the fork's read-only "what did the agent change" view (bridge/diff.ts): three
       // read-only git subcommands against the pane's own cwd, read-gated like `history`, and it
       // is named here for the reason every other action is — a route arrives on purpose.
@@ -637,8 +641,9 @@ describe("solo zero-tax — routes", () => {
       // grows two actions rather than the app growing a route, because a shot is taken FOR a pane
       // and its answer is drafted INTO that pane's composer. Being in this regex is also what keeps
       // them session-scoped and write-gated through the block every other pane action rides — see
-      // the `caller.resolve()` count in server.test.ts, which did not move.
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|changes|focus|diff|file|shot|probe|handoff))?$/",
+      // the `caller.resolve()` count in server.test.ts, which did not move. `handoff` and `model`
+      // are fork writes on the same block (bridge/handoff.ts, bridge/codex-model.ts).
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|focus|diff|file|shot|probe|handoff|model))?$/",
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
       // The Changes view asked by workspace (ADR 0065): the same read as the pane route's `changes`,
       // read-gated and forwarded with `?host=` to the member that owns the space.
@@ -1206,7 +1211,7 @@ describe("solo zero-tax — notifications", () => {
     expect(src).toContain("if (msg.session !== undefined) data.session = msg.session;");
     expect(src).toContain("if (msg.host !== undefined) data.host = msg.host;");
     // Never stamped unconditionally: an unguarded assignment is what would change the solo payload.
-    const stamps = src.split("\n").filter((l) => l.includes("data.host"));
+    const stamps = src.split(/\r?\n/).filter((l) => l.includes("data.host"));
     expect(stamps).toEqual(["    if (msg.host !== undefined) data.host = msg.host;"]);
   });
 
@@ -1216,10 +1221,25 @@ describe("solo zero-tax — notifications", () => {
     const { makeNotifySink } = await import("./notifications.ts");
     const sent: PushMessage[] = [];
     const sink = makeNotifySink({ send: (m: PushMessage) => sent.push(m) }, { isMuted: () => false }, "collie:herd");
-    sink.render({ title: "claude needs you", body: "demo · /home/you", paneId: "p1", renotify: true });
+    sink.render({
+      title: "claude needs you",
+      titleCode: "agent.blocked",
+      titleDetail: { agent: "claude" },
+      body: "demo · /home/you",
+      paneId: "p1",
+      renotify: true,
+    });
     sink.clear();
     expect(sent).toEqual([
-      { title: "claude needs you", body: "demo · /home/you", tag: "collie:herd", paneId: "p1", renotify: true },
+      {
+        title: "claude needs you",
+        titleCode: "agent.blocked",
+        titleDetail: { agent: "claude" },
+        body: "demo · /home/you",
+        tag: "collie:herd",
+        paneId: "p1",
+        renotify: true,
+      },
       // FORK: `badge: 0` on a clear — the icon's dot goes with the notification (app-badge).
       { type: "clear", tag: "collie:herd", badge: 0 },
     ]);

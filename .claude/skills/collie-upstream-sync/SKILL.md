@@ -243,7 +243,7 @@ cd web && bun run vitest run src/lib/push-decision.test.ts src/lib/  # the areas
 `CLAUDE.md` is explicit that the root typecheck does not cover `web/`'s test files and that the gap
 has shipped a broken tip once.
 
-**The suite is GREEN on this fork — 181 files, 5067 tests, zero failures.** It was not: jsdom 29
+**The suite is GREEN on this fork — 363 files, 15292 tests at 1.15.3, zero failures.** It was not: jsdom 29
 never wires up `globalThis.localStorage`, and 133 tests across 18 files failed on it, which meant a
 persistence regression was untestable here and a real new failure had to be found inside a wall of
 expected ones. `web/src/test/setup.ts` now installs a Map-backed Storage (see its own header for the

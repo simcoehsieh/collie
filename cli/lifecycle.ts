@@ -6,7 +6,8 @@ import { EXIT, type Io } from "./io.ts";
 import { ensureMuxChosen } from "./mux.ts";
 import type { StatusView, Ui } from "./render.ts";
 import { cmdUnserve, crewModeOnDisk, type ServeDeps } from "./serve.ts";
-import type { Exec, Files } from "./sys.ts";
+import { type Exec, type Files, PROCESS_QUERY_SLOW_START_MS } from "./sys.ts";
+import { healthTimeoutMs } from "./update-run.ts";
 import {
   bridgeUrl,
   configuredPublicUrl,
@@ -121,7 +122,7 @@ export function systemdUserReachable(exec: Exec, env: Environment = {}): boolean
 /**
  * Which supervisor runs the bridge. {@link systemdUserReachable} is the gate, because a container
  * or a machine with no user instance has the binary and no bus (the pre-shim collie-ctl.sh).
- * launchd is gated on Darwin too: the `gui/<uid>` domain is Darwin-only.
+ * launchd is gated on Darwin too: its GUI and background user domains are Darwin-only.
  *
  * `COLLIE_SUPERVISOR` pins the answer. The shell had no such knob because its tests could redefine
  * `have_launchd` in a heredoc; a compiled binary cannot be monkey-patched, so without this the
@@ -220,12 +221,95 @@ export function stopPidfileProcess(deps: LifecycleDeps): void {
     const pid = Number(text);
     if (pid > 1) {
       const command = deps.exec.processCommand(pid);
-      if (command !== null && isOurBridge(command, collieBinary(deps.ctx.root), deps.ctx.instance)) {
+      if (command !== null && isOurBridge(command, collieBinary(deps.ctx.root, deps.platform), deps.ctx.instance)) {
         deps.exec.kill(pid);
       }
     }
   }
   deps.files.remove(pidFile);
+}
+
+// ── Windows: the community supervisor's bridge ───────────────────────────────
+
+/**
+ * The record `contrib/windows/collie-ctl.ps1` keeps for the bridge it supervises from Task
+ * Scheduler: `<launcher pid>|<bridge pid>`, with `0` for the bridge while its loop is between two
+ * launches. Nothing in `cli/` writes it; it is read here only so a restart can find that bridge.
+ */
+export const windowsProcessRecordPath = (configDir: string): string =>
+  join(configDir, "collie-processes");
+
+/** Windows paths compare without regard to case or separator, as the OS resolves them. */
+const windowsPathKey = (s: string): string => s.replaceAll("\\", "/").toLowerCase();
+
+/**
+ * Restart the bridge `contrib/windows/collie-ctl.ps1` supervises, by stopping the bridge process
+ * ALONE. That script's loop relaunches a bridge that exits non-zero, from this checkout, so the
+ * restart needs nothing else. Stopping the `herdr.collie` task instead could take the processes it
+ * started with it, and the phone's Update button runs `collie update` as a detached child of the
+ * bridge: the update would end half way through its own restart, the failure #213 fixed on macOS.
+ *
+ * The kill is justified the way the script's own `Stop-RecordedCollieProcesses` justifies it: the
+ * recorded pid must still be a process running this checkout's `bridge/index.ts`, because pids are
+ * recycled and the record outlives its process.
+ *
+ * Returns `null` off Windows, or when there is no record — the caller keeps the path it had, so a
+ * host without the community lifecycle behaves exactly as before.
+ */
+export async function restartWindowsSupervised(deps: LifecycleDeps): Promise<number | null> {
+  if (deps.platform !== "win32") return null;
+  const raw = deps.files.read(windowsProcessRecordPath(deps.ctx.configDir));
+  if (raw === null) return null;
+
+  const record = /^(\d+)\|(\d+)$/.exec(raw.trim());
+  if (record === null) {
+    deps.io.err(`error: unreadable bridge record in ${windowsProcessRecordPath(deps.ctx.configDir)}: ${raw.trim()}`);
+    deps.io.err("       restart it with contrib\\windows\\collie-ctl.ps1 restart");
+    return EXIT.FAIL;
+  }
+
+  const bridgePid = Number(record[2]);
+  if (bridgePid > 1) {
+    const command = deps.exec.processCommand(bridgePid, PROCESS_QUERY_SLOW_START_MS);
+    const script = join(deps.ctx.root, "bridge", "index.ts");
+    if (command === null || !windowsPathKey(command).includes(windowsPathKey(script))) {
+      deps.io.err(`error: the recorded bridge (pid ${bridgePid}) is not this checkout's bridge — not stopping it`);
+      deps.io.err("       restart it with contrib\\windows\\collie-ctl.ps1 restart");
+      return EXIT.FAIL;
+    }
+    deps.exec.kill(bridgePid);
+    deps.io.out(`bridge stopped (pid ${bridgePid}); the Task Scheduler supervisor relaunches it`);
+  } else {
+    // `0` is the loop between two launches: the next one already reads this checkout.
+    deps.io.out("the Task Scheduler supervisor is already relaunching the bridge");
+  }
+
+  // The loop waits a few seconds before it relaunches, and the bridge then has to come up. Say
+  // whether it did, rather than printing a banner over a bridge that is still starting.
+  // The update health gate's own budget, so a slow machine that raised `COLLIE_UPDATE_HEALTH_TIMEOUT_MS`
+  // is waited for here too, and both call the same silence a failure.
+  const waitS = Math.max(1, Math.ceil(healthTimeoutMs(deps.ctx.env) / 1000));
+  let answered = false;
+  for (let attempt = 0; attempt < waitS && !answered; attempt++) {
+    try {
+      answered = await deps.ready(deps.ctx.port, dialableBridgeHost(deps.ctx.env));
+    } catch {
+      answered = false; // a probe that throws is a bridge that did not answer, not a crashed restart
+    }
+    if (!answered) await deps.sleep(1000);
+  }
+  await printStatusBanner(deps);
+  if (answered) return EXIT.OK;
+  // A FAILURE, because this tier waited and saw no bridge, which the other tiers cannot know. The
+  // in-place update stops here instead of recording a `pass` and printing `✓ update complete` over a
+  // dead bridge. The detached runner does not read this code: it polls its own health gate and rolls
+  // back once whatever the restart returned (`driveApply` in `cli/update-run.ts`).
+  deps.io.err(
+    `error: Collie did not answer on ${localBridgeHostPort(deps.ctx.env, deps.ctx.port)} within ${waitS}s; it may still be starting`,
+  );
+  deps.io.err("       wait a minute, then run `collie status`. If it stays down, read why with:");
+  deps.io.err("       powershell -File contrib\\windows\\collie-ctl.ps1 logs");
+  return EXIT.FAIL;
 }
 
 // ── Writing the service definition ───────────────────────────────────────────
@@ -236,7 +320,7 @@ export function stopPidfileProcess(deps: LifecycleDeps): void {
  * contract: say so, and exit non-zero, rather than installing a unit that can never start.
  */
 function requireBinary(deps: LifecycleDeps): boolean {
-  const binary = collieBinary(deps.ctx.root);
+  const binary = collieBinary(deps.ctx.root, deps.platform);
   if (deps.files.exists(binary)) return true;
   deps.io.err(`error: no collie binary at ${binary} — build one with \`bun run build:cli\``);
   return false;
@@ -284,7 +368,7 @@ export function resolveTailscaleHosts(deps: LifecycleDeps): string {
 
 export function writeUnit(deps: LifecycleDeps): boolean {
   if (!requireBinary(deps)) return false;
-  const spec = serviceSpec(deps.ctx, resolveTailscaleHosts(deps));
+  const spec = serviceSpec(deps.ctx, resolveTailscaleHosts(deps), deps.platform);
   deps.files.mkdirp(deps.ctx.configDir);
   deps.files.write(unitFilePath(deps.ctx.home, deps.ctx.instance), systemdUnit(spec));
   deps.exec.capture("systemctl", ["--user", "daemon-reload"]);
@@ -293,7 +377,7 @@ export function writeUnit(deps: LifecycleDeps): boolean {
 
 export function writeAgent(deps: LifecycleDeps): boolean {
   if (!requireBinary(deps)) return false;
-  const spec = serviceSpec(deps.ctx, resolveTailscaleHosts(deps));
+  const spec = serviceSpec(deps.ctx, resolveTailscaleHosts(deps), deps.platform);
   deps.files.mkdirp(deps.ctx.configDir);
   deps.files.write(
     agentFilePath(deps.ctx.home, deps.ctx.instance),
@@ -313,7 +397,7 @@ export function writeAgent(deps: LifecycleDeps): boolean {
  */
 export function startUnsupervised(deps: LifecycleDeps): number {
   if (!requireBinary(deps)) return EXIT.FAIL;
-  const spec = serviceSpec(deps.ctx, resolveTailscaleHosts(deps));
+  const spec = serviceSpec(deps.ctx, resolveTailscaleHosts(deps), deps.platform);
   deps.files.mkdirp(deps.ctx.configDir);
   const pid = deps.exec.spawnDetached(bridgeCommand(spec), {
     cwd: deps.ctx.root,
@@ -484,6 +568,12 @@ export async function cmdRestart(deps: LifecycleDeps): Promise<number> {
   const chosen = await ensureMuxChosen(deps);
   if (chosen !== EXIT.OK) return chosen;
 
+  // Windows has no tier here: its supervisor is `contrib/windows/collie-ctl.ps1`, and `stop`/`start`
+  // on the unsupervised tier would neither find its bridge nor leave it alone — they would start a
+  // second one beside it. When that supervisor's record is present, restart its bridge instead.
+  const windows = await restartWindowsSupervised(deps);
+  if (windows !== null) return windows;
+
   const stopped = cmdStop(deps);
   if (stopped !== EXIT.OK) return stopped;
   return cmdStart(deps);
@@ -553,7 +643,7 @@ export function cmdLogs(deps: LifecycleDeps, args: readonly string[]): number {
 export async function cmdExecBridge(deps: LifecycleDeps): Promise<number> {
   // Discovered here as well as at write time: an unsupervised or hand-written unit carries no baked
   // allowlist, and a MagicDNS name can change under a unit that was written months ago.
-  const spec = serviceSpec(deps.ctx, resolveTailscaleHosts(deps));
+  const spec = serviceSpec(deps.ctx, resolveTailscaleHosts(deps), deps.platform);
   const env = { ...stringEnv(deps.ctx.env), ...bridgeEnvironment(spec) };
   for (const [k, v] of Object.entries(env)) process.env[k] = v;
   await import("../bridge/index.ts");
@@ -561,6 +651,24 @@ export async function cmdExecBridge(deps: LifecycleDeps): Promise<number> {
 }
 
 // ── The banner ───────────────────────────────────────────────────────────────
+
+/** Discover both domains without adopting an agent another service manager owns. */
+function launchdServiceDescriptions(deps: LifecycleDeps): string[] {
+  const uid = deps.uid();
+  const label = agentLabel(deps.ctx.instance);
+  const descriptions: string[] = [];
+  for (const domain of ["gui", "user"]) {
+    const target = `${domain}/${uid}/${label}`;
+    const result = deps.exec.capture("launchctl", ["print", target]);
+    if (!result.found || result.code !== 0 || result.stdout.trim() === "") continue;
+    // A loaded-but-stopped agent has no pid line. Report both registrations if both exist,
+    // rather than hiding a background service behind a stopped GUI agent after a migration.
+    const pid = /^[ \t]*pid = (\d+)/m.exec(result.stdout)?.[1];
+    const state = pid === undefined ? "loaded, not running" : `active (pid ${pid})`;
+    descriptions.push(`launchd (${target}) · ${state}`);
+  }
+  return descriptions;
+}
 
 /** How the bridge is supervised right now, as the banner's `service` line says it. */
 export function serviceDescription(deps: LifecycleDeps): string {
@@ -573,21 +681,11 @@ export function serviceDescription(deps: LifecycleDeps): string {
   }
   const pid = deps.files.read(pidFilePath(deps.ctx.configDir, deps.ctx.instance))?.trim();
   if (tier === "launchd") {
-    // `launchctl print` fails when the label isn't loaded; a loaded-but-stopped job has no pid line.
-    const label = agentLabel(deps.ctx.instance);
-    const r = deps.exec.capture("launchctl", ["print", launchdTarget(deps.uid(), deps.ctx.instance)]);
-    const out = r.found && r.code === 0 ? r.stdout : "";
-    if (out.trim() === "") {
-      // No agent — but this Mac may be on the unsupervised fallback (bootstrap refused, e.g. no
-      // console login), where a bridge really is running and only supervision is missing. Reporting
-      // a bare "not loaded" there would read as "nothing is up" while the phone is being served.
-      if (pid !== undefined) return `pid ${pid} (unsupervised — launchd bootstrap refused)`;
-      return `launchd (${label}) · not loaded`;
-    }
-    const running = /^[ \t]*pid = (\d+)/m.exec(out)?.[1];
-    return running !== undefined
-      ? `launchd (${label}) · active (pid ${running})`
-      : `launchd (${label}) · loaded, not running`;
+    const descriptions = launchdServiceDescriptions(deps);
+    if (descriptions.length > 0) return descriptions.join("; ");
+    // Neither domain has the agent, but the unsupervised fallback may still be serving.
+    if (pid !== undefined) return `pid ${pid} (unsupervised — launchd bootstrap refused)`;
+    return `launchd (${agentLabel(deps.ctx.instance)}) · not loaded`;
   }
   return pid !== undefined ? `pid ${pid} (unsupervised)` : "not supervised";
 }

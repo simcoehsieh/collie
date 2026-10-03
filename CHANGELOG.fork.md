@@ -11,6 +11,56 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.15.3
+
+Merged upstream v1.15.3 (2026-10-02, with v1.14.2, v1.15.0, v1.15.1 and v1.15.2 under it) — 119
+commits, 43 conflicted files. What it brings that matters here: **a working Claude pane keeps its
+composer** (Claude Code's own `esc to interrupt` / `↓ to manage` footer read as a modal's key hints,
+so every busy Claude pane showed the unread-dialog card and refused sends), **a Codex pane on `/goal`
+keeps its input box**, a two-pane Claude workflow box pans instead of losing its right half, Copy
+output in the pane menu, push titles in the device's language, Settings as an index of sections, the
+pane switcher's Activity / Cache orders, and History with tool calls and compaction recaps folded by
+default.
+
+### Dropped, because upstream superseded it
+
+- **`rounded-sm` on the inline code chip** (`components/markdown-text.tsx`). Upstream's blue code chip
+  (1.15.0) is `rounded-sm` itself, so the fork's one-word change had nothing left to change.
+  Operator's call, 2026-10-03.
+
+### Not taken
+
+- **Upstream's boot splash** (the collie mark as two SVGs). The fork's cat splash already fixed the
+  same mismatch; `index.html` keeps the cat mask. `public/collie-mark-header-{light,dark}.svg` ship
+  unused.
+- **The ⚙ Display item on the belt** (1.15.0). The belt's no-pins shape keeps it off; Display opens
+  from ⋮ → Display settings, which now opens upstream's Display sheet.
+
+### Re-applied on top of upstream's new structure
+
+- **Settings rows** onto the four-section index: Low power under Device, the per-pane notification
+  rules (`panes`) under Alerts, the switch-shaped skeleton in `push-control.tsx`; the first-run row
+  stays out of Device (the first-run standing shape). `routes/settings.test.tsx` renders the Device
+  section now — on the index it had become vacuous.
+- **The journal's `todo` part and its result-swallow sets** inside upstream's per-row reducers
+  (`journal/claude.ts`, `codex.ts`).
+- **The fork's chat mode beside upstream's Chat experiment.** With Settings → Experiments → Chat on
+  and chosen, upstream's body owns the pane and the fork's transcript and view toggle stand aside;
+  otherwise nothing changes. Upstream's Tool calls default (off) also folds steps in the fork's
+  transcript, because both render through `TranscriptView`.
+- **`agent-start.tsx`** draws `MeowMark`, and finds the header mark by the fork's `data-slot="header-mark"`.
+
+### Fixed in the merge
+
+- A done push whose title the fork had replaced with the agent's own line kept upstream's
+  `titleCode`, so the service worker would have put "claude is done" back over it in the device's
+  language. The swap now drops the code (`bridge/notifications.ts`, pinned).
+- The service worker reads the push title templates in the same `Promise.all` as the two
+  visibility reads, so the iOS deadline still covers one round trip.
+- Red on the fork before this merge, green now: `ack-manifest` had no entry for `codexModel`;
+  `shot.test.ts` pinned the pane-route regex as a substring (now pins the intent);
+  `solo-baseline` was missing the `model` route.
+
 ## On top of 1.14.1
 
 Merged upstream v1.14.1 (2026-09-27, with v1.14.0 under it) — 57 commits, 33 conflicted files. What
