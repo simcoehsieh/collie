@@ -9,6 +9,7 @@ import {
   drainSendQueue,
   enqueueSend,
   installSendQueueDrain,
+  keepFailedSend,
   QUEUE_ITEM_BYTES,
   QUEUE_MAX_ITEMS,
   QUEUE_TTL_MS,
@@ -65,6 +66,17 @@ describe("classifySendFailure", () => {
 });
 
 describe("the store", () => {
+  it("distinguishes legacy translated delivery warnings from a persisted pane refusal", () => {
+    enqueueSend({ paneId: "w1:p1", text: "delivery", kind: "message", agent: null, possiblyDelivered: true });
+    enqueueSend({ paneId: "w1:p1", text: "refusal", kind: "message", agent: null, possiblyDelivered: true });
+    const legacy = queuedForPane(undefined, "w1:p1").map((row, index) => Object.assign({}, row, {
+      holdKind: undefined, held: index === 0 ? "可能已送出，請先看畫面" : "The pane is showing a dialog",
+    }));
+    __resetSendQueue();
+    localStorage.setItem("collie:send-queue:v1", JSON.stringify(legacy));
+    expect(queuedForPane(undefined, "w1:p1").map((row) => row.holdKind)).toEqual(["delivery", "refused"]);
+  });
+
   it("persists an uncertain delivery as a hold across reloads", () => {
     enqueueSend({ paneId: "w1:p1", text: "may have landed", kind: "message", agent: null, possiblyDelivered: true });
     const raw = localStorage.getItem("collie:send-queue:v1");
@@ -140,6 +152,37 @@ describe("the store", () => {
     enqueueSend({ paneId: "w1:p1", text: "b", kind: "message", agent: null });
     discardSend(a.id);
     expect(queuedForPane(undefined, "w1:p1").map((r) => r.text)).toEqual(["b"]);
+  });
+});
+
+describe("the shared guarded-send failure policy", () => {
+  const args = { paneId: "w1:p1", text: "retained words", kind: "message", agent: null } as const;
+  it("retains a known-unsent link failure and reports that it is queued", () => {
+    const kept = keepFailedSend({ status: "error", transport: "auth", error: "Sign in" }, args);
+    expect(kept).toMatchObject({ text: args.text, possiblyDelivered: false });
+    expect(kept?.held).toBeUndefined();
+    expect(statusSpy.last).toBe("Couldn't reach Collie — kept, to send when it's back.");
+  });
+  it("warns about uncertain delivery even when the words exceed the queue limit", () => {
+    const kept = keepFailedSend({ status: "error", transport: "network", error: "Failed to fetch", possiblyDelivered: true },
+      { ...args, text: "x".repeat(QUEUE_ITEM_BYTES + 1) });
+    expect(kept).toBeNull();
+    expect(queuedForPane(undefined, args.paneId)).toEqual([]);
+    expect(statusSpy.last).toBe("May already have been sent; check the pane first");
+  });
+  it.each([
+    { status: "blocked", error: "Dialog open" },
+    { status: "stalled", error: "No echo" },
+    { status: "error", transport: "network", textDelivered: true, error: "Submit failed" },
+  ] satisfies Exclude<ReplyOutcome, { status: "sent" }>[])("does not enqueue a pane refusal or known typing: %j", (outcome) => {
+    expect(keepFailedSend(outcome, args)).toBeNull();
+    expect(queuedForPane(undefined, args.paneId)).toEqual([]);
+    expect(statusSpy.last).toBe(outcome.error);
+  });
+  it("respects a caller's password-prompt restriction", () => {
+    expect(keepFailedSend({ status: "error", transport: "network", error: "Link lost" }, args, false)).toBeNull();
+    expect(queuedForPane(undefined, args.paneId)).toEqual([]);
+    expect(statusSpy.last).toBe("Link lost");
   });
 });
 

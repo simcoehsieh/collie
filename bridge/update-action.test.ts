@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MAINTAINER_PREFLIGHT } from "../fork/test/maintainer-preflight.ts";
 
 import {
   firstRed,
@@ -27,7 +28,7 @@ import {
   updateStartCommand,
   type UpdateRunnerSpawn,
   type UpdateRunnerSpawnOptions,
-  updateStartVerdict,
+  updateStartVerdict as deploymentUpdateStartVerdict,
   type CrewUpdateRow,
   type PreflightCheck,
   type PreflightReport,
@@ -50,6 +51,11 @@ const REPORT = (verdict: "green" | "amber" | "red", checks: PreflightReport["che
 });
 
 const GREEN = REPORT("green", [{ id: "disk", verdict: "green", reason: "4.2 GB free" }]);
+
+// Upstream's decision cases deliberately exercise a self-managed deployment. The fork gate
+// below calls the production default instead, so a healthy six-check report cannot bypass it.
+const updateStartVerdict = (req: UpdateStartRequest, state: UpdateStartState) =>
+  deploymentUpdateStartVerdict(req, state, { maintainerManaged: false });
 
 const runAt = (state: UpdateRunState): UpdateRun => ({
   schema: 1,
@@ -79,6 +85,19 @@ const ask = (over: JsonObject = {}): UpdateStartRequest => {
   // null for exactly one input — a body that is not an object.
   return parsed as UpdateStartRequest;
 };
+
+describe("maintainer-managed POST /api/update", () => {
+  test.each([{}, { major: true, target: "2.0.0" }, { maintainerManaged: false }])(
+    "refuses a confirmed self-update even with a healthy complete preflight: %j", (body) => {
+      const verdict = deploymentUpdateStartVerdict(ask(body), state({
+        preflight: MAINTAINER_PREFLIGHT, installKind: "linked-clone", majorAvailable: "2.0.0",
+      }));
+      expect(verdict).toEqual({ kind: "refuse", status: 409, body: {
+        code: "update.maintainer_managed", error: "this installation is updated by maintainer merges",
+      } });
+    },
+  );
+});
 
 describe("the update preflight report, as the bridge reads it", () => {
   test("a schema-1 report parses to its verdict and checks", () => {

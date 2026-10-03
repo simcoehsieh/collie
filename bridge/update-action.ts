@@ -1,5 +1,6 @@
 import { closeSync, existsSync, openSync, renameSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { FORK_UPDATE_POLICY, type UpdatePolicy } from "../fork/update-policy.ts";
 
 import type { JsonObject, JsonValue } from "./json.ts";
 import type { UpdateStatus } from "./types.ts";
@@ -814,7 +815,11 @@ export interface UpdateStartState {
  *  5. **The target the operator read.** A stale card must not consent to a version nobody read
  *     about, so a target that no longer matches what this collie would install is refused.
  */
-export function updateStartVerdict(req: UpdateStartRequest, state: UpdateStartState): UpdateStartVerdict {
+export function updateStartVerdict(
+  req: UpdateStartRequest,
+  state: UpdateStartState,
+  policy: Pick<UpdatePolicy, "maintainerManaged"> = FORK_UPDATE_POLICY,
+): UpdateStartVerdict {
   if (!req.confirm) return refuse(400, "update.confirm_required");
 
   const running = state.run !== null && inFlight(state.run.state);
@@ -862,6 +867,9 @@ export function updateStartVerdict(req: UpdateStartRequest, state: UpdateStartSt
   // `collie update` whose only possible outcome is the refusal, recorded as a failed update on a
   // perfectly healthy machine.
   if (state.installKind === "packaged") return refuse(409, "update.packaged");
+  // The server uses the deployment policy, never a field in the client's body. A healthy fork
+  // report must not let an old bundle mint a failed self-update run. Restart remains independent.
+  if (policy.maintainerManaged) return refuse(409, "update.maintainer_managed");
 
   if (state.preflight === null) return refuse(503, "update.preflight_unavailable");
   const red = firstRed(state.preflight);

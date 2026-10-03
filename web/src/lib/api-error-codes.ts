@@ -117,6 +117,7 @@ export const API_ERROR_CODES = [
   "update.none_available",
   "update.peers_packaged",
   "update.packaged",
+  "update.maintainer_managed",
   "update.start_failed",
 ] as const;
 

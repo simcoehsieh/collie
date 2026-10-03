@@ -16,6 +16,14 @@ export const forkEn = {
   "fork.queue.showFull": "Show full message",
   "fork.queue.hideFull": "Collapse message",
   "fork.queue.fullText": "Full message",
+  "fork.queue.title": "Saved messages",
+  "fork.queue.sendAgain": "Send again",
+  "fork.queue.showFullFor": "Show full message {number}: {preview}",
+  "fork.queue.hideFullFor": "Collapse message {number}: {preview}",
+  "fork.queue.fullTextFor": "Full message {number}: {preview}",
+  "fork.queue.sendNowFor": "Send now, message {number}: {preview}",
+  "fork.queue.sendAgainFor": "Send again, message {number}: {preview}",
+  "fork.queue.discardFor": "Discard message {number}: {preview}",
 } as const;
 
 export type ForkMessageKey = keyof typeof forkEn;
@@ -37,4 +45,12 @@ export const forkZhTW = {
   "fork.queue.showFull": "展開完整訊息",
   "fork.queue.hideFull": "收合訊息",
   "fork.queue.fullText": "完整訊息",
+  "fork.queue.title": "保留的訊息",
+  "fork.queue.sendAgain": "再送一次",
+  "fork.queue.showFullFor": "展開完整訊息 {number}：{preview}",
+  "fork.queue.hideFullFor": "收合訊息 {number}：{preview}",
+  "fork.queue.fullTextFor": "完整訊息 {number}：{preview}",
+  "fork.queue.sendNowFor": "立即送出訊息 {number}：{preview}",
+  "fork.queue.sendAgainFor": "再送一次訊息 {number}：{preview}",
+  "fork.queue.discardFor": "丟棄訊息 {number}：{preview}",
 } satisfies ForkDictionary;

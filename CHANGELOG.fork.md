@@ -22,6 +22,25 @@ output in the pane menu, push titles in the device's language, Settings as an in
 pane switcher's Activity / Cache orders, and History with tool calls and compaction recaps folded by
 default.
 
+### Survey UI — X1–X4 (2026-10-03)
+
+- **A working Claude or Codex pane offers a deliberate interrupt.** With no draft or message to
+  recall, tap the square to arm a labelled destructive confirmation for two seconds, then tap again
+  to stop the turn. Switching panes, opening a modal or leaving disarms it; the existing stop-and-edit
+  action keeps its behavior. Both interrupt states retain the 44 px target.
+- **The tab strip's plus names the launcher it opens.** A pinned launcher adds its small agent mark
+  and label to the control; holding it shows the current target and explains that picking opens
+  and pins a row. A removed pin falls back to the plain shell.
+- **This fork explains that its maintainer merges upstream releases.** Updates link to release
+  notes and keep restart commands. Doctor and the complete preflight treat the expected fork source
+  as informational, and the server refuses self-updates under the shared policy. Other origin
+  problems, failed tag listings and updater failures remain visible.
+- **A lost send acknowledgement no longer triggers an automatic resend.** Composer and notes use
+  one failure policy: unknown delivery stays saved for review after reconnecting or reopening.
+  Expand a row to read its full text; its labelled 44 px Send again and Discard controls distinguish
+  rows, and a refused resend shows its reason beside the delivery warning. Known-unsent messages
+  continue draining in order.
+
 ### Dropped, because upstream superseded it
 
 - **`rounded-sm` on the inline code chip** (`components/markdown-text.tsx`). Upstream's blue code chip

@@ -15,6 +15,12 @@ beforeEach(() => {
 });
 
 describe("describeApiError", () => {
+  it("explains the maintainer refusal through the fork dictionary", async () => {
+    expect(describeApiError({ code: "update.maintainer_managed" })).toBe("This installation is updated by maintainer merges.");
+    setLocale("zh-TW");
+    await whenLocaleReady("zh-TW");
+    expect(describeApiError({ code: "update.maintainer_managed" })).toBe("此安裝由維護者合併更新。");
+  });
   it("translates a known code and fills its slots from detail", () => {
     expect(
       describeApiError({

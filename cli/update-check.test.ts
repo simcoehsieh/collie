@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { MAINTAINER_PREFLIGHT } from "../fork/test/maintainer-preflight.ts";
 
 import { CREW_PROTOCOL_VERSION } from "../bridge/crew/enrollment.ts";
 import { leadStore, member, peerStore } from "../bridge/crew/fixtures.ts";
@@ -25,7 +26,7 @@ import { EXIT } from "./io.ts";
 import { COMMANDS } from "./program.ts";
 import type { RemoteResult, RemoteRunner } from "./remote.ts";
 import type { Net } from "./sys.ts";
-import { unitFilePath } from "./unit.ts";
+import { agentFilePath, unitFilePath } from "./unit.ts";
 import {
   bunCheck,
   checkLine,
@@ -206,6 +207,38 @@ const record = (over: Partial<OpsRecord> = {}): OpsRecord => ({
 });
 
 describe("preflight — the healthy instance", () => {
+  test("the expected maintained fork produces the complete macOS report used by bridge and web", async () => {
+    const h = harness({ installed: "1.15.3", answers: [
+      [`${GIT} remote get-url origin`, { stdout: "git@github.com:simcoehsieh/collie.git\n" }],
+      ["systemctl --user show-environment", { code: 1 }],
+    ] });
+    h.files.entries.set(agentFilePath(HOME, null), { text: "<plist />" });
+    const report = await preflight({ ...h.deps, platform: "darwin" });
+    expect(report).toEqual(MAINTAINER_PREFLIGHT);
+    expect(h.exec.calls.find((c) => c.includes("ls-remote")))
+      .toBe(`${GIT} ls-remote --tags https::https://github.com/AltanS/collie.git`);
+    expect(h.files.ops).toEqual([]);
+  });
+
+  test("the maintained fork still reports a failed upstream tag listing", async () => {
+    const h = harness({ answers: [
+      [`${GIT} remote get-url origin`, { stdout: "https://github.com/simcoehsieh/collie.git\n" }],
+      [`${GIT} ls-remote --tags`, { code: 128, stderr: "fatal: Could not resolve host: github.com" }],
+    ] });
+    const report = await preflight(h.deps);
+    expect(report.checks.map((c) => c.id)).toEqual(["doctor", "disk", "bun", "tree", "upstream", "service"]);
+    expect(byId(report, "upstream")).toMatchObject({ verdict: "red", reason: expect.stringContaining("Could not resolve host") });
+    expect(byId(report, "upstream").remedy).toContain("network");
+  });
+
+  test("the expected fork does not bypass an explicitly different configured source", async () => {
+    const h = harness({ env: { COLLIE_UPDATE_REPO: "another/collie" }, answers: [
+      [`${GIT} remote get-url origin`, { stdout: "https://github.com/simcoehsieh/collie.git\n" }],
+    ] });
+    expect(byId(await preflight(h.deps), "upstream").verdict).toBe("red");
+    expect(h.exec.calls.some((c) => c.includes("ls-remote"))).toBe(false);
+  });
+
   test("every instance check is green and the report is green", async () => {
     const report = await preflight(harness().deps);
     expect(report.checks.map((c) => c.id)).toEqual(["doctor", "disk", "bun", "tree", "upstream", "service"]);

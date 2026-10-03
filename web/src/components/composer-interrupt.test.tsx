@@ -31,11 +31,14 @@ function rig(overrides: Partial<Props> = {}) {
 
 describe("Composer — deliberate interrupt without a recall", () => {
   let keys: string[][];
+  let keyTargets: string[];
   beforeEach(() => {
     clearStatus();
     keys = [];
+    keyTargets = [];
     server.use(http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
       keys.push((await request.json()).keys);
+      keyTargets.push(decodeURIComponent(new URL(request.url).pathname));
       return HttpResponse.json({ ok: true });
     }));
   });
@@ -48,6 +51,7 @@ describe("Composer — deliberate interrupt without a recall", () => {
     rig({ agent });
     fireEvent.click(screen.getByRole("button", { name: "Interrupt agent" }));
     expect(keys).toEqual([]);
+    expect(screen.getByRole("button", { name: "Tap again to interrupt" })).toHaveTextContent("Tap again to interrupt");
     fireEvent.click(screen.getByRole("button", { name: "Tap again to interrupt" }));
     await waitFor(() => expect(keys).toEqual([["Escape"]]));
     expect(screen.getByRole("textbox")).toHaveValue("");
@@ -79,13 +83,18 @@ describe("Composer — deliberate interrupt without a recall", () => {
   it.each([
     { paneId: "w1:p2" }, { scope: { host: "other" } }, { dialogPresent: true },
     { display: { open: true, onToggle: vi.fn() } }, { status: "idle" as const },
-  ])("disarms when the pane or interaction changes: %j", (next) => {
+  ])("disarms when the pane or interaction changes: %j", async (next) => {
     const view = rig();
     fireEvent.click(screen.getByRole("button", { name: "Interrupt agent" }));
     view.update(next);
     view.update({ dialogPresent: false, status: "working", display: { open: false, onToggle: vi.fn() } });
-    expect(screen.queryByRole("button", { name: "Tap again to interrupt" })).toBeNull();
+    // The second physical press after switching must only arm the new pane, never send Esc.
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /^(Interrupt agent|Tap again to interrupt)$/ })));
     expect(keys).toEqual([]);
+    expect(screen.getByRole("button", { name: "Tap again to interrupt" })).toHaveTextContent("Tap again to interrupt");
+    fireEvent.click(screen.getByRole("button", { name: "Tap again to interrupt" }));
+    await waitFor(() => expect(keys).toEqual([["Escape"]]));
+    expect(keyTargets).toEqual([`/api/pane/${"paneId" in next ? next.paneId : "w1:p1"}/keys`]);
   });
 
   it("disarms on a draft and does not rearm when the draft clears", () => {
