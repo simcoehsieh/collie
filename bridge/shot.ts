@@ -1,3 +1,4 @@
+import { commandRunnable, type CommandProbe } from "./command-paths.ts";
 import type { JsonValue } from "./json.ts";
 import { jsonNumberField, jsonRecord, jsonStringField } from "./stt/json.ts";
 import type { ProbeBox, ProbeResponse, ProbeStyles, ShotResponse, Viewport } from "./types.ts";
@@ -71,6 +72,17 @@ export interface ShotIo {
 export function parseShotCommand(command: string): string[] | null {
   const argv = command.trim().split(/\s+/u).filter((part) => part !== "");
   return argv.length === 0 ? null : argv;
+}
+
+/**
+ * FORK: what `/api/config` says about annotate-and-ask — `true` only while the configured command
+ * could start (bridge/command-paths.ts: its program resolves on the bridge's PATH, and every absolute
+ * path it names is on disk). Absent otherwise, never `false`: the field's own omit-when-off rule. A
+ * command left pointing at a retired checkout, or at a program the bridge's PATH cannot see, is a
+ * row the pane menu does not draw.
+ */
+export function shotCapability(argv: readonly string[] | null, probe?: CommandProbe): true | undefined {
+  return argv !== null && commandRunnable(argv, probe) ? true : undefined;
 }
 
 /** Spawn the argv with the standard hygiene: no stdin, a deadline, a byte cap, stderr dropped. */

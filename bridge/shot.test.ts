@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { JsonValue } from "./json.ts";
-import { isPaneReadAction } from "./server.ts";
+import { bridgeConfigBody, isPaneReadAction } from "./server.ts";
 import {
   SHOT_IMAGE_CAP,
   SHOT_OUTPUT_CAP,
@@ -12,6 +13,7 @@ import {
   normaliseProbe,
   parseShotCommand,
   redactSecrets,
+  shotCapability,
   shotDataUrl,
   shotImageMime,
   type ShotIo,
@@ -337,8 +339,8 @@ describe("the routes", () => {
     expect(src).toContain("const shotArgv = parseShotCommand(cfg.shotCommand);");
     expect(src).toContain("const shot = shotArgv === null ? null : new ShotRunner(shotArgv, cfg.shotHosts);");
     expect(src).toContain('if (shot === null) return text("no shot command", 404);');
-    // Advertised only while the files the command names are on disk (bridge/command-paths.ts).
-    expect(src).toContain("shot: shot !== null && shotArgv !== null && commandPathsPresent(shotArgv) ? true : undefined,");
+    // Advertised only while the command could start (`shotCapability`, asserted for real below).
+    expect(src).toContain("shot: shotCapability(shotArgv),");
     expect(src).toContain("if (opts.shot === true) wire.shot = true;");
   });
 
@@ -349,5 +351,64 @@ describe("the routes", () => {
     expect(start).toBeGreaterThan(0);
     const block = src.slice(start, src.indexOf("\n}", start));
     expect(block).not.toContain("${");
+  });
+});
+
+// ── The capability, as the phone reads it ────────────────────────────────────────────────────
+// From the operator's setting to the `/api/config` body, through the same three calls the handler
+// makes: `parseShotCommand(cfg.shotCommand)`, `shotCapability(shotArgv)`, `bridgeConfigBody`. The
+// handler itself lives in `Bun.serve` (its one line is pinned above); everything it computes is here.
+// Nothing is spawned — the program is created, looked up on PATH, and deleted.
+
+describe("/api/config — the shot capability", () => {
+  const configFor = (command: string) =>
+    bridgeConfigBody({
+      push: false,
+      vapidPublicKey: "",
+      build: "test",
+      mode: "solo",
+      shot: shotCapability(parseShotCommand(command)),
+    });
+
+  test("a program the bridge's PATH cannot find is not advertised", () => {
+    const body = configFor("collie-survey-missing-shot-executable-4");
+    expect("shot" in body).toBe(false);
+    expect(JSON.stringify(body)).not.toContain("shot");
+  });
+
+  test("nothing configured is nothing advertised", () => {
+    expect("shot" in configFor("")).toBe(false);
+  });
+
+  describe("with the program on the bridge's PATH", () => {
+    const program = "collie-shot-readiness-probe";
+
+    const withProgram = (run: (dir: string) => void): void => {
+      const dir = mkdtempSync(join(tmpdir(), "collie-shot-bin-"));
+      const saved = process.env.PATH;
+      try {
+        writeFileSync(join(dir, program), "#!/bin/sh\nexit 0\n");
+        chmodSync(join(dir, program), 0o755);
+        writeFileSync(join(dir, "main.py"), "print('shot')\n");
+        process.env.PATH = `${dir}:${saved ?? ""}`;
+        run(dir);
+      } finally {
+        if (saved === undefined) delete process.env.PATH;
+        else process.env.PATH = saved;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+
+    test("…and every file it names on disk, it is advertised", () => {
+      withProgram((dir) => {
+        expect(configFor(`${program} --script ${join(dir, "main.py")}`).shot).toBe(true);
+      });
+    });
+
+    test("…but a file it names gone, it is not", () => {
+      withProgram((dir) => {
+        expect("shot" in configFor(`${program} --script ${join(dir, "retired", "main.py")}`)).toBe(false);
+      });
+    });
   });
 });
