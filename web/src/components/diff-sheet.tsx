@@ -14,7 +14,7 @@ import * as api from "@/lib/api";
 import { isApiErrorStatus } from "@/lib/api";
 import { buzz } from "@/lib/haptics";
 import { t } from "@/lib/i18n";
-import { tf } from "@/lib/i18n/fork-messages";
+import { tf } from "@/lib/i18n/fork-strings";
 import { anchorKey, type Note, type NoteAnchor } from "@/lib/notes";
 import type { Scope } from "@/lib/scope";
 import { shortenHome } from "@/lib/shorten-home";

@@ -6,7 +6,7 @@ import { Collapse } from "@/components/ui/collapse";
 import type { EchoPhase } from "@/hooks/use-action-echo";
 import * as api from "@/lib/api";
 import { t as translate } from "@/lib/i18n";
-import { tf } from "@/lib/i18n/fork-messages";
+import { tf } from "@/lib/i18n/fork-strings";
 import { modelLabel, type ModelFacts } from "@/lib/model-label";
 import { scopeKey, type Scope } from "@/lib/scope";
 import type { CodexHandoffModel } from "@/lib/types";

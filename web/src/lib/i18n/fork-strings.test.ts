@@ -1,5 +1,5 @@
 import { __resetLocale, setLocale } from "./index";
-import { FORK_MESSAGE_KEYS, FORK_MESSAGE_LOCALES, forkTable, tf } from "./fork-messages";
+import { FORK_MESSAGE_KEYS, FORK_MESSAGE_LOCALES, forkTable, tf } from "./fork-strings";
 
 // The fork's own string layer. What is pinned is what would fail quietly: a table that drifted
 // short of English, a locale with no table that must still answer, and a slot that must fill.
@@ -9,7 +9,7 @@ beforeEach(() => {
   __resetLocale();
 });
 
-describe("fork-messages", () => {
+describe("fork-strings", () => {
   it("answers in English by default", () => {
     expect(tf("paneActions.more")).toBe("More");
   });
