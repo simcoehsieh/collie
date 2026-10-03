@@ -6,6 +6,7 @@ import { ROOT_ROUTE_ID, type HomeData } from "@/lib/loaders";
 import { __resetUpdateRunStore } from "@/lib/update-run-store";
 import { __resetLocale, setLocale, whenLocaleReady } from "@/lib/i18n";
 import type { PreflightReport, UpdateInfo, UpdateRun } from "@/lib/types";
+import { MAINTAINER_PREFLIGHT } from "../../../fork/test/maintainer-preflight";
 import { withHeaderHost } from "@/test/header-host";
 
 vi.mock("@/lib/fork-shape", async (original) => ({
@@ -25,9 +26,7 @@ const info = (over: Partial<UpdateInfo> = {}): UpdateInfo => ({
   current: "1.15.3", latest: "1.16.0", latestUrl: URL, releaseAvailable: true,
   majorAvailable: null, majorUrl: null, bridgeStale: false, checkedAt: Date.now(), ...over,
 });
-const green: PreflightReport = { schema: 1, verdict: "green", checks: [
-  { id: "doctor", verdict: "green", reason: "maintainer-managed merges" },
-] };
+const green: PreflightReport = { ...MAINTAINER_PREFLIGHT, checks: [...MAINTAINER_PREFLIGHT.checks] };
 
 function mount(update = info(), element = <UpdateCard />, preflight: PreflightReport | null = green) {
   server.use(http.get("/api/update/check", () => HttpResponse.json({ ...update, preflight })));
@@ -59,9 +58,26 @@ describe("Maintainer-managed updates", () => {
     expect(notice?.command).toBeUndefined();
   });
 
-  it("keeps a stale process visible without suggesting a self-update", () => {
+  it("keeps the restart command for a stale process", () => {
     expect(updateNotice(info({ bridgeStale: true }))?.line).toContain("Bridge restart needed");
-    expect(updateNotice(info({ bridgeStale: true }))?.command).toBeUndefined();
+    expect(updateNotice(info({ bridgeStale: true }))?.command).toBe("herdr plugin action invoke restart --plugin herdr.collie");
+    expect(updateNotice(info({ bridgeStale: true, installKind: "linked-clone" }))?.command).toBe("collie restart");
+  });
+
+  it("shows and copies the host's restart command when its installed version changed", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    mount(info({ restartNeeded: true, restartCommand: "collie restart", installKind: "linked-clone" }), <UpdateBanner />);
+    const copy = await screen.findByRole("button", { name: "Copy command: collie restart" });
+    expect(copy).toHaveTextContent("collie restart");
+    fireEvent.click(copy);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("collie restart"));
+    expect(updateNotice(info({ restartNeeded: true, installKind: "linked-clone" }))?.command).toBe("collie restart");
+  });
+
+  it("keeps a restart command on the maintainer's update card as well", async () => {
+    mount(info({ bridgeStale: true, installKind: "linked-clone" }));
+    expect(await screen.findByRole("button", { name: "Copy command: collie restart" })).toHaveTextContent("collie restart");
   });
 
   it.each([{}, { releaseAvailable: false, majorAvailable: "2.0.0", majorUrl: null }])("the card offers release notes and no self-update: %j", async (over) => {
@@ -70,15 +86,17 @@ describe("Maintainer-managed updates", () => {
     mount(info(over));
     const notes = await screen.findByRole("link", { name: "Release notes" });
     expect(notes.getAttribute("href")).toMatch(/releases\/tag\/v(1\.16\.0|2\.0\.0)$/);
-    await screen.findByText("maintainer-managed merges");
+    for (const check of green.checks) {
+      expect(await screen.findByText(check.reason)).toBeVisible();
+      expect(screen.getByText(check.id, { selector: ".font-mono" })).toBeVisible();
+    }
     expect(screen.queryByRole("button", { name: /^(Update to|Update all|Cross to|Retry|Try)/ })).toBeNull();
     expect(mutations).toEqual([]);
   });
 
   it("shows a real red preflight check and its reason", async () => {
-    mount(info(), <UpdateCard />, { schema: 1, verdict: "red", checks: [
-      { id: "disk", verdict: "red", reason: "No staging space is left" },
-    ] });
+    mount(info(), <UpdateCard />, { ...green, verdict: "red", checks: green.checks.map((check) =>
+      check.id === "disk" ? Object.assign({}, check, { verdict: "red" as const, reason: "No staging space is left" }) : check) });
     expect(await screen.findByText("No staging space is left")).toBeVisible();
     expect(screen.queryByRole("button", { name: /Update to/ })).toBeNull();
   });

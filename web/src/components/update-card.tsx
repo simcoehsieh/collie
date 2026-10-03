@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Collapse } from "@/components/ui/collapse";
 import { SectionHeader } from "@/components/section-header";
+import { UpdateBanner } from "@/components/update-banner";
 import { useLocale } from "@/hooks/use-locale";
 import { useTick } from "@/hooks/use-tick";
 import { t, tn } from "@/lib/i18n";
@@ -136,6 +137,8 @@ export function UpdateCard() {
   const [dismissed, setDismissed] = useState(false);
 
   const snapshot = data?.update;
+  const restartInfo = snapshot?.restartNeeded || snapshot?.bridgeStale ? snapshot
+    : check?.restartNeeded || check?.bridgeStale ? check : undefined;
   const current = snapshot?.current ?? check?.current ?? "";
   const latest = snapshot?.latest ?? check?.latest ?? null;
   const releaseAvailable = snapshot?.releaseAvailable ?? check?.releaseAvailable ?? false;
@@ -318,9 +321,7 @@ export function UpdateCard() {
                   target="_blank" rel="noopener noreferrer"
                 >{t("fork.updates.notes")}</a>
               )}
-              {(snapshot?.bridgeStale || snapshot?.restartNeeded || check?.bridgeStale || check?.restartNeeded) && (
-                <p className="text-sm text-status-blocked">{t("fork.updates.restart")}</p>
-              )}
+              {restartInfo !== undefined && <UpdateBanner update={restartInfo} className="text-left text-sm" />}
               {checked && preflight === null && !running && (
                 <p className="text-sm text-status-blocked">{t("settings.updateCard.preflightUnavailable")}</p>
               )}

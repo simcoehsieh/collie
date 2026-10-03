@@ -30,29 +30,6 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ## [Unreleased]
 
-### Added
-
-- **A working Claude or Codex pane offers a deliberate interrupt.** With no draft or message to
-  recall, tap the muted square twice within two seconds to stop the turn. Switching panes, opening
-  a modal or leaving the page disarms it, and the confirmation hint expires with the armed state;
-  the existing stop-and-edit action keeps its behavior.
-- **The tab strip's plus names the launcher it opens.** A pinned launcher adds its small agent mark
-  and label to the control; holding it shows the current target and explains that picking opens
-  and pins a row. A removed pin falls back to the plain shell.
-
-### Changed
-
-- **This fork explains that its maintainer merges upstream releases.** Updates link to release notes
-  without offering a self-update that would refuse the fork's origin. Doctor treats the known fork
-  source as informational; other origin problems and updater failures remain visible.
-
-### Fixed
-
-- **A lost send acknowledgement no longer triggers an automatic resend.** Messages with unknown
-  delivery stay queued for review even after reconnecting or reopening the app. Expand a row to
-  read all its text in a scrollable region, then use the labelled Send now or Discard controls;
-  known-unsent messages continue draining in order.
-
 ## [1.15.3] - 2026-10-02
 
 ### Fixed

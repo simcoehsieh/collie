@@ -212,6 +212,7 @@ export const ERROR_CODES = {
    * only in the client, whose disabled button this file's own contract calls a courtesy.
    */
   "update.packaged": "updates come from this machine's package manager — Collie does not replace its files",
+  "update.maintainer_managed": "this installation is updated by maintainer merges",
   /** The handoff itself failed — nothing was staged and nothing restarted. */
   "update.start_failed": "the update could not be started: {reason}",
 } as const;
@@ -258,4 +259,3 @@ export function apiError(code: ErrorCode, detail?: ApiErrorDetail): ApiErrorBody
   if (detail !== undefined) body.detail = detail;
   return body;
 }
-

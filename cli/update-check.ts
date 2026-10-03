@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { FORK_UPDATE_POLICY, maintainerManagedSource } from "../fork/update-policy.ts";
 
 import type { JsonValue } from "../bridge/json.ts";
 import type { OpsRecord } from "../bridge/crew/ops-store.ts";
@@ -34,7 +35,7 @@ import {
   sshRunner,
 } from "./remote.ts";
 import { realExec, realFiles, realNet, resolveRunnableBun, type Exec, type Files, type Net } from "./sys.ts";
-import { tagRemote } from "./update-remote.ts";
+import { anonymousTagUrl, tagRemote } from "./update-remote.ts";
 import {
   majorAction,
   parseApiTags,
@@ -434,13 +435,15 @@ export async function upstreamCheck(
 ): Promise<PreflightCheck> {
   const configured = updateRepoOf(deps.ctx.env);
   const installed = manifestVersionFrom(deps.files.read(join(deps.ctx.root, "herdr-plugin.toml")));
+  let maintainedFork = false;
 
   // The fork guard, copied in spirit from `cli/update.ts`'s `assertOrigin` (which is private there):
   // a checkout whose `origin` is not the configured update source would be force-checked-out onto a
   // stranger's tags, so `update` refuses BEFORE it fetches — and so does this.
   if (isCheckout(install)) {
     const origin = originOf(deps.exec, deps.ctx.root);
-    if (!originMatches(origin, configured)) {
+    maintainedFork = maintainerManagedSource(configured, origin.kind === "repo" ? origin.repo : null);
+    if (!maintainedFork && !originMatches(origin, configured)) {
       const named =
         origin.kind === "repo"
           ? `github.com/${origin.repo}`
@@ -457,8 +460,10 @@ export async function upstreamCheck(
     }
   }
 
-  const listed = await listTags(deps, install, configured);
+  const listed = await listTags(deps, install, configured, maintainedFork);
   if (!listed.ok) return red("upstream", listed.reason, listed.remedy);
+  const maintainedSource = () => green("upstream",
+    `github.com/${FORK_UPDATE_POLICY.repository} — maintainer-managed merges from github.com/${configured}`);
 
   // `--to-tag` asks a different question of the same listing: not "what would an update take" but
   // "does THIS release resolve here, and may this install take it". It is what a peer following its
@@ -468,6 +473,7 @@ export async function upstreamCheck(
     const pinned = planToTag({ tags: listed.tags, installed, wanted: toTag });
     return pinned.kind === "refused"
       ? red("upstream", pinned.reason, "the release this collie was asked to take is not one it may take")
+      : maintainedFork ? maintainedSource()
       : green("upstream", `${pinned.target.tag} resolves on github.com/${configured} — this install may take it`);
   }
 
@@ -484,6 +490,9 @@ export async function upstreamCheck(
         )
       : amber("upstream", `this install names no readable version — an update would pin it to ${plan.newest.tag}`);
   }
+  // Observe the real upstream listing before saying the expected fork is healthy. A listing
+  // failure or missing tags stays actionable; nothing here relaxes update.ts's assertOrigin.
+  if (maintainedFork && listed.tags.length > 0) return maintainedSource();
   if (plan.kind === "no-higher-major") return green("upstream", `no release above major ${plan.major} exists yet`);
   if (plan.kind === "no-release") {
     return amber("upstream", `github.com/${configured} publishes no release of major ${plan.major} yet`);
@@ -551,9 +560,9 @@ const TAG_REMEDY = {
  * checkout, the GitHub tags endpoint on a binary install. Same `ReleaseTag[]` either way, so the
  * planner below never learns which one answered.
  */
-async function listTags(deps: UpdateCheckDeps, install: InstallKind, repo: string): Promise<TagListing> {
+async function listTags(deps: UpdateCheckDeps, install: InstallKind, repo: string, maintainedFork = false): Promise<TagListing> {
   if (isCheckout(install)) {
-    const remote = tagRemote(deps.exec, deps.ctx.root);
+    const remote = maintainedFork ? anonymousTagUrl(`https://github.com/${repo}.git`) : tagRemote(deps.exec, deps.ctx.root);
     const ls = deps.exec.capture(
       "git",
       gitArgs(deps.ctx.root, ["ls-remote", "--tags", remote]),

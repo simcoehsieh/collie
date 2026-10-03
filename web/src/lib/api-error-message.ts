@@ -32,7 +32,10 @@ export function describeApiError(fields: ApiErrorFields, fallback?: string): str
   const { code, detail } = fields;
   // The template-literal key is what makes the catalogue complete by construction: if `en.ts` were
   // missing `apiError.<code>` for any member of the union, this line would not compile.
-  if (isApiErrorCode(code)) return t(`apiError.${code}`, detail);
+  if (isApiErrorCode(code)) {
+    if (code === "update.maintainer_managed") return t("fork.updates.managed");
+    return t(`apiError.${code}`, detail);
+  }
   const sentence = fields.error?.trim() ?? "";
   if (sentence !== "") return sentence;
   // `fallback` is the CALLER'S surface-specific line ("Rename failed") for a body that carried no

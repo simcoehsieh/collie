@@ -4,7 +4,8 @@ import { lastHealthyAt, subscribeHealth } from "./connection-health";
 import { hasWindow } from "./env";
 import { asJsonNumber, asJsonObject, asJsonString, parseJson, type JsonValue } from "./json";
 import { t } from "./i18n";
-import { sendGuardedReply } from "./reply-action";
+import { forkEn, forkZhTW } from "./i18n/fork-messages";
+import { sendGuardedReply, type ReplyOutcome } from "./reply-action";
 import { paneScopeKey, type Scope } from "./scope";
 import { setStatus } from "./status";
 import type { AgentStatus } from "./types";
@@ -51,6 +52,8 @@ export interface QueuedSend {
   queuedAt: number;
   /** The row waits for a tap: the pane refused or a POST's delivery is unknown. */
   held?: string;
+  /** Distinguish a delivery warning from the pane's later refusal, across locale changes. */
+  holdKind?: "delivery" | "refused";
   /** A POST lost its acknowledgement. Persisted independently of the translated hold reason. */
   possiblyDelivered?: boolean;
 }
@@ -103,6 +106,8 @@ function readRow(value: JsonValue): QueuedSend | null {
   if (status !== undefined && isAgentStatus(status)) row.status = status;
   const held = asJsonString(record.held);
   if (held !== undefined) row.held = held;
+  const holdKind = asJsonString(record.holdKind);
+  if (holdKind === "delivery" || holdKind === "refused") row.holdKind = holdKind;
   if (record.possiblyDelivered === true) {
     row.possiblyDelivered = true;
     row.held ??= t("fork.queue.possiblyDelivered");
@@ -113,6 +118,13 @@ function readRow(value: JsonValue): QueuedSend | null {
     // Preserve its text, but do not infer "known unsent" from a missing historical field.
     row.possiblyDelivered = true;
     row.held = t("fork.queue.possiblyDelivered");
+  }
+  if (row.held !== undefined) {
+    // Older rows recorded only translated text. Migrate those warnings once; new rows carry
+    // their meaning independently of whichever locale happens to be active when they reload.
+    row.holdKind ??= row.possiblyDelivered &&
+      (row.held === forkEn["fork.queue.possiblyDelivered"] || row.held === forkZhTW["fork.queue.possiblyDelivered"])
+      ? "delivery" : "refused";
   }
   return row;
 }
@@ -201,11 +213,30 @@ export function enqueueSend(args: EnqueueArgs, now: number = Date.now()): Queued
   if (args.possiblyDelivered) {
     row.possiblyDelivered = true;
     row.held = t("fork.queue.possiblyDelivered");
+    row.holdKind = "delivery";
   }
   items = [...items.filter((i) => now - i.queuedAt < QUEUE_TTL_MS), row];
   while (items.length > QUEUE_MAX_ITEMS) items.shift();
   emit();
   return row;
+}
+
+/** One failure policy for the composer and notes: retain only a link failure before known typing. */
+export function keepFailedSend(
+  outcome: Exclude<ReplyOutcome, { status: "sent" }>,
+  args: Omit<EnqueueArgs, "possiblyDelivered">,
+  canQueue = true,
+): QueuedSend | null {
+  const kept = canQueue && outcome.status === "error" && outcome.transport !== undefined && !outcome.textDelivered
+    ? enqueueSend({ ...args, possiblyDelivered: outcome.possiblyDelivered }) : null;
+  if (outcome.status === "error" && outcome.possiblyDelivered) {
+    setStatus(t("fork.queue.possiblyDelivered"), "warn");
+  } else if (kept !== null) {
+    setStatus(t("queue.queued"), "warn");
+  } else {
+    setStatus(outcome.error, "error");
+  }
+  return kept;
 }
 
 export function discardSend(id: string): void {
@@ -254,8 +285,13 @@ function mark(id: string, held: string | undefined, possiblyDelivered = false): 
   items = items.map((i) => {
     if (i.id !== id) return i;
     const next = { ...i };
-    if (held === undefined) delete next.held;
-    else next.held = held;
+    if (held === undefined) {
+      delete next.held;
+      delete next.holdKind;
+    } else {
+      next.held = held;
+      next.holdKind = possiblyDelivered ? "delivery" : "refused";
+    }
     if (possiblyDelivered) next.possiblyDelivered = true;
     return next;
   });

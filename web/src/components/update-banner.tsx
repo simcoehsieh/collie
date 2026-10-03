@@ -33,15 +33,6 @@ export interface UpdateNotice {
  */
 export function updateNotice(update: UpdateInfo | undefined): UpdateNotice | null {
   if (!update) return null;
-  if (MAINTAINER_MANAGED_UPDATES) {
-    if (update.restartNeeded || update.bridgeStale) return { line: t("fork.updates.restart") };
-    const version = update.releaseAvailable && update.latest ? update.latest : update.majorAvailable;
-    if (version === null) return null;
-    return {
-      line: t("fork.updates.available", { version: version.replace(/^v/, "") }),
-      href: (version === update.latest ? update.latestUrl : update.majorUrl) ?? upstreamReleaseUrl(version),
-    };
-  }
   // The command spelling is a function of the install kind (M14/01 §5.3): Herdr's plugin actions
   // reach only a Herdr-managed (detached) checkout — on a binary install, a linked dev clone or an
   // unknown layout they name a plugin Herdr does not manage, so those get the `collie` verbs, which
@@ -52,18 +43,18 @@ export function updateNotice(update: UpdateInfo | undefined): UpdateNotice | nul
   // so `collie update` refuses there by design (ADR 0035). It therefore gets NO update command —
   // printing one would print the exact command that refuses. Restarting is still its own business
   // and `collie restart` works, because the binary is on PATH like any other packaged program.
-  const selfUpdates = update.installKind !== "packaged";
+  const selfUpdates = update.installKind !== "packaged" && !MAINTAINER_MANAGED_UPDATES;
   // A PACKAGE SWAP UNDER A LIVE PROCESS (M17/02). Above `bridgeStale` because it is the stronger
   // statement about the same machine: not "the source moved", but "the version on disk is no longer
   // the version running". The command is the HOST's own answer, spelled there from the install kind
   // — the phone renders it and never derives a second one.
   if (update.restartNeeded === true && update.restartCommand !== undefined) {
-    return { line: t("settings.updateBanner.restartNeeded"), command: update.restartCommand };
+    return { line: t(MAINTAINER_MANAGED_UPDATES ? "fork.updates.restart" : "settings.updateBanner.restartNeeded"), command: update.restartCommand };
   }
-  if (update.bridgeStale) {
+  if (update.bridgeStale || (MAINTAINER_MANAGED_UPDATES && update.restartNeeded)) {
     // No release page for "restart needed" — show the one command that restarts it, to copy.
     return {
-      line: t("settings.updateBanner.restart"),
+      line: t(MAINTAINER_MANAGED_UPDATES ? "fork.updates.restart" : "settings.updateBanner.restart"),
       command: herdrManaged
         ? "herdr plugin action invoke restart --plugin herdr.collie"
         : "collie restart",
@@ -73,16 +64,20 @@ export function updateNotice(update: UpdateInfo | undefined): UpdateNotice | nul
   // page (linked) carries the update commands, so the footer just links there.
   if (update.releaseAvailable && update.latest) {
     return {
-      line: t("settings.updateBanner.releaseAvailable", { version: update.latest }),
-      href: update.latestUrl ?? undefined,
+      line: MAINTAINER_MANAGED_UPDATES
+        ? t("fork.updates.available", { version: update.latest.replace(/^v/, "") })
+        : t("settings.updateBanner.releaseAvailable", { version: update.latest }),
+      href: update.latestUrl ?? (MAINTAINER_MANAGED_UPDATES ? upstreamReleaseUrl(update.latest) : undefined),
     };
   }
   // A MAJOR is out. It ranks below a routine release because it is the one thing the plain update
   // action will NOT take (ADR 0020) — so this line names the consent command instead of leaving the
   // operator to tap update, see it succeed, and still see a banner.
   if (update.majorAvailable) {
-    const line = t("settings.updateBanner.majorAvailable", { version: update.majorAvailable });
-    const href = update.majorUrl ?? undefined;
+    const line = MAINTAINER_MANAGED_UPDATES
+      ? t("fork.updates.available", { version: update.majorAvailable.replace(/^v/, "") })
+      : t("settings.updateBanner.majorAvailable", { version: update.majorAvailable });
+    const href = update.majorUrl ?? (MAINTAINER_MANAGED_UPDATES ? upstreamReleaseUrl(update.majorAvailable) : undefined);
     // The major line still appears on a packaged install — that a major is out is worth knowing
     // however it gets taken — but it carries no command. Collie can see that its root is unwritable,
     // which is what makes the update someone else's; nothing on disk says WHOSE, so there is no
@@ -99,10 +94,10 @@ export function updateNotice(update: UpdateInfo | undefined): UpdateNotice | nul
   return null;
 }
 
-export function UpdateBanner({ className }: { className?: string }) {
+export function UpdateBanner({ className, update }: { className?: string; update?: UpdateInfo }) {
   useLocale();
   const data = useOptionalRootData();
-  const notice = updateNotice(data?.update);
+  const notice = updateNotice(update ?? data?.update);
   const [copied, setCopied] = useState(false);
 
   if (!notice) return null;

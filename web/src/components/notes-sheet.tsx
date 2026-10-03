@@ -24,7 +24,7 @@ import {
 } from "@/lib/notes";
 import { sendGuardedReply } from "@/lib/reply-action";
 import { paneScopeKey, type Scope } from "@/lib/scope";
-import { enqueueSend } from "@/lib/send-queue";
+import { enqueueSend, keepFailedSend } from "@/lib/send-queue";
 import { setStatus } from "@/lib/status";
 import type { AgentStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -235,18 +235,11 @@ export function NotesSheet({ open, onClose, paneId, scope, title, agent, status 
         onClose();
         return;
       }
-      // The LINK failed and nothing was typed, so the words are still good and only the moment was
-      // wrong — the same verdict lib/send-queue.ts is built around.
-      if (res.status === "error" && res.transport !== undefined && res.textDelivered !== true) {
-        const kept = enqueueSend({ paneId, scope, text, kind: "message", agent: agent ?? null, status });
-        if (kept !== null) {
-          markNotesSent(ids);
-          setStatus(t("queue.queued"), "warn");
-          onClose();
-          return;
-        }
+      const kept = keepFailedSend(res, { paneId, scope, text, kind: "message", agent: agent ?? null, status });
+      if (kept !== null) {
+        markNotesSent(ids);
+        onClose();
       }
-      setStatus(res.error, "error");
     } finally {
       setBusy(false);
     }

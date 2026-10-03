@@ -1,10 +1,13 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NoteSheet, NotesSheet } from "./notes-sheet";
-import { __resetNotes, addNote, markNotesSent, notesForPane, type NoteAnchor } from "@/lib/notes";
-import { __resetSendQueue, queuedForPane } from "@/lib/send-queue";
+import { __resetNotes, addNote, buildNotesPrompt, markNotesSent, notesForPane, type NoteAnchor } from "@/lib/notes";
+import { __resetSendQueue, drainSendQueue, queuedForPane } from "@/lib/send-queue";
+import { useStatus } from "@/lib/status";
+import { server } from "@/test/setup";
 
 // The two sheets a note is made and spent through: what the capture surface shows and stores, and
 // what the list says about a pane that has notes waiting.
@@ -78,6 +81,34 @@ describe("NoteSheet", () => {
 });
 
 describe("NotesSheet", () => {
+  it("holds notes when a POST loses its acknowledgement, with the delivery warning and no automatic retry", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const scope = { host: "notes-host" };
+    const note = addNote({ paneId: PANE, scope, anchor: HUNK, comment: "check the offset" });
+    const text = buildNotesPrompt([note], { title: "notes pane" });
+    const posted: string[] = [];
+    server.use(http.post<never, { text: string }>(/\/api\/pane\/[^/]+\/reply$/, async ({ request }) => {
+      posted.push((await request.json()).text);
+      return HttpResponse.error();
+    }));
+    function Status() {
+      const status = useStatus();
+      return <output aria-label="Send status" data-tone={status?.tone}>{status?.text}</output>;
+    }
+    render(<><NotesSheet open onClose={onClose} paneId={PANE} scope={scope} title="notes pane" agent={null} /><Status /></>);
+    await user.click(screen.getByRole("button", { name: /Send 1 note/ }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    const row = queuedForPane(scope, PANE)[0];
+    expect(row).toMatchObject({ text, scope, paneId: PANE, possiblyDelivered: true, holdKind: "delivery" });
+    expect(row?.held).toBe("May already have been sent; check the pane first");
+    expect(screen.getByRole("status", { name: "Send status" })).toHaveTextContent(row!.held!);
+    expect(screen.getByRole("status", { name: "Send status" })).toHaveAttribute("data-tone", "warn");
+    expect(notesForPane(scope, PANE)[0]?.sentAt).toBeGreaterThan(0);
+    await drainSendQueue();
+    expect(posted).toEqual([text]);
+  });
+
   it("lists the pane's notes with their numbers and offers to send what is waiting", async () => {
     addNote({ paneId: PANE, anchor: HUNK, comment: "too low" });
     addNote({

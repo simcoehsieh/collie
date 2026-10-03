@@ -1,9 +1,4 @@
-// The deployment's update policy, shared by the phone and CLI doctor. Changing this ONE switch
-// restores self-managed updates. It never authorises the updater to overwrite a foreign origin.
-export const FORK_UPDATE_POLICY = {
-  maintainerManaged: true,
-  repository: "simcoehsieh/collie",
-} as const;
+import { FORK_UPDATE_POLICY } from "../../../fork/update-policy";
 
 // Like the fork's other shape gates, upstream tests keep exercising the upstream flow. Fork
 // behavior tests explicitly enable this gate; the CLI classification reads the policy itself.
