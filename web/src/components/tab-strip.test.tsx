@@ -5,6 +5,42 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/setup";
 import { TabStrip } from "./tab-strip";
 import type { AgentStatus, AgentView, TabView } from "@/lib/types";
+import { pinnedLauncher } from "@/lib/launchers";
+
+describe("TabStrip — the plus names its resolved launcher", () => {
+  const launcher = { command: "/opt/bin/codex --profile work", label: "Work Codex" };
+  const props = { workspaceId: "w1", tabs: [{ tabId: "w1:t1", workspaceId: "w1", number: 1,
+    label: "work", focused: true, paneCount: 1 }], agents: [], selected: null, onSelect: vi.fn(), onNewTab: vi.fn() };
+
+  it("names a renamed row and draws its command's mark inside the same plus", () => {
+    const pinned = pinnedLauncher([launcher], launcher.command);
+    const { container } = render(<TabStrip {...props} newTabLauncher={pinned} />);
+    const plus = screen.getByRole("button", { name: "New tab: Work Codex" });
+    const mark = plus.querySelector('svg[role="img"]');
+    expect(mark).toHaveAttribute("aria-label", "codex logo");
+    expect(mark?.closest('[aria-hidden="true"]')).not.toBeNull();
+    expect(mark?.getAttribute("class")).toContain("size-3");
+    expect(plus.querySelector("svg.lucide-plus")).not.toBeNull();
+    expect(container.querySelectorAll('svg[role="img"]')).toHaveLength(1);
+    fireEvent.click(plus);
+    expect(props.onNewTab).toHaveBeenCalledWith("w1");
+  });
+
+  it.each(["", "removed"])("keeps a neutral plus for unresolved pin %j", (command) => {
+    render(<TabStrip {...props} newTabLauncher={pinnedLauncher([launcher], command)} />);
+    const plus = screen.getByRole("button", { name: "New tab" });
+    expect(plus.querySelector('svg[role="img"]')).toBeNull();
+    expect(plus.querySelector("svg.lucide-plus")).not.toBeNull();
+  });
+
+  it("keeps the launch target name and mark while creating the tab", () => {
+    render(<TabStrip {...props} newTabLauncher={launcher} creatingTab />);
+    const plus = screen.getByRole("button", { name: "New tab: Work Codex" });
+    expect(plus).toBeDisabled();
+    expect(plus).toHaveAttribute("aria-busy", "true");
+    expect(plus.querySelector('svg[role="img"]')).not.toBeNull();
+  });
+});
 
 // What the eye reads on a cell: its text without the `aria-hidden` semibold copy each label keeps
 // to reserve its width (`StableLabel` in tab-strip.tsx).

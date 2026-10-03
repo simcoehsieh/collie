@@ -81,6 +81,39 @@ function renderChat(overrides: Partial<ComponentProps<typeof AgentChat>> = {}) {
   return { props, container };
 }
 
+describe("AgentChat — the plus shows exactly what its tap launches", () => {
+  it("uses the resolved pin for both the accessible label and the launch request", async () => {
+    const command = "codex --profile work";
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ newTabLauncher: command }));
+    __resetDashPrefs();
+    const calls: unknown[] = [];
+    server.use(
+      http.get("/api/launchers", () => HttpResponse.json({ launchers: [{ command, label: "Work Codex" }], home: "/home" })),
+      http.post("/api/launch", async ({ request }) => {
+        calls.push(await request.json());
+        return HttpResponse.json({ ok: true, paneId: "w1:new" });
+      }),
+    );
+    const { props } = renderChat({ tabs: fixtureTabs });
+    fireEvent.click(await screen.findByRole("button", { name: "New tab: Work Codex" }));
+    await waitFor(() => expect(calls).toEqual([{ command, paneId: props.paneId }]));
+  });
+
+  it("a removed pin shows a neutral plus and opens a shell", async () => {
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ newTabLauncher: "removed" }));
+    __resetDashPrefs();
+    const calls: unknown[] = [];
+    server.use(http.post("/api/tab", async ({ request }) => {
+      calls.push(await request.json());
+      return HttpResponse.json({ ok: true, paneId: "w1:new" });
+    }));
+    const { props } = renderChat({ tabs: fixtureTabs });
+    fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+    await waitFor(() => expect(calls).toEqual([{ workspaceId: props.agent?.workspaceId }]));
+    expect(screen.queryByRole("button", { name: /New tab:/ })).toBeNull();
+  });
+});
+
 // ── FORK: CHAT MODE GAVE AN AGENT PANE A SECOND VIEW ─────────────────────────
 // A pane that HAS a transcript can show it instead of the mirror (agent-chat.tsx § chat mode). The
 // default is the TERMINAL (it was the transcript for one morning — use-display-prefs.ts says why it

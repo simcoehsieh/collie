@@ -71,6 +71,17 @@ describe("NewTabSheet", () => {
     expect(screen.getByText(/makes it what \+ does/i)).toBeInTheDocument();
   });
 
+  it("names the resolved launch target in its subtitle", () => {
+    renderSheet({ selected: "codex --profile work" });
+    expect(screen.getByText(/\+ opens: codex\./)).toBeInTheDocument();
+  });
+
+  it("a deleted pin names and selects the plain shell", () => {
+    renderSheet({ selected: "removed --flags" });
+    expect(screen.getByText(/\+ opens: Plain shell\./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /plain shell/i })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("draws each row's own agent mark, and hides it from the accessible name", () => {
     // The app already ships these tiles — the tab strip and the herd list draw the same ones — so a
     // row here is recognisable at a glance rather than by reading it. Hidden from the a11y tree

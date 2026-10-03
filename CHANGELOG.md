@@ -35,6 +35,9 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - **A working Claude or Codex pane offers a deliberate interrupt.** With no draft or message to
   recall, tap the muted square twice within two seconds to stop the turn. Switching panes, opening
   a modal or leaving the page disarms it; the existing stop-and-edit action keeps its behavior.
+- **The tab strip's plus names the launcher it opens.** A pinned launcher adds its small agent mark
+  and label to the control; holding it shows the current target and explains that picking opens
+  and pins a row. A removed pin falls back to the plain shell.
 
 ## [1.15.3] - 2026-10-02
 

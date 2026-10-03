@@ -3,6 +3,8 @@ import { Loader2, Plus } from "lucide-react";
 
 import { STRIP_TAP_TARGET, TAB_ROW_SQUARE_TAP_TARGET } from "@/components/ui/labelled-strip";
 import { TabActionsSheet } from "@/components/tab-actions-sheet";
+import { AgentIcon } from "@/components/agent-icon";
+import { launcherAgent } from "@/lib/launchers";
 import { StatusDot } from "@/components/status-badge";
 import { UnseenMark } from "@/components/ui/unseen-mark";
 import { useLongPress } from "@/hooks/use-long-press";
@@ -13,7 +15,7 @@ import { TRIAGE_STATUS, worstTriage, type TriageKey } from "@/lib/triage";
 import { hostKey } from "@/lib/hosts";
 import { tabCellTitle, type TabTitle } from "@/lib/pane-name";
 import { statusLabel } from "@/lib/types";
-import type { AgentView, TabView } from "@/lib/types";
+import type { AgentView, TabView, Launcher } from "@/lib/types";
 import { useMuxCapability } from "@/lib/mux-capability";
 import type { Scope } from "@/lib/scope";
 import { t as translate } from "@/lib/i18n";
@@ -29,6 +31,8 @@ interface TabStripProps {
   selected: string | null;
   onSelect: (tabId: string | null) => void;
   onNewTab: (workspaceId: string) => void;
+  /** FORK: the exact pinnedLauncher() result used by onNewTab. No second lookup or fetch here. */
+  newTabLauncher?: Launcher;
   /**
    * Long-press on the "+", for choosing what it opens. Absent leaves the button a plain tap — the
    * caller decides whether there is anything to choose BETWEEN, since it owns the launcher rows.
@@ -128,6 +132,7 @@ export const TabStrip = memo(function TabStrip({
   selected,
   onSelect,
   onNewTab,
+  newTabLauncher,
   onNewTabHold,
   creatingTab = false,
   allowAll = true,
@@ -297,7 +302,8 @@ export const TabStrip = memo(function TabStrip({
               {...newTabHold}
               onClick={() => onNewTab(workspaceId)}
               disabled={creatingTab}
-              aria-label={translate("space.tabStrip.new.aria")}
+              aria-label={newTabLauncher === undefined ? translate("space.tabStrip.new.aria") :
+                translate("fork.newTab.target", { label: newTabLauncher.label })}
               aria-busy={creatingTab}
               // 28px drawn, 44x44 hit, a true square, which is the one shape allowed to keep
               // `rounded-full`. 28 and not the old 32 because the row is 30 now: the circle must sit
@@ -318,6 +324,11 @@ export const TabStrip = memo(function TabStrip({
                 <Loader2 className="size-4 animate-spin" aria-hidden />
               ) : (
                 <Plus className="size-4" />
+              )}
+              {newTabLauncher !== undefined && (
+                <span aria-hidden="true" className="pointer-events-none absolute -right-0.5 -bottom-0.5">
+                  <AgentIcon agent={launcherAgent(newTabLauncher.command)} className="size-3" />
+                </span>
               )}
             </button>
           )}
