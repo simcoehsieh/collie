@@ -3466,6 +3466,7 @@ describe("Composer — the field clears on the tap", () => {
       const [text, setText] = useState("quiet");
       return (
         <>
+          <StatusSentinel />
           <Composer
             paneId="w1:p1"
             agent="claude"
@@ -3498,22 +3499,28 @@ describe("Composer — the field clears on the tap", () => {
     await user.click(screen.getByRole("button", { name: "tick" }));
     expect(screen.getByText("still there")).toBeInTheDocument();
     release();
+    // Finish the guarded send before the fake pane is reset for the next case. A late stall from
+    // this released request would otherwise write into the next case's module-scoped status.
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(/^Sent ✓$/));
   }, 15000);
 });
 
 // ── FORK: a send the LINK failed goes to the queue, not back into the field ───────────────────
 //
-// The tunnel dropping for a second used to hand the words back to the field with an error, on a
-// phone, where the operator re-taps until it goes or forgets. Now the words are kept
-// (lib/send-queue.ts) and resent when a poll proves the link live; the field is free.
+// Keep the words when the link fails. A lost POST acknowledgement waits for review; only a
+// known-unsent send may resume when a poll proves the link live.
 describe("Composer — a link failure queues the send", () => {
   beforeEach(() => __resetSendQueue());
+  afterEach(() => __resetSendQueue());
 
-  it("a network failure before anything was typed keeps the words in the queue and leaves the field empty", async () => {
+  it("a lost POST acknowledgement holds the words for review and leaves the field empty", async () => {
     const user = userEvent.setup();
-    // The POST that would type the words is what fails — the link, not the pane — so nothing was
-    // typed and the guard reports a transport error rather than a stall.
-    server.use(http.post(/\/api\/pane\/[^/]+\/reply$/, () => HttpResponse.error()));
+    // The bridge received the words but its acknowledgement was lost. A healthy link later must
+    // not turn that missing acknowledgement into permission to type the words again.
+    server.use(http.post<never, { text: string }>(/\/api\/pane\/[^/]+\/reply$/, async ({ request }) => {
+      recordReply(await request.json());
+      return HttpResponse.error();
+    }));
     renderComposerWithStatus();
     const box = screen.getByPlaceholderText(/type a reply/i);
 
@@ -3524,10 +3531,38 @@ describe("Composer — a link failure queues the send", () => {
       timeout: 5000,
     });
     expect(box).toHaveValue("");
-    expect(screen.getByTestId("status")).toHaveTextContent(/kept, to send when it's back/);
+    expect(queuedForPane(undefined, "w1:p1")[0]).toMatchObject({ possiblyDelivered: true,
+      held: "May already have been sent; check the pane first" });
+    expect(screen.getByTestId("status")).toHaveTextContent(/May already have been sent; check the pane first/);
     // The stored draft went with the field: the queue, not the 48 h store, holds the words now.
     expect(loadDraft(undefined, "w1:p1")).toBeNull();
   }, 15000);
+
+  it("an explicit auth refusal queues a known-unsent message for the ordinary drain", async () => {
+    const user = userEvent.setup();
+    server.use(http.post(/\/api\/pane\/[^/]+\/reply$/, () => new HttpResponse("sign in", { status: 401 })));
+    renderComposerWithStatus();
+    await user.type(screen.getByRole("textbox"), "known unsent");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(queuedForPane(undefined, "w1:p1")).toHaveLength(1));
+    const row = queuedForPane(undefined, "w1:p1")[0];
+    expect(row?.text).toBe("known unsent");
+    expect(row?.held).toBeUndefined();
+    expect(row?.possiblyDelivered).toBe(false);
+    expect(screen.getByTestId("status")).toHaveTextContent(/kept, to send when it's back/);
+  });
+
+  it("keeps an oversized uncertain send in the field with its delivery warning", async () => {
+    server.use(http.post(/\/api\/pane\/[^/]+\/reply$/, () => HttpResponse.error()));
+    renderComposerWithStatus();
+    const box = screen.getByRole("textbox");
+    const text = "x".repeat(8193);
+    fireEvent.change(box, { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(/May already have been sent; check the pane first/));
+    expect(box).toHaveValue(text);
+    expect(queuedForPane(undefined, "w1:p1")).toEqual([]);
+  });
 
   it("a refusal from the pane still puts the words back — only the link's failures are queued", async () => {
     const user = userEvent.setup();

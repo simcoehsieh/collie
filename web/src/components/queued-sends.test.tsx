@@ -12,6 +12,30 @@ import { QueuedSends } from "./queued-sends";
 beforeEach(() => __resetSendQueue());
 
 describe("QueuedSends", () => {
+  it("names uncertain delivery and expands the complete unmodified message", async () => {
+    const user = userEvent.setup();
+    const text = "First line\nSecond line\nFinal sentinel <script>kept as text</script>";
+    enqueueSend({ paneId: "w1:p1", text, kind: "message", agent: null, possiblyDelivered: true });
+    const { container } = render(<QueuedSends paneId="w1:p1" />);
+    expect(screen.getByText(/May already have been sent; check the pane first/)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Full message" })).toBeNull();
+    const expand = screen.getByRole("button", { name: "Show full message" });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    await user.click(expand);
+    const expanded = screen.getByRole("button", { name: "Collapse message" });
+    expect(expanded).toHaveAttribute("aria-expanded", "true");
+    const full = screen.getByRole("textbox", { name: "Full message" });
+    expect(full).toHaveValue(text);
+    expect(full).toHaveAttribute("readonly");
+    expect(full.closest("button")).toBeNull();
+    await user.tab();
+    expect(full).toHaveFocus();
+    expect(container.querySelector("script")).toBeNull();
+    await user.click(expanded);
+    expect(screen.queryByRole("textbox", { name: "Full message" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Send now" })).toHaveTextContent("Send now");
+    expect(screen.getByRole("button", { name: "Discard" })).toHaveTextContent("Discard");
+  });
   it("renders nothing while the pane has nothing waiting, and the rows when it does", () => {
     const { container } = render(<QueuedSends paneId="w1:p1" />);
     expect(container.querySelector('[data-slot="queued-sends"]')).toBeNull();

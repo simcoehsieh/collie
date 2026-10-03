@@ -48,10 +48,10 @@ export type ReplyOutcome =
    *  `noEcho`: the prompt the last verification read saw, when the reason the text never appeared is
    *  that the screen is deliberately not showing it — see lib/no-echo.ts. */
   | { status: "stalled"; error: string; noEcho?: string }
-  /** Transport/RPC failure. `textDelivered` = text is in the pane but unsubmitted; don't resend.
-   *  FORK: `transport` names the failure when it was the LINK and not the pane — nothing was typed,
-   *  and the message can be kept to send when the link is back (lib/send-queue.ts). */
-  | { status: "error"; error: string; textDelivered?: boolean; transport?: SendFailure };
+  /** Transport/RPC failure. `textDelivered` = verified text in the pane; don't type it again.
+   * FORK: a lost POST acknowledgement is NOT proof nothing was typed. `possiblyDelivered` holds
+   * that message for review instead of automatically repeating it when the link returns. */
+  | { status: "error"; error: string; textDelivered?: boolean; transport?: SendFailure; possiblyDelivered?: boolean };
 
 /** Minimum visible characters that must match before we believe the input box holds OUR text. */
 export const MIN_MATCH_CHARS = 8;
@@ -307,7 +307,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
     try {
       part = await sendReply(args.paneId, chunks[i]!, false, args.scope);
     } catch (e) {
-      return transportError(e);
+      return transportError(e, true, delivered !== "");
     }
     if (!part.ok) return { status: "error", error: describeApiError(part) };
     delivered += chunks[i]!;
@@ -334,7 +334,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
   try {
     typed = await sendReply(args.paneId, chunks[chunks.length - 1]!, false, args.scope);
   } catch (e) {
-    return transportError(e);
+    return transportError(e, true, delivered !== "");
   }
   if (!typed.ok) return { status: "error", error: describeApiError(typed) };
 
@@ -531,7 +531,7 @@ async function oneShot(args: GuardedReplyArgs): Promise<ReplyOutcome> {
     const res = await sendReply(args.paneId, args.text, true, args.scope);
     return res.ok ? { status: "sent" } : { status: "error", error: describeApiError(res) };
   } catch (e) {
-    return transportError(e);
+    return transportError(e, true);
   }
 }
 
@@ -565,13 +565,17 @@ async function submitOnly(
 }
 
 /**
- * FORK: a throw before anything reached the pane, as the outcome — with the failure's KIND when it
- * was the link rather than the pane, so the caller can keep the words for later instead of handing
- * them back to be retyped.
+ * FORK: name the link failure separately from delivery evidence. Before dispatch it is known
+ * unsent; after a POST, a timeout/network/52x leaves delivery unknown. An explicit authentication
+ * refusal is known unsent unless an earlier multipart paste was already acknowledged.
  */
-function transportError<TThrown>(e: TThrown): ReplyOutcome {
+function transportError<TThrown>(e: TThrown, afterPost = false, partialDelivery = false): ReplyOutcome {
   const transport = classifySendFailure(e);
-  return transport === null ? { status: "error", error: message(e) } : { status: "error", error: message(e), transport };
+  const possiblyDelivered = partialDelivery || (afterPost && transport !== null && transport !== "auth");
+  const outcome: ReplyOutcome = { status: "error", error: message(e) };
+  if (transport !== null) outcome.transport = transport;
+  if (possiblyDelivered) outcome.possiblyDelivered = true;
+  return outcome;
 }
 
 function message<TThrown>(e: TThrown): string {

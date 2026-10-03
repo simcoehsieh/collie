@@ -1401,13 +1401,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             ? { prompt: res.noEcho, typed: true }
             : null,
         );
-        // FORK: THE LINK FAILED, NOT THE PANE. Nothing was typed (`transport` is only set on the
-        // throws before the text went anywhere, and `textDelivered` says it did not), so the words
-        // are still good and only the moment was wrong. They go to the queue (lib/send-queue.ts)
-        // rather than back into the field: the queue resends them the moment a poll proves the
-        // link live, and the field is free for the next thing. The chip comes down either way.
+        // FORK: retain link failures, but absence of `textDelivered` is not proof of non-delivery.
+        // A POST with no acknowledgement goes into a held row; only a known-unsent message may
+        // drain automatically. The queue owns the words instead of restoring a draft to re-tap.
         if (res.status === "error" && res.transport !== undefined && !res.textDelivered && noEchoRef.current === null) {
-          const kept = enqueueSend({ paneId, scope, text: t, kind: "message", agent: agent ?? null, status });
+          const kept = enqueueSend({ paneId, scope, text: t, kind: "message", agent: agent ?? null, status,
+            possiblyDelivered: res.possiblyDelivered });
           if (kept !== null) {
             // The queue owns the message now — its text already carries the chips' paths — so the
             // held chips are released exactly as a verified send releases them.
@@ -1419,7 +1418,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               clearTimeout(lastSentTimerRef.current);
               lastSentTimerRef.current = null;
             }
-            setStatus(translate("queue.queued"), "warn");
+            setStatus(translate(res.possiblyDelivered ? "fork.queue.possiblyDelivered" : "queue.queued"), "warn");
             return false;
           }
         }
@@ -1427,7 +1426,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         // then goes back into the field WITHOUT re-entering the 48 h store (updateInput's gate).
         inFlightRef.current = false;
         restoreDraft();
-        setStatus(res.error, "error");
+        setStatus(res.status === "error" && res.possiblyDelivered ? translate("fork.queue.possiblyDelivered") : res.error,
+          res.status === "error" && res.possiblyDelivered ? "warn" : "error");
         return false;
       }
     } catch (e) {
@@ -1666,7 +1666,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       return;
     }
     if (!confirmInterrupt(interruptTarget)) {
-      setStatus(translate("fork.interrupt.confirm"), "info");
+      setStatus(translate("fork.interrupt.confirm"), "info", 2000);
       return;
     }
     setInterruptBusy(true);

@@ -19,8 +19,10 @@ import type { AgentStatus } from "./types";
 // per pane, and drained in order the moment a poll proves the link live again.
 //
 // ── WHAT DRAINS ON ITS OWN, AND WHAT WAITS FOR A TAP ────────────────────────────────────────────
-// A plain message resends itself. An ANSWER — a yes/no to a prompt the pane was showing when it
-// was queued — does not: the prompt may have been answered from the terminal, or timed out, or be a
+// A known-unsent plain message resends itself. A possibly-delivered POST waits for review; a
+// healthy poll proves only connectivity, never whether a previous write landed. An ANSWER — a
+// yes/no to a prompt the pane was showing when it was queued — does not: the prompt may have been
+// answered from the terminal, or timed out, or be a
 // different prompt now, and an auto-sent "y" into a pane that has moved on is the one thing this
 // must never do. Those are marked `answer`, carry the status the pane had, and drain only on the
 // row's own Send now. A message the drain could not deliver (the pane refused it — a dialog owns
@@ -47,8 +49,10 @@ export interface QueuedSend {
   /** The pane's status when queued; an `answer` is only meaningful against the same one. */
   status?: AgentStatus;
   queuedAt: number;
-  /** Set when the drain tried and the PANE refused: the row waits for a tap, and says why. */
+  /** The row waits for a tap: the pane refused or a POST's delivery is unknown. */
   held?: string;
+  /** A POST lost its acknowledgement. Persisted independently of the translated hold reason. */
+  possiblyDelivered?: boolean;
 }
 
 export const QUEUE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -99,6 +103,17 @@ function readRow(value: JsonValue): QueuedSend | null {
   if (status !== undefined && isAgentStatus(status)) row.status = status;
   const held = asJsonString(record.held);
   if (held !== undefined) row.held = held;
+  if (record.possiblyDelivered === true) {
+    row.possiblyDelivered = true;
+    row.held ??= t("fork.queue.possiblyDelivered");
+  } else if (record.possiblyDelivered === false) {
+    row.possiblyDelivered = false;
+  } else if (row.kind === "message" && row.held === undefined) {
+    // A v1 row from before delivery evidence was recorded might already have reached the pane.
+    // Preserve its text, but do not infer "known unsent" from a missing historical field.
+    row.possiblyDelivered = true;
+    row.held = t("fork.queue.possiblyDelivered");
+  }
   return row;
 }
 
@@ -164,6 +179,7 @@ export interface EnqueueArgs {
   kind: QueuedKind;
   agent: string | null;
   status?: AgentStatus;
+  possiblyDelivered?: boolean;
 }
 
 /** Keep one send. Returns the row, or null when the text is too large to keep. */
@@ -178,9 +194,14 @@ export function enqueueSend(args: EnqueueArgs, now: number = Date.now()): Queued
     kind: args.kind,
     agent: args.agent,
     queuedAt: now,
+    possiblyDelivered: args.possiblyDelivered === true,
   };
   if (args.scope !== undefined) row.scope = args.scope;
   if (args.status !== undefined) row.status = args.status;
+  if (args.possiblyDelivered) {
+    row.possiblyDelivered = true;
+    row.held = t("fork.queue.possiblyDelivered");
+  }
   items = [...items.filter((i) => now - i.queuedAt < QUEUE_TTL_MS), row];
   while (items.length > QUEUE_MAX_ITEMS) items.shift();
   emit();
@@ -229,12 +250,13 @@ export function queuedKeys(): string[] {
   return [...new Set(items.map((i) => i.key))];
 }
 
-function mark(id: string, held: string | undefined): void {
+function mark(id: string, held: string | undefined, possiblyDelivered = false): void {
   items = items.map((i) => {
     if (i.id !== id) return i;
     const next = { ...i };
     if (held === undefined) delete next.held;
     else next.held = held;
+    if (possiblyDelivered) next.possiblyDelivered = true;
     return next;
   });
   emit();
@@ -271,7 +293,7 @@ export async function drainSendQueue(
     const candidates = forced ? [forced] : [...items];
     const stopped = new Set<string>();
     for (const row of candidates) {
-      if (!forced && (row.kind !== "message" || row.held !== undefined)) {
+      if (!forced && (row.kind !== "message" || row.held !== undefined || row.possiblyDelivered)) {
         // A row that waits for a tap holds its pane's place in line: the ones behind it wait too,
         // so a queue never sends out of order around something the operator has not decided.
         stopped.add(row.key);
@@ -291,8 +313,15 @@ export async function drainSendQueue(
         setStatus(t("queue.sent"), "success");
         continue;
       }
+      if (outcome.status === "error" && outcome.possiblyDelivered) {
+        mark(row.id, t("fork.queue.possiblyDelivered"), true);
+        stopped.add(row.key);
+        // A failed link stops this drain, but the newly persisted hold survives every later poll.
+        if (outcome.transport !== undefined) return;
+        continue;
+      }
       if (outcome.status === "error" && outcome.transport !== undefined && !outcome.textDelivered) {
-        // The link again. Leave everything as it is; the next live poll drains.
+        // Known unsent. The next live poll may try again, preserving any pre-existing hold.
         return;
       }
       // The PANE refused (or the text landed unsubmitted): hold this row for a tap, and do not

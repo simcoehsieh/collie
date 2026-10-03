@@ -12,6 +12,10 @@ export const forkEn = {
   "fork.updates.notes": "Release notes",
   "fork.updates.restart": "Bridge restart needed · This installation is maintained by its maintainer",
   "fork.updates.failed": "An update failed · Check the update details",
+  "fork.queue.possiblyDelivered": "May already have been sent; check the pane first",
+  "fork.queue.showFull": "Show full message",
+  "fork.queue.hideFull": "Collapse message",
+  "fork.queue.fullText": "Full message",
 } as const;
 
 export type ForkMessageKey = keyof typeof forkEn;
@@ -29,4 +33,8 @@ export const forkZhTW = {
   "fork.updates.notes": "版本說明",
   "fork.updates.restart": "橋接程式需要重新啟動 · 此安裝由維護者維護",
   "fork.updates.failed": "更新失敗 · 請查看更新詳情",
+  "fork.queue.possiblyDelivered": "可能已送出，請先看畫面",
+  "fork.queue.showFull": "展開完整訊息",
+  "fork.queue.hideFull": "收合訊息",
+  "fork.queue.fullText": "完整訊息",
 } satisfies ForkDictionary;

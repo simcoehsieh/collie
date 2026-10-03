@@ -65,6 +65,42 @@ describe("classifySendFailure", () => {
 });
 
 describe("the store", () => {
+  it("persists an uncertain delivery as a hold across reloads", () => {
+    enqueueSend({ paneId: "w1:p1", text: "may have landed", kind: "message", agent: null, possiblyDelivered: true });
+    const raw = localStorage.getItem("collie:send-queue:v1");
+    __resetSendQueue();
+    localStorage.setItem("collie:send-queue:v1", raw!);
+    const row = queuedForPane(undefined, "w1:p1")[0];
+    expect(row?.possiblyDelivered).toBe(true);
+    expect(row?.held).toBe("May already have been sent; check the pane first");
+  });
+
+  it("holds persisted uncertainty even if the translated held string is missing", async () => {
+    enqueueSend({ paneId: "w1:p1", text: "held", kind: "message", agent: null, possiblyDelivered: true });
+    const row = queuedForPane(undefined, "w1:p1")[0]!;
+    const stored = { ...row };
+    delete stored.held;
+    __resetSendQueue();
+    localStorage.setItem("collie:send-queue:v1", JSON.stringify([stored]));
+    const sender = vi.fn(async (): Promise<ReplyOutcome> => ({ status: "sent" }));
+    await drainSendQueue({ sender });
+    expect(sender).not.toHaveBeenCalled();
+    expect(queuedForPane(undefined, "w1:p1")[0]?.held).toBe("May already have been sent; check the pane first");
+  });
+
+  it("a legacy row with no delivery evidence is held; a new known-unsent row still drains after reload", async () => {
+    enqueueSend({ paneId: "w1:p1", text: "legacy", kind: "message", agent: null });
+    enqueueSend({ paneId: "w1:p2", text: "known unsent", kind: "message", agent: null });
+    const legacy = { ...queuedForPane(undefined, "w1:p1")[0]! };
+    delete legacy.possiblyDelivered;
+    const ordinary = queuedForPane(undefined, "w1:p2")[0]!;
+    __resetSendQueue();
+    localStorage.setItem("collie:send-queue:v1", JSON.stringify([legacy, ordinary]));
+    const sent: string[] = [];
+    await drainSendQueue({ sender: async (row) => { sent.push(row.text); return { status: "sent" }; } });
+    expect(sent).toEqual(["known unsent"]);
+    expect(queuedForPane(undefined, "w1:p1")[0]?.possiblyDelivered).toBe(true);
+  });
   it("keeps a send per pane, in order, and reads it back from storage after a reload", () => {
     const now = Date.now();
     enqueueSend({ paneId: "w1:p1", text: "first", kind: "message", agent: "claude" }, now - 3_000);
@@ -114,6 +150,41 @@ describe("the drain", () => {
       return outcomes[row.text] ?? { status: "sent" };
     };
   }
+
+  it("an ambiguous resend becomes held and is never sent on the next healthy drain", async () => {
+    enqueueSend({ paneId: "w1:p1", text: "a", kind: "message", agent: null });
+    enqueueSend({ paneId: "w1:p1", text: "b", kind: "message", agent: null });
+    const log: string[] = [];
+    await drainSendQueue({ sender: sender({ a: { status: "error", error: "timeout", transport: "network", possiblyDelivered: true } }, log) });
+    expect(log).toEqual(["a"]);
+    expect(queuedForPane(undefined, "w1:p1")[0]?.possiblyDelivered).toBe(true);
+    await drainSendQueue({ sender: sender({}, log) });
+    expect(log).toEqual(["a"]);
+    const held = queuedForPane(undefined, "w1:p1")[0]!;
+    await drainSendQueue({ force: held.id, sender: sender({}, log) });
+    expect(log).toEqual(["a", "a"]); // only the explicit Send now repeats it
+    await drainSendQueue({ sender: sender({}, log) });
+    expect(log).toEqual(["a", "a", "b"]);
+  });
+
+  it("live polls and an online event do not repeat uncertain rows or skip their place in line", async () => {
+    vi.useFakeTimers();
+    const log: string[] = [];
+    const off = installSendQueueDrain(sender({}, log));
+    try {
+      const held = enqueueSend({ paneId: "w1:p1", text: "uncertain", kind: "message", agent: null, possiblyDelivered: true })!;
+      enqueueSend({ paneId: "w1:p1", text: "next", kind: "message", agent: null });
+      enqueueSend({ paneId: "w1:p2", text: "other pane", kind: "message", agent: null });
+      markLive();
+      window.dispatchEvent(new Event("online"));
+      await vi.advanceTimersByTimeAsync(300);
+      expect(log).toEqual(["other pane"]);
+      discardSend(held.id);
+      markLive();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(log).toEqual(["other pane", "next"]);
+    } finally { off(); vi.useRealTimers(); }
+  });
 
   it("sends messages in order, removes what went, and reports it", async () => {
     enqueueSend({ paneId: "w1:p1", text: "a", kind: "message", agent: null });

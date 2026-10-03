@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/setup";
+import { clearStatus, useStatus } from "@/lib/status";
 import { Composer } from "./composer";
 import { BottomSheet } from "./ui/sheet";
 
@@ -11,6 +12,7 @@ type Props = ComponentProps<typeof Composer>;
 function rig(overrides: Partial<Props> = {}) {
   let update: (next: Partial<Props>) => void = () => { throw new Error("Rig not mounted"); };
   function Rig() {
+    const actionStatus = useStatus();
     const [props, setProps] = useState<Props>({
       paneId: "w1:p1", agent: "claude", isShell: false, status: "working", gone: false,
       readOnly: false, dialogPresent: false, text: "working", terminalDraft: null,
@@ -20,7 +22,7 @@ function rig(overrides: Partial<Props> = {}) {
       display: { open: false, onToggle: vi.fn() }, onSent: vi.fn(), ...overrides,
     });
     update = (next) => act(() => setProps((current) => ({ ...current, ...next })));
-    return <Composer {...props} />;
+    return <><Composer {...props} /><output aria-label="Action status">{actionStatus?.text ?? ""}</output></>;
   }
   const router = createMemoryRouter([{ path: "/", element: <Rig /> }]);
   const view = render(<RouterProvider router={router} />);
@@ -30,6 +32,7 @@ function rig(overrides: Partial<Props> = {}) {
 describe("Composer — deliberate interrupt without a recall", () => {
   let keys: string[][];
   beforeEach(() => {
+    clearStatus();
     keys = [];
     server.use(http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
       keys.push((await request.json()).keys);
@@ -55,7 +58,9 @@ describe("Composer — deliberate interrupt without a recall", () => {
     vi.useFakeTimers();
     rig();
     fireEvent.click(screen.getByRole("button", { name: "Interrupt agent" }));
+    expect(screen.getByRole("status", { name: "Action status" })).toHaveTextContent("Tap again to interrupt");
     act(() => vi.advanceTimersByTime(2000));
+    expect(screen.getByRole("status", { name: "Action status" })).toBeEmptyDOMElement();
     fireEvent.click(screen.getByRole("button", { name: "Interrupt agent" }));
     expect(screen.getByRole("button", { name: "Tap again to interrupt" })).toBeInTheDocument();
     expect(keys).toEqual([]);
