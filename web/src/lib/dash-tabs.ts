@@ -23,3 +23,13 @@ export const FORK_DASH_TABS_ON: boolean = import.meta.env.MODE === "test";
 // and drops the `min-h-7` it reserved for one. Tests run with it (MODE "test"), and
 // routes/home-no-tabs.test.tsx pins the fork's shape.
 export const FORK_HEADING_NEW_TAB_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO BARE SHELLS IN THE DASHBOARD LIST (operator, 2026-10-04: "空的 shell 不用呈現吧"). A shell
+// pane has no status to watch and nothing to answer, so on a phone its row is a line of chrome — and a
+// workspace holding nothing but a shell (`Survey`, `folio`) became a whole heading for it. The
+// dashboard list is agents only; a shell stays one tap away in SPACES (whose counts still include
+// it), the tab strip and the pane switcher. The snapshot carries no foreground process, so "bare"
+// cannot be told from "running a dev server" without a per-poll process read; this gate takes every
+// shell off the list and leaves the rest of the app as it was. routes/home.tsx asks it once.
+// Tests run with shells (MODE "test"); routes/home-no-tabs.test.tsx pins the fork's shape.
+export const FORK_DASH_SHELLS_ON: boolean = import.meta.env.MODE === "test";

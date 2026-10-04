@@ -22,6 +22,14 @@ output in the pane menu, push titles in the device's language, Settings as an in
 pane switcher's Activity / Cache orders, and History with tool calls and compaction recaps folded by
 default.
 
+### No bare shells in the dashboard list (2026-10-04)
+
+- **The dashboard list draws agents only.** A shell pane has no status to watch and nothing to
+  answer, and a workspace holding only a shell became a heading for one grey row. Shells stay one
+  tap away in SPACES (which still counts them), the tab strip and the pane switcher. One gate,
+  `FORK_DASH_SHELLS_ON` in `web/src/lib/dash-tabs.ts`, asked once in `routes/home.tsx`; pinned in
+  `routes/home-no-tabs.test.tsx`. Operator's call: 「空的 shell 不用呈現吧」.
+
 ### A whole Herdr session can be muted (2026-10-04)
 
 - **`notify.toml` takes `[[sessions]]` rows**: `session = "dev"` with `mode = "mute"` silences every

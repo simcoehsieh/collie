@@ -84,7 +84,8 @@ re-grafted rather than accepted. They are listed in `FORK.md` — today those ar
 standing shape** (one line per pane, never the harness's own name, no model on the row), **the dashboard's
 no-footer shape** (no Panes / Focus / Changes bar, `lib/dash-tabs.ts`), **the belt's no-pins shape** (no Switch mark,
 Changes pill or clear X at its right end, `lib/belt-pins.ts`), **the headings' no-"+" shape** (no new-tab
-"+" on a dashboard workspace heading, `lib/dash-tabs.ts`), **the
+"+" on a dashboard workspace heading, `lib/dash-tabs.ts`), **the dashboard's agents-only list** (no bare-shell rows,
+`FORK_DASH_SHELLS_ON` in `lib/dash-tabs.ts`), **the
 first-run screen's standing shape** (it never opens; a `TOUR_VERSION` bump must stay silent and
 Settings has no row for it) and **the composer's standing shape on a physical keyboard** (an empty box
 sends its keys to the pane, a box with text is a message Enter sends, a `/` over an empty box

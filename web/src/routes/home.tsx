@@ -25,7 +25,7 @@ import { useSpaceActions } from "@/hooks/use-spaces";
 import { useNav } from "@/hooks/use-nav";
 import { usePaneOpen } from "@/hooks/use-pane-open";
 import { useScrollMemory } from "@/hooks/use-scroll-memory";
-import { FORK_DASH_TABS_ON, FORK_HEADING_NEW_TAB_ON } from "@/lib/dash-tabs";
+import { FORK_DASH_SHELLS_ON, FORK_DASH_TABS_ON, FORK_HEADING_NEW_TAB_ON } from "@/lib/dash-tabs";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { useQuotaEnabled } from "@/lib/operator-config";
 import { ambientHost, ambientPanes, isMultiHost, paneRowKey, paneScope, sessionsOnHost } from "@/lib/hosts";
@@ -304,7 +304,8 @@ export function HomeRoute() {
               own at the bottom of the sheet. */}
           <AgentList
             agents={data.agents}
-            shellPanes={data.shellPanes}
+            // FORK: no bare shells in this list (lib/dash-tabs.ts); SPACES still counts them.
+            {...(FORK_DASH_SHELLS_ON ? { shellPanes: data.shellPanes } : {})}
             bridge={data.bridge}
             onOpen={paneOpen.open}
             glideKeyOf={paneOpen.glideKeyOf}
