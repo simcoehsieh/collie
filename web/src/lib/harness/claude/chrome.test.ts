@@ -825,6 +825,9 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "draft-footer-empty", statusRows: 2, draft: null, stripped: 9 },
     { fixture: "draft-footer-single", statusRows: 2, draft: "remember to update the changelo", stripped: 9 },
     { fixture: "draft-footer-wrapped", statusRows: 2, draft: "this stranded draft is long eno", stripped: 11 },
+    // FORK: a two-line draft (an attached image's path, a blank, the message) under the composer's
+    // "ctrl+g to edit in VS Code" hint, which used to be read as the plan dialog's footer.
+    { fixture: "draft-multiline-vscode-hint", statusRows: 1, draft: "w1_p1-mutzj7mr-5a1c0e2d.png 測試一下這個", stripped: 7 },
     { fixture: "draft-paste-placeholder", statusRows: 2, draft: "[Pasted text #3 +3 lines]", stripped: 7 },
     // The split shape (#110): a token plus the literal tail beside it, captured complete and
     // half-arrived. Three status rows here — the sandbox pane also carries a transcript warning.

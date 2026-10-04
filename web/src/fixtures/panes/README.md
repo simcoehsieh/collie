@@ -1186,3 +1186,11 @@ The last seven rows were captured on opencode 1.18.34, the rest of this corpus o
 `idle`, not `blocked`, under the question dialogs probed in round two (see "Round two" in
 `QUESTION_NOTES.md`). Each of the seven was checked for user and host names, home paths, tokens and
 session ids and holds only probe strings and the model name.
+
+## Claude composer ctrl+g hint (captured 2026-10-04, Claude Code 2.1.288, herdr 0.9.1, macOS, SCRUBBED)
+
+`claude--draft-multiline-vscode-hint.txt` — the tail of a live pane holding a two-line draft (an
+uploaded image's path, a blank line, a short message) while a turn runs. The footer's right edge
+prints `ctrl+g to edit in VS Code`, which the composer shows once a draft spans more than one line;
+`classifyFooter` used to read it as the ExitPlanMode footer and refuse the box, so every multi-line
+send from the phone stalled. Scrubbed: the upload path's home directory and file name.

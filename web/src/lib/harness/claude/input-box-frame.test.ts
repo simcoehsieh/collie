@@ -67,6 +67,9 @@ describe("parity with the old walk on the real corpus", () => {
     "claude--draft-footer-empty.txt",
     "claude--draft-footer-single.txt",
     "claude--draft-footer-wrapped.txt",
+    // FORK: the composer's "ctrl+g to edit in VS Code" hint under a two-line draft is not the plan
+    // dialog's footer (markers.ts PLAN_EDIT_HINT).
+    "claude--draft-multiline-vscode-hint.txt",
     "claude--draft-paste-placeholder.txt",
     "claude--draft-paste-split-partial.txt",
     "claude--draft-paste-split-tail.txt",

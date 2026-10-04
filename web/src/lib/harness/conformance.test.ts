@@ -46,6 +46,9 @@ const NEUTRAL = new Set([
   "claude--draft-footer-empty.txt",
   "claude--draft-footer-single.txt",
   "claude--draft-footer-wrapped.txt",
+  // FORK: a two-line draft under the composer's own "ctrl+g to edit in VS Code" hint — composer
+  // chrome, not the plan dialog whose footer carries the same words (markers.ts PLAN_EDIT_HINT).
+  "claude--draft-multiline-vscode-hint.txt",
   // The /model picker DISMISSED: the input box is back, so this is an ordinary idle screen. It is the
   // negative control for the generic menu grammar — its statusline is `·`-separated like a key-hint
   // footer, and the input-box gate is the only thing that keeps it raw.

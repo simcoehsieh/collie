@@ -22,6 +22,20 @@ output in the pane menu, push titles in the device's language, Settings as an in
 pane switcher's Activity / Cache orders, and History with tool calls and compaction recaps folded by
 default.
 
+### A multi-line send reaches a Claude pane again (2026-10-04)
+
+- **Fixed: every multi-line send to a Claude pane stalled with "Message didn't reach the input box"**
+  while the text sat typed in the terminal. Once a draft spans two lines (an attached image's path is
+  a line of its own), the composer's footer prints `ctrl+g to edit in VS Code` at its right edge, and
+  `classifyFooter` read those words as the ExitPlanMode dialog's footer — whose hint is the same
+  phrase — so the box locator refused the live box and the draft read as nothing. The plan dialog's
+  hint is always followed by a "·" (its plan file, or the wrap that carries it); the composer's ends
+  the row. `PLAN_EDIT_HINT` in `web/src/lib/harness/claude/markers.ts` now tells them apart; a hint
+  clipped with "…" is still claimed, since a false refusal costs a stall and a false accept types into
+  the dialog. Real capture `claude--draft-multiline-vscode-hint.txt`, pinned in
+  `status-hints.test.ts`. A fresh pane without an editor integration never prints the hint, which is
+  why it would not reproduce there.
+
 ### No bare shells in the dashboard list (2026-10-04)
 
 - **The dashboard list draws agents only.** A shell pane has no status to watch and nothing to

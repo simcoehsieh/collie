@@ -273,6 +273,9 @@ export function questionRowText(text: string): string {
  */
 // A plan file's path on a row of its own: `<config dir>/plans/<slug>.md`.
 const PLAN_FILE_ROW = /^\s*\S*\/plans\/[\w.-]+\.md\s*$/;
+// FORK: the plan dialog's edit hint — followed by a "·" somewhere after it on the row, or clipped
+// with "…". The composer's own "ctrl+g to edit in <editor>" ends the row with neither.
+const PLAN_EDIT_HINT = /ctrl\+g to edit\b(?:[^·]*·|.*…\s*$)/;
 
 export function classifyFooter(text: string, texts: string[]): PromptFamily | null {
   const t = text.toLowerCase();
@@ -280,7 +283,13 @@ export function classifyFooter(text: string, texts: string[]): PromptFamily | nu
   if (/\benter to confirm\b/.test(t)) {
     return namesTrustDialog(texts) ? "trust" : null;
   }
-  if (/ctrl\+g to edit\b/.test(t) || /\.claude\/plans\//.test(t)) return "plan";
+  // FORK (2026-10-04): the ExitPlanMode footer's hint is always followed by a "·" (the plan file's
+  // path, or the wrap that carries it), so "ctrl+g to edit" alone is NOT the dialog: the composer's
+  // own footer prints "ctrl+g to edit in VS Code" at its right edge, last on the row, whenever the
+  // draft runs onto a second line — and claiming it as "plan" refused the live box, so every
+  // multi-line send stalled. A hint clipped with "…" could be either, and is still claimed: a false
+  // refusal costs a stalled send, a false accept types into the dialog.
+  if (PLAN_EDIT_HINT.test(t) || /\.claude\/plans\//.test(t)) return "plan";
   // The plan file lives under CLAUDE_CONFIG_DIR, which need not be `.claude`, and a long path wraps
   // the footer so the path is alone on the last row. Claimed only beside the footer's own
   // "ctrl+g to edit …·" row, so a stray path to some plans/*.md file claims nothing.
