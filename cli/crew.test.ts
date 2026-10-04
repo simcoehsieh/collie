@@ -40,6 +40,7 @@ import {
   readToken,
   schemedAddressLines,
   selfAddress,
+  WINDOWS_CREW_SENTENCE,
 } from "./crew.ts";
 import {
   type AliasRow,
@@ -56,6 +57,7 @@ import type { CrewAddDeps } from "./remote.ts";
 import { mintWarrant } from "../bridge/crew/warrant.ts";
 import { leadDeputyLines } from "./crew-status-deputy.ts";
 import { dialableBridgeHost } from "./tailnet.ts";
+import { hostFor } from "../bridge/host.ts";
 
 // The crew verbs, against fakes for every seam. NOTHING here reaches a service manager, a tailnet, a
 // real trust store or a network: `restart`/`serve`/`unserve` are counters, the transport is a
@@ -120,6 +122,8 @@ function harness(initial: TrustStoreData | null, replies: Reply[] = [], over: Pa
   let n = 0;
 
   const deps: CrewAddDeps = {
+    // A Linux host, pinned: on a Windows test run the crew-forming verbs would refuse (M43).
+    host: hostFor("linux"),
     // `clientFor` races the fake fetch (which resolves as soon as the event loop turns) against a
     // REAL `setTimeout` sized from this env var (`crewTimeoutBudget`, default ~1200ms here). Nothing
     // in this suite exercises that budget — every "unreachable" case throws synchronously instead —
@@ -429,6 +433,83 @@ describe("enrollUrl", () => {
     for (const bad of ["desk.ts.net/api", "desk.ts.net?x=1", "user:pw@desk.ts.net", "", "::::"]) {
       expect(enrollUrl(bad)).toBeNull();
     }
+  });
+});
+
+// ── Windows runs alone (M43) ─────────────────────────────────────────────────
+
+describe("on a Windows host, the verbs that form a crew refuse and change nothing", () => {
+  const WIN = { host: hostFor("win32") };
+  // Each verb with arguments that would otherwise go a long way: a store to mint into, a lead to
+  // dial, an ssh host to reach (this harness throws on any ssh, prompt or bundle).
+  const forming: [string, (h: Harness) => Promise<number>, TrustStoreData | null][] = [
+    ["crew invite", (h) => cmdCrewInvite(h.deps, []), leadStore()],
+    ["crew invite, no store yet", (h) => cmdCrewInvite(h.deps, ["--as", "desk"]), null],
+    ["crew join", (h) => cmdJoin(h.deps, ["desk.ts.net", "-"]), null],
+    ["collie crew join", (h) => cmdCrew(h.deps, ["join", "desk.ts.net", "-"]), null],
+    ["collie crew invite", (h) => cmdCrew(h.deps, ["invite"]), leadStore()],
+    ["collie crew add", (h) => cmdCrew(h.deps, ["add", "nas.example"]), leadStore()],
+    // The verbs that change who leads: name a deputy, consent to a promotion, take the lead.
+    ["collie crew deputy", (h) => cmdCrew(h.deps, ["deputy", "peer"]), leadStore()],
+    ["collie crew deputy --revoke", (h) => cmdCrew(h.deps, ["deputy", "--revoke"]), leadStore()],
+    ["collie crew approve-promote", (h) => cmdCrew(h.deps, ["approve-promote", "peer"]), leadStore()],
+    ["collie promote", (h) => cmdPromote(h.deps, ["--force"]), peerStore()],
+  ];
+
+  for (const [name, verb, initial] of forming) {
+    test(`${name}: one sentence on stderr, exit 1, no store write, no request, no restart`, async () => {
+      const h = harness(initial, [], WIN);
+      const before = JSON.stringify(h.data());
+      expect(await verb(h)).toBe(EXIT.FAIL);
+      expect(h.io.stderr).toEqual([`error: ${WINDOWS_CREW_SENTENCE}`]);
+      expect(h.io.stdout).toEqual([]);
+      expect(JSON.stringify(h.data())).toBe(before);
+      expect(h.requests).toEqual([]);
+      expect(h.audit).toEqual([]);
+      expect(h.restarts).toEqual([]);
+      expect(h.serves).toEqual([]);
+      expect(h.unserves).toEqual([]);
+      expect(h.exec.calls).toEqual([]);
+    });
+  }
+
+  test("the sentence is the one the operator reads, word for word", () => {
+    expect(WINDOWS_CREW_SENTENCE).toBe(
+      "On Windows, Collie runs on one machine only: a Windows machine cannot join, lead or change a crew in this release, and nothing was changed. See docs/windows.md.",
+    );
+  });
+
+  test("the verbs that read or leave a crew are not refused", async () => {
+    const status = harness(leadStore(), [], WIN);
+    expect(await cmdCrewStatus(status.deps, ["--no-probe"])).toBe(EXIT.OK);
+    const leave = harness(peerStore(), [], WIN);
+    await cmdLeave(leave.deps);
+    for (const h of [status, leave]) expect(text(h.io)).not.toContain(WINDOWS_CREW_SENTENCE);
+    expect(leave.data()?.crew ?? null).toBeNull();
+  });
+
+  test("a solo crew status on Windows names no verb that refuses", async () => {
+    const h = harness(null, [], WIN);
+    expect(await cmdCrewStatus(h.deps, [])).toBe(EXIT.OK);
+    expect(h.io.stdout).toEqual([
+      "mode: solo — this collie is not in a crew (no trust store, or an empty one).",
+      "  A Windows machine cannot join or lead a crew in this release.",
+    ]);
+    expect(text(h.io)).not.toContain("crew invite");
+    expect(text(h.io)).not.toContain("collie join");
+  });
+
+  test("a solo crew status off Windows still names both ways in", async () => {
+    const h = harness(null, [], { host: hostFor("linux") });
+    expect(await cmdCrewStatus(h.deps, [])).toBe(EXIT.OK);
+    expect(h.io.stdout[1]).toBe("  `collie crew invite` here makes it a lead; `collie join …` makes it a peer.");
+  });
+
+  test("off Windows the same invite is minted as before", async () => {
+    const h = harness(leadStore(), [], { host: hostFor("linux") });
+    expect(await cmdCrewInvite(h.deps, [])).toBe(EXIT.OK);
+    expect(h.io.stdout[0]).toBe(`r1.${fp("desk")}`);
+    expect(text(h.io)).not.toContain("On Windows");
   });
 });
 

@@ -1,9 +1,10 @@
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
+import { HOST, hostFor } from "../bridge/host.ts";
 import { fallbackDirs, findIn, findTool, searchDirs, toolExts } from "./tools.ts";
 
 // The whole reason this module exists: Herdr spawns plugin actions with no login shell, so PATH may
@@ -40,6 +41,21 @@ describe("searchDirs", () => {
   test("a dir named twice is searched once", () => {
     const dirs = searchDirs(["/usr/bin", "/usr/bin"].join(delimiter), HOME);
     expect(dirs.filter((d) => d === "/usr/bin")).toHaveLength(1);
+  });
+});
+
+describe("searchDirs reads the PATH of the host it is given", () => {
+  test("a Windows PATH splits at semicolons and keeps drive and UNC entries, whatever the machine", () => {
+    const path = "C:\\Program Files\\Tools;D:\\tools;\\\\srv\\share\\bin;relative\\bin";
+    const dirs = searchDirs(path, HOME, hostFor("win32"));
+    expect(dirs.slice(0, 3)).toEqual(["C:\\Program Files\\Tools", "D:\\tools", "\\\\srv\\share\\bin"]);
+    expect(dirs).not.toContain("relative\\bin");
+  });
+
+  test("a POSIX host splits at colons and drops a drive-lettered entry", () => {
+    const dirs = searchDirs("/opt/a:/opt/b:C", HOME, hostFor("linux"));
+    expect(dirs.slice(0, 2)).toEqual(["/opt/a", "/opt/b"]);
+    expect(dirs).not.toContain("C");
   });
 });
 
@@ -100,21 +116,21 @@ describe("toolExts", () => {
   // The platform is passed, never read: these ran on a Windows host only, which is a host we do
   // not have, so the branch they cover went untested on every machine that runs this suite.
   test("is the bare name alone off win32", () => {
-    expect(toolExts({ PATHEXT: ".COM;.EXE" }, "linux")).toEqual([""]);
+    expect(toolExts({ PATHEXT: ".COM;.EXE" }, hostFor("linux"))).toEqual([""]);
   });
 
   test("is the bare name first, then PATHEXT, on win32", () => {
-    expect(toolExts({ PATHEXT: ".COM;.EXE" }, "win32")).toEqual(["", ".COM", ".EXE"]);
+    expect(toolExts({ PATHEXT: ".COM;.EXE" }, hostFor("win32"))).toEqual(["", ".COM", ".EXE"]);
   });
 
   test("falls back to the standard suffixes with no PATHEXT", () => {
-    expect(toolExts({}, "win32")).toEqual(["", ".COM", ".EXE", ".BAT", ".CMD"]);
+    expect(toolExts({}, hostFor("win32"))).toEqual(["", ".COM", ".EXE", ".BAT", ".CMD"]);
   });
 
   // Windows spells it `PathExt`, and case survives only while the environment is the live
   // `process.env` proxy — this module is handed plain copies of it.
   test("reads the name case-insensitively on win32", () => {
-    expect(toolExts({ PathExt: ".COM;.EXE" }, "win32")).toEqual(["", ".COM", ".EXE"]);
+    expect(toolExts({ PathExt: ".COM;.EXE" }, hostFor("win32"))).toEqual(["", ".COM", ".EXE"]);
   });
 });
 
@@ -132,7 +148,7 @@ describe("findTool on win32, from a host that is not Windows", () => {
   const env = { PATH: dir, PATHEXT: ".cmd" };
 
   test("a `.cmd` shim on PATH resolves", () => {
-    expect(findTool("herdr", env, HOME, "win32")).toBe(shim);
+    expect(findTool("herdr", env, HOME, hostFor("win32"))).toBe(shim);
   });
 
   // Bun's compiler writes `collie.exe`; a caller holding the bare absolute path means that file. The
@@ -141,12 +157,45 @@ describe("findTool on win32, from a host that is not Windows", () => {
     const exe = join(dir, "collie.exe");
     writeFileSync(exe, "MZ");
     chmodSync(exe, 0o755);
-    expect(findTool(join(dir, "collie"), { PATHEXT: ".exe" }, HOME, "win32")).toBe(exe);
-    expect(findTool(join(dir, "collie"), { PATHEXT: ".exe" }, HOME, "linux")).toBeNull();
-    expect(findTool(join(dir, "nothing"), { PATHEXT: ".exe" }, HOME, "win32")).toBeNull();
+    expect(findTool(join(dir, "collie"), { PATHEXT: ".exe" }, HOME, hostFor("win32"))).toBe(exe);
+    expect(findTool(join(dir, "collie"), { PATHEXT: ".exe" }, HOME, hostFor("linux"))).toBeNull();
+    expect(findTool(join(dir, "nothing"), { PATHEXT: ".exe" }, HOME, hostFor("win32"))).toBeNull();
   });
 
   test("the same shim is not matched on linux — there the bare name is the only candidate", () => {
-    expect(findTool("herdr", env, HOME, "linux")).toBeNull();
+    expect(findTool("herdr", env, HOME, hostFor("linux"))).toBeNull();
+  });
+});
+
+// Issue 344: Windows 11 with PowerShell 7 has a DIRECTORY `C:\Windows\System32\PowerShell`, and
+// System32 precedes `WindowsPowerShell\v1.0` on PATH. A directory is "executable" to `access(X_OK)`
+// (it is searchable), so the bare name resolved to the directory and the spawn then failed.
+describe("findTool skips a directory that carries the tool's name", () => {
+  function layout(fileName: string) {
+    const root = mkdtempSync(join(tmpdir(), "collie-tools-dir-"));
+    const a = join(root, "a");
+    const b = join(root, "b");
+    mkdirSync(a);
+    mkdirSync(b);
+    mkdirSync(join(a, "powershell"), { mode: 0o755 });
+    const file = join(b, fileName);
+    writeFileSync(file, "MZ");
+    chmodSync(file, 0o755);
+    return { a, b, file };
+  }
+
+  test("win32: a directory `powershell` earlier on PATH does not win over a later `powershell.exe`", () => {
+    const { a, b, file } = layout("powershell.exe");
+    const env = { PATH: [a, b].join(hostFor("win32").path.delimiter), PATHEXT: ".exe" };
+    expect(findTool("powershell", env, HOME, hostFor("win32"))).toBe(file);
+  });
+
+  // Runs on the REAL host, not a pinned one: a pinned `linux` host over real Windows temp paths
+  // splits `C:\...` on `:`. The file name carries the host's own executable suffix, so the same
+  // test asserts "a directory named like the tool never wins" on Linux, macOS and Windows alike.
+  test("host: a directory named like the tool does not win over a later executable file", () => {
+    const { a, b, file } = layout(`powershell${HOST.exeSuffix}`);
+    const env = { PATH: [a, b].join(HOST.path.delimiter), PATHEXT: ".exe" };
+    expect(findTool("powershell", env, HOME, HOST)).toBe(file);
   });
 });

@@ -1,6 +1,7 @@
 import type { ArtifactRecord } from "./artifacts.ts";
 import type { TranscriptEntry } from "./journal/types.ts";
 import type { CreateResponse, CreatedPane } from "./types.ts";
+import { HOST } from "./host.ts";
 
 // FORK — HANDING A CONVERSATION TO ANOTHER AGENT.
 //
@@ -47,7 +48,8 @@ export type HandoffHarness = "claude" | "codex" | "agy";
  */
 export function handoffHarnessOf(command: string): HandoffHarness | null {
   const first = command.trim().split(/\s+/u)[0] ?? "";
-  const base = first.split("/").pop() ?? "";
+  // The program's own name, by the host's path rules (bridge/host.ts), so a Windows path works too.
+  const base = HOST.path.basename(first);
   if (base === "claude" || base === "codex" || base === "agy") return base;
   return null;
 }

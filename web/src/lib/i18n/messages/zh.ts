@@ -870,6 +870,8 @@ export const zh: Dictionary = {
   // TODO wordsmith
   "dialog.menu.levelCurrentAria": "{label}，当前",
   "unreadDialog.caption": "Collie 无法读取此对话框", // wordsmith
+  "unreadDialog.confirmKey": "再次点击以发送 {key}", // wordsmith
+  "unreadDialog.confirmDismiss": "再次点击以关闭", // wordsmith
   "dialog.preview.currentAnswerAria": "当前回答",
   "dialog.preview.previewedBelowAria": "下方显示预览",
   "dialog.preview.previewLabel": "预览 · {label}",
@@ -889,6 +891,10 @@ export const zh: Dictionary = {
     "当前处于密码提示状态，终端无回显导致无法确认输入是否到达。未输入任何内容。",
   "reply.blocked.composerLeft":
     "清空输入行时 Agent 输入框消失，可能触发了弹窗或菜单。消息未写入。",
+  "reply.refused.multiline":
+    "此输入框遇到换行就会提交，多行消息会在第一个换行处被截断。请写成一行。未输入任何内容。",
+  "reply.refused.multilineMidway":
+    "此输入框遇到换行就会提交，多行消息已在第一个换行处被截断。换行之前的部分已经输入到窗格中。请写成一行。",
   "reply.stalled.noEcho":
     "当前处于密码提示状态，终端无回显导致无法确认文本且未提交。输入的内容已写入窗格。",
   "reply.stalled.generic":

@@ -866,6 +866,8 @@ export const zhTW: Dictionary = {
   // TODO wordsmith
   "dialog.menu.levelCurrentAria": "{label}，目前",
   "unreadDialog.caption": "Collie 無法讀取此對話框", // wordsmith
+  "unreadDialog.confirmKey": "再次點擊以傳送 {key}", // wordsmith
+  "unreadDialog.confirmDismiss": "再次點擊以關閉", // wordsmith
   "dialog.preview.currentAnswerAria": "目前回答",
   "dialog.preview.previewedBelowAria": "下方顯示預覽",
   "dialog.preview.previewLabel": "預覽 · {label}",
@@ -885,6 +887,10 @@ export const zhTW: Dictionary = {
     "目前處於密碼提示狀態，終端機沒有回顯，因此無法確認輸入是否送達。未輸入任何內容。",
   "reply.blocked.composerLeft":
     "清空輸入列時 Agent 輸入框消失，可能觸發了彈出視窗或選單。訊息未寫入。",
+  "reply.refused.multiline":
+    "此輸入框遇到換行就會送出，多行訊息會在第一個換行處被截斷。請寫成一行。未輸入任何內容。",
+  "reply.refused.multilineMidway":
+    "此輸入框遇到換行就會送出，多行訊息已在第一個換行處被截斷。換行之前的部分已經輸入到窗格中。請寫成一行。",
   "reply.stalled.noEcho":
     "目前處於密碼提示狀態，終端機沒有回顯，因此無法確認文字且尚未提交。輸入的內容已寫入窗格。",
   "reply.stalled.generic":

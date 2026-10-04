@@ -1,12 +1,7 @@
-import { basename, dirname, join, posix, win32 } from "node:path";
-
+import { collieBinary, HOST, type Host, isBelow, isSameOrInside } from "../bridge/host.ts";
 import type { CliContext } from "./context.ts";
 import type { LinkReader } from "./link.ts";
 import type { Exec, Files } from "./sys.ts";
-import { collieBinary } from "./unit.ts";
-
-/** The path rules of the platform a layout is judged for, so a Windows root is compared the Windows way on any host. */
-const pathApi = (platform: string) => (platform === "win32" ? win32 : posix);
 
 // HOW THIS COLLIE GOT HERE, and where its updates come from — the two questions `update` and
 // `doctor` must answer the same way, so they are answered once, here.
@@ -211,6 +206,15 @@ export function classifyInstall(p: InstallProbe): InstallKind {
  */
 export const PACKAGED_SENTENCE = "updates come from your package manager";
 
+/**
+ * The one sentence for a source checkout on Windows (M43 spec 08). There `collie update` takes a
+ * release install only: a checkout's update needs `bash` to build (spec 03), and its task runs the
+ * clone's own `bin\collie.exe`, so the restart after a staged update relaunched the old build (VM,
+ * 2026-10-02). `collie update` and its preflight (so the phone's button) print exactly this.
+ */
+export const WINDOWS_CHECKOUT_SENTENCE =
+  "On Windows, collie updates a release install. A source checkout is not supported for updates; install the release zip with install.ps1.";
+
 // ── The probe, and what a binary install's paths are ─────────────────────────
 
 /** The paths of a binary install, all derived from the version directory the process runs from. */
@@ -229,29 +233,25 @@ export interface BinaryLayout {
 /**
  * Is `child` under `parent`, however either is spelled? A string prefix test with a `/` never matches
  * on Windows: `resolve` hands back `C:\inst\versions\1.1.0`, `dirname` of a forward-slash root keeps
- * its slashes, and the drive letter and case may differ. `relative` folds all of that. `platform`
- * picks the path rules, so a Linux test pins the Windows answer.
+ * its slashes, and the drive letter and case may differ. The host's own comparison (`bridge/host.ts`)
+ * folds all of that. Both paths are resolved first, which is what `path.relative` did before: a `..`
+ * or `.` segment, or a relative path, answers as it always did. `host` picks the path rules, so a
+ * Linux test pins the Windows answer.
  */
-function relationOf(parent: string, child: string, platform: string): "same" | "inside" | "outside" {
-  const api = platform === "win32" ? win32 : posix;
-  const rel = api.relative(parent, child);
-  if (rel === "") return "same";
-  // `relative` returns `child` itself, absolute, when no path leads there (another drive).
-  const escapes = rel === ".." || rel.startsWith(`..${api.sep}`) || api.isAbsolute(rel);
-  return escapes ? "outside" : "inside";
-}
+const resolved = (host: Host, path: string): string => host.path.resolve(path);
 
 /** `child` is strictly below `parent`. */
-export function isInside(parent: string, child: string, platform: string = process.platform): boolean {
-  return relationOf(parent, child, platform) === "inside";
+export function isUnder(host: Host, parent: string, child: string): boolean {
+  return isBelow(host, resolved(host, parent), resolved(host, child));
 }
 
 /** `child` is `parent` or below it. */
-export function isSameOrInside(parent: string, child: string, platform: string = process.platform): boolean {
-  return relationOf(parent, child, platform) !== "outside";
+export function isSameOrUnder(host: Host, parent: string, child: string): boolean {
+  return isSameOrInside(host, resolved(host, parent), resolved(host, child));
 }
 
-export function binaryLayout(root: string): BinaryLayout {
+export function binaryLayout(root: string, host: Host = HOST): BinaryLayout {
+  const { dirname, basename, join } = host.path;
   const versionsDir = dirname(root);
   const installRoot = dirname(versionsDir);
   return {
@@ -276,14 +276,23 @@ export function binaryLayout(root: string): BinaryLayout {
  * Structural and git-free — only the layout decides, so a checkout keeps pointing at its own
  * `bin/collie` exactly as before.
  */
-export function publishedBinary(root: string, link: LinkReader, platform: string = process.platform): string {
-  const layout = binaryLayout(root);
-  if (basename(layout.versionsDir) !== "versions") return collieBinary(root, platform);
+export function publishedBinary(root: string, link: LinkReader, host: Host = HOST): string {
+  return collieBinary(publishedRoot(root, link, host), host);
+}
+
+/**
+ * The folder {@link publishedBinary} sits under: `<install-root>/current` on a binary install whose
+ * `current` names a version under `versions/`, and `root` itself everywhere else. The Windows task is
+ * registered on this folder (`cli/lifecycle.ts`), so the task, the PATH name and `doctor` read one
+ * answer and cannot drift apart.
+ */
+export function publishedRoot(root: string, link: LinkReader, host: Host = HOST): string {
+  const layout = binaryLayout(root, host);
+  if (host.path.basename(layout.versionsDir) !== "versions") return root;
   const probe = link.probe(layout.currentLink);
-  if (probe.kind !== "symlink") return collieBinary(root, platform);
-  const target = pathApi(platform).resolve(layout.installRoot, probe.target);
-  const inLayout = isSameOrInside(layout.versionsDir, target, platform);
-  return inLayout ? collieBinary(layout.currentLink, platform) : collieBinary(root, platform);
+  if (probe.kind !== "symlink") return root;
+  const target = host.path.resolve(layout.installRoot, probe.target);
+  return isSameOrUnder(host, layout.versionsDir, target) ? layout.currentLink : root;
 }
 
 /** What the world says about `root` — one `git` call, one `lstat`, one `readlink`. All reads. */
@@ -293,29 +302,29 @@ export function probeInstall(
     readonly exec: Exec;
     readonly files: Files;
     readonly link: LinkReader;
-    /** Which path rules compare the layout; the host's when absent. */
-    readonly platform?: string;
+    /** Which path rules compare the layout; the running host's when absent. */
+    readonly host?: Host;
   },
   root: string,
 ): InstallProbe {
-  const platform = deps.platform ?? process.platform;
+  const host = deps.host ?? HOST;
   const git = isGitCheckout(deps.exec, root);
-  const layout = binaryLayout(root);
+  const layout = binaryLayout(root, host);
   const probe = deps.link.probe(layout.currentLink);
-  const target = probe.kind === "symlink" ? pathApi(platform).resolve(layout.installRoot, probe.target) : null;
+  const target = probe.kind === "symlink" ? host.path.resolve(layout.installRoot, probe.target) : null;
   return {
     isGitCheckout: git,
     isDetached: git && isManagedCheckout(deps.exec, root),
     // `exists` answers for a directory and for the one-line file a worktree or submodule uses.
-    hasGitEntry: deps.files.exists(join(root, ".git")),
-    parentIsVersions: basename(layout.versionsDir) === "versions",
+    hasGitEntry: deps.files.exists(host.path.join(root, ".git")),
+    parentIsVersions: host.path.basename(layout.versionsDir) === "versions",
     currentIsSymlink: probe.kind === "symlink",
-    currentResolvesHere: target !== null && isSameOrInside(layout.versionsDir, target, platform),
-    hasMarker: deps.files.exists(join(root, "herdr-plugin.toml")),
+    currentResolvesHere: target !== null && isSameOrUnder(host, layout.versionsDir, target),
+    hasMarker: deps.files.exists(host.path.join(root, "herdr-plugin.toml")),
     rootOwnerUid: deps.files.ownerUid(root),
     // `null` — the probe could not reach the question — is NOT read-only. See the field's comment.
     rootIsReadOnly: deps.files.writable(root) === false,
-    rootOutsideHome: !isInside(deps.ctx.home, root, platform),
+    rootOutsideHome: !isUnder(host, deps.ctx.home, root),
   };
 }
 
@@ -325,7 +334,7 @@ export function detectInstall(deps: {
   readonly exec: Exec;
   readonly files: Files;
   readonly link: LinkReader;
-  readonly platform?: string;
+  readonly host?: Host;
 }): InstallKind {
   return classifyInstall(probeInstall(deps, deps.ctx.root));
 }

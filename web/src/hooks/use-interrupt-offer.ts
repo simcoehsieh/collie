@@ -9,11 +9,12 @@ interface InterruptOfferOptions {
   keys: readonly string[] | undefined;
   eligible: boolean;
   obstructed: boolean;
-  sendKeys: (keys: string[]) => Promise<boolean>;
+  /** The composer's own key send (it goes through lib/api, which starts the poll burst). */
+  sendInterruptKeys: (keys: string[]) => Promise<boolean>;
 }
 
 /** A two-tap interrupt belongs to one visible pane and expires after two seconds. */
-export function useInterruptOffer({ target, keys, eligible, obstructed, sendKeys }: InterruptOfferOptions) {
+export function useInterruptOffer({ target, keys, eligible, obstructed, sendInterruptKeys }: InterruptOfferOptions) {
   const offered = eligible && keys !== undefined;
   const { pending, confirm, reset } = usePendingConfirm(2000);
   const [busy, setBusy] = useState(false);
@@ -53,7 +54,7 @@ export function useInterruptOffer({ target, keys, eligible, obstructed, sendKeys
     inFlight.current = true;
     setBusy(true);
     try {
-      await sendKeys([...keys]);
+      await sendInterruptKeys([...keys]);
     } finally {
       inFlight.current = false;
       setBusy(false);

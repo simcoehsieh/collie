@@ -28,6 +28,7 @@ import { useScrollMemory } from "@/hooks/use-scroll-memory";
 import { FORK_DASH_SHELLS_ON, FORK_DASH_TABS_ON, FORK_HEADING_NEW_TAB_ON } from "@/lib/dash-tabs";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { useQuotaEnabled } from "@/lib/operator-config";
+import { isolateSpaces } from "@/lib/spaces";
 import { ambientHost, ambientPanes, isMultiHost, paneRowKey, paneScope, sessionsOnHost } from "@/lib/hosts";
 import { setMachineHidden, useHiddenMachines } from "@/lib/hidden-machines";
 import type { ChangesLookup } from "@/lib/api";
@@ -371,7 +372,7 @@ export function HomeRoute() {
           {view === "panes" && (
             <>
               <SpaceOverview
-                workspaces={data.workspaces}
+                workspaces={isolateSpaces(data.workspaces, prefs.isolatedSpace)}
                 agents={navPanes.agents}
                 shellPanes={navPanes.shellPanes}
                 host={navHost}

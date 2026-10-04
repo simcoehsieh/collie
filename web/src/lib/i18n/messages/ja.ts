@@ -883,6 +883,8 @@ export const ja: Dictionary = {
   // TODO wordsmith
   "dialog.menu.levelCurrentAria": "{label}、現在",
   "unreadDialog.caption": "Collie はこの対話を読み取れません", // wordsmith
+  "unreadDialog.confirmKey": "もう一度タップして{key}を送信", // wordsmith
+  "unreadDialog.confirmDismiss": "もう一度タップして閉じる", // wordsmith
   "dialog.preview.currentAnswerAria": "現在の回答",
   "dialog.preview.previewedBelowAria": "プレビューを下に表示中",
   "dialog.preview.previewLabel": "プレビュー · {label}",
@@ -903,6 +905,10 @@ export const ja: Dictionary = {
     "パスワード入力プロンプトです。エコーバックがないため入力到達を確認できません。入力は行われていません。",
   "reply.blocked.composerLeft":
     "入力行のクリア中に入力欄が非表示になりました。メニューかダイアログが開いている可能性があります。メッセージは入力されていません。",
+  "reply.refused.multiline":
+    "この入力欄は改行で送信されるため、複数行のメッセージは最初の改行で途切れます。1行にまとめてください。入力は行われていません。",
+  "reply.refused.multilineMidway":
+    "この入力欄は改行で送信されるため、複数行のメッセージは最初の改行で途切れました。それより前の部分はすでにペインに入力されています。1行にまとめてください。",
   "reply.stalled.noEcho":
     "パスワード入力プロンプトです。エコーバックがないため到達確認ができず、送信されませんでした。入力内容はペイン側に残っています。",
   "reply.stalled.generic":

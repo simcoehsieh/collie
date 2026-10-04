@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
+import { hostFor } from "../bridge/host.ts";
 import {
   type BuildDeps,
   bunCompileSandboxPrefix,
@@ -23,6 +24,7 @@ import {
   collieBinaryStaging,
   compiledPath,
   swapBinary,
+  sweepAsides,
   ensureBuild,
   webDist,
   webStaging,
@@ -95,7 +97,7 @@ function harness(
   });
   // The platform is pinned, not read from the host: these cases are about a Linux box (`bin/collie`,
   // one rename); the Windows swap has its own cases that pass "win32" and pass on every host.
-  return { deps: { ctx: context(over.env ?? {}), io, exec, files, platform: "linux" }, io, exec, files };
+  return { deps: { ctx: context(over.env ?? {}), io, exec, files, host: hostFor("linux") }, io, exec, files };
 }
 
 /** Every command the fake exec recorded, folded to the POSIX spelling (see {@link posix}). */
@@ -375,7 +377,7 @@ describe("build: the ordered steps", () => {
     // `bun build --compile --outfile bin/collie.new` writes `bin/collie.new.exe` on Windows. Renaming
     // the bare name died with ENOENT after the web bundle had already built, so neither swap landed.
     const h = harness({ files: { [`${STAGING}/index.html`]: "<!doctype html>NEW" } });
-    h.deps.platform = "win32";
+    h.deps.host = hostFor("win32");
     expect(cmdBuild(h.deps)).toBe(EXIT.OK);
     expect(calls(h).find(compilerCall)).toEndWith(`--outfile ${posix(BINARY_NEW)}`);
     expect(h.files.ops.slice(-4)).toEqual(
@@ -439,16 +441,116 @@ describe("swapBinary on Windows", () => {
 
   test("the live collie.exe steps aside, the new one lands, and the old one is cleared", () => {
     const files = fakeFiles({ [LIVE]: "OLD", [STAGED]: "NEW" });
-    swapBinary(files, STAGED, LIVE, "win32");
-    expect(moves(files)).toEqual([posix(`mv ${LIVE} ${LIVE}.old`), posix(`mv ${STAGED} ${LIVE}`)]);
+    swapBinary(files, STAGED, LIVE, hostFor("win32"), "41-a");
+    expect(moves(files)).toEqual([posix(`mv ${LIVE} ${LIVE}.old-41-a`), posix(`mv ${STAGED} ${LIVE}`)]);
     expect(files.read(LIVE)).toBe("NEW");
     // Nothing runs the old file in this fake, so it is cleared at once.
+    expect(files.exists(`${LIVE}.old-41-a`)).toBe(false);
+  });
+
+  test("a second swap while the first old process still runs takes a new aside name", () => {
+    // The first swap's old file is still executed by a process, so Windows refuses to remove it.
+    // With one fixed `.old` name the next step aside was a rename onto that file: EPERM.
+    const held = `${LIVE}.old-41-a`;
+    const files = fakeFiles({ [LIVE]: "MIDDLE", [STAGED]: "NEW", [held]: "OLD" });
+    files.undeletable.add(held);
+    swapBinary(files, STAGED, LIVE, hostFor("win32"), "42-b");
+    expect(moves(files)).toEqual([posix(`mv ${LIVE} ${LIVE}.old-42-b`), posix(`mv ${STAGED} ${LIVE}`)]);
+    expect(files.read(LIVE)).toBe("NEW");
+    expect(files.read(held)).toBe("OLD");
+    expect(files.exists(`${LIVE}.old-42-b`)).toBe(false);
+  });
+
+  /** `files.rename` that answers `code` for the first `times` calls matching `from -> to`. */
+  const busyOnce = (files: FakeFiles, from: string, to: string, code: string, times: number) => {
+    const rename = files.rename;
+    let left = times;
+    files.rename = (a, b) => {
+      if (posix(a).endsWith(posix(from)) && posix(b).endsWith(posix(to)) && left-- > 0) {
+        throw Object.assign(new Error(`${code}: operation not permitted, rename`), { code });
+      }
+      rename(a, b);
+    };
+  };
+
+  test("the order is: step aside, take the place; a busy rename is tried again with a pause", () => {
+    const files = fakeFiles({ [LIVE]: "OLD", [STAGED]: "NEW" });
+    busyOnce(files, STAGED, LIVE, "EBUSY", 2);
+    const paused: number[] = [];
+    swapBinary(files, STAGED, LIVE, hostFor("win32"), "41-a", (ms) => paused.push(ms));
+    expect(moves(files)).toEqual([posix(`mv ${LIVE} ${LIVE}.old-41-a`), posix(`mv ${STAGED} ${LIVE}`)]);
+    expect(paused).toEqual([250, 500]);
+    expect(files.read(LIVE)).toBe("NEW");
+  });
+
+  test("a place step that stays busy puts the old collie.exe back: the install always has one", () => {
+    const files = fakeFiles({ [LIVE]: "OLD", [STAGED]: "NEW" });
+    busyOnce(files, STAGED, LIVE, "EPERM", 99);
+    const paused: number[] = [];
+    expect(() => swapBinary(files, STAGED, LIVE, hostFor("win32"), "41-a", (ms) => paused.push(ms))).toThrow("EPERM");
+    // Five tries of the place step, then the aside goes back.
+    expect(paused).toEqual([250, 500, 1_000, 2_000]);
+    expect(moves(files).at(-1)).toBe(posix(`mv ${LIVE}.old-41-a ${LIVE}`));
+    expect(files.read(LIVE)).toBe("OLD");
+    expect(files.read(STAGED)).toBe("NEW");
+    expect(files.exists(`${LIVE}.old-41-a`)).toBe(false);
+  });
+
+  test("a busy restore is tried again too", () => {
+    const files = fakeFiles({ [LIVE]: "OLD", [STAGED]: "NEW" });
+    files.unrenamable.add(STAGED);
+    busyOnce(files, `${LIVE}.old-41-a`, LIVE, "EBUSY", 1);
+    const paused: number[] = [];
+    expect(() => swapBinary(files, STAGED, LIVE, hostFor("win32"), "41-a", (ms) => paused.push(ms))).toThrow();
+    expect(paused).toEqual([250]);
+    expect(files.read(LIVE)).toBe("OLD");
+  });
+
+  test("off Windows a busy rename is not tried again: one rename, as before", () => {
+    const files = fakeFiles({ [BINARY]: "OLD", [BINARY_NEW]: "NEW" });
+    busyOnce(files, BINARY_NEW, BINARY, "EBUSY", 1);
+    const paused: number[] = [];
+    expect(() => swapBinary(files, BINARY_NEW, BINARY, hostFor("linux"), "41-a", (ms) => paused.push(ms))).toThrow("EBUSY");
+    expect(paused).toEqual([]);
+  });
+
+  test("the default aside name is unique to this process and this moment", () => {
+    const files = fakeFiles({ [LIVE]: "OLD", [STAGED]: "NEW" });
+    files.undeletable.add(`${LIVE}.old`);
+    swapBinary(files, STAGED, LIVE, hostFor("win32"));
+    const aside = moves(files)[0] ?? "";
+    expect(aside).toMatch(new RegExp(`\\.old-${process.pid}-[0-9a-z]+$`));
+  });
+
+  test("the sweep clears every aside nothing runs, the legacy `.old` too, and leaves the rest", () => {
+    const dir = `${ROOT}/bin`;
+    const files = fakeFiles({
+      [LIVE]: "LIVE",
+      [`${LIVE}.old`]: "legacy",
+      [`${LIVE}.old-1-a`]: "free",
+      [`${LIVE}.old-2-b`]: "held",
+      [`${dir}/collie.exe.older`]: "not an aside",
+      [`${dir}/other.exe.old-3-c`]: "not ours",
+    });
+    files.undeletable.add(`${LIVE}.old-2-b`);
+    sweepAsides(files, LIVE, hostFor("win32"));
     expect(files.exists(`${LIVE}.old`)).toBe(false);
+    expect(files.exists(`${LIVE}.old-1-a`)).toBe(false);
+    expect(files.exists(`${LIVE}.old-2-b`)).toBe(true);
+    expect(files.exists(`${dir}/collie.exe.older`)).toBe(true);
+    expect(files.exists(`${dir}/other.exe.old-3-c`)).toBe(true);
+    expect(files.exists(LIVE)).toBe(true);
+  });
+
+  test("off Windows the sweep touches nothing", () => {
+    const files = fakeFiles({ [`${BINARY}.old-1-a`]: "x" });
+    sweepAsides(files, BINARY, hostFor("linux"));
+    expect(files.exists(`${BINARY}.old-1-a`)).toBe(true);
   });
 
   test("a staged file that is not there never moves the one working binary", () => {
     const files = fakeFiles({ [LIVE]: "OLD" });
-    swapBinary(files, STAGED, LIVE, "win32");
+    swapBinary(files, STAGED, LIVE, hostFor("win32"));
     expect(moves(files)).toEqual([posix(`mv ${STAGED} ${LIVE}`)]);
     expect(files.read(LIVE)).toBe("OLD");
   });
@@ -456,21 +558,21 @@ describe("swapBinary on Windows", () => {
   test("a staged file that cannot take its place puts the old binary back, and the failure rises", () => {
     const files = fakeFiles({ [LIVE]: "OLD", [STAGED]: "NEW" });
     files.unrenamable.add(STAGED);
-    expect(() => swapBinary(files, STAGED, LIVE, "win32")).toThrow();
-    expect(moves(files).at(-1)).toBe(posix(`mv ${LIVE}.old ${LIVE}`));
+    expect(() => swapBinary(files, STAGED, LIVE, hostFor("win32"), "41-a")).toThrow();
+    expect(moves(files).at(-1)).toBe(posix(`mv ${LIVE}.old-41-a ${LIVE}`));
     expect(files.read(LIVE)).toBe("OLD");
   });
 });
 
 describe("compiledPath: the file Bun's compiler actually writes", () => {
   test("Windows gains `.exe`; an outfile that already has one is left alone", () => {
-    expect(compiledPath("C:\\c\\bin\\collie.new", "win32")).toBe("C:\\c\\bin\\collie.new.exe");
-    expect(compiledPath("C:\\c\\bin\\collie.EXE", "win32")).toBe("C:\\c\\bin\\collie.EXE");
+    expect(compiledPath("C:\\c\\bin\\collie.new", hostFor("win32"))).toBe("C:\\c\\bin\\collie.new.exe");
+    expect(compiledPath("C:\\c\\bin\\collie.EXE", hostFor("win32"))).toBe("C:\\c\\bin\\collie.EXE");
   });
 
   test("everywhere else the outfile is the file", () => {
     for (const platform of ["linux", "darwin"] as const) {
-      expect(compiledPath("/c/bin/collie.new", platform)).toBe("/c/bin/collie.new");
+      expect(compiledPath("/c/bin/collie.new", hostFor(platform))).toBe("/c/bin/collie.new");
     }
   });
 });
@@ -480,7 +582,7 @@ describe("build: CLI-only compiler", () => {
     const io = capture();
     const files = fakeFiles({ [`${ROOT}/cli/main.ts`]: "export {};" });
 
-    expect(compileCli({ root: ROOT, io, exec: fakeExec(), files, platform: "linux" })).toBe(true);
+    expect(compileCli({ root: ROOT, io, exec: fakeExec(), files, host: hostFor("linux") })).toBe(true);
     expect(files.entryType(`${ROOT}/bin`)).toBe("directory");
   });
 
@@ -493,7 +595,7 @@ describe("build: CLI-only compiler", () => {
       return result;
     };
 
-    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, platform: "linux" })).toBe(true);
+    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, host: hostFor("linux") })).toBe(true);
     const compile = calls(h).find(compilerCall)!;
     const sandbox = compilerCwd(compile);
     expect(sandbox).toStartWith(posix(SANDBOX_PREFIX));
@@ -507,7 +609,7 @@ describe("build: CLI-only compiler", () => {
 
     expect(
       compileCli(
-        { root: ROOT, io: h.io, exec: h.exec, files: h.files, platform: "linux" },
+        { root: ROOT, io: h.io, exec: h.exec, files: h.files, host: hostFor("linux") },
         {
           bun: "/tool/upstream-bun",
           target: "bun-linux-x64-baseline",
@@ -532,7 +634,7 @@ describe("build: CLI-only compiler", () => {
       return { ...result, code: 1 };
     };
 
-    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, platform: "linux" })).toBe(false);
+    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, host: hostFor("linux") })).toBe(false);
     const sandbox = compilerCwd(calls(h).find(compilerCall)!);
     expect(h.files.exists(sandbox)).toBe(false);
     expect(h.files.entries.has(`${ROOT}/${SIDECAR}`)).toBe(false);
@@ -543,15 +645,15 @@ describe("build: CLI-only compiler", () => {
     const sentinel = join(fixed, "sentinel");
     const h = harness({ files: { [sentinel]: "UNOWNED" } });
 
-    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, platform: "linux" })).toBe(true);
+    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, host: hostFor("linux") })).toBe(true);
     expect(h.files.entries.get(sentinel)?.text).toBe("UNOWNED");
     expect(h.files.ops).not.toContain(posix(`rm -rf ${fixed}`));
   });
 
   test("gives overlapping compiler calls separate sandboxes", () => {
     const h = harness();
-    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, platform: "linux" })).toBe(true);
-    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, platform: "linux" })).toBe(true);
+    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, host: hostFor("linux") })).toBe(true);
+    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, host: hostFor("linux") })).toBe(true);
 
     const sandboxes = calls(h).filter(compilerCall).map(compilerCwd);
     expect(sandboxes).toHaveLength(2);
@@ -563,7 +665,7 @@ describe("build: CLI-only compiler", () => {
     const h = harness();
     h.files.unlistable.add(ROOT);
 
-    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, platform: "linux" })).toBe(false);
+    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, host: hostFor("linux") })).toBe(false);
     expect(h.exec.calls).toEqual([]);
     expect(h.io.stderr.join("\n")).toContain("could not list the checkout root");
   });
@@ -572,7 +674,7 @@ describe("build: CLI-only compiler", () => {
     const h = harness({ files: { ["/external/bin/.bun-compile/sentinel"]: "EXTERNAL" } });
     h.files.realPaths.set(`${ROOT}/bin`, "/external/bin");
 
-    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, platform: "linux" })).toBe(false);
+    expect(compileCli({ root: ROOT, io: h.io, exec: h.exec, files: h.files, host: hostFor("linux") })).toBe(false);
     expect(h.files.entries.get("/external/bin/.bun-compile/sentinel")?.text).toBe("EXTERNAL");
     expect(h.exec.calls).toEqual([]);
     expect(h.io.stderr.join("\n")).toContain("resolves outside its canonical path");

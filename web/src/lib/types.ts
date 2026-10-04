@@ -1184,6 +1184,8 @@ export type ActionResponse =
       textDelivered?: boolean;
       code?: ApiErrorCode;
       detail?: ApiErrorDetail;
+      /** On a 409 `prompt_changed` only: the bridge's reason code for the refusal. */
+      reason?: string;
     };
 
 export type UploadResponse =

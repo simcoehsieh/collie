@@ -11,6 +11,32 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.16.2
+
+Merged upstream v1.16.2 (2026-10-04, with v1.16.0 and v1.16.1 under it) — 208 commits, 8 conflicted
+files, no fork patch dropped. What it brings that matters here: **a turn Herdr 0.9 reports as `idle`
+now pushes Finished** (#345 — the likely reason app agents' completions stopped reaching the phone;
+`dev` stays muted by its session rule), Claude's **"Switch model?" gets Yes / No buttons**, a long
+reply reaches Claude whole as one bracketed paste, a tap is confirmed only once the pointer is seen on
+the row, the unreadable-dialog Escape needs a second tap, and the pane row scrolls sideways on an iPhone.
+
+### Re-applied on top of upstream's new structure
+
+- **`notifications.ts`**: upstream's `working → idle` reading as `done`, and the fork's pane (with its
+  session) still handed to `isNotifiable`, so per-pane and `[[sessions]]` rules keep answering.
+- **`pane-strip.tsx`**: upstream's class string without `pointer-events-auto` (the iOS scroll fix),
+  under the fork's tonal-selected comment and arms.
+- **Upstream's new guards, met by the fork rather than loosened**: the interrupt hook's callback is
+  `sendInterruptKeys` (the key-writes scan read the old name `sendKeys` as a call); `handoff.ts` and
+  `server.ts` take a base name through `HOST.path.basename` (host guard); `artifacts.ts` and
+  `cli/beacon.ts` are listed as private writes under the state folder, with where (private-roots
+  guard); the doctor golden carries the fork's `launchers` and `notify` rows (diffed: the only change).
+- **Exempted, with the reason written beside it**: `sw.ts`'s one-tap approve posts `/keys` itself (it
+  runs with the app closed, where there is no lib/api), and the fork's `/api/events` stream is allowed
+  by the Access-gate pin, which now also checks the stream opens after the gate. Before
+  `COLLIE_ACCESS_TEAM` is ever set here, cap that stream's lifetime: a stream outlives the token.
+- The fork's X3 test passes `host: hostFor("darwin")` (upstream renamed `platform` to `host`).
+
 ## On top of 1.15.3
 
 Merged upstream v1.15.3 (2026-10-02, with v1.14.2, v1.15.0, v1.15.1 and v1.15.2 under it) — 119

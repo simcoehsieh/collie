@@ -236,11 +236,11 @@ export const TabStrip = memo(function TabStrip({
           // each tab the mirror's top 10px stop answering a tap, a long-press or the start of a
           // drag. On the space route the same 14px lie over the top of the space's list.
           //
-          // Under a pane row the pane row wins instead: it is `relative z-[2]` (`pane-strip.tsx`),
-          // so it owns its whole 26px, gaps included, and the boundary lands on the rows' shared
-          // edge. The tab measures its own 30px there. Two stacked 44px targets need 88px of
-          // pitch and the two rows are 56, so one of them has to give, and it is the tab, whose
-          // row is the taller one.
+          // Under a pane row the pane row wins instead: its pills sit in a `relative z-[2]` track
+          // (`pane-strip.tsx`), so it owns its whole 26px, gaps included, and the boundary lands on
+          // the rows' shared edge. The tab measures its own 30px there. Two stacked 44px targets
+          // need 88px of pitch and the two rows are 56, so one of them has to give, and it is the
+          // tab, whose row is the taller one.
           className={cn(
             // `select-none` on the SCROLLER, not only on the controls inside it. iOS does not give
             // up when the pressed element is unselectable — it walks UP for the nearest selectable

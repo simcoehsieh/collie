@@ -1,4 +1,5 @@
 import { normaliseBasePath } from "../bridge/config.ts";
+import type { Host } from "../bridge/host.ts";
 import { type OpsRecord, CrewOpsStore } from "../bridge/crew/ops-store.ts";
 import { emptyConfigLayer } from "../bridge/config-source.ts";
 import type { CliContext, Environment } from "./context.ts";
@@ -24,10 +25,12 @@ export const STATE = "/state";
 /**
  * The key a fake filesystem stores a path under: POSIX, no drive. On Windows `join` and `resolve`
  * return `C:\opt\collie\bin\collie`; the fakes model a POSIX box, so that folds back to
- * `/opt/collie/bin/collie`. The platform is a parameter so Linux CI pins the Windows branch.
+ * `/opt/collie/bin/collie`. Without a host the fold always runs, because a test that pins a Windows
+ * host on Linux hands the fakes Windows spellings too. Pass a host to ask what that host would do:
+ * only `win32` folds.
  */
-export function posixKey(p: string, platform: NodeJS.Platform = process.platform): string {
-  return platform === "win32" ? p.replace(/^[A-Za-z]:/, "").replaceAll("\\", "/") : p;
+export function posixKey(p: string, host?: Host): string {
+  return host === undefined || host.platform === "win32" ? p.replace(/^[A-Za-z]:/, "").replaceAll("\\", "/") : p;
 }
 
 /** A map that folds its keys with {@link posixKey}, so a test may name a path in either spelling. */
@@ -70,6 +73,8 @@ export interface FakeExec extends Exec {
   killed: number[];
   /** Every {@link Exec.processCommand} probe, with the bound it asked for (absent = the default). */
   probed: { pid: number; timeoutMs?: number }[];
+  /** Every {@link Exec.listProcesses} call, by the executable names it asked for. */
+  listed: string[][];
   spawned: { command: string[]; env: Record<string, string>; logPath: string }[];
   /**
    * Every {@link Exec.runLogged} call — the command, its log path and the bound it was given. The
@@ -106,6 +111,12 @@ export interface Scripted {
   answers?: [prefix: string, answer: Partial<ExecResult> | PerCallAnswer][];
   /** The process table, for `ps -p <pid> -o command=`. */
   ps?: Record<number, string>;
+  /** Pids whose {@link Exec.processLookup} cannot be answered: a process table that did not answer in time. */
+  psUnknown?: number[];
+  /** {@link Exec.listProcesses} does not answer (`null`): PowerShell failed or ran past its bound. */
+  listUnknown?: true;
+  /** Pids a kill does not end: access denied (another account's, or an elevated, process). */
+  unkillable?: number[];
   /** pid handed back by a detached spawn. */
   spawnPid?: number | null;
   /**
@@ -125,6 +136,7 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
   const calls: string[] = [];
   const killed: number[] = [];
   const probed: { pid: number; timeoutMs?: number }[] = [];
+  const listed: string[][] = [];
   const timeouts: { call: string; ms: number }[] = [];
   const spawned: { command: string[]; env: Record<string, string>; logPath: string }[] = [];
   const ran: {
@@ -166,6 +178,7 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
     calls,
     killed,
     probed,
+    listed,
     spawned,
     ran,
     timeouts,
@@ -206,6 +219,30 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
     processCommand: (pid, timeoutMs) => {
       probed.push(timeoutMs === undefined ? { pid } : { pid, timeoutMs });
       return scripted.ps?.[pid] ?? null;
+    },
+    // The same table, three answers: a scripted row runs, a `psUnknown` pid cannot be asked about,
+    // and anything else is gone. Recorded in `probed` like `processCommand`, for the same bound checks.
+    processLookup: (pid, timeoutMs) => {
+      probed.push(timeoutMs === undefined ? { pid } : { pid, timeoutMs });
+      if (scripted.psUnknown?.includes(pid) === true) return { kind: "unknown", why: "PowerShell did not answer within 60s" };
+      const command = scripted.ps?.[pid];
+      // A killed process is gone from the next lookup, as from the next listing, unless it is unkillable.
+      const ended = killed.includes(pid) && scripted.unkillable?.includes(pid) !== true;
+      return command === undefined || ended ? { kind: "gone" } : { kind: "running", command };
+    },
+    // The scripted process table, minus what this fake has killed, and only the rows whose command
+    // names one of the executables asked for: a killed process is gone from the next listing.
+    listProcesses: (names) => {
+      listed.push([...names]);
+      if (scripted.listUnknown === true) return null;
+      const stems = names.map((n) => n.replace(/\.exe$/i, "").toLowerCase());
+      return Object.entries(scripted.ps ?? {})
+        .map(([pid, command]) => ({ pid: Number(pid), command }))
+        .filter(
+          (row) =>
+            (!killed.includes(row.pid) || scripted.unkillable?.includes(row.pid) === true) &&
+            stems.some((st) => row.command.toLowerCase().includes(st)),
+        );
     },
     kill: (pid) => void killed.push(pid),
   };
@@ -287,6 +324,10 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
     exists: (p) => under(p).length > 0,
     executable: (p) => under(p).length > 0 && !notExecutable.has(p),
     read: (p) => entries.get(p)?.text ?? null,
+    digest: (p) => {
+      const text = entries.get(p)?.text;
+      return text === undefined ? null : new Bun.CryptoHasher("sha256").update(text).digest("hex");
+    },
     entryType: (p) =>
       entryTypes.get(p) ?? (entries.has(p) ? "file" : under(p).some((k) => k !== p) ? "directory" : null),
     list: (p) => [
@@ -353,6 +394,7 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
     exists: one(raw.exists),
     executable: one(raw.executable),
     read: one(raw.read),
+    digest: one(raw.digest),
     entryType: one(raw.entryType),
     list: one(raw.list),
     listStrict: one(raw.listStrict),
@@ -374,7 +416,7 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
 export interface FakeLinkFs extends LinkWriter {
   /** The destination, as this fake models it: absolute path → what is there. */
   entries: Map<string, LinkProbe>;
-  /** `mkdirp <p>` / `symlink <target> <at>` / `rm <at>`, in order. */
+  /** `mkdirp <p>` / `symlink <target> <at>` / `rm <at>` / `junction <target> <at>`, in order. */
   ops: string[];
   /** Paths whose write fails — the `~/.local/bin` an operator cannot write to. */
   readonly: Set<string>;
@@ -408,6 +450,11 @@ export function fakeLinkFs(seed: Record<string, LinkProbe> = {}): FakeLinkFs {
       ops.push(`rm ${posixKey(at)}`);
       if (readonlyPaths.has(at)) throw new Error("EACCES: permission denied");
       entries.delete(at);
+    },
+    junction(target, at) {
+      ops.push(`junction ${posixKey(target)} ${posixKey(at)}`);
+      if (readonlyPaths.has(at)) throw new Error("EACCES: permission denied");
+      entries.set(at, { kind: "symlink", target });
     },
   };
 }

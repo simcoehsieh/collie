@@ -890,6 +890,8 @@ export const es: Dictionary = {
   // TODO wordsmith
   "dialog.menu.levelCurrentAria": "{label}, actual",
   "unreadDialog.caption": "Collie no puede leer este diálogo", // wordsmith
+  "unreadDialog.confirmKey": "Pulsa de nuevo para enviar {key}", // wordsmith
+  "unreadDialog.confirmDismiss": "Pulsa de nuevo para descartar", // wordsmith
   "dialog.preview.currentAnswerAria": "Respuesta actual",
   "dialog.preview.previewedBelowAria": "Vista previa a continuación",
   "dialog.preview.previewLabel": "Vista previa · {label}",
@@ -910,6 +912,10 @@ export const es: Dictionary = {
     "Es una solicitud de contraseña. Al no mostrar caracteres al escribir, Enviar no puede confirmar la recepción del texto. No se introdujo nada.",
   "reply.blocked.composerLeft":
     "El campo de entrada del agente desapareció al limpiar la línea. Probablemente hay un menú o diálogo abierto. No se introdujo el mensaje.",
+  "reply.refused.multiline":
+    "Este campo envía al recibir un salto de línea, así que un mensaje de varias líneas se cortaría en el primer salto. Escríbelo en una sola línea. No se introdujo nada.",
+  "reply.refused.multilineMidway":
+    "Este campo envía al recibir un salto de línea, así que un mensaje de varias líneas se cortó en el primer salto. La parte anterior ya está en el panel. Escríbelo en una sola línea.",
   "reply.stalled.noEcho":
     "Es una solicitud de contraseña. No muestra salida al escribir, por lo que el texto no se pudo confirmar ni enviar. El contenido introducido permanece en el panel.",
   "reply.stalled.generic":

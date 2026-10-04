@@ -956,6 +956,9 @@ export const en = {
   "dialog.menu.levelAria": "{verb} to {label}",
   "dialog.menu.levelCurrentAria": "{label}, current",
   "unreadDialog.caption": "Collie cannot read this dialog",
+  // Second-tap wording (#339): the first tap arms the key, the second sends it.
+  "unreadDialog.confirmKey": "Tap again to send {key}",
+  "unreadDialog.confirmDismiss": "Tap again to dismiss",
   "dialog.preview.currentAnswerAria": "Current answer",
   "dialog.preview.previewedBelowAria": "Previewed below",
   "dialog.preview.previewLabel": "Preview · {label}",
@@ -976,6 +979,10 @@ export const en = {
     "That's a password prompt — it shows nothing as you type, so Send can never confirm the text arrived. Nothing was typed.",
   "reply.blocked.composerLeft":
     "The agent's input box left the screen while its input line was being cleared — a menu or dialog is probably up. Your message wasn't typed.",
+  "reply.refused.multiline":
+    "This input submits on a new line, so a multi-line message would be cut at the first break. Put it on one line. Nothing was typed.",
+  "reply.refused.multilineMidway":
+    "This input submits on a new line, so a multi-line message was cut at its first break. The part before it is already in the pane. Put the message on one line.",
   "reply.stalled.noEcho":
     "That's a password prompt — it shows nothing as you type, so the text can't be confirmed and nothing was submitted. What you typed is already in the pane.",
   "reply.stalled.generic":
