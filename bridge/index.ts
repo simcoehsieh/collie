@@ -53,7 +53,7 @@ import { TranscriptStore } from "./journal/store.ts";
 import { NotificationCoordinator, makeNotifySink, type NotifyClock } from "./notifications.ts";
 import { pushTitle } from "./push-titles.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
-import { createOperatorNotifyRules } from "./operator-notify.ts";
+import { createOperatorNotifyRules, createOperatorNotifySessions } from "./operator-notify.ts";
 import { ArtifactStore } from "./artifacts.ts";
 import { peekBinaryPrompt } from "./prompt-peek.ts";
 import { replyLine, type ReplyLine } from "./reply-peek.ts";
@@ -573,7 +573,13 @@ await snooze.load();
 // re-read behind an mtime check so an edit is live without a restart — the timer is the only thing
 // that would otherwise miss a change made while no phone was asking.
 const OPERATOR_NOTIFY_REFRESH_MS = 5_000;
-const notifyPrefs = new NotifyPrefsStore(cfg, Date.now, createOperatorNotifyRules(cfg.notifyFile));
+const notifyPrefs = new NotifyPrefsStore(
+  cfg,
+  Date.now,
+  createOperatorNotifyRules(cfg.notifyFile),
+  // FORK: the same file's [[sessions]] rows — `dev` muted whole (operator-notify.ts).
+  createOperatorNotifySessions(cfg.notifyFile),
+);
 await notifyPrefs.load();
 await notifyPrefs.refreshOperatorRules();
 setInterval(() => void notifyPrefs.refreshOperatorRules(), OPERATOR_NOTIFY_REFRESH_MS).unref();
@@ -1139,7 +1145,8 @@ const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
   );
   // FORK: the pane rides along so a per-pane rule (notify-prefs.ts) can answer for it.
   const notifications = new NotificationCoordinator(clock, sink, cfg.notifyDelayMs, (status, pane) =>
-    notifyPrefs.isNotifiable(status, pane),
+    // FORK: the pane carries its session's registry name, for a [[sessions]] rule.
+    notifyPrefs.isNotifiable(status, { ...pane, session: name }),
   );
   engine.onTransition((agent, from, to) => notifications.onTransition(agent, from, to));
   engine.onRemove((paneId) => notifications.onRemove(paneId));

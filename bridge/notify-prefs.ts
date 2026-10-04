@@ -45,6 +45,16 @@ export interface PaneNotifyRule {
   snoozedUntil?: number;
 }
 
+/**
+ * FORK: one mode for every pane of a Herdr session, from `notify.toml`'s `[[sessions]]` tables
+ * (operator-notify.ts). The most general rule there is, so it speaks only where no pane rule did.
+ */
+export interface SessionNotifyRule {
+  /** The session's registry name (`app`, `dev`), as `/api/snapshot`'s `sessions[].name` says it. */
+  session: string;
+  mode: PaneNotifyMode;
+}
+
 /** Notification type preferences: which notifiable statuses actually push. */
 export interface NotifyPrefs {
   /** Push when an agent becomes blocked (waiting on your input). Default on. */
@@ -86,6 +96,8 @@ export interface PaneIdentity {
   tabLabel?: string;
   workspaceLabel?: string;
   terminalTitle?: string;
+  /** FORK: the Herdr session the pane lives in, for a `[[sessions]]` rule. Absent: no session rule applies. */
+  session?: string;
 }
 
 /** The longest label a rule may carry — a pattern, not a paragraph. */
@@ -186,12 +198,16 @@ export class NotifyPrefsStore {
   private readonly file: string;
   /** FORK: the last rules `operatorRules` answered with — what the sync `isNotifiable` reads. */
   private operator: PaneNotifyRule[] = [];
+  /** FORK: the last `[[sessions]]` rows `operatorSessionRules` answered with. */
+  private operatorSessions: SessionNotifyRule[] = [];
 
   constructor(
     private readonly cfg: Config,
     private readonly now: () => number = Date.now,
     /** FORK: the operator's `notify.toml` reader; absent means no file (the tests' default). */
     private readonly operatorRules?: () => Promise<PaneNotifyRule[]>,
+    /** FORK: the same file's `[[sessions]]` reader; absent means no session rules. */
+    private readonly operatorSessionRules?: () => Promise<SessionNotifyRule[]>,
   ) {
     this.file = join(cfg.stateDir, "notify-prefs.json");
   }
@@ -202,11 +218,19 @@ export class NotifyPrefsStore {
    * itself stays synchronous on the cached list. A reader that throws keeps the last list.
    */
   async refreshOperatorRules(): Promise<void> {
-    if (this.operatorRules === undefined) return;
-    try {
-      this.operator = structuredClone(await this.operatorRules());
-    } catch {
-      /* the last good list stands — the reader already warned */
+    if (this.operatorRules !== undefined) {
+      try {
+        this.operator = structuredClone(await this.operatorRules());
+      } catch {
+        /* the last good list stands — the reader already warned */
+      }
+    }
+    if (this.operatorSessionRules !== undefined) {
+      try {
+        this.operatorSessions = structuredClone(await this.operatorSessionRules());
+      } catch {
+        /* the last good list stands — the reader already warned */
+      }
     }
   }
 
@@ -237,13 +261,17 @@ export class NotifyPrefsStore {
   isNotifiable(status: AgentStatus, pane?: PaneIdentity): boolean {
     if (status !== "blocked" && status !== "done") return false;
     // FORK: the phone's rules first, then the file's — `ruleFor` keeps that order within each kind.
-    const rule = pane === undefined ? null : ruleFor([...this.prefs.panes, ...this.operator], pane);
-    if (rule !== null) {
-      if (rule.snoozedUntil !== undefined && rule.snoozedUntil > this.now()) return false;
-      if (rule.mode === "mute") return false;
-      if (rule.mode === "blocked") return status === "blocked";
-      if (rule.mode === "all") return true;
-    }
+    const paneRule = pane === undefined ? null : ruleFor([...this.prefs.panes, ...this.operator], pane);
+    if (paneRule?.snoozedUntil !== undefined && paneRule.snoozedUntil > this.now()) return false;
+    // FORK: a pane rule names this pane, so it beats the session's blanket mode (operator-notify.ts).
+    const sessionRule =
+      paneRule !== null || pane?.session === undefined
+        ? undefined
+        : this.operatorSessions.find((r) => r.session === pane.session);
+    const mode = paneRule?.mode ?? sessionRule?.mode;
+    if (mode === "mute") return false;
+    if (mode === "blocked") return status === "blocked";
+    if (mode === "all") return true;
     if (status === "blocked") return this.prefs.blocked;
     return this.prefs.done;
   }

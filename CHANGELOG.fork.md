@@ -22,6 +22,16 @@ output in the pane menu, push titles in the device's language, Settings as an in
 pane switcher's Activity / Cache orders, and History with tool calls and compaction recaps folded by
 default.
 
+### A whole Herdr session can be muted (2026-10-04)
+
+- **`notify.toml` takes `[[sessions]]` rows**: `session = "dev"` with `mode = "mute"` silences every
+  pane of that Herdr session, done and blocked alike, whatever its workspace is called. It is the
+  most general rule, so a pane rule (the phone's or the file's) still wins for the pane it names.
+  Why: `dev` holds agents that a controller in `app` supervises, and a label convention (`aux-…`)
+  failed the first day — a `dev` workspace named `Tradingview` pushed every finished job.
+  `bridge/operator-notify.ts` (`validateOperatorNotifySessions`), `bridge/notify-prefs.ts`
+  (`SessionNotifyRule`, `PaneIdentity.session`), one wiring line in `bridge/index.ts`.
+
 ### Survey UI — X1–X4 (2026-10-03)
 
 - **A working Claude or Codex pane offers a deliberate interrupt.** With no draft or message to

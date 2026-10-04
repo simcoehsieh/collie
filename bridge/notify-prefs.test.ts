@@ -12,6 +12,7 @@ import {
   ruleFor,
   type PaneIdentity,
   type PaneNotifyRule,
+  type SessionNotifyRule,
 } from "./notify-prefs.ts";
 import { loadConfig } from "./config.ts";
 
@@ -183,6 +184,32 @@ describe("NotifyPrefsStore", () => {
     await store.refreshOperatorRules();
     expect(store.current().operatorPanes).toBeUndefined();
     expect(store.isNotifiable("done", p("w2:p9", { workspaceLabel: "listener-ai-stock" }))).toBe(true);
+  });
+
+  test("FORK: a [[sessions]] mute silences every pane of that session, whatever it is called; a pane rule still wins", async () => {
+    const sessions: SessionNotifyRule[] = [{ session: "dev", mode: "mute" }];
+    const fileRules: PaneNotifyRule[] = [{ label: "alfred-chat", mode: "blocked" }];
+    const store = new NotifyPrefsStore(
+      await tempCfg(),
+      Date.now,
+      () => Promise.resolve(fileRules),
+      () => Promise.resolve(sessions),
+    );
+    await store.set({ done: true, blocked: true });
+    await store.refreshOperatorRules();
+    const p = (paneId: string, over: Partial<PaneIdentity> = {}): PaneIdentity => ({ paneId, ...over });
+    // The 2026-10-04 case: a dev workspace named without the aux- convention. Done AND blocked stay quiet.
+    expect(store.isNotifiable("done", p("wF:p2", { session: "dev", workspaceLabel: "Tradingview" }))).toBe(false);
+    expect(store.isNotifiable("blocked", p("wF:pA", { session: "dev", workspaceLabel: "Tradingview" }))).toBe(false);
+    // The controller's session is untouched: the switches speak, and its own pane rule still applies.
+    expect(store.isNotifiable("done", p("w1:p1", { session: "app", workspaceLabel: "Agentry" }))).toBe(true);
+    expect(store.isNotifiable("blocked", p("w1:p1", { session: "app", workspaceLabel: "Agentry" }))).toBe(true);
+    expect(store.isNotifiable("done", p("w2:p1", { session: "app", workspaceLabel: "alfred-chat" }))).toBe(false);
+    // A pane with no session (a caller that predates the field) gets no session rule.
+    expect(store.isNotifiable("done", p("wF:p2", { workspaceLabel: "Tradingview" }))).toBe(true);
+    // A pane rule names the pane, so it beats the session's blanket mode — the phone's included.
+    await store.set({ panes: [{ paneId: "wF:p9", mode: "all" }] });
+    expect(store.isNotifiable("done", p("wF:p9", { session: "dev" }))).toBe(true);
   });
 
   test("set merges a partial patch, persists, and returns the updated prefs", async () => {
