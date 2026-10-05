@@ -423,6 +423,24 @@ describe("Push — per-message collapse topic (update must not share the herd sl
     expect(isApplePushEndpoint("not a url")).toBe(false);
   });
 
+  // FORK: the shrunk summary an alert settling re-renders (`renotify: false`) is a retraction too.
+  // On iOS it arrived as one more "2 agents done" every time an agent started working again.
+  test("a non-renotifying render skips Apple's endpoints; a renotifying one reaches all", async () => {
+    const cfg = await tempCfg();
+    const seen: string[] = [];
+    const push = new Push(cfg, async (target) => {
+      seen.push(target.endpoint);
+    });
+    enable(push, [sub("https://web.push.apple.com/QPHp"), sub("https://fcm.googleapis.com/fcm/send/dCVu")]);
+    await push.send({ title: "2 agents done", body: "a, b", tag: "collie:herd", renotify: true });
+    expect(seen.length).toBe(2);
+    await push.send({ title: "claude is done", body: "a", tag: "collie:herd", paneId: "w1:p1", renotify: false });
+    expect(seen.slice(2)).toEqual(["https://fcm.googleapis.com/fcm/send/dCVu"]);
+    // An update notice and an operator's test push carry no `renotify` and still reach Apple.
+    await push.send({ title: "test", body: "t", tag: "collie:herd" });
+    expect(seen.length).toBe(5);
+  });
+
   test("a clear stays on the herd topic (it closes the herd slot)", async () => {
     const cfg = await tempCfg();
     const { sender, sends } = capturing();

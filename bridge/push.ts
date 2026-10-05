@@ -415,8 +415,12 @@ export class Push {
     const { agent: _agent, approve: _approve, ...wire } = msg;
     // Per-message collapse topic — update alerts must not share the herd slot (see UPDATE_SEND_OPTIONS).
     const options = msg.type === "update" ? UPDATE_SEND_OPTIONS : SEND_OPTIONS;
-    // FORK: a retraction skips Apple's endpoints — see `isApplePushEndpoint`.
-    const to = msg.type === "clear" ? (endpoint: string) => !isApplePushEndpoint(endpoint) : undefined;
+    // FORK: a retraction skips Apple's endpoints — see `isApplePushEndpoint`. A render with
+    // `renotify: false` is a retraction too: the coordinator re-renders the shrunk summary when an
+    // alert settles (an agent started working again, the operator opened it), and on iOS that
+    // shrunk "2 agents done" lands as a fresh notification for nothing that finished.
+    const retraction = msg.type === "clear" || (msg.type === undefined && msg.renotify === false);
+    const to = retraction ? (endpoint: string) => !isApplePushEndpoint(endpoint) : undefined;
     await this.broadcast(JSON.stringify({ ...wire, data }), options, to);
   }
 

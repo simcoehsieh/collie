@@ -405,6 +405,40 @@ describe("NotificationCoordinator — retraction", () => {
   });
 });
 
+// FORK: opening a pane settles its alert. Herdr 0.9 reports a finished turn as `idle` and an idle
+// pane makes no further transition until its next turn, so without this an opened, read pane rode
+// along in every later "N agents done" — the summary named three panes when one had finished.
+describe("NotificationCoordinator — seen settles the alert", () => {
+  test("a delivered done the operator opens leaves the next summary", () => {
+    const { clock, sink, coord } = setup();
+    coord.onTransition(agentNamed("p1", "claude", "idle", { terminalTitle: "tradingview" }), "working", "idle");
+    clock.fireAll();
+    coord.onSeen("p1");
+    expect(sink.events.at(-1)).toEqual({ kind: "clear" });
+    coord.onTransition(agentNamed("p2", "claude", "idle", { terminalTitle: "folio" }), "working", "idle");
+    clock.fireAll();
+    expect(sink.last?.count).toBe(1);
+    expect(sink.last?.paneId).toBe("p2");
+  });
+
+  test("a pane the operator is watching when it finishes is not pushed", () => {
+    const { clock, sink, coord } = setup();
+    coord.onTransition(agent("p1", "idle"), "working", "idle");
+    coord.onSeen("p1");
+    clock.fireAll();
+    expect(sink.events).toEqual([]);
+  });
+
+  test("seeing a pane with no alert emits nothing", () => {
+    const { clock, sink, coord } = setup();
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    clock.fireAll();
+    const before = sink.events.length;
+    coord.onSeen("p2");
+    expect(sink.events.length).toBe(before);
+  });
+});
+
 describe("NotificationCoordinator — type preferences", () => {
   test("with default prefs (done off), a done transition never pushes — even after the window", () => {
     const { clock, sink, coord } = setup({ blocked: true, done: false });

@@ -1648,7 +1648,11 @@ export function startServer(opts: {
       // peer's own ledger — which is what makes "seen" one shared fact (.adr/0003) rather than two
       // machines' guesses, and why the `x-collie-seen` header is forwarded verbatim.
       const routed = isRead ? req.method === "GET" : req.method === "POST";
-      if (routed && marksPaneSeen(req, action)) activity.noteSeen(session, paneId);
+      if (routed && marksPaneSeen(req, action)) {
+        activity.noteSeen(session, paneId);
+        // FORK: seen settles the pane's alert too (notifications.ts `onSeen`).
+        rt.notifications.onSeen(paneId);
+      }
       // A pane request means a phone is looking at this collie — the second of the two routes that
       // stamp attention (state-engine.ts § noteAttention). It is stamped HERE rather than at the
       // browser's dispatch so that a pane the lead FORWARDED to a peer counts on the peer, where

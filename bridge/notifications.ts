@@ -304,6 +304,17 @@ export class NotificationCoordinator<H = unknown> {
     this.pending.set(id, { handle, status: alert.status, pane: agent });
   }
 
+  /**
+   * FORK: the operator is looking at this pane (a pane read carrying `x-collie-seen`, server.ts) —
+   * its alert has done its job. Drop it, pending or delivered, so it is not pushed after the fact
+   * and does not ride along in every later "N agents done" summary. Herdr 0.9 reports most finished
+   * turns as `idle` (#345), and an `idle` pane makes no further transition until its next turn, so
+   * without this an opened pane stayed in the summary for as long as nobody typed into it.
+   */
+  onSeen(paneId: string): void {
+    this.resolve(paneId);
+  }
+
   /** Wire to `StateEngine.onRemove` — a vanished pane is implicitly resolved. */
   onRemove(paneId: string): void {
     this.resolve(paneId);

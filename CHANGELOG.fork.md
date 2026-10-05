@@ -70,6 +70,22 @@ default.
   `FORK_DASH_SHELLS_ON` in `web/src/lib/dash-tabs.ts`, asked once in `routes/home.tsx`; pinned in
   `routes/home-no-tabs.test.tsx`. Operator's call: 「空的 shell 不用呈現吧」.
 
+### A "done" push means something finished (2026-10-05)
+
+- **An alert settling no longer pushes the iPhone.** When an agent started working again (the
+  operator's own reply, or a job resuming), the coordinator re-rendered the shrunk summary with
+  `renotify: false`, and on iOS every render is a visible notification: "2 agents done" arrived each
+  time a pane went BACK to work. The 1.12 fix kept retractions (`type: "clear"`) off Apple but not
+  this second kind; `bridge/push.ts` now treats both alike. Cost: the app badge on Apple is corrected
+  when Meow opens instead of on every settle.
+- **Opening a pane settles its alert.** Herdr 0.9 reports most finished turns as `idle` (#345), and
+  since 1.16.1 those count as done; an `idle` pane makes no further transition until its next turn,
+  so a pane already read stayed in every later summary ("3 agents done: tradingview, folio, meow"
+  when one had finished). A pane read carrying `x-collie-seen` now resolves its alert, pending or
+  delivered — so a pane the phone is watching when it finishes is not pushed either.
+  `NotificationCoordinator.onSeen`, one call beside `activity.noteSeen` in `bridge/server.ts`.
+  Operator's report: 「一堆沒意義的通知根本無法反應 job 真的做完」.
+
 ### A whole Herdr session can be muted (2026-10-04)
 
 - **`notify.toml` takes `[[sessions]]` rows**: `session = "dev"` with `mode = "mute"` silences every
