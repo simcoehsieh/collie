@@ -31,3 +31,26 @@ export async function stopWithin(
   await server.stop(true);
   return true;
 }
+
+/** How long the whole shutdown may take before the process exits regardless of what is still open. */
+export const SHUTDOWN_DEADLINE_MS = 5_000;
+
+/**
+ * Exit after `ms` whatever the shutdown is still waiting on. The bounded server stop above was not
+ * enough: at the 1.17.2 deploy a bridge logged "shutting down" and was still alive ten seconds later,
+ * so some later step (a poll loop's dispose, a flush) also waits. A restart must never depend on every
+ * step finishing; the steps are logged (`[bridge] shutdown: …`) so the next hang names itself. The
+ * timer is unref'd, so a shutdown that finishes first exits without it.
+ */
+export function armShutdownDeadline(
+  ms: number = SHUTDOWN_DEADLINE_MS,
+  exit: (code: number) => void = (code) => process.exit(code),
+  log: (line: string) => void = (line) => console.log(line),
+): ReturnType<typeof setTimeout> {
+  const timer = setTimeout(() => {
+    log(`[bridge] shutdown: still running after ${String(ms)} ms, exiting`);
+    exit(0);
+  }, ms);
+  timer.unref?.();
+  return timer;
+}

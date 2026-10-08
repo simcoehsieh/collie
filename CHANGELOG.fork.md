@@ -49,7 +49,9 @@ day of CPU / memory / disk / network and alert rules).
   `server.stop()` waited on the fork's live feed (`/api/events`), which never ends while a phone has
   Meow open; at this merge's restart the old bridge sat draining, all three `launchctl bootstrap`
   retries hit the teardown window, and the new bridge came up unsupervised beside an old one that
-  ignored SIGTERM. In-flight requests now get one second, then every connection is closed.
+  ignored SIGTERM. In-flight requests now get one second, then every connection is closed; and the
+  whole shutdown has a five-second deadline after which the process exits regardless, because a
+  bridge with the bounded stop still hung in a later step. Each step logs `[bridge] shutdown: <step>`.
 - **Push:** a machine alert is not a retraction (it reaches Apple), and keeps its buzz while a tab is
   visible — it is shown because nothing on screen stands in for it.
 - **Tests:** the dash prefs store loads on first read, so upstream's write-then-render tests read what

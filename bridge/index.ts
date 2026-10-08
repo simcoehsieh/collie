@@ -65,7 +65,7 @@ import { ZELLIJ_BINARY_OPTION } from "./mux/zellij/adapter.ts";
 import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
 import { TranscriptStore } from "./journal/store.ts";
 import { NotificationCoordinator, makeNotifySink, type NotifyClock } from "./notifications.ts";
-import { stopWithin } from "./shutdown.ts";
+import { armShutdownDeadline, stopWithin } from "./shutdown.ts";
 import { pushTitle } from "./push-titles.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
 import { createOperatorNotifyRules, createOperatorNotifySessions } from "./operator-notify.ts";
@@ -2069,26 +2069,36 @@ const server = startServer({
   },
 });
 
+/** One line per shutdown step, so a shutdown that hangs names the step it hung in (bridge/shutdown.ts). */
+const step = (name: string) => console.log(`[bridge] shutdown: ${name}`);
+
 const shutdown = async () => {
   console.log("\n[bridge] shutting down");
+  // FORK: a hard deadline first, so no step below can keep a restart waiting (bridge/shutdown.ts).
+  armShutdownDeadline();
   // Stop accepting new connections and let in-flight requests drain briefly (non-forced stop)
   // before we tear down the poll loops and exit. FORK: briefly means a bounded window — the live
   // feed never ends on its own (bridge/shutdown.ts).
+  step("server");
   await stopWithin(server);
   clearInterval(refreshTimer);
+  step("sessions");
   registry.disposeAll();
   // The codex speech-to-text provider owns a `codex app-server` child (bridge/stt/codex-auth.ts).
   // A no-op when speech-to-text is off, or configured to a provider that holds nothing open.
   stt.close();
   // Writes are debounced, so the last few seconds of "you looked at this" live only in memory —
   // persist them before exiting, or every restart quietly resurrects alerts you'd already cleared.
+  step("activity");
   activity.stop();
   await activity.flush();
   // The day of minutes is saved every five minutes from the tick; the last few go to disk here.
+  step("machines");
   await machineWatch?.flush();
   clearInterval(sweepTimer);
   clearTimeout(updateFirstCheck);
   clearInterval(updateTimer);
+  step("exit");
   process.exit(0);
 };
 process.on("SIGINT", shutdown);
