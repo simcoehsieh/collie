@@ -65,6 +65,7 @@ import { ZELLIJ_BINARY_OPTION } from "./mux/zellij/adapter.ts";
 import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
 import { TranscriptStore } from "./journal/store.ts";
 import { NotificationCoordinator, makeNotifySink, type NotifyClock } from "./notifications.ts";
+import { stopWithin } from "./shutdown.ts";
 import { pushTitle } from "./push-titles.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
 import { createOperatorNotifyRules, createOperatorNotifySessions } from "./operator-notify.ts";
@@ -2071,8 +2072,9 @@ const server = startServer({
 const shutdown = async () => {
   console.log("\n[bridge] shutting down");
   // Stop accepting new connections and let in-flight requests drain briefly (non-forced stop)
-  // before we tear down the poll loops and exit.
-  await server.stop();
+  // before we tear down the poll loops and exit. FORK: briefly means a bounded window — the live
+  // feed never ends on its own (bridge/shutdown.ts).
+  await stopWithin(server);
   clearInterval(refreshTimer);
   registry.disposeAll();
   // The codex speech-to-text provider owns a `codex app-server` child (bridge/stt/codex-auth.ts).
