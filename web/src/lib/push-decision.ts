@@ -6,6 +6,7 @@
 // in, plain data out.
 
 import { interpolate } from "./i18n/template";
+import { machinePath, machinesPath } from "./machine-paths";
 import { isPushTitleCode, type PushTitleDetail } from "./push-title-codes";
 import type { PushTitleTemplates } from "./push-title-store";
 import { scopeSearch } from "./scope";
@@ -13,7 +14,12 @@ import { scopeSearch } from "./scope";
 // Payload shape is whatever bridge/push.ts sends: a render → { title, body, tag, renotify,
 // data: { paneId } }; a retraction → { type: "clear", tag }.
 export interface PushPayload {
-  type?: "clear";
+  /**
+   * `clear` retracts a slot. `machine` is a sustained-load alert for a crew member (ADR 0084) and
+   * `update` is the update push; both are the bridge's own spellings (bridge/push.ts). Only `machine`
+   * changes a decision here: it is never suppressed (see {@link decidePush}).
+   */
+  type?: "clear" | "update" | "machine";
   title?: string;
   /**
    * The catalogue code `title` was rendered from, and the values it was filled with
@@ -89,6 +95,8 @@ export interface NotifData {
   host?: string;
   /** Non-pane tap destination (e.g. "settings"); absent = the default agent deep-link. */
   target?: string;
+  /** The crew member a `target: "machine"` alert is about, as `/api/machines` names it. Not `host`. */
+  machine?: string;
 }
 
 export type PushDecision =
@@ -115,6 +123,8 @@ export type PushDecision =
       actions?: PushActionSpec[];
       /** What those buttons send — present exactly when `actions` is. */
       approve?: ApproveSpec;
+      /** The crew member a machine alert is about; undefined for every other push. */
+      machine?: string;
       renotify: boolean;
       /** FORK: the app icon's badge after this push; absent = leave it. */
       badge?: number;
@@ -217,6 +227,7 @@ export function decidePush(
   const session = payload.data?.session;
   const host = payload.data?.host;
   const target = payload.data?.target;
+  const machine = payload.data?.machine;
   // ONE derivation, both directions. A retraction that computed a different tag than its render did
   // would leave a dead notification on the lock screen forever, with nothing left that will ever
   // close it — so `clear` and `show` resolve the slot on this single line, before they diverge.
@@ -243,7 +254,10 @@ export function decidePush(
     if (payload.badge !== undefined) replaced.badge = payload.badge;
     return replaced;
   }
-  if (hasVisibleClient && !mustShow) return { kind: "suppress" };
+  // A machine alert is the one push a visible tab does not stand in for. The in-app status line speaks
+  // for panes: it says an agent needs you, and says nothing about a machine running hot. Suppressing
+  // it because a Collie tab happens to be open would swallow the only signal there is (1.17.0 review).
+  if (hasVisibleClient && !mustShow && payload.type !== "machine") return { kind: "suppress" };
   const shown: Extract<PushDecision, { kind: "show" }> = {
     kind: "show",
     title: localisedTitle(payload, templates) ?? payload.title ?? "Collie",
@@ -253,9 +267,11 @@ export function decidePush(
     session,
     host,
     target,
+    machine,
     // A notification raised only because the platform demands one must not also buzz: the operator
     // is looking at the app that already shows it.
-    renotify: hasVisibleClient ? false : (payload.renotify ?? false),
+    // A machine alert is shown BECAUSE nothing on screen stands in for it, so it keeps its buzz.
+    renotify: hasVisibleClient && payload.type !== "machine" ? false : (payload.renotify ?? false),
   };
   // Both added only when present, so a payload without them decides to the exact object it always
   // did (the tests compare whole decisions).
@@ -335,6 +351,11 @@ export function honouredActions(
  */
 export function notificationPath(data: NotifData = {}): string {
   if (data.target === "settings") return "/settings/updates";
+  // A machine alert (ADR 0084) opens that machine's page. `machine` is the crew member id the bridge
+  // stamped, which is the row id `/api/machines` answers with. `host` is NOT read for this target: it
+  // names where a pane lives, and a machine alert has no pane. A push without a machine has nowhere
+  // better to go than Machines itself. The paths are nav.ts's own (kept in machine-paths.ts for the worker), unscoped: the page is the lead's.
+  if (data.target === "machine") return data.machine ? machinePath(data.machine) : machinesPath();
   const base = data.paneId && data.paneId !== "test" ? `/pane/${encodeURIComponent(data.paneId)}` : "/";
   return `${base}${scopeSearch({ host: data.host, session: data.session })}`;
 }

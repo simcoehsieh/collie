@@ -32,6 +32,12 @@ import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
 interface ConnectionBannerProps {
+  /**
+   * The machine being viewed (upstream 1.17.0, a crew member's own fault). FORK: accepted and not
+   * read — this install has no crew, and the fork's four-cause red row (one /api/health probe) is
+   * kept whole rather than re-grafted onto upstream's two-answer /api/config probe.
+   */
+  host?: string;
   /** Herdr link from the last snapshot (undefined before the first successful poll). */
   bridge: BridgeStatus | undefined;
   /** The last snapshot fetch failed (stale data on screen). */

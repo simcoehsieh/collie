@@ -54,8 +54,9 @@ export function crewRouteFor(pathname: string): string | null {
 const FORWARDABLE: readonly RegExp[] = [
   // FORK: `diff`, `file`, `shot`, `probe`, `handoff` and `model` are the fork's own pane routes, on
   // the same literal in server.ts — each is answered by the member that owns the pane (its screen, its
-  // journal, its launchers), so each rides the link exactly as `reply` does. `changes` and `chat` are upstream's.
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|focus|diff|file|shot|probe|handoff|model))?$/,
+  // journal, its launchers), so each rides the link exactly as `reply` does. `changes`, `chat` and
+  // `files` are upstream's.
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|diff|file|shot|probe|handoff|model))?$/,
   /^tab$/,
   /^tab\/[^/]+\/(?:rename|close)$/,
   /^workspace$/,
@@ -63,6 +64,9 @@ const FORWARDABLE: readonly RegExp[] = [
   // lives on ONE member, so a `?host=` call is proxied like `pane/:id/changes`. Mirrors
   // `WORKSPACE_CHANGES_ROUTE` in bridge/server.ts one-for-one.
   /^workspace\/[^/]+\/changes$/,
+  // The Files view asked by workspace (ADR 0083): one folder or one file under the same root, read
+  // off the disk of the member that owns the space. Mirrors `WORKSPACE_FILES_ROUTE` one-for-one.
+  /^workspace\/[^/]+\/files$/,
   // Rows must come from the host that runs them: a launch (and the rows a launch button reads)
   // addressed at a peer via `?host=` has to reach THAT machine's `launchers.toml`, never the
   // lead's. Both ride the crew link exactly like `workspace` does.
@@ -86,9 +90,28 @@ const FORWARDABLE: readonly RegExp[] = [
   /^preview\/file$/,
 ];
 
-/** `workspace/<id>/changes` — the one workspace route that is a read. */
-function isWorkspaceChanges(route: string): boolean {
-  return /^workspace\/[^/]+\/changes$/.test(route);
+/** `workspace/<id>/changes` and `workspace/<id>/files` — the workspace routes that are reads. */
+function isWorkspaceRead(route: string): boolean {
+  return /^workspace\/[^/]+\/(?:changes|files)$/.test(route);
+}
+
+/**
+ * The pane actions that only read, as bridge/server.ts's `isPaneReadAction` lists them. FORK: `diff`
+ * is the fork's read-only `git diff` of the pane's work tree and `file` the bytes of one file in that
+ * tree — GETs that change nothing, answered by whichever member owns the pane's disk.
+ */
+function isPaneRead(
+  action: string | undefined,
+): action is undefined | "history" | "chat" | "changes" | "files" | "diff" | "file" {
+  return (
+    action === undefined ||
+    action === "history" ||
+    action === "chat" ||
+    action === "changes" ||
+    action === "files" ||
+    action === "diff" ||
+    action === "file"
+  );
 }
 
 /** The inverse of {@link crewRouteFor}, for the peer dispatching a crew route into its own routes. */
@@ -120,24 +143,18 @@ export function forwardKind(route: string): ForwardKind {
   // FORK: a preview serves a page off the owning member's disk and changes nothing there — a blob by
   // another name, and attempted against a stale member for the same reason (§10.3).
   if (route === "preview/file") return "read";
-  // A workspace's Changes list is the pane route's `changes`, asked by space: a read.
-  if (isWorkspaceChanges(route)) return "read";
+  // A workspace's Changes list is the pane route's `changes`, asked by space: a read. Its Files view
+  // too: it needs an authorised device on the member (ADR 0083), but it changes nothing, so it is
+  // attempted against a stale member and rides the read budget like any other read.
+  if (isWorkspaceRead(route)) return "read";
   if (!route.startsWith("pane/")) return "write";
   const action = route.split("/")[2];
   // `changes` is read-only git over the owning member's folder (ADR 0065): a read, like history.
   // `chat` is the same log `history` reads, asked for its newest end (journal/live.ts): a read too,
-  // and the one on the poll path — so it must never be refused before it is tried (§10.3).
-  // `diff` is the fork's read-only `git diff` of the pane's work tree — the same shape: a GET that
-  // changes nothing, answered by whichever member owns the pane's disk. `file` is that same read one
-  // step further in: the bytes of one file in that tree, never written.
-  return action === undefined ||
-    action === "history" ||
-    action === "chat" ||
-    action === "changes" ||
-    action === "diff" ||
-    action === "file"
-    ? "read"
-    : "write";
+  // and the one on the poll path — so it must never be refused before it is tried (§10.3). `files`
+  // reads one folder or file under that same root (ADR 0083): a read as well. FORK: so are `diff`
+  // and `file` (see `isPaneRead`).
+  return isPaneRead(action) ? "read" : "write";
 }
 
 /** The pane id a route addresses, for the lead's own audit line. `undefined` for tab/workspace. */
@@ -169,19 +186,10 @@ export function forwardAuditAction(route: string): string | null {
   if (route === "folders" || route === "folders/star") return null; // a read, and a preference
   if (route.startsWith("blobs/")) return null; // a read
   if (route === "preview/file") return null; // a read (FORK)
-  if (isWorkspaceChanges(route)) return null; // a read
+  if (isWorkspaceRead(route)) return null; // a read
   if (route.startsWith("tab/")) return route.endsWith("/close") ? "tab.close" : "tab.rename";
   const action = route.split("/")[2];
-  if (
-    action === undefined ||
-    action === "history" ||
-    action === "chat" ||
-    action === "changes" ||
-    action === "diff" ||
-    action === "file"
-  ) {
-    return null; // reads, and a read is audited on neither side
-  }
+  if (isPaneRead(action)) return null; // reads, and a read is audited on neither side
   if (action === "close" || action === "rename" || action === "handoff") return `pane.${action}`;
   return action; // reply | keys | upload | shot | probe | model (FORK)
 }

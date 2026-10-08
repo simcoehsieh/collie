@@ -24,6 +24,7 @@ vi.mock("@/lib/dash-tabs", () => ({
   FORK_DASH_TABS_ON: false,
   FORK_HEADING_NEW_TAB_ON: false,
   FORK_DASH_SHELLS_ON: false,
+  FORK_DASH_SUMMARY_CONTROLS_ON: false,
 }));
 vi.mock("@/hooks/use-loading-stalled", () => ({
   useLoadingStalled: () => false,
@@ -78,6 +79,20 @@ describe("dashboard without the footer (fork)", () => {
     cleanup();
     localStorage.clear();
     __resetDashPrefs();
+  });
+
+  it("draws no order toggle and no needs-you switch on the summary line, and spells both counts (1.17)", async () => {
+    // A stored Focus tab, which 1.17 migrates into the needs-you switch ON: with the switch not drawn,
+    // it must not filter the list either.
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ dashView: "focus", paneOrder: "activity" }));
+    __resetDashPrefs();
+    renderHome();
+    await settled();
+    expect(screen.queryByRole("radiogroup", { name: /order/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /needs you only|only what needs you/i })).toBeNull();
+    // "collie" holds only a working agent: the Focus filter would have dropped it.
+    expect(screen.getAllByText("collie").length).toBeGreaterThan(0);
+    expect(screen.getByText(/1 working/i)).toBeInTheDocument();
   });
 
   it("draws no Panes / Focus / Changes bar", async () => {

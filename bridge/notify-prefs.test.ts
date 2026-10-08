@@ -32,7 +32,7 @@ afterAll(async () => {
   await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
 });
 
-const defaults = { blocked: true, done: false, updates: true, cache: false, panes: [] };
+const defaults = { blocked: true, done: false, updates: true, cache: false, panes: [], machines: true };
 
 describe("coerceNotifyPrefs", () => {
   test("fills missing / non-boolean keys from defaults", () => {
@@ -45,7 +45,9 @@ describe("coerceNotifyPrefs", () => {
     expect(coerceNotifyPrefs({ updates: false })).toEqual({ ...defaults, updates: false });
     // `cache` is the fourth, and the one that defaults OFF: an explicit true sticks.
     expect(coerceNotifyPrefs({ cache: true })).toEqual({ ...defaults, cache: true });
-    expect(coerceNotifyPrefs({ blocked: "yes", done: 1, updates: 0, cache: "on" })).toEqual(defaults);
+    // `machines` is the fifth, and defaults ON: a rule set per machine is the opt-in (ADR 0084).
+    expect(coerceNotifyPrefs({ machines: false })).toEqual({ ...defaults, machines: false });
+    expect(coerceNotifyPrefs({ blocked: "yes", done: 1, updates: 0, cache: "on", machines: 0 })).toEqual(defaults);
     expect(coerceNotifyPrefs({ blocked: "yes", done: 1, updates: 0 })).toEqual(defaults);
   });
 
@@ -72,8 +74,12 @@ describe("coerceNotifyPrefs", () => {
 });
 
 describe("parseNotifyPrefsPatch", () => {
-  test("accepts the three switches and rejects a non-boolean", () => {
+  test("accepts every boolean switch and rejects a non-boolean", () => {
     expect(parseNotifyPrefsPatch({ done: true })).toEqual({ done: true });
+    // Upstream ddb41eb1: the switches are read off the defaults, so `cache` (dropped by the old
+    // hand-written list of three) and `machines` both reach the store.
+    expect(parseNotifyPrefsPatch({ cache: true, machines: false })).toEqual({ cache: true, machines: false });
+    expect(parseNotifyPrefsPatch({ machines: "off" })).toBeNull();
     expect(parseNotifyPrefsPatch({})).toEqual({});
     expect(parseNotifyPrefsPatch({ blocked: "no" })).toBeNull();
     expect(parseNotifyPrefsPatch(null)).toBeNull();
@@ -217,13 +223,13 @@ describe("NotifyPrefsStore", () => {
   test("set merges a partial patch, persists, and returns the updated prefs", async () => {
     const cfg = await tempCfg();
     const store = new NotifyPrefsStore(cfg);
-    const updated = await store.set({ done: true, updates: false, cache: true });
-    expect(updated).toEqual({ blocked: true, done: true, updates: false, cache: true, panes: [] });
+    const updated = await store.set({ done: true, updates: false, cache: true, machines: false });
+    expect(updated).toEqual({ blocked: true, done: true, updates: false, cache: true, panes: [], machines: false });
 
     // Round-trips through disk: a fresh store reloads the same values (survives a restart).
     const reloaded = new NotifyPrefsStore(cfg);
     await reloaded.load();
-    expect(reloaded.current()).toEqual({ blocked: true, done: true, updates: false, cache: true, panes: [] });
+    expect(reloaded.current()).toEqual({ blocked: true, done: true, updates: false, cache: true, panes: [], machines: false });
   });
 
   test("pane rules round-trip through disk and `panes` replaces rather than merges", async () => {
@@ -271,7 +277,7 @@ describe("NotifyPrefsStore", () => {
     await writeFile(join(cfg.stateDir, "notify-prefs.json"), JSON.stringify({ blocked: false }));
     const store = new NotifyPrefsStore(cfg);
     await store.load();
-    expect(store.current()).toEqual({ blocked: false, done: false, updates: true, cache: false, panes: [] });
+    expect(store.current()).toEqual({ blocked: false, done: false, updates: true, cache: false, panes: [], machines: true });
   });
 
   test("load tolerates a missing file (keeps defaults)", async () => {

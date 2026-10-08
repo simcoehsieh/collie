@@ -1,7 +1,9 @@
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { isStateSecretName } from "./acl-policy.ts";
 import { withinRoot } from "./dirs.ts";
+import { isGitSegment } from "./files-view.ts";
 import { isRepoRelativePath, resolveRepo, runGit, type DiffFailure, type DiffIo } from "./diff.ts";
 
 // FORK. One file of the pane's own working tree, read-only, for the phone.
@@ -179,6 +181,15 @@ export async function fileView(
     return { ok: false, reason: "not_found" };
   }
   if (!withinRoot(real, repo.repoRoot)) return { ok: false, reason: "outside_root" };
+  // FORK (1.17 merge): the same two refusals upstream's Files read applies (bridge/files-view.ts,
+  // ADR 0083) — nothing under a `.git` folder, and no file named like a Collie state secret
+  // (`paired-devices.json`, `crew-trust.json`, …), checked on the path asked for AND the real one.
+  for (const p of [path, real.slice(repo.repoRoot.length + 1)]) {
+    const segments = p.split(/[\\/]/);
+    if (segments.some(isGitSegment) || isStateSecretName(segments.at(-1) ?? "")) {
+      return { ok: false, reason: "bad_path" };
+    }
+  }
 
   const read = await io.readBytes(real, FILE_VIEW_CAP);
   if (read === null) return { ok: false, reason: "not_found" };

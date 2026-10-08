@@ -24,6 +24,7 @@ interface Prefs {
   panes?: PaneNotifyRule[];
   operatorPanes?: PaneNotifyRule[];
   cache: boolean;
+  machines: boolean;
 }
 
 // The control sends ONE key per toggle, so a patch is a partial of the same contract — which is
@@ -33,7 +34,7 @@ let currentPrefs: Prefs;
 
 beforeEach(() => {
   lastPatch = undefined;
-  currentPrefs = { blocked: true, done: false, updates: true, cache: false, panes: [] };
+  currentPrefs = { blocked: true, done: false, updates: true, cache: false, machines: true, panes: [] };
   server.use(
     http.get("/api/notifications/prefs", () => HttpResponse.json(currentPrefs)),
     http.post<never, Partial<Prefs>>("/api/notifications/prefs", async ({ request }) => {
@@ -163,7 +164,7 @@ describe("NotifyPrefsControl — per pane", () => {
 // apply and says the file's name, and a tap adds a phone rule that wins over it.
 describe("NotifyPrefsControl — rules from notify.toml", () => {
   test("a file rule shows as the applied mode, named after the file; a tap overrides it with a phone rule", async () => {
-    currentPrefs = { blocked: true, done: true, updates: true, cache: false, panes: [], operatorPanes: [{ label: "webapp", mode: "blocked" }] };
+    currentPrefs = { blocked: true, done: true, updates: true, cache: false, machines: true, panes: [], operatorPanes: [{ label: "webapp", mode: "blocked" }] };
     const user = userEvent.setup();
     const pane = fixtureAgents[0]!;
     render(<NotifyPrefsControl panes={[pane]} />);
@@ -193,12 +194,27 @@ describe("NotifyPrefsControl — the fourth switch and the panes it watches", ()
     );
   });
 
-  test("renders four switch rows, the fourth for the cache warning", async () => {
+  test("renders five switch rows, the cache warning last so its watched panes sit under it", async () => {
     render(<NotifyPrefsControl />);
     expect(await screen.findByRole("switch", { name: /needs input/i })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: /finished/i })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: /app updates/i })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /machine load stays high/i })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: /cache about to go cold/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("switch").at(-1)).toHaveAccessibleName(/cache about to go cold/i);
+  });
+
+  // ADR 0084: one switch silences every machine alert rule at once. Default on.
+  test("the machine alerts switch is on by default and POSTs {machines: false}", async () => {
+    const user = userEvent.setup();
+    render(<NotifyPrefsControl />);
+    const machines = await screen.findByRole("switch", { name: /machine load stays high/i });
+    await waitFor(() => expect(machines).toBeChecked());
+
+    await user.click(machines);
+
+    await waitFor(() => expect(lastPatch).toEqual({ machines: false }));
+    await waitFor(() => expect(machines).not.toBeChecked());
   });
 
   test("toggling the fourth switch POSTs {cache: true}", async () => {

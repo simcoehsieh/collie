@@ -33,3 +33,13 @@ export const FORK_HEADING_NEW_TAB_ON: boolean = import.meta.env.MODE === "test";
 // shell off the list and leaves the rest of the app as it was. routes/home.tsx asks it once.
 // Tests run with shells (MODE "test"); routes/home-no-tabs.test.tsx pins the fork's shape.
 export const FORK_DASH_SHELLS_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO ORDER TOGGLE OR NEEDS-YOU SWITCH ON THE DASHBOARD SUMMARY LINE (2026-10-08, at the 1.17
+// merge). Upstream 1.17.0 put a clock/hourglass order toggle (Activity, Cache) and a circle-dot
+// needs-you switch beside the summary line, and made the dashboard follow an order chosen in the pane
+// switcher. This install's dashboard is the operator's design: workspace groups in place order, no
+// controls on that line. Off at this gate: routes/home.tsx passes no `order`, `onOrderChange` or
+// `onNeedsYouOnlyChange`, so agent-list.tsx draws neither control, and `needsYouOnly` is forced off —
+// 1.17 migrates a stored Focus tab into that switch, ON, which would otherwise filter the list with no
+// way to turn it off. The switcher keeps its own order. Tests run with them (MODE "test").
+export const FORK_DASH_SUMMARY_CONTROLS_ON: boolean = import.meta.env.MODE === "test";

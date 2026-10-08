@@ -4,6 +4,8 @@ import { updateStartVerdict, type CrewUpdateRow } from "./update-action.ts";
 import { encodeStyledRegion, styledRegionLines } from "../web/src/lib/styled-region.ts";
 
 import {
+  afterPaneInput,
+  isPaneInput,
   blobRoute,
   BLOB_MAX_BYTES,
   sniffBlobType,
@@ -43,6 +45,7 @@ import {
   paneReadPayload,
   parsePairRequest,
   parseSnoozeRequest,
+  parseNotifyPrefsPatch,
   parseCacheWatchRequest,
   parseCacheWatchForget,
   cacheWatchable,
@@ -144,6 +147,7 @@ function cfg(overrides: Partial<Config> = {}): Config {
     muxEndpoint: "/tmp/herdr.sock",
     tmuxBin: "",
     zellijBin: "",
+    ternBin: "",
     socketPath: "/tmp/herdr.sock",
     dirRoots: [],
     agentryHome: "",
@@ -1466,6 +1470,36 @@ describe("guard — the pairing gate composes with the header gate", () => {
     expect(read(cfg(), { authorization: "Bearer wrong" }, paired)).toBeNull();
   });
 
+  // The Files view (ADR 0083): a read that needs the write level's device factors, both of them,
+  // without the write level's `Origin` rule — a browser sends no `Origin` on a same-origin GET.
+  const deviceRead = (c: Config, headers: Record<string, string>, gate?: ReturnType<typeof gateOf>) =>
+    guard(req({ host: "collie.ts.net", ...headers }), c, "device-read", gate);
+
+  test("device-read: pairing refuses an unpaired device and lets a paired one read, with no Origin", async () => {
+    const denied = deviceRead(cfg(), {}, paired);
+    expect(denied!.status).toBe(403);
+    expect(await denied!.text()).toBe("device not paired");
+    expect(deviceRead(cfg(), { authorization: "Bearer wrong" }, paired)!.status).toBe(403);
+    expect(deviceRead(cfg(), { authorization: "Bearer tok-phone" }, paired)).toBeNull();
+    // Nothing paired and no header gate: open, like a write is.
+    expect(deviceRead(cfg(), {}, nothingPaired)).toBeNull();
+  });
+
+  test("device-read: the header gate refuses an unlisted or absent device", async () => {
+    const c = cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] });
+    expect(deviceRead(c, { [HDR]: "phone" })).toBeNull();
+    const unlisted = deviceRead(c, { [HDR]: "tablet" });
+    expect(unlisted!.status).toBe(403);
+    expect(await unlisted!.text()).toBe("device not authorised");
+    expect(deviceRead(c, {})!.status).toBe(403);
+    // The same device may still read a pane: only files asks for the device.
+    expect(read(c, { [HDR]: "tablet" })).toBeNull();
+  });
+
+  test("device-read: still an access check — a cross-origin Origin is refused", () => {
+    expect(deviceRead(cfg(), { origin: "https://evil.example", authorization: "Bearer tok-phone" }, paired)!.status).toBe(403);
+  });
+
   test("the two gates compose by AND: each refuses independently of the other", async () => {
     const c = cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] });
     // Header ok, not paired → the pairing refusal.
@@ -1578,6 +1612,28 @@ describe("parsePairRequest — the bootstrap body", () => {
   test("the code is passed through unjudged — shape-checking it would be a free oracle", () => {
     // Not code-shaped at all, but it is the hash compare's job to say so, in constant time.
     expect(parsePairRequest({ code: "!!!!", label: "phone" })?.code).toBe("!!!!");
+  });
+});
+
+describe("parseNotifyPrefsPatch", () => {
+  test("every notification kind can be switched, the cache warning included", () => {
+    // The global cache switch was dropped here from 1.9.0 on: the parser listed three keys, so
+    // `{ cache: true }` became an empty patch and the bridge answered with the old value.
+    expect(parseNotifyPrefsPatch({ cache: true })).toEqual({ cache: true });
+    expect(parseNotifyPrefsPatch({ machines: false })).toEqual({ machines: false });
+    expect(parseNotifyPrefsPatch({ blocked: false, done: true, updates: false, cache: false })).toEqual({
+      blocked: false,
+      done: true,
+      updates: false,
+      cache: false,
+    });
+  });
+
+  test("a non-boolean value refuses the whole body, an unknown key is ignored", () => {
+    expect(parseNotifyPrefsPatch({ cache: "yes" })).toBeNull();
+    expect(parseNotifyPrefsPatch({ later: true })).toEqual({});
+    expect(parseNotifyPrefsPatch(null)).toBeNull();
+    expect(parseNotifyPrefsPatch([true])).toBeNull();
   });
 });
 
@@ -2551,9 +2607,10 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
     // All session-scoped routes reach their runtime through the caller's resolver and nothing else.
-    // Upstream's THIRTEEN (tab create, workspace create, launch, this host's launcher rows, this host's
-    // folder list and a star on it, one journal blob, a workspace's Changes list, tab action, the pane
-    // family, "look now", the worktree listing and the worktree actions), plus the fork's:
+    // Upstream's FOURTEEN (tab create, workspace create, launch, this host's launcher rows, this host's
+    // folder list and a star on it, one journal blob, a workspace's Changes list, a workspace's Files
+    // view, tab action, the pane family, "look now", the worktree listing and the worktree actions),
+    // plus the fork's:
     //
     // `/api/dirs` resolves for its FORWARD rather than for the runtime's value: a `?h=laptop` browse
     // must list the LAPTOP's disk, and resolution is what sends it there. A route that answered
@@ -2575,9 +2632,9 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // bridge/artifacts.ts), each resolving through the same gate so a `?host=` call is answered by
     // the runtime whose agents carry the sessions the records name.
     //
-    // 13 upstream + dirs + preview + 5 artifacts = 20.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(20);
-    // Exactly seven `registry.get(` calls remain, and each is a sanctioned one, named here rather
+    // 14 upstream + dirs + preview + 5 artifacts = 21.
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(21);
+    // Exactly eight (upstream; nine on this fork, see below) `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
     // collie's own multiplexer (M10/06) and is not session-scoped at all; `/api/mux/logo.svg`,
@@ -2589,17 +2646,21 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // (M22/03); and the live feed `/api/events`, which is local by declaration — a member host is
     // refused with a 404 on the line BEFORE the get, so there is no `?h=` value it could be served
     // under. An eighth would be a route reaching past the gate.
-    // EIGHT on this fork, not upstream's seven: the fork's live feed (`/api/events`, named in the
-    // sentence just above) and 1.9.0's cache-watch resolver (named just below) each added one, and
-    // both are sanctioned for the reasons given. A NINTH would be a route reaching past the gate.
-    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(8);
+    // NINE on this fork, not upstream's eight: the fork's live feed (`/api/events`, named in the
+    // sentence just above) adds one to upstream's list (which includes 1.9.0's cache-watch resolver
+    // and 1.17's forwarded-input hot intent, both named just below), and it is sanctioned for the
+    // reason given. A TENTH would be a route reaching past the gate.
+    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(9);
     expect(src).toContain('if (host.kind !== "local") return text("no stream for a member host", 404);');
     // (M22/03); and the cache-watch resolver, which turns `(host, session, paneId)` into the watch key
     // a PREFERENCE is stored under — deliberately NOT through the gate, because that preference belongs
     // on the collie the phone is talking to and a forward would store it on the machine that holds no
     // push subscription (ADR 0042, CREW_PROTOCOL.md §5). It reads a peer's pane out of the lead's own
-    // swept body instead, exactly as `bridge/crew/notify.ts` does, and writes to no terminal at all.
-    // A NINTH would be a route reaching past the gate — see the count above.
+    // swept body instead, exactly as `bridge/crew/notify.ts` does, and writes to no terminal at all;
+    // and the hot intent after an input FORWARDED to a member, which tightens THIS collie's primary
+    // engine because the sweep that brings the member's answer back rides its tick (CREW_PROTOCOL.md
+    // §10.1). It runs after the forward has answered and writes nothing. A TENTH would be a route
+    // reaching past the gate — see the count above.
     // The mux read is a read of the LOCAL primary — never `?host=`, because a peer's capabilities
     // are its own business and reach the lead over the crew API, never out of this registry.
     expect(src).toContain("const activeMux = registry.get();");
@@ -2666,7 +2727,7 @@ describe("the update write gate — POST api/update rides the pane path's own ga
   test("same device auth as pane input: one gate expression, two call sites, no second guard() call", () => {
     const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
     // Defined once…
-    expect([...src.matchAll(/const browserGate = \(level: "read" \| "write"\)/g)]).toHaveLength(1);
+    expect([...src.matchAll(/const browserGate = \(level: GateLevel\)/g)]).toHaveLength(1);
     // …handed to the pane family…
     expect(src).toContain("gate: browserGate,");
     // …and used by the update route. If someone re-spells either as its own `guard(req, cfg, …)`
@@ -4113,5 +4174,44 @@ describe("paneReadPayload — the logical read is asked for only when it can rep
     expect(body.logicalText).toBe("run:\nhttps://a.dev/auth?client=1&state=y then");
     // The mirror keeps its own rows, styling and all — only the hrefs are repaired downstream.
     expect(body.text).toBe(grid);
+  });
+});
+
+// ── The hot intent after an input (state-engine.ts § noteInput) ─────────────────────────────────
+//
+// Herdr announces nothing when an agent reports its session, so a bridge relaxed to its 12 s idle
+// tick saw a Codex session, reported on the first prompt, up to one tick late. A landed input now
+// puts the engine that owns the pane into its fast cadence for a bounded count of polls.
+describe("an input written to a pane makes its engine hot", () => {
+  test("isPaneInput names the two input routes, as POSTs, and nothing else", () => {
+    expect(isPaneInput("/api/pane/w1%3Ap1/reply", "POST")).toBe(true);
+    expect(isPaneInput("/api/pane/w1%3Ap1/keys", "POST")).toBe(true);
+    expect(isPaneInput("/api/pane/w1%3Ap1/reply", "GET")).toBe(false);
+    for (const action of ["upload", "close", "rename", "focus", "history", "chat", "changes", "files"]) {
+      expect(isPaneInput(`/api/pane/w1%3Ap1/${action}`, "POST")).toBe(false);
+    }
+    expect(isPaneInput("/api/pane/w1%3Ap1", "POST")).toBe(false);
+    expect(isPaneInput("/api/tab/w1%3At1/close", "POST")).toBe(false);
+  });
+
+  test("afterPaneInput tells the engine only when the write landed, and hands the response back", () => {
+    let noted = 0;
+    const engine = { noteInput: () => void noted++ };
+    const ok = new Response("{}", { status: 200 });
+    expect(afterPaneInput(engine, ok)).toBe(ok);
+    expect(noted).toBe(1);
+    for (const status of [400, 403, 404, 409, 502]) afterPaneInput(engine, new Response("{}", { status }));
+    expect(noted).toBe(1);
+  });
+
+  test("the reply and keys routes, and the lead's forward of them, all pass through it", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    // On the owning host: the browser's request and a member's crew dispatch share this block.
+    expect(src).toContain("return afterPaneInput(rt.engine, await replyPane(");
+    expect(src).toContain("return afterPaneInput(rt.engine, await keysPane(");
+    // On the lead: the forward's answer, so the lead's sweep follows the member it typed into.
+    expect(src).toContain("const input = isPaneInput(pathname, req.method);");
+    expect(src).toContain("return input && own !== undefined ? afterPaneInput(own, forwarded) : forwarded;");
+    expect([...src.matchAll(/afterPaneInput\(/g)]).toHaveLength(4); // the definition and three calls
   });
 });

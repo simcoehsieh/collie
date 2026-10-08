@@ -2,9 +2,9 @@ import { useCallback, useSyncExternalStore } from "react";
 import { asJsonBoolean, asJsonObject, asJsonString, type JsonValue } from "@/lib/json";
 
 import type { ChangesLayout } from "@/lib/changes-tree";
-import { coerceDashView, type DashView } from "@/lib/dash-view";
+import { coerceDashView, isLegacyDashView, wasFocusView, type DashView } from "@/lib/dash-view";
 import { coercePaneOrder, type PaneOrder } from "@/lib/pane-order";
-import { coercePaneView, type PaneView } from "@/lib/pane-view";
+import { coercePaneView, type PaneView, DEFAULT_PANE_VIEW } from "@/lib/pane-view";
 import type { RecentDir } from "@/lib/triage";
 
 // Dashboard layout preferences, persisted in localStorage. Deliberately separate from
@@ -74,14 +74,33 @@ export interface DashPrefs {
   /** The Changes list drawn flat, one row per file, or as a folder tree. */
   changesLayout: ChangesLayout;
   /**
+   * Whether the Files view lists the entries git ignores (ADR 0083). OFF by default: `node_modules`,
+   * build output and logs bury the files an operator came to read. Per device, and it outlives the
+   * folder: the name filter resets with each folder, this choice does not.
+   */
+  filesShowIgnored: boolean;
+  /**
+   * Whether the Changes screen shows the changed files only, as a flat list or a tree of them, rather
+   * than the root folder with each change marked on its row (ADR 0083, 2026-10-06). OFF by default:
+   * the folder with its marks shows both what changed and what sits beside it. Per device, beside
+   * {@link filesShowIgnored}.
+   */
+  changesOnly: boolean;
+  /**
    * The composer's action belt size, one factor for the whole belt: band, pills, icons and words
    * all grow from it together (`--belt-scale`, `components/actions-row.tsx`). One of
    * {@link BELT_SCALES}. 1.15 is the baseline Altan asked for on 2026-09-23 ("slightly higher and
    * the icons slightly larger, like 15%"); the other two are the Settings row's way up from there.
    */
   beltScale: BeltScale;
-  /** The dashboard's footer tab: Panes, Focus or Changes (ADR 0066, renamed by ADR 0068). Panes by default. */
+  /** The dashboard's footer tab: Dashboard, Crew or Changes (ADR 0085). Dashboard by default. */
   dashView: DashView;
+  /**
+   * The Dashboard's "needs you" switch (ADR 0085, the old Focus tab): on, each workspace shows only
+   * its panes that need you. Per device, off by default. A device that had the Focus tab selected
+   * reads as on, once (see {@link coerceDashPrefs}).
+   */
+  needsYouOnly: boolean;
   /**
    * Whether a session view draws the agent's tool calls: the reads, the searches, the commands and
    * the edits it ran between saying things.
@@ -116,22 +135,11 @@ export interface DashPrefs {
    */
   paneOrder: PaneOrder;
   /**
-   * Whether this device has opted into Chat at all (Settings → Experiments).
+   * Which body a pane with a session draws: the chat stream or the terminal mirror. One standing
+   * value for the whole device, written from the pane's ⋮ menu alone. `chat` by default since 1.17.0
+   * (ADR 0082); a device that chose the terminal keeps it.
    *
-   * OFF by default, and that is the whole gate: while it is off no pane draws the chat stream and
-   * the pane's ⋮ menu shows no switch, so a device that never opens that row behaves exactly as it
-   * did. 1.15.0 ships Chat's reader for six harnesses and its screen on the first pass, with two
-   * known holes on the day it ships (codex tool calls, and a hermes turn that can vanish with no
-   * reducer able to tell — ADR 0073's Consequences). Default-on would make those the first
-   * impression of the release; default-off with a named switch makes them the cost of opting in.
-   */
-  chatExperiment: boolean;
-  /**
-   * Which body a pane draws ONCE {@link chatExperiment} is on: the terminal mirror or the chat
-   * stream. One standing value for the whole device, written from the pane's ⋮ menu alone.
-   *
-   * See lib/pane-view.ts for why its default is `chat` while the app's default view is still the
-   * terminal — the two are different questions, and the gate above is what answers the second.
+   * See lib/pane-view.ts for why it is one per-device value and not a per-pane override.
    */
   paneView: PaneView;
 }
@@ -161,13 +169,15 @@ const DEFAULTS: DashPrefs = {
   changesNested: true,
   changesDepth: 2,
   changesLayout: "list",
+  filesShowIgnored: false,
+  changesOnly: false,
   beltScale: 1.15,
-  dashView: "panes",
+  dashView: "dashboard",
+  needsYouOnly: false,
   showToolCalls: false,
   showCompactions: false,
   paneOrder: "place",
-  chatExperiment: false,
-  paneView: "chat",
+  paneView: DEFAULT_PANE_VIEW,
 };
 
 function coerceDepth(raw: JsonValue | undefined): number {
@@ -220,12 +230,16 @@ export function coerceDashPrefs(raw: JsonValue | undefined): DashPrefs {
     changesNested: asJsonBoolean(p.changesNested) ?? DEFAULTS.changesNested,
     changesDepth: coerceDepth(p.changesDepth),
     changesLayout: p.changesLayout === "tree" ? "tree" : DEFAULTS.changesLayout,
+    filesShowIgnored: asJsonBoolean(p.filesShowIgnored) ?? DEFAULTS.filesShowIgnored,
+    changesOnly: asJsonBoolean(p.changesOnly) ?? DEFAULTS.changesOnly,
     beltScale: coerceBeltScale(p.beltScale),
     dashView: coerceDashView(p.dashView),
+    // THE FOCUS MIGRATION (ADR 0085): a stored Focus tab turns the switch on, so no one loses the
+    // view they had. An explicit stored value wins otherwise.
+    needsYouOnly: wasFocusView(p.dashView) ? true : (asJsonBoolean(p.needsYouOnly) ?? DEFAULTS.needsYouOnly),
     showToolCalls: asJsonBoolean(p.showToolCalls) ?? DEFAULTS.showToolCalls,
     showCompactions: asJsonBoolean(p.showCompactions) ?? DEFAULTS.showCompactions,
     paneOrder: coercePaneOrder(p.paneOrder),
-    chatExperiment: asJsonBoolean(p.chatExperiment) ?? DEFAULTS.chatExperiment,
     paneView: coercePaneView(p.paneView),
   };
 }
@@ -234,7 +248,21 @@ function loadPrefs(): DashPrefs {
   try {
     const raw = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
     if (!raw) return { ...DEFAULTS };
-    return coerceDashPrefs(JSON.parse(raw));
+    const parsed: JsonValue = JSON.parse(raw);
+    const prefs = coerceDashPrefs(parsed);
+    // A retired tab name is written back migrated, so the Focus migration happens once: the switch is
+    // then stored as its own value and the old name is gone.
+    const stored = asJsonObject(parsed);
+    // FORK: THE CHAT FLIP KEEPS THIS DEVICE'S BODY (2026-10-08, at the 1.17 merge). 1.17.0 made Chat
+    // the default and ignores the old opt-in, so a device that never turned Chat on in Settings →
+    // Experiments would flip to Chat on update. A blob that says it never opted in (`chatExperiment`
+    // stored false) is migrated once to the terminal it was showing; the ⋮ menu's body switch still
+    // turns Chat on. A fresh device, and one that had opted in, get upstream's default.
+    if (stored && stored.chatExperiment === false && stored.paneView !== "terminal") {
+      prefs.paneView = "terminal";
+      savePrefs(prefs);
+    } else if (stored && isLegacyDashView(stored.dashView)) savePrefs(prefs);
+    return prefs;
   } catch {
     return { ...DEFAULTS };
   }
@@ -251,7 +279,12 @@ function savePrefs(prefs: DashPrefs): void {
 }
 
 // ── The store ─────────────────────────────────────────────────────────────
-let prefs: DashPrefs = loadPrefs();
+// Loaded on first read, not at import: a test that writes the stored blob and then renders (upstream's
+// own way, which assumed a per-hook state) is read the same way a reset-and-read one is.
+let loaded: DashPrefs | null = null;
+function storedPrefs(): DashPrefs {
+  return (loaded ??= loadPrefs());
+}
 const listeners = new Set<() => void>();
 
 function subscribe(cb: () => void): () => void {
@@ -260,24 +293,24 @@ function subscribe(cb: () => void): () => void {
 }
 
 function getPrefs(): DashPrefs {
-  return prefs;
+  return storedPrefs();
 }
 
 /** Apply a patch to the shared prefs, persist it, and wake every subscriber. */
 export function updateDashPrefs(patch: Partial<DashPrefs>): void {
-  prefs = { ...prefs, ...patch };
-  savePrefs(prefs);
+  loaded = { ...storedPrefs(), ...patch };
+  savePrefs(loaded);
   for (const fn of listeners) fn();
 }
 
 /** The prefs as they stand right now — for code that runs outside a render (the poll tick). */
 export function dashPrefs(): DashPrefs {
-  return prefs;
+  return storedPrefs();
 }
 
 /** Whether Low power is on, readable from anywhere. The poll loop's input. */
 export function lowPowerEnabled(): boolean {
-  return prefs.lowPower;
+  return storedPrefs().lowPower;
 }
 
 /** Subscribe-to-the-flag hook for the one or two places that only need Low power. */
@@ -287,7 +320,7 @@ export function useLowPower(): boolean {
 
 /** Test seam — the store is module state, so one case's pins would outlive it. */
 export function __resetDashPrefs(): void {
-  prefs = loadPrefs();
+  loaded = null;
   for (const fn of listeners) fn();
 }
 
@@ -308,12 +341,14 @@ export interface UseDashPrefsReturn {
   setChangesNested: (nested: boolean) => void;
   setChangesDepth: (depth: number) => void;
   setChangesLayout: (layout: ChangesLayout) => void;
+  setFilesShowIgnored: (show: boolean) => void;
+  setChangesOnly: (only: boolean) => void;
   setBeltScale: (scale: number) => void;
   setDashView: (view: DashView) => void;
+  setNeedsYouOnly: (on: boolean) => void;
   setShowToolCalls: (show: boolean) => void;
   setShowCompactions: (show: boolean) => void;
   setPaneOrder: (order: PaneOrder) => void;
-  setChatExperiment: (on: boolean) => void;
   setPaneView: (view: PaneView) => void;
 }
 
@@ -334,12 +369,17 @@ export function useDashPrefs(): UseDashPrefsReturn {
   const setChangesNested = useCallback((changesNested: boolean) => updateDashPrefs({ changesNested }), []);
   const setChangesDepth = useCallback((depth: number) => updateDashPrefs({ changesDepth: coerceDepth(depth) }), []);
   const setChangesLayout = useCallback((changesLayout: ChangesLayout) => updateDashPrefs({ changesLayout }), []);
+  const setFilesShowIgnored = useCallback(
+    (filesShowIgnored: boolean) => updateDashPrefs({ filesShowIgnored }),
+    [],
+  );
+  const setChangesOnly = useCallback((changesOnly: boolean) => updateDashPrefs({ changesOnly }), []);
   const setBeltScale = useCallback((scale: number) => updateDashPrefs({ beltScale: coerceBeltScale(scale) }), []);
   const setDashView = useCallback((dashView: DashView) => updateDashPrefs({ dashView }), []);
+  const setNeedsYouOnly = useCallback((needsYouOnly: boolean) => updateDashPrefs({ needsYouOnly }), []);
   const setShowToolCalls = useCallback((showToolCalls: boolean) => updateDashPrefs({ showToolCalls }), []);
   const setShowCompactions = useCallback((showCompactions: boolean) => updateDashPrefs({ showCompactions }), []);
   const setPaneOrder = useCallback((paneOrder: PaneOrder) => updateDashPrefs({ paneOrder }), []);
-  const setChatExperiment = useCallback((chatExperiment: boolean) => updateDashPrefs({ chatExperiment }), []);
   const setPaneView = useCallback((paneView: PaneView) => updateDashPrefs({ paneView }), []);
 
   const setIsolatedSpace = useCallback((isolatedSpace: string | null) => updateDashPrefs({ isolatedSpace }), []);
@@ -367,12 +407,14 @@ export function useDashPrefs(): UseDashPrefsReturn {
     setChangesNested,
     setChangesDepth,
     setChangesLayout,
+    setFilesShowIgnored,
+    setChangesOnly,
     setBeltScale,
     setDashView,
+    setNeedsYouOnly,
     setShowToolCalls,
     setShowCompactions,
     setPaneOrder,
-    setChatExperiment,
     setPaneView,
   };
 }

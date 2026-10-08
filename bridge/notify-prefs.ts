@@ -79,6 +79,10 @@ export interface NotifyPrefs {
    *  (`bridge/cache/watch.ts`, ADR 0042). There is no per-pane off that overrides it. Not an agent
    *  status either, so it never flows through {@link isNotifiable}; the cache warden reads it directly. */
   cache: boolean;
+  /** Push when a machine's load stays above the alert rule set on its Machines page (ADR 0084). Default
+   *  ON, unlike `cache`: a rule is the opt-in, set per machine, so this switch only silences rules the
+   *  operator already asked for. Not an agent status; the machine watch reads it directly. */
+  machines: boolean;
 }
 
 export const DEFAULT_NOTIFY_PREFS: NotifyPrefs = {
@@ -87,6 +91,7 @@ export const DEFAULT_NOTIFY_PREFS: NotifyPrefs = {
   updates: true,
   cache: false,
   panes: [],
+  machines: true,
 };
 
 /** The pane facts a rule is matched against — the slice of an `AgentView` that names it. */
@@ -150,11 +155,12 @@ export function coerceNotifyPrefs(raw: JsonValue | undefined): NotifyPrefs {
     updates: typeof o.updates === "boolean" ? o.updates : DEFAULT_NOTIFY_PREFS.updates,
     panes: coercePaneRules(o.panes),
     cache: typeof o.cache === "boolean" ? o.cache : DEFAULT_NOTIFY_PREFS.cache,
+    machines: typeof o.machines === "boolean" ? o.machines : DEFAULT_NOTIFY_PREFS.machines,
   };
 }
 
 /**
- * Validate an untrusted `/api/notifications/prefs` body into a partial patch. The three switches must
+ * Validate an untrusted `/api/notifications/prefs` body into a partial patch. The boolean switches must
  * be booleans when present; `panes`, when present, must be an array and REPLACES the rule list whole
  * (a phone edits the list it was shown, so a merge would have nothing to merge against). A rule that
  * names no pane or carries an unknown mode is dropped rather than refused — the list is the phone's
@@ -165,7 +171,7 @@ export function parseNotifyPrefsPatch(v: JsonValue | undefined): Partial<NotifyP
   if (typeof v !== "object" || v === null || v === undefined || Array.isArray(v)) return null;
   const o: JsonObject = v;
   const patch: Partial<NotifyPrefs> = {};
-  for (const key of ["blocked", "done", "updates"] as const) {
+  for (const key of notifyPrefSwitches()) {
     if (!(key in o)) continue;
     const value = o[key];
     if (typeof value !== "boolean") return null;
@@ -176,6 +182,17 @@ export function parseNotifyPrefsPatch(v: JsonValue | undefined): Partial<NotifyP
     patch.panes = coercePaneRules(o.panes);
   }
   return patch;
+}
+
+/** The boolean switches of {@link NotifyPrefs}, read off the defaults (upstream ddb41eb1: a hand-written
+ *  list of three kept dropping `cache`, so the global "Cache about to go cold" switch never persisted).
+ *  FORK: the defaults also carry `panes`, an array, so only the boolean-valued keys are switches. */
+type NotifyPrefSwitch = { [K in keyof NotifyPrefs]-?: NotifyPrefs[K] extends boolean ? K : never }[keyof NotifyPrefs];
+function notifyPrefSwitches(): NotifyPrefSwitch[] {
+  return Object.entries(DEFAULT_NOTIFY_PREFS)
+    .filter(([, value]) => typeof value === "boolean")
+    .map(([key]) => key)
+    .filter((k): k is NotifyPrefSwitch => k in DEFAULT_NOTIFY_PREFS);
 }
 
 /** The rule that applies to `pane`: an exact id match first, then the first label match. */
@@ -285,6 +302,7 @@ export class NotifyPrefsStore {
     if (patch.updates !== undefined) this.prefs.updates = patch.updates;
     if (patch.panes !== undefined) this.prefs.panes = patch.panes.map((r) => ({ ...r }));
     if (patch.cache !== undefined) this.prefs.cache = patch.cache;
+    if (patch.machines !== undefined) this.prefs.machines = patch.machines;
     await this.save();
     return this.current();
   }

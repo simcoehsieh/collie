@@ -11,6 +11,47 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.17.2
+
+Merged upstream v1.17.2 (2026-10-08, with v1.17.0 and v1.17.1 under it) — 183 commits, 44 conflicted
+files. The first sync under the skill's three classes: infra is taken, a new capability is judged, a
+restyle of an existing screen keeps the fork's. What it brings that matters here: Claude Code 2.1.291
+dialogs read again (slash list, effort card, plan, permission cards that show the command), the
+global cache switch that would not stay on, `collie restart` that waits for launchd's pid, and two new
+capabilities the operator took — **Files** (browse the workspace folder, preview Markdown / JSON /
+HTML; reached as before, pane menu → diff → the workspace's changes) and **Machines** (Settings → a
+day of CPU / memory / disk / network and alert rules).
+
+- **Dropped, upstream supersedes it: the fork's multi-line ctrl+g patch (`f864f3a5`).** 1.17.2 claims
+  the plan family only when the plan dialog's own words are on screen, which covers the composer's
+  "ctrl+g to edit in <editor>" hint and the 40-column wrap; the fork's `·` rule went. Its fixture
+  (`claude--draft-multiline-vscode-hint.txt`) and its negative assertions stay and pass under
+  upstream's rule. Operator's call.
+- **Declined restyles, each behind a gate with a pinned test (FORK.md):** the dashboard summary
+  line's order toggle and needs-you switch (`FORK_DASH_SUMMARY_CONTROLS_ON`, which also keeps both
+  counts spelled), Chat as the default pane body (`FORK_CHAT_DEFAULT_ON`, plus a one-time migration
+  of devices that never opted in), the header's two tap targets (`FORK_HEADER_NAME_TAP_ON`). The
+  footer tabs (Crew / Dashboard / Files) stay off under the existing `FORK_DASH_TABS_ON`; the belt's
+  Files button under `FORK_BELT_PINS_ON`; "drastically simplify" is not in the fork's Quick list
+  (this install's `quick-replies.toml` replaces it anyway).
+- **Kept the fork's: the iOS home-screen height.** Upstream #355 reads `100lvh` in standalone; on the
+  operator's iPhone that measured 852 against a 793 viewport and put the composer off the screen
+  (index.css, "THE APP'S FULL-SCREEN BOX"). `--app-h` stays `100dvh`, so upstream screens using it
+  agree with `.app-viewport`. `routes/root.tsx` and `connection-banner.tsx` stay the fork's; their
+  upstream fixes are crew-only.
+- **Same bug, fixed in the fork's own parser:** upstream `ddb41eb1` (the global cache switch was
+  dropped from the prefs patch) — the fork's `notify-prefs.ts` parser had the same hand-written key
+  list; it now reads the switches off `DEFAULT_NOTIFY_PREFS` (`notifyPrefSwitches()`).
+- **The fork's one-file read (`file`, bridge/file-view.ts) gets upstream Files' guards:** device-read
+  like `files`, and no path through `.git` or to a file named like a Collie state secret, on the path
+  asked for and on its real path.
+- **Push:** a machine alert is not a retraction (it reaches Apple), and keeps its buzz while a tab is
+  visible — it is shown because nothing on screen stands in for it.
+- **Tests:** the dash prefs store loads on first read, so upstream's write-then-render tests read what
+  they wrote; `region-top.ts`'s pin for the 2.1.291 `/config` capture follows the fork's region (web
+  and bridge binding tests agree); `machines-routes.test.ts` passes `dir` fourth (the fork's
+  `serveStatic` takes `ifNoneMatch`).
+
 ## On top of 1.16.2
 
 Merged upstream v1.16.2 (2026-10-04, with v1.16.0 and v1.16.1 under it) — 208 commits, 8 conflicted

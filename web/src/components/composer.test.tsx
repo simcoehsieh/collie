@@ -3073,6 +3073,7 @@ describe("Composer — quick replies follow the pane kind", () => {
     expect(screen.getByRole("button", { name: "y" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "n" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "commit and push" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "drastically simplify" })).not.toBeInTheDocument();
   });
 });
 

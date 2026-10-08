@@ -11,6 +11,15 @@ describe("quickRepliesFor", () => {
     expect(claude.flatMap((g) => g.items)).toContain("continue");
   });
 
+  // FORK: the shipped agent list is the operator's ("the only one in it I need is commit and push",
+  // lib/quick-replies.ts), so 1.17.0's "drastically simplify" is not in it. This install's own
+  // quick-replies.toml replaces the shipped list anyway; add the phrase there to have it.
+  it("FORK: keeps the operator's list — commit and push open, the rest folded, no drastically simplify", () => {
+    const groups = quickRepliesFor("claude", false);
+    expect(groups.find((g) => g.title === "common")?.items).toEqual(["commit and push"]);
+    expect(groups.flatMap((g) => g.items)).not.toContain("drastically simplify");
+  });
+
   it("gives a shell y/n and NOT the agent phrases", () => {
     const shell = quickRepliesFor("shell", true);
     const items = shell.flatMap((g) => g.items);

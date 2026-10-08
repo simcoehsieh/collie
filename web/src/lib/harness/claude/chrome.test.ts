@@ -454,7 +454,7 @@ describe("extractInputDraft — recovers a stranded prompt-line draft", () => {
   // Bug #76 fix: the wrapped-draft scan used to be bounded by MAX_DRAFT_LINES (12), so a draft long
   // enough to wrap past that many continuation rows made locateInputBox return null — the send guard
   // then saw no draft at all and stalled forever even though the text had landed. The bound is now
-  // 100 (defense-in-depth, not a correctness bound — see the comment on MAX_DRAFT_LINES in chrome.ts),
+  // 100 (defense-in-depth, not a correctness bound — see the comment on MAX_DRAFT_LINES in markers.ts),
   // comfortably above real wraps, so a draft this long is still found.
   it("matches a box whose draft wraps past the old 12-line bound", () => {
     const many = Array.from({ length: 20 }, (_, i) => `  continuation ${i}`);
@@ -964,6 +964,7 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "v2289-switch-model-no--w50", statusRows: 0, draft: null, stripped: 1 },
     { fixture: "v2289-switch-model-yes", statusRows: 0, draft: null, stripped: 1 },
     { fixture: "v2289-switch-model-yes--w50", statusRows: 0, draft: null, stripped: 1 },
+    { fixture: "v2291-permission-bash-subagent", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-checked", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-final", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-pointer-next", statusRows: 0, draft: null, stripped: 0 },
