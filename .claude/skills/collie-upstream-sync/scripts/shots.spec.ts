@@ -21,6 +21,13 @@ import { installApiStub } from "./fixtures/api";
 //                  the "has not reported a session" note, which is otherwise the stub's gap).
 //                  storage = localStorage entries set before the app's first script, for a state
 //                  that lives on the device (a pin: `{"collie:pins:v1": "[…]"}`). Values are strings.
+//                  steps = actions run after the page settles, to reach a state: {"click": selector},
+//                  {"press": key}, {"wait": ms}. ignore = boxes highlight.py skips (unused here).
+//                  devices = which viewports to shoot, default ["phone"]. sides = which trees shoot
+//                  this id (default all); per = { "<side>": { route?, steps?, fixture?, storage? } }
+//                  overrides for one tree — a new capability's "before" is the screen it would live
+//                  on, reached another way, because the control that opens it does not exist yet.
+//   SHOTS_SIDE   before | after | upstream — which tree this run is (set by before-after.sh).
 //   SHOTS_FIXTURES  the fixture directory. The AFTER tree's, for both runs, so a capture upstream
 //                  added in this release is shown to the old bundle too — that is the "before".
 //   SHOTS_OUT    where the JPEGs go: <id>--phone.jpg, <id>--desktop.jpg.
@@ -32,9 +39,18 @@ interface Shot {
   harness?: string;
   hasSession?: boolean;
   storage?: Record<string, string>;
+  steps?: Array<{ click?: string; press?: string; wait?: number }>;
+  ignore?: number[][];
+  devices?: string[];
+  sides?: string[];
+  per?: Record<string, Partial<Pick<Shot, "route" | "fixture" | "harness" | "storage" | "steps" | "hasSession">>>;
 }
 
-const spec: Shot[] = JSON.parse(readFileSync(process.env.SHOTS_SPEC!, "utf8"));
+const side = process.env.SHOTS_SIDE ?? "after";
+// One tree's view of the list: the ids it shoots, each with that tree's overrides applied.
+const spec: Shot[] = (JSON.parse(readFileSync(process.env.SHOTS_SPEC!, "utf8")) as Shot[])
+  .filter((s) => s.sides === undefined || s.sides.includes(side))
+  .map((s) => ({ ...s, ...(s.per?.[side] ?? {}) }));
 const fixtures = process.env.SHOTS_FIXTURES!;
 const out = process.env.SHOTS_OUT!;
 mkdirSync(out, { recursive: true });
@@ -49,7 +65,7 @@ for (const [device, use] of Object.entries(VIEWPORTS)) {
   test.describe(device, () => {
     test.use({ ...use, deviceScaleFactor: 2 });
 
-    for (const shot of spec) {
+    for (const shot of spec.filter((s) => (s.devices ?? ["phone"]).includes(device))) {
       test(shot.id, async ({ page }) => {
         await installApiStub(page);
         if (shot.storage !== undefined) {
@@ -81,6 +97,11 @@ for (const [device, use] of Object.entries(VIEWPORTS)) {
         await page.goto(shot.route ?? `/pane/${PANE}`);
         await page.waitForLoadState("networkidle");
         await page.waitForTimeout(600); // route entrance + first mirror paint
+        for (const step of shot.steps ?? []) {
+          if (step.click !== undefined) await page.locator(step.click).first().click({ timeout: 5000 });
+          if (step.press !== undefined) await page.keyboard.press(step.press);
+          await page.waitForTimeout(step.wait ?? 300);
+        }
         await page.screenshot({ path: join(out, `${shot.id}--${device}.jpg`), type: "jpeg", quality: 78 });
       });
     }

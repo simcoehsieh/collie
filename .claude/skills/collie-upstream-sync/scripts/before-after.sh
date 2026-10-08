@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Before/after screenshots for an upstream sync — phase 3 of collie-upstream-sync.
 #
-#   before-after.sh prepare <tag> [--before <ref>] [--after-ref <ref>]
+#   before-after.sh prepare <tag> [--before <ref>] [--after-ref <ref>] [--upstream]
 #       Two scratch worktrees under $DIR/<tag>/: `before` at <ref> (default HEAD, i.e. what the
 #       phone runs now) and `after` = HEAD with <tag> merged, uncommitted. Exits 3 when the merge
 #       conflicts: resolve the conflicts IN THE `after` WORKTREE the way the phase-3 verdicts say
 #       (git's rerere records it, and phase 4 in the live checkout replays it), then run `shoot`.
 #       --after-ref skips the merge and checks out that ref instead (a merge already made).
+#       --upstream adds a third worktree, `upstream`, at <tag> as shipped: the look a declined
+#       restyle would have brought, so the report can show what is being declined.
 #   before-after.sh shoot <tag> <shots.json>
 #       Builds each tree's PWA and photographs every shot in shots.json at phone (390x844) and
-#       desktop (1280x800) size, into $DIR/<tag>/shots/{before,after}/<id>--{phone,desktop}.jpg.
+#       desktop (1280x800) size, into $DIR/<tag>/shots/{before,after[,upstream]}/<id>--<device>.jpg.
 #   before-after.sh clean <tag>
 #       Removes both worktrees and the directory.
 #
@@ -45,17 +47,22 @@ base="$DIR/$tag"
 case "$cmd" in
   prepare)
     shift 2
-    before_ref=HEAD; after_ref=""
+    before_ref=HEAD; after_ref=""; with_upstream=0
     while [ $# -gt 0 ]; do
       case "$1" in
         --before) before_ref="$2"; shift 2 ;;
         --after-ref) after_ref="$2"; shift 2 ;;
+        --upstream) with_upstream=1; shift ;;
         *) die "unknown flag $1" ;;
       esac
     done
     [ -e "$base" ] && die "$base exists — run \`$0 clean $tag\` first"
     mkdir -p "$base"
     git -C "$REPO" worktree add --quiet --detach "$base/before" "$before_ref"
+    if [ "$with_upstream" = 1 ]; then
+      git -C "$REPO" worktree add --quiet --detach "$base/upstream" "$tag"
+      echo "upstream $base/upstream  ($tag as shipped)"
+    fi
     if [ -n "$after_ref" ]; then
       git -C "$REPO" worktree add --quiet --detach "$base/after" "$after_ref"
     else
@@ -80,8 +87,10 @@ case "$cmd" in
     spec="$(cd "$(dirname "$spec")" && pwd)/$(basename "$spec")"
     [ -d "$base/after" ] || die "no worktrees — run \`$0 prepare $tag\` first"
     [ -z "$(git -C "$base/after" diff --name-only --diff-filter=U)" ] || die "the after tree still has conflicts"
-    for side in before after; do
+    failed=""
+    for side in before after upstream; do
       tree="$base/$side"
+      [ -d "$tree" ] || continue
       echo "── $side ($tree)" >&2
       deps "$tree"
       (cd "$tree/web" && bunx vite build --logLevel error)
@@ -89,16 +98,18 @@ case "$cmd" in
       cp "$HERE/shots.config.ts" "$tree/web/collie-sync-shots.config.ts"
       rm -rf "$base/shots/$side"
       status=0
-      (cd "$tree/web" && SHOTS_SPEC="$spec" SHOTS_FIXTURES="$base/after/web/src/fixtures/panes" \
+      (cd "$tree/web" && SHOTS_SPEC="$spec" SHOTS_SIDE="$side" SHOTS_FIXTURES="$base/after/web/src/fixtures/panes" \
         SHOTS_OUT="$base/shots/$side" bunx playwright test -c collie-sync-shots.config.ts) || status=$?
       rm -f "$tree/web/e2e/collie-sync-shots.spec.ts" "$tree/web/collie-sync-shots.config.ts"
-      [ "$status" -eq 0 ] || die "$side: playwright failed ($status)"
+      # One failed shot must not cost the other trees theirs: note it, shoot on, fail at the end.
+      [ "$status" -eq 0 ] || { echo "  $side: playwright failed ($status) — the shots that passed are kept" >&2; failed="$failed $side"; }
     done
     echo "$base/shots"
+    [ -z "$failed" ] || die "shots failed on:$failed (see above; fix the selector or add a per-side override)"
     ;;
 
   clean)
-    for side in before after; do
+    for side in before after upstream; do
       [ -d "$base/$side" ] && git -C "$REPO" worktree remove --force "$base/$side"
     done
     rm -rf "$base"
