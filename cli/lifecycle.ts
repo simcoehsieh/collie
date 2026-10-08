@@ -422,6 +422,26 @@ async function confirmLaunchdJob(deps: LifecycleDeps, target: string): Promise<n
   return EXIT.OK;
 }
 
+/** How long `stop` waits for the booted-out bridge to exit, and how often it looks (FORK). */
+const LAUNCHD_EXIT_WAIT_MS = 8_000;
+const LAUNCHD_EXIT_POLL_MS = 250;
+
+/**
+ * FORK: wait until the process a launchd job was running has exited. `bootout` returns before the
+ * job is torn down, and while it is, `bootstrap` fails with EIO; `start` retries three times a second
+ * apart, which is shorter than a bridge with a phone attached takes to drain and exit. On 2026-10-08
+ * every `collie restart` with Meow open on the phone fell back to an unsupervised bridge that way.
+ * Waiting here for the old pid (the bridge exits within five seconds by its own deadline,
+ * bridge/shutdown.ts) gives `start` a job that is already gone. A table that cannot answer ends the
+ * wait: `start`'s own retries are still there behind it.
+ */
+async function waitForLaunchdExit(deps: LifecycleDeps, pid: number): Promise<void> {
+  for (let waited = 0; waited < LAUNCHD_EXIT_WAIT_MS; waited += LAUNCHD_EXIT_POLL_MS) {
+    if (deps.exec.processLookup(pid, PROCESS_QUERY_SLOW_START_MS).kind !== "running") return;
+    await deps.sleep(LAUNCHD_EXIT_POLL_MS);
+  }
+}
+
 async function startLaunchd(deps: LifecycleDeps): Promise<number> {
   if (!writeAgent(deps)) return EXIT.FAIL;
   const uid = deps.uid();
@@ -999,12 +1019,16 @@ const BACKENDS = {
   },
   launchd: {
     start: startLaunchd,
-    stop(deps) {
+    async stop(deps) {
       // bootout stops it now; `disable` is what makes that survive a login, since RunAtLoad would
       // otherwise bring it back. Together they are systemd's `disable --now`.
       const target = launchdTarget(deps.uid(), deps.ctx.instance);
+      // FORK: note the job's process before bootout, and wait for it to be gone after (see
+      // waitForLaunchdExit).
+      const old = launchdJobPid(deps, target);
       deps.exec.capture("launchctl", ["disable", target]);
       deps.exec.capture("launchctl", ["bootout", target]);
+      if (old !== undefined) await waitForLaunchdExit(deps, Number(old));
       stopPidfileProcess(deps);
     },
     remove(deps) {

@@ -495,6 +495,34 @@ describe("start, on launchd", () => {
     expect(h.io.stdout).toContain("bridge started (launchd: herdr.collie)");
   });
 
+  // FORK: `bootout` returns before the old bridge has exited, and `bootstrap` fails with EIO until it
+  // has; a bridge with a phone attached takes longer than start's three retries (2026-10-08).
+  test("FORK: stop waits for the booted-out bridge to exit before start bootstraps", async () => {
+    let reads = 0;
+    const h = darwin({ ps: { 4242: `${BINARY} _exec-bridge` } });
+    const lookup = h.deps.exec.processLookup.bind(h.deps.exec);
+    h.deps.exec.processLookup = (pid, ms) => (pid === 4242 && ++reads > 3 ? { kind: "gone" } : lookup(pid, ms));
+    const waits: number[] = [];
+    h.deps.sleep = (ms) => {
+      waits.push(ms);
+      return Promise.resolve();
+    };
+    expect(await cmdStop(h.deps)).toBe(EXIT.OK);
+    expect(reads).toBe(4);
+    expect(waits.slice(0, 3)).toEqual([250, 250, 250]);
+  });
+
+  test("FORK: the wait gives up after eight seconds", async () => {
+    const h = darwin({ ps: { 4242: `${BINARY} _exec-bridge` } });
+    const waits: number[] = [];
+    h.deps.sleep = (ms) => {
+      waits.push(ms);
+      return Promise.resolve();
+    };
+    expect(await cmdStop(h.deps)).toBe(EXIT.OK);
+    expect(waits.filter((ms) => ms === 250).reduce((a, b) => a + b, 0)).toBe(8000);
+  });
+
   test("degrades to unsupervised after three failures instead of leaving no bridge at all", async () => {
     // EIO is also how launchd reports "gui/<uid> doesn't exist" — every Mac administered purely
     // over SSH. Giving up would take a working host to NO bridge, since stop already killed the
@@ -2007,7 +2035,8 @@ describe("restart off Windows, golden", () => {
     });
     expect(await cmdRestart(h.deps)).toBe(EXIT.OK);
     expect(fold(h.exec.calls)).toEqual([
-      ENV, ENV, ENV, ENV, "launchctl disable gui/501/herdr.collie", "launchctl bootout gui/501/herdr.collie", ...BUILD,
+      // FORK: `stop` reads the job's pid first, to wait for that process after bootout.
+      ENV, ENV, ENV, ENV, "launchctl print gui/501/herdr.collie", "launchctl disable gui/501/herdr.collie", "launchctl bootout gui/501/herdr.collie", ...BUILD,
       ENV, ENV, "tailscale status --json", "launchctl bootout gui/501/herdr.collie", "launchctl enable gui/501/herdr.collie",
       "launchctl bootstrap gui/501 /home/pat/Library/LaunchAgents/herdr.collie.plist",
       "launchctl kickstart gui/501/herdr.collie", "launchctl print gui/501/herdr.collie", ENV, ENV,

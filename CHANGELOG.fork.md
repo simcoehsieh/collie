@@ -52,6 +52,11 @@ day of CPU / memory / disk / network and alert rules).
   ignored SIGTERM. In-flight requests now get one second, then every connection is closed; and the
   whole shutdown has a five-second deadline after which the process exits regardless, because a
   bridge with the bounded stop still hung in a later step. Each step logs `[bridge] shutdown: <step>`.
+- **`collie stop` (and so `restart`) on launchd waits for the old bridge to exit** (`cli/lifecycle.ts`,
+  `waitForLaunchdExit`, up to 8 s). `bootout` returns before teardown and `bootstrap` fails with EIO
+  until it is done; `start`'s three retries a second apart were shorter than a bridge with a phone
+  attached takes to drain, so every restart with Meow open fell back to an unsupervised bridge.
+  Upstream's restart golden gains the one `launchctl print` this reads first.
 - **Push:** a machine alert is not a retraction (it reaches Apple), and keeps its buzz while a tab is
   visible — it is shown because nothing on screen stands in for it.
 - **Tests:** the dash prefs store loads on first read, so upstream's write-then-render tests read what
