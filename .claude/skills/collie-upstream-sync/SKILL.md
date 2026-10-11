@@ -130,7 +130,13 @@ Changes pill or clear X at its right end, `lib/belt-pins.ts`), **the headings' n
 `FORK_DASH_SHELLS_ON` in `lib/dash-tabs.ts`), **the summary line's no-controls shape** (no order toggle
 or needs-you switch, both counts spelled, place order kept; `FORK_DASH_SUMMARY_CONTROLS_ON`), **the
 terminal-first pane** (upstream's Chat is not the default; `FORK_CHAT_DEFAULT_ON` in `lib/pane-view.ts`),
-**the one-tap pane header** (`FORK_HEADER_NAME_TAP_ON` in `lib/fork-shape.ts`), **the
+**the one-tap pane header** (`FORK_HEADER_NAME_TAP_ON` in `lib/fork-shape.ts`), **the dashboard's
+workspace chip strip** (upstream 1.19 replaced it with an "All workspaces" select; the fork keeps the
+strip in `components/workspace-chips.tsx`, `FORK_DASH_SELECT_ON` in `lib/dash-tabs.ts`), **no New page**
+(upstream 1.19's launcher for an agent, a command or a worktree: no route door, no dashboard "+" FAB, no
+first-start card button, no "Branch off" in the pane menu; `FORK_NEW_PAGE_ON` in `lib/fork-shape.ts` and
+`FORK_DASH_NEW_FAB_ON`), **no branch label, model tag or lost badge** (on the row, the pane header and the
+home mark; `FORK_BRANCH_LABEL_ON`, `FORK_MODEL_TAG_ON`, `FORK_MARK_LOST_BADGE_ON`), **the
 first-run screen's standing shape** (it never opens; a `TOUR_VERSION` bump must stay silent and
 Settings has no row for it) and **the composer's standing shape on a physical keyboard** (an empty box
 sends its keys to the pane, a box with text is a message Enter sends, a `/` over an empty box
@@ -349,7 +355,7 @@ cd web && bun run vitest run src/lib/push-decision.test.ts src/lib/  # the areas
 `CLAUDE.md` is explicit that the root typecheck does not cover `web/`'s test files and that the gap
 has shipped a broken tip once.
 
-**The suite is GREEN on this fork — 406 files, 19929 tests at 1.17.2, zero failures.** It was not: jsdom 29
+**The suite is GREEN on this fork — 449 files, 21786 tests at 1.19.2 (406 / 19929 at 1.17.2), zero failures.** It was not: jsdom 29
 never wires up `globalThis.localStorage`, and 133 tests across 18 files failed on it, which meant a
 persistence regression was untestable here and a real new failure had to be found inside a wall of
 expected ones. `web/src/test/setup.ts` now installs a Map-backed Storage (see its own header for the
@@ -357,6 +363,21 @@ one subtlety — the members go on `Storage.prototype`, because that is where th
 So **any** failure after a merge is now a finding: there is no expected-failure baseline left to
 excuse it with. If an upstream merge brings the count back, say so rather than filing it under
 weather.
+
+**Module-level stores in fork files need a test seam.** A fork store that memoises at module scope
+(the dashboard prefs, the operator-config memo) leaks between tests once upstream adds a test that
+reads it twice. Give it a `__reset…()` and call it from the existing reset upstream's tests already use
+(`__resetOperatorCommands` calls `__resetConfigMemo`), rather than editing each new test.
+
+In zsh, a `$T` holding several test paths is ONE argument; write `${=T}` to split it.
+
+**A release that adds an auth gate needs the phone paired BEFORE the restart.** 1.18 made pairing
+always on (ADR 0086): every `/api` path except `/api/health` is 403 without a device token, so the
+phone goes dark the moment the new bridge starts. The old bridge already serves pairing, so pair
+first: `./bin/collie pair` prints a QR and a `…/settings?pair=<code>` link (single-use, 10 minutes);
+the operator opens it on the phone; wait until `~/.local/state/collie/paired-devices.json` lists the
+device; only then restart. Any local caller of `/api/*` (agentry's `herdr-upgrade-handoff.sh`) moves
+to `/api/health`. Never run `collie pair --help` on a release before 1.19.1: it mints a real code.
 
 Only once those pass:
 
