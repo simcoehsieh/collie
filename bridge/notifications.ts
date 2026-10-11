@@ -1,4 +1,4 @@
-import { paneName, panePlace } from "./pane-name.ts";
+import { panePlace, soleTabName, type NameableP } from "./pane-name.ts";
 import type { BinaryPromptPeek } from "./prompt-peek.ts";
 import { pushTitle, type PushTitleCode, type PushTitleDetail } from "./push-titles.ts";
 import { YES_NO_ACTIONS, type PushMessage } from "./push.ts";
@@ -226,9 +226,32 @@ export function makeNotifySink(
   };
 }
 
+// ── A PUSH NAMES A PANE BY THE OPERATOR'S LABEL, NEVER BY THE PROGRAM'S TITLE ─────────────────────
+// Every other surface leads with `paneName` (pane-name.ts), which falls back to the terminal title.
+// A push may not. A program sets that title with an escape sequence, so anything running in the pane
+// chooses it, and it can carry a path, a command line or a secret. A push crosses a third-party push
+// service and shows on a lock screen, which is the last place for any of those. So the push asks
+// {@link pushName}, which is the one name rule with the title taken out, and with no fallback to it,
+// not even a stale one. A pane with no label of the operator's gets the neutral harness word, and
+// the digest's collision rule adds its place when two read the same. The body is masked on top
+// (`push.ts` § redactPushMessage), but the title stays out by rule, not by luck. Written down in
+// docs/security.md too.
+
+/**
+ * What a push calls a pane: the operator's label (`paneLabel`), Claude's `/rename` name, or the
+ * operator's name for a one-pane tab; else `shell` or the harness word. Never `terminalTitle`.
+ */
+export function pushName(pane: NameableP): string {
+  if (pane.paneLabel) return pane.paneLabel;
+  if (pane.sessionName) return pane.sessionName;
+  const tab = soleTabName(pane);
+  if (tab !== null) return tab;
+  return pane.kind === "shell" ? "shell" : pane.agent;
+}
+
 interface Alert {
   agent: string;
-  /** What this pane is CALLED — the one name rule, `bridge/pane-name.ts`. */
+  /** What a push calls this pane — {@link pushName}, the operator's label and never the title. */
   label: string;
   /** Where it sits — `space › tab`, or the space alone. The one place rule, same module. */
   place: string;
@@ -288,7 +311,7 @@ export class NotificationCoordinator<H = unknown> {
     this.cancelPending(id);
     const alert: Alert = {
       agent: agent.agent,
-      label: paneName(agent),
+      label: pushName(agent),
       place: panePlace(agent),
       // SAFETY: `onTransition` is only reached for a status the prefs call notifiable, and the
       // notifiable set IS `NotifiableStatus` (blocked/done) — `isNotifiable` returns false for

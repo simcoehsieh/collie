@@ -7,7 +7,8 @@ import { AppHeaderHost, RouteHeader, SettingsGear } from "@/components/app-heade
 // FORK: the mark this install wears is the cat; collie-mark.tsx stays as shipped, just unimported.
 import { MeowMark, type MarkState } from "@/components/meow-mark";
 import { homeSolo } from "../fixtures";
-import { Card, Group, RootRouter, Section, Stage, type SectionDef } from "../harness";
+import { RootRouter } from "../harness";
+import { Card, Group, Section, Stage, type SectionDef } from "../layout";
 import { TypefaceCard } from "../typeface-card";
 
 export const DEF: SectionDef = {

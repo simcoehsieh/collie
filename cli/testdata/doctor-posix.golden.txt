@@ -13,6 +13,7 @@ local:
   ✓        bind-wildcard         bound to one address
   ✓        acl                   inbound packet filter is non-empty — can't disprove reachability; non-empty proves nothing
   ✓        front-door            laptop.tail.ts.net:443 → http://127.0.0.1:8787 (recorded and live)
+  ✓        pairing               1 device(s) paired
   ✓        launchers             none at /cfg/launchers.toml — the tab strip's "+" opens a plain shell and its long-press offers no menu; copy launchers.toml.example there to declare rows (read live, no restart)
   ✓        notify                none at /cfg/notify.toml — per-pane notification rules come only from the phone's Settings; copy notify.toml.example there to declare rules in a file (read live, no restart)
   ✓        mux                   herdr — see herdr-socket · no COLLIE_MUX, so `start` picks it: a Herdr socket at /home/pat/.config/herdr/herdr.sock
@@ -54,6 +55,7 @@ local:
   ✓        bind-wildcard         bound to one address
   ✓        acl                   inbound packet filter is non-empty — can't disprove reachability; non-empty proves nothing
   ✓        front-door            laptop.tail.ts.net:443 → http://127.0.0.1:8787 (recorded and live)
+  ✓        pairing               1 device(s) paired
   ✓        launchers             none at /cfg/launchers.toml — the tab strip's "+" opens a plain shell and its long-press offers no menu; copy launchers.toml.example there to declare rows (read live, no restart)
   ✓        notify                none at /cfg/notify.toml — per-pane notification rules come only from the phone's Settings; copy notify.toml.example there to declare rules in a file (read live, no restart)
   ✓        mux                   herdr — see herdr-socket · no COLLIE_MUX, so `start` picks it: a Herdr socket at /home/pat/.config/herdr/herdr.sock

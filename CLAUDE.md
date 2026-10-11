@@ -387,7 +387,7 @@ case never invents its own payload.
 **The selector rule.** A case addresses a role and an accessible name, `getByRole` or `getByText`,
 never a CSS class. No case adds a `data-testid` anywhere in `web/src`. The one exception is the
 playground: every card carries an explicit `data-state` handle, set by a `state` prop on `Card`
-(`web/src/playground/harness.tsx`), never derived from its label.
+(`web/src/playground/layout.tsx`), never derived from its label.
 
 **The locale rule.** A case that checks translated text pins the locale before the first
 navigation, by writing the bare locale code into `collie:locale:v1` in `localStorage`
@@ -401,8 +401,9 @@ against the string in `web/src/lib/i18n/messages/<code>.ts`, never against Engli
   by `STATES_TEST_MATCH` in `web/playwright.config.ts`, `page.goto("/playground.html")`, and address
   a card by `[data-state="…"]`.
 - Tier 2: add a `.spec.ts` under `web/e2e/live/`, import `test`/`expect`/`message` from
-  `web/e2e/live/live.ts`. Read only, no pairing, no "Take over", no update, no device revoke, no
-  pane close or rename.
+  `web/e2e/live/live.ts`. Read only: the suite pairs once first through `web/e2e/live/pair.ts`
+  (`COLLIE_E2E_DEVICE_TOKEN` or `COLLIE_E2E_PAIR_CODE`), and a case never pairs itself. No "Take
+  over", no update, no device revoke, no pane close or rename.
 
 **Reading a failure.** A failed case leaves a screenshot and, on a retry, a trace
 (`screenshot: "only-on-failure"`, `trace: "on-first-retry"` in `web/playwright.config.ts`); CI
@@ -539,7 +540,19 @@ lint guard, the crew-wire guard or the `flake.lock` guard.
   rows are the allowlist `POST /api/launch` matches exactly, so the client names a row and never
   supplies a command line. Same reader, same mtime liveness; no scope ladder, because a row that
   makes its own pane has nothing to address. Do not add a second allowlist and do not let the client
-  supply a command line.
+  supply a command line. The New page may also name an agent by id (`harness`), which the bridge
+  maps to ONE binary word in `bridge/harness-launch.ts` and reports per machine on `/api/launchers`;
+  a launch with a `requestId` replays from `launch-receipts.json` instead of opening a second pane
+  ([ADR 0091](./.adr/0091-launch-by-id-with-a-request-id.md)).
+  Rows a phone adds live in `<stateDir>/launchers-added.json` under the operator's `[phone]` switches,
+  never in `launchers.toml`; they are merged into the allowlist at read time, the operator's row wins
+  a duplicate line, a recipe row is rebuilt from `bridge/launcher-recipes.ts` and a free line is
+  re-checked at every read. The bridge never writes `launchers.toml`, and a revoke takes the device's
+  rows with it ([ADR 0094](./.adr/0094-launchers-added-from-a-phone.md)).
+  The one exception to "never a command line" is a one-off `run`: a paired device, the operator's
+  `[phone] run` switch and the same character rule, typed as a row is, never on a new branch, and
+  recorded in `<stateDir>/commands-recent.json`, never as a row; its audit line keeps the command word
+  and the length, not the line ([ADR 0095](./.adr/0095-one-off-commands-and-their-history.md)).
 - **Every user-facing string goes through `t()`/`tn()` from `@/lib/i18n`**, and a component that
   calls them subscribes via `useLocale()` so it re-renders on a locale (or lazy-dictionary) change.
   `messages/en.ts` is the source of truth; all six dictionary files change together, enforced by
@@ -648,8 +661,13 @@ the rule below: `stt.json` in the state dir when the operator ran `collie stt se
 font files under `<config-dir>/fonts`, served read-only through `bridge/operator-fonts.ts`
 ([ADR 0033](./.adr/0033-the-app-face-is-a-device-preference.md)).
 
-**The law is that a CLIENT-SUPPLIED value becomes a path in three places only: the journal, the
-Changes view, and the Files view** — in the journal it is a pane id, never a path. The Changes view
+**The law is that a CLIENT-SUPPLIED value becomes a path in four places only: the journal, the
+Changes view, the Files view, and a branch's folder** — in the journal it is a pane id, never a path.
+A branch's folder (`bridge/worktree-folder.ts`,
+[ADR 0093](./.adr/0093-a-branch-folder-is-named-by-its-parent.md)) is a PARENT the phone names and a
+child the bridge names after the branch; `resolveParentTarget` refuses a `..` as sent, a link below
+home, a folder outside home, in a dotdir or in the repo, and a child that exists, and it runs at plan
+and again at create. Don't call Herdr's `worktree.create` with a `path` that did not just pass it. The Changes view
 (`bridge/changes.ts`, [ADR 0065](./.adr/0065-the-changes-view-reads-git-read-only.md)) is bounded by
 a listed-paths rule: a diff is served only for a repo the bridge's own discovery returned and a path
 git listed there, and an untracked read goes through `containedRealpath` too. Its git runs are
@@ -660,7 +678,9 @@ root comes off the snapshot, never the request, and its real path must pass the 
 client's path is relative, refused on its shape before any disk call, and its real path must sit
 inside the root's through `containedRealpath`; `.git` and the bridge's state and config folders are
 denied on top. It needs an authorised device (`device-read`), and its bytes go out as JSON, never as
-a document. `GET /api/fonts/<basename>` does not become a fourth such place: the request's name is **looked up** in the rows the operator's own
+a document, with one exception: `files/image` ([ADR 0090](./.adr/0090-files-shows-images.md)) sends a
+picture's raw bytes, typed by `sniffImageType` from the bytes alone (PNG, JPEG, GIF, WebP, AVIF; no
+SVG), with `no-store` and a `default-src 'none'; sandbox` CSP, through the same `readFile` checks. `GET /api/fonts/<basename>` does not become a fourth such place: the request's name is **looked up** in the rows the operator's own
 `theme.toml` declared and that row's path is taken, so a name nobody declared is refused before any path exists. The containment
 rule in [`files.ts`](./bridge/journal/files.ts) then runs anyway, on both surfaces and as an
 independent second check: **every** path about to be read goes through `containedRealpath` — after
@@ -701,9 +721,11 @@ a web form, for the reason pairing is.
 
 **Two device gates guard writes, independently, and compose by AND.** `COLLIE_DEVICE_HEADER` trusts
 a name a proxy injects; **pairing** (`bridge/pairing.ts`, `collie pair` / `collie devices`) requires a
-bearer credential the device holds, and is on exactly when the registry is non-empty. Reads stay
-ungated by both, with one exception: the Files view asks for both as a `device-read`
-([ADR 0083](./.adr/0083-the-files-view-reads-the-changes-root.md)). Neither applies to `/crew/v1/*`, which has its own two factors. The reasoning sits in
+bearer credential the device holds, and is always on, reads included
+([ADR 0086](./.adr/0086-reads-need-the-pairing-token.md)). Every `/api/*` route except `/api/health`
+and `/api/pair` needs a valid token, and an empty registry answers `403 device not paired`. The
+header gate still covers writes only, with one exception: the Files view asks for both as a
+`device-read` ([ADR 0083](./.adr/0083-the-files-view-reads-the-changes-root.md)). Neither applies to `/crew/v1/*`, which has its own two factors. The reasoning sits in
 `bridge/pairing.ts`'s header; don't collapse the two gates into one.
 
 **Collie manages exactly one front door: `tailscale serve`** — the CLI (`cli/serve.ts`) publishes it,

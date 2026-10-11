@@ -34,7 +34,7 @@
 import { MeowMark } from "@/components/meow-mark";
 import { cn } from "@/lib/utils";
 
-import { Card, Segmented } from "./harness";
+import { Card, Segmented } from "./layout";
 import { FACE_OPTIONS, FACES, setFace, useFace, type FaceId } from "./prefs";
 
 /** The dashboard's own shape: a name, a state, and two counts that have to line up down the column. */

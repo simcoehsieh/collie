@@ -15,3 +15,33 @@ export function upstreamReleaseUrl(version: string): string {
 // of a screen the operator already uses by feel, and Pane settings stays on the ⋮ menu. Off here,
 // components/agent-chat.tsx routes the name line's tap to the space too. Tests run with the split.
 export const FORK_HEADER_NAME_TAP_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO LOST BADGE ON THE HEADER MARK (2026-10-11, at the 1.19 merge). Upstream 1.18.0 made the
+// connection strip dismissable and put a badge on the mark so the state survives the dismissal. This
+// install keeps the fork's four-cause banner, which is not dismissable, and the mark already dims and
+// greys while lost, so the badge would be a second signal for a state already on screen. Off here,
+// components/collie-home.tsx draws no badge. Tests run with it.
+export const FORK_MARK_LOST_BADGE_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO BRANCH ON THE DASHBOARD ROW OR THE PANE HEADER (2026-10-11, at the 1.19 merge). Upstream
+// 1.18.0 leads every dashboard row's second line with the pane's git branch, and adds it after the
+// workspace in the pane header. The row's standing shape is one line per pane (FORK.md), and the
+// header's second line is the workspace and the model (the operator's call, 2026-09-17). Off here,
+// components/agent-card.tsx and agent-chat.tsx draw no branch; the Files header still names it.
+// Tests run with it.
+export const FORK_BRANCH_LABEL_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO MODEL TAG IN THE PANE'S CORNER (2026-10-11, at the 1.19 merge). Upstream 1.19.0 labels the
+// mirror's bottom-right corner with the agent's model. This install already shows the model and its
+// effort on the header's second line (lib/model-label.ts), so the corner would say it twice. Off here,
+// components/agent-chat.tsx draws no ModelTag. Tests run with it.
+export const FORK_MODEL_TAG_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO NEW PAGE (operator, 2026-10-11, at the 1.19 merge: 「New 頁：不要」). Upstream 1.19.0 starts
+// agents, commands and worktrees from one page at /new, reached from the SPACES header's folder button,
+// a pane's "New agent on a branch" and the empty dashboard's "Start your first agent" (it also folded
+// away the old new-space sheet those doors used to open). Off here: routes/home.tsx and
+// components/agent-chat.tsx pass none of the three doors, and space-overview.tsx draws no folder button
+// without one. The route itself stays in the router, unreachable from the app. Tabs still open from
+// the tab strip's "+" (a launcher on its hold). Tests run with the page.
+export const FORK_NEW_PAGE_ON: boolean = import.meta.env.MODE === "test";

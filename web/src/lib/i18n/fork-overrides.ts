@@ -1,5 +1,5 @@
 import type { Locale } from "./locale";
-import type { Dictionary, MessageKey } from "./messages/en";
+import { en, type Dictionary, type MessageKey, type PartialDictionary } from "./messages/en";
 import { forkEn, forkZhTW, type ForkDictionary } from "./fork-messages";
 
 // FORK — THE CAT SPEAKS CAT.
@@ -61,14 +61,18 @@ const OVERRIDES = {
  */
 export type ForkRuntimeDictionary = Dictionary & ForkDictionary;
 
-export function withForkOverrides(locale: Locale, dictionary: Dictionary): ForkRuntimeDictionary {
+export function withForkOverrides(locale: Locale, dictionary: PartialDictionary): ForkRuntimeDictionary {
   const additions = locale === "zh-TW" ? forkZhTW : forkEn;
+  // English under the bundle: a language upstream added after 1.17 lacks the fork's own keys
+  // (messages/en.ts `PartialDictionary`), and `t()` reads one dictionary with no fallback of its own.
+  // A complete bundle covers every English key, so for the seven older ones this changes nothing.
+  const full: Dictionary = { ...en, ...dictionary };
   // Narrowed by `in`, not by an assertion: most locales carry no entry at all (that is the point of
   // the layer being small), and the guard is what tells the compiler which ones do. `satisfies`
   // above has already proved every key here IS a Locale, so this cannot select something that is not.
-  if (!(locale in OVERRIDES)) return { ...dictionary, ...additions };
+  if (!(locale in OVERRIDES)) return { ...full, ...additions };
   // SAFETY: the `in` guard on the line above is the check — `locale` is a key of OVERRIDES at this
   // point, and `satisfies` has already proved every key of OVERRIDES is itself a Locale.
   const patch: Partial<Record<MessageKey, string>> = OVERRIDES[locale as keyof typeof OVERRIDES];
-  return { ...dictionary, ...patch, ...additions };
+  return { ...full, ...patch, ...additions };
 }

@@ -21,7 +21,9 @@ interface SpaceOverviewProps {
   /** Bare shells too — a space you only ever opened a shell in still counts as used. */
   shellPanes?: AgentView[];
   onOpen: (workspaceId: string) => void;
-  onNewSpace: () => void;
+  /** Open the New page. FORK: absent while the New page is off (lib/fork-shape.ts), and then the
+   *  folder button is not drawn. */
+  onNewSpace?: (() => void) | undefined;
   /** True while a Space create is in flight — see `space-strip.tsx`'s prop of the same name. */
   creatingSpace?: boolean;
   /**
@@ -109,7 +111,7 @@ export function SpaceOverview({
                 operator looking at a list of spaces WILL go looking for how to add one, so the
                 reason cannot simply vanish with the button: it moves into the body, where there is
                 room for words. Present on Herdr, which declares the capability. */}
-            {newSpace.capable && (
+            {newSpace.capable && onNewSpace !== undefined && (
               <button
                 type="button"
                 onClick={onNewSpace}

@@ -47,13 +47,17 @@ export function walkGroupKey(agent: string, model: PromptModel): string {
 }
 
 export const WALK_PAIRS: readonly WalkPair[] = [
+  ["grok", "grok--model-picker.txt", "grok--model-picker-moved.txt"],
+  ["grok", "grok--model-window.txt", "grok--model-window-moved.txt"],
+  ["grok", "grok--model-effort.txt", "grok--model-effort-moved.txt"],
   // omp tool approval, `unicode` preset (18.4.10) and `nerd` preset (18.1.17): Approve and Deny.
   ["omp", "omp--v18-4-approval-bash.txt", "omp--v18-4-approval-bash-moved.txt"],
   ["omp", "omp--v18-4-approval-write.txt", "omp--v18-4-approval-write-moved.txt"],
   ["omp", "omp--approval-write.txt", "omp--approval-write--deny.txt"],
-  // omp Ask single-select, both keycap dialects.
+  // omp Ask single-select, both keycap dialects, and the 18.8 dialog with option descriptions (#372).
   ["omp", "omp--select-menu.txt", "omp--select-menu-moved.txt"],
   ["omp", "omp--v18-4-ask-single.txt", "omp--v18-4-ask-single-moved.txt"],
+  ["omp", "omp--v18-8-ask-single-described.txt", "omp--v18-8-ask-single-described-moved.txt"],
   // omp `/resume` picker. The unboxed pair differs in the ages too (`1 minute ago` against
   // `2 minutes ago`); `coreSignature` blanks them, so the pair holds.
   ["omp", "omp--v18-4-resume.txt", "omp--v18-4-resume-moved.txt"],

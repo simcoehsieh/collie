@@ -4,8 +4,19 @@ import { join } from "node:path";
 import { http, HttpResponse } from "msw";
 
 import { server } from "@/test/setup";
+import { POLL_DELAY_MS } from "./harness/guard";
 import * as registry from "./harness/registry";
+import type { HarnessAdapter } from "./harness/types";
 import { bracketPaste, draftCarriesSend, sendGuardedReply } from "./reply-action";
+
+// M46 spec 11 turns every send off for a pane the bridge has not answered lately (lib/liveness.ts).
+// These suites drive sends against a mocked network and never poll first, so they pin the pane live;
+// the gating itself is covered by liveness.test.ts and the *-offline suites.
+vi.mock("@/lib/liveness", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/liveness")>()),
+  isLive: () => true,
+  useLive: () => true,
+}));
 
 // The regression suite for #34: a free-text reply must never fire the submit key until the text is
 // verifiably sitting in the harness's input box. Before this, the reply path typed and then submitted
@@ -235,6 +246,20 @@ describe("draftCarriesSend", () => {
     expect(draftCarriesSend(`prefix ${family.repeat(8)} suffix`, family.repeat(8))).toBe(true);
   });
 
+  // M46: the bridge masks a known secret shape on screen (bridge/redact.ts) but never the operator's
+  // own send, so a reply carrying a key reads back from the box as the key's mask. Placeholder only.
+  it("reads the bridge's secret mask as one printable character per mark", () => {
+    const key = "sk-or-v1-your-key-here-0000000000";
+    const masked = `sk-o${"•".repeat(key.length - 4)}`;
+    expect(draftCarriesSend(`use ${key} now`, `use ${masked} now`)).toBe(true);
+    // One mark too many or too few is a different text.
+    expect(draftCarriesSend(`use ${key} now`, `use ${masked}• now`)).toBe(false);
+    expect(draftCarriesSend(`use ${key} now`, `use ${masked.slice(0, -1)} now`)).toBe(false);
+    // A mark never stands for whitespace, and a literal bullet still verifies itself.
+    expect(draftCarriesSend("password: a b c d e f", "password: a•b c d e f")).toBe(false);
+    expect(draftCarriesSend("• first item in a list", "• first item in a list")).toBe(true);
+  });
+
   it("treats regex metacharacters in the draft as literal text", () => {
     expect(draftCarriesSend("run a.*b now", "run a.*b now")).toBe(true);
     expect(draftCarriesSend("run axxb now", "run a.*b now")).toBe(false);
@@ -264,6 +289,42 @@ describe("draftCarriesSend", () => {
 });
 
 describe("sendGuardedReply", () => {
+  it("verifies a long Grok draft without treating the input scrollbar as message text", async () => {
+    const text = Array.from(
+      { length: 40 },
+      (_, i) => `Collie Grok probe line ${String(i + 1).padStart(2, "0")}: 繁體中文測試，不執行任何工具。`,
+    ).join("\n");
+    const calls = harness(() =>
+      fixtureText(calls.length === 0 ? "grok--fresh-idle.txt" : "grok--draft-scrollbar.txt"),
+    );
+
+    const out = await sendGuardedReply({ paneId: "w1:p1", text, agent: "grok", ...instant });
+
+    expect(out).toEqual({ status: "sent" });
+    expect(calls).toEqual([
+      { text, submit: false },
+      { text: "", submit: true },
+    ]);
+  });
+
+  it("verifies a long Grok draft with a fractional scrollbar thumb", async () => {
+    const text = Array.from(
+      { length: 40 },
+      (_, i) => `GB_LONG_${String(i + 1).padStart(2, "0")}：繁體中文測試。`,
+    ).join("\n") + "\n不要使用工具。請只回覆 GB_LONG_CONFIRMED_40。";
+    const calls = harness(() =>
+      fixtureText(calls.length === 0 ? "grok--fresh-idle.txt" : "grok--draft-scrollbar-partial.txt"),
+    );
+
+    const out = await sendGuardedReply({ paneId: "w1:p1", text, agent: "grok", ...instant });
+
+    expect(out).toEqual({ status: "sent" });
+    expect(calls).toEqual([
+      { text, submit: false },
+      { text: "", submit: true },
+    ]);
+  });
+
   // RED-FIRST regression: the visible Codex composer used to be classified as absent when its queue
   // hint and context percentage shared one raw terminal row. This must still verify before submit.
   it("types, verifies, and submits on Codex's inline queue/context footer", async () => {
@@ -352,6 +413,20 @@ describe("sendGuardedReply", () => {
     // sends nothing but its configured submitKeys.
     expect(calls).toEqual([
       { text: "ship it please", submit: false },
+      { text: "", submit: true },
+    ]);
+  });
+
+  it("submits a reply whose key the bridge masks on screen (M46)", async () => {
+    const key = "sk-or-v1-your-key-here-0000000000";
+    const sent = `set OPENROUTER_API_KEY=${key}`;
+    const calls = harness(() => paneWithDraft(`set OPENROUTER_API_KEY=sk-o${"•".repeat(key.length - 4)}`));
+
+    const out = await sendGuardedReply({ paneId: "w1:p1", text: sent, agent: "claude", ...instant });
+
+    expect(out).toEqual({ status: "sent" });
+    expect(calls).toEqual([
+      { text: sent, submit: false },
       { text: "", submit: true },
     ]);
   });
@@ -673,6 +748,139 @@ describe("sendGuardedReply", () => {
       ...instant,
     });
     expect(out).toMatchObject({ error: expect.stringMatching(/that key likely landed/i) });
+  });
+
+  // The Navi stall: the /models-style overlay box holds the keyboard while the composer tail
+  // stays intact, so the composer gate answers true although typing would land in the overlay's
+  // filter. The pre-flight refuses on the box predicate, on the same terms as a missing composer
+  // (force still overrides) — nothing is typed and Enter is never sent.
+  it("refuses an overlay box the composer gate still calls a composer", async () => {
+    const calls = harness(() => fixtureText("oc--slash-palette.txt"));
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text: "summarise the diff",
+      agent: "opencode",
+      ...instant,
+    });
+
+    expect(out.status).toBe("blocked");
+    expect(calls).toEqual([]);
+  });
+
+  // The companion case: the box opens AFTER the probe, while the pre-clear sweep's keys are on
+  // the wire. The sweep's own re-confirming read consults the box predicate too, so the message
+  // never goes out — the sweep ran, the type never happens. Reads: probe, re-confirm.
+  it("refuses when the overlay box opens between the sweep and the message", async () => {
+    let reads = 0;
+    const idle = fixtureText("oc--fresh-idle.txt");
+    const overlay = fixtureText("oc--slash-palette.txt");
+    const log: string[] = [];
+    const calls: Array<{ text: string; submit: boolean }> = [];
+    server.use(
+      http.get(/\/api\/pane\/[^/]+$/, () => {
+        reads++;
+        return HttpResponse.json({
+          paneId: "w1:p1",
+          text: reads === 1 ? idle : overlay,
+          truncated: false,
+          revision: 1,
+        });
+      }),
+      http.post<never, { text: string; submit: boolean }>(
+        /\/api\/pane\/[^/]+\/reply$/,
+        async ({ request }) => {
+          const body = await request.json();
+          calls.push(body);
+          return HttpResponse.json({ ok: true });
+        },
+      ),
+    );
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text: "summarise the diff",
+      agent: "opencode",
+      onComposerSeen: async () => {
+        log.push("sweep");
+        return { ok: true as const, keysSent: true };
+      },
+      ...instant,
+    });
+
+    expect(out.status).toBe("blocked");
+    expect(log).toEqual(["sweep"]);
+    expect(calls).toEqual([]);
+  });
+
+  // The chunked-send read lands on a different screen than the probe (the operator opens the
+  // box mid-plan), so it consults the box predicate too. Two chunks force the plan's own read;
+  // read 1 probes the composer, read 2 plans on the overlay.
+  it("refuses a chunked send when the overlay box owns the chunk-plan read", async () => {
+    const real = registry.adapterFor("opencode")!;
+    const spy = vi.spyOn(registry, "adapterFor").mockReturnValue({
+      ...real,
+      replyChunks: () => ["summarise ", "the diff"],
+    });
+    try {
+      let reads = 0;
+      const idle = fixtureText("oc--fresh-idle.txt");
+      const overlay = fixtureText("oc--slash-palette.txt");
+      const calls = harness(() => (++reads === 1 ? idle : overlay));
+
+      const out = await sendGuardedReply({
+        paneId: "w1:p1",
+        text: "summarise the diff",
+        agent: "opencode",
+        ...instant,
+      });
+
+      expect(out.status).toBe("blocked");
+      expect(calls).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // `force` is the operator's deliberate "type anyway" after a `blocked`: it overrides the box
+  // refusal exactly like a missing composer, the text is typed — and the verify loop still never
+  // sees it in an input box, so the stall keeps the generic "that key likely landed" warning
+  // rather than naming a dialog the operator already knew about. Enter stays home throughout.
+  it("force overrides the overlay refusal, types, and the stall keeps the key-landed warning", async () => {
+    const calls = harness(() => fixtureText("oc--slash-palette.txt"));
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text: "summarise the diff",
+      agent: "opencode",
+      force: true,
+      ...instant,
+    });
+
+    expect(out.status).toBe("stalled");
+    expect(out).toMatchObject({ error: expect.stringMatching(/that key likely landed/i) });
+    expect(calls.some((c) => c.submit)).toBe(false);
+  });
+
+  // The companion case: the dialog opens AFTER typing, so the verify polls watch the text vanish
+  // into it. The stall then names the dialog instead of guessing. Read 1 sees the composer
+  // (pre-flight probe); every verify poll sees the permission dialog.
+  it("names the dialog when the text vanishes into one mid-send", async () => {
+    let reads = 0;
+    const idle = fixtureText("oc--fresh-idle.txt");
+    const dialog = fixtureText("oc--permission-bash.txt");
+    const calls = harness(() => (++reads <= 2 ? idle : dialog));
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text: "summarise the diff",
+      agent: "opencode",
+      ...instant,
+    });
+
+    expect(out.status).toBe("stalled");
+    expect(out).toMatchObject({ error: expect.stringMatching(/dialog, menu, or overlay/i) });
+    expect(calls.some((c) => c.submit)).toBe(false);
   });
 
   it("#34: does not mistake somebody else's stranded draft for our text", async () => {
@@ -1177,5 +1385,222 @@ describe("the pre-type work is handed the region its keys must be bound to", () 
 
     expect(out.status).toBe("blocked");
     expect(log).toEqual([]);
+  });
+});
+
+describe("the submit settle", () => {
+  // Some TUIs need a beat between the typed bytes landing and the submit key: Muse swallows an
+  // Enter sent within ~60ms of the text (measured on Muse 1.4.4: fails at ≤50ms, works at
+  // ≥100ms; the audit trail's failures sit at 55-62ms with one at 197ms, smallest success at
+  // 411ms), while the verify loop can confirm the draft on its first read. An adapter that needs
+  // the beat declares `submitSettleMs`; the guard then holds the submit until that long after the
+  // LAST type call, paying only the remainder. An adapter without the hook pays nothing (#395).
+  const SETTLE = 350;
+  /** The real Claude adapter plus the hook (and anything else a test overrides). */
+  const settling = (extra: Partial<HarnessAdapter> = {}) =>
+    vi.spyOn(registry, "adapterFor").mockReturnValue({
+      ...registry.adapterFor("claude")!,
+      submitSettleMs: () => SETTLE,
+      ...extra,
+    });
+  afterEach(() => vi.restoreAllMocks());
+
+  /** The `harness` helper, but type/submit/sleep share one timeline so order is asserted too. */
+  function eventHarness(screen: () => string, events: string[]) {
+    server.use(
+      http.get(/\/api\/pane\/[^/]+$/, () =>
+        HttpResponse.json({ paneId: "w1:p1", text: screen(), truncated: false, revision: 1 }),
+      ),
+      http.post<never, { text: string; submit: boolean }>(
+        /\/api\/pane\/[^/]+\/reply$/,
+        async ({ request }) => {
+          const body = await request.json();
+          events.push(body.submit ? "post:submit" : "post:type");
+          return HttpResponse.json({ ok: true });
+        },
+      ),
+    );
+  }
+
+  const settled = (ms: number) => `sleep:${ms}`;
+
+  it("waits the full settle when verification was instant", async () => {
+    settling();
+    const text = "ship the release checklist";
+    const events: string[] = [];
+    eventHarness(() => paneWithDraft(text), events);
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text,
+      agent: "claude",
+      sleep: async (ms) => {
+        events.push(settled(ms));
+      },
+      now: () => 1000,
+    });
+
+    expect(out).toEqual({ status: "sent" });
+    // No poll sleeps (first read already matched) and the settle lands between the two POSTs.
+    expect(events).toEqual(["post:type", settled(350), "post:submit"]);
+  });
+
+  it("skips the settle when verification already took longer than it", async () => {
+    settling();
+    const text = "ship the release checklist";
+    const events: string[] = [];
+    let now = 1000;
+    let reads = 0;
+    eventHarness(() => {
+      reads += 1;
+      // Preflight + first verify read see a bare box; the draft arrives on the second verify.
+      if (reads > 1) now += 300;
+      return reads >= 3 ? paneWithDraft(text) : paneWithDraft("");
+    }, events);
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text,
+      agent: "claude",
+      sleep: async (ms) => {
+        events.push(settled(ms));
+      },
+      now: () => now,
+    });
+
+    expect(out).toEqual({ status: "sent" });
+    // One poll delay between the verify attempts, and no settle on top: 600ms had passed.
+    expect(events).toEqual(["post:type", settled(POLL_DELAY_MS), "post:submit"]);
+  });
+
+  it("pays a bounded full settle when the clock stepped backwards", async () => {
+    settling();
+    const text = "ship the release checklist";
+    const events: string[] = [];
+    eventHarness(() => paneWithDraft(text), events);
+    let calls = 0;
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text,
+      agent: "claude",
+      sleep: async (ms) => {
+        events.push(settled(ms));
+      },
+      // typedAt reads 2000; by the settle computation the clock says 1000.
+      now: () => (calls++ === 0 ? 2000 : 1000),
+    });
+
+    expect(out).toEqual({ status: "sent" });
+    // Unknown elapsed, so assume just-typed — but never more than one settle, whatever the step.
+    expect(events).toEqual(["post:type", settled(350), "post:submit"]);
+  });
+
+  it("adds no wait for an adapter without the hook", async () => {
+    const real = registry.adapterFor("claude")!;
+    expect(real.submitSettleMs).toBeUndefined();
+    const text = "ship the release checklist";
+    const events: string[] = [];
+    eventHarness(() => paneWithDraft(text), events);
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text,
+      agent: "claude",
+      sleep: async (ms) => {
+        events.push(settled(ms));
+      },
+      now: () => 1000,
+    });
+
+    expect(out).toEqual({ status: "sent" });
+    expect(events).toEqual(["post:type", "post:submit"]);
+  });
+
+  it("waits only the declared floor, not a fixed one", async () => {
+    settling({ submitSettleMs: () => 120 });
+    const text = "ship the release checklist";
+    const events: string[] = [];
+    eventHarness(() => paneWithDraft(text), events);
+
+    await sendGuardedReply({
+      paneId: "w1:p1",
+      text,
+      agent: "claude",
+      sleep: async (ms) => {
+        events.push(settled(ms));
+      },
+      now: () => 1000,
+    });
+
+    expect(events).toEqual(["post:type", settled(120), "post:submit"]);
+  });
+
+  // `force` only overrides the PRE-FLIGHT refusal (a box the adapter cannot see). It never reaches
+  // the submit, so a forced send that then verifies a draft pays the same floor as any other.
+  it("force does not skip the floor", async () => {
+    settling({ composerReady: () => false });
+    const text = "ship the release checklist";
+    const events: string[] = [];
+    eventHarness(() => paneWithDraft(text), events);
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text,
+      agent: "claude",
+      force: true,
+      sleep: async (ms) => {
+        events.push(settled(ms));
+      },
+      now: () => 1000,
+    });
+
+    expect(out).toEqual({ status: "sent" });
+    expect(events).toEqual(["post:type", settled(350), "post:submit"]);
+  });
+
+  it("measures the floor from the LAST type call of a multi-chunk send", async () => {
+    settling({ replyChunks: () => ["first part of the message ", "and the second part"] });
+    const text = "first part of the message and the second part";
+    // A fake clock that only moves when the pane is read: 100ms per read.
+    let now = 0;
+    let typedSoFar = "";
+    const events: string[] = [];
+    server.use(
+      http.get(/\/api\/pane\/[^/]+$/, () => {
+        now += 100;
+        return HttpResponse.json({
+          paneId: "w1:p1",
+          text: paneWithDraft(typedSoFar),
+          truncated: false,
+          revision: 1,
+        });
+      }),
+      http.post<never, { text: string; submit: boolean }>(
+        /\/api\/pane\/[^/]+\/reply$/,
+        async ({ request }) => {
+          const body = await request.json();
+          if (!body.submit) typedSoFar += body.text;
+          events.push(body.submit ? "post:submit" : "post:type");
+          return HttpResponse.json({ ok: true });
+        },
+      ),
+    );
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text,
+      agent: "claude",
+      sleep: async (ms) => {
+        events.push(settled(ms));
+      },
+      now: () => now,
+    });
+
+    expect(out).toEqual({ status: "sent" });
+    // Reads before the last chunk (probe, plan, chunk-1 verify) moved the clock 300ms+; measured
+    // from the first chunk the wait would be shorter. From the last type call exactly one verify
+    // read (100ms) has passed, so 250ms of the 350 remain.
+    expect(events).toEqual(["post:type", "post:type", settled(250), "post:submit"]);
   });
 });

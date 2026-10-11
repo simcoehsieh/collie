@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,10 @@ import {
   splitOpencodeKey,
 } from "./opencode.ts";
 import { MAX_RESULT_CHARS, MAX_TEXT_CHARS } from "./text.ts";
+
+// The Windows runner is ~10x slower on the sqlite fixtures (8 s against 0.25 s on Linux), past bun's 5 s
+// default. The budget is per file: bun resets the default for the next test file.
+setDefaultTimeout(process.platform === "win32" ? 30_000 : 5_000);
 
 // Builders mirroring the verified on-disk shape (opencode 1.18.9, 2026-08-03): a message row's `data`
 // json plus its parts' `data` json, composed by the source into one JSONL line per message.
@@ -1984,5 +1988,29 @@ describe("parseOpencodeTranscript — V1 compaction is a summary, not speech", (
   test("an ordinary assistant turn stays speech", () => {
     const entries = parseOpencodeTranscript(line("msg_a", assistantData(), [textPart("on it")]));
     expect(entries[0]!.role).toBe("assistant");
+  });
+});
+
+// A message sent while opencode works. Measured 2026-10-09 (opencode 1.18.34, 7 cases in 4 local
+// sessions): it is an ordinary user `message` row with a `text` part, created while the running
+// assistant message is still open, and the next assistant message takes it as `parentID`. No flag, no
+// queue marker. Rows are read in `time_created` order, so it sits between the two assistant messages.
+describe("parseOpencodeTranscript — a message sent while the agent works", () => {
+  test("a user message created inside a running assistant message is one user turn, in order", () => {
+    const entries = parseOpencodeTranscript(
+      [
+        line("msg_1", userData(1000), [textPart("write a story")], 1000),
+        line("msg_2", assistantData(1100), [textPart("Once upon a time")], 1100),
+        line("msg_3", userData(1200), [textPart("Queued note: reply with only OK.")], 1200),
+        line("msg_4", { ...assistantData(1300), parentID: "msg_3" }, [textPart("OK")], 1300),
+      ].join("\n"),
+    );
+    expect(entries.map((e) => [e.uuid, e.role])).toEqual([
+      ["msg_1", "user"],
+      ["msg_2", "assistant"],
+      ["msg_3", "user"],
+      ["msg_4", "assistant"],
+    ]);
+    expect(entries[2]!.parts).toEqual([{ kind: "text", text: "Queued note: reply with only OK." }]);
   });
 });

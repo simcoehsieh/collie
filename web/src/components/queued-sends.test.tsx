@@ -7,10 +7,19 @@ import { server } from "@/test/setup";
 import { __resetSendQueue, enqueueSend, queuedForPane } from "@/lib/send-queue";
 import { QueuedSends } from "./queued-sends";
 import { __resetLocale, setLocale, whenLocaleReady } from "@/lib/i18n";
+import { markLive, resetLiveness } from "@/lib/liveness";
 
 // The rows above the composer: what is waiting, why, and the two taps.
 
-beforeEach(() => { __resetSendQueue(); __resetLocale(); });
+// The guarded send refuses a pane the bridge has not answered lately (M46 spec 11, lib/liveness.ts);
+// every row here is on `w1:p1`, read live just now. The gate itself is pinned in lib/send-queue.test.ts
+// and lib/reply-action-offline.test.ts.
+beforeEach(() => {
+  __resetSendQueue();
+  __resetLocale();
+  resetLiveness();
+  markLive("w1:p1", Date.now());
+});
 
 describe("QueuedSends", () => {
   it("names saved uncertain rows and their resend action in Traditional Chinese", async () => {

@@ -90,6 +90,14 @@ interface DirectTypingOptions {
   controlChords: boolean;
   onActivate: () => void;
   focusInput: () => void;
+  /**
+   * Identity of the agent under the pane (`composer` passes its `agent`
+   * prop, `"shell"` when there is none). A change means the session the
+   * arming belonged to is gone — e.g. the agent exited and the pane fell
+   * back to a shell, which is how a chat message becomes a command. The
+   * mode disarms with a notice rather than streaming into the stranger.
+   */
+  agentKey: string;
 }
 
 // The composer textarea's direct-terminal mode: what you type goes to the pane as keystrokes,
@@ -132,6 +140,7 @@ export function useDirectTyping({
   controlChords,
   onActivate,
   focusInput,
+  agentKey,
 }: DirectTypingOptions) {
   const [active, setActive] = useState(false);
   const [value, setValue] = useState("");
@@ -143,6 +152,17 @@ export function useDirectTyping({
   const composing = useRef(false);
   const committedComposition = useRef<string | null>(null);
   const pendingBlur = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Idle watchdog: one 60s one-shot, re-armed on every keystroke (commits
+  // and special keys — not composition intermediates). A mode nobody has
+  // touched for a minute is a mode nobody is looking at; disarm with a
+  // notice rather than hold it open indefinitely. Foreground only: the
+  // backgrounded-tab disarm fires first, and a throttled timer can only fire
+  // late, never extend arming.
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Previous agent identity for the change effect below. `undefined` means
+  // never seen (first mount): only a real observed change disarms, never
+  // the initial value or a poll gap resolving to the same name.
+  const prevAgentKey = useRef<string | undefined>(undefined);
   const sender = useOrderedKeySender(sendKeys, () => {
     resetMode();
     // Stop the phone keyboard too: otherwise continued typing after a transport failure silently
@@ -174,6 +194,9 @@ export function useDirectTyping({
     // React swaps the controlled value so selection lands at the end.
     inputRef.current?.focus();
     focusInput();
+    // The watchdog starts at the arming, not at the first key: the trap is arming, then typing a
+    // chat message after the agent underneath has exited, so an untouched mode must expire too.
+    pokeIdleTimer();
   }
 
   /**
@@ -206,6 +229,7 @@ export function useDirectTyping({
 
   /** Disarm and forget the transient state. Leaves the field alone — callers decide about focus. */
   function resetMode() {
+    cancelIdleTimer();
     activeRef.current = false;
     setActive(false);
     setValue("");
@@ -222,6 +246,26 @@ export function useDirectTyping({
     if (pendingBlur.current === null) return;
     clearTimeout(pendingBlur.current);
     pendingBlur.current = null;
+  }
+
+  function cancelIdleTimer() {
+    if (idleTimer.current === null) return;
+    clearTimeout(idleTimer.current);
+    idleTimer.current = null;
+  }
+
+  // Re-arm the 60s watchdog after key activity. Called at every enqueue
+  // site (commits + special keys); the timer callback goes through the
+  // lifecycle ref like every other disarm-from-outside-render.
+  function pokeIdleTimer() {
+    cancelIdleTimer();
+    idleTimer.current = setTimeout(() => {
+      idleTimer.current = null;
+      if (!activeRef.current) return;
+      lifecycle.current.resetMode();
+      setStatus(t("directTyping.status.idleTimeout"), "info");
+      lifecycle.current.dropKeyboard();
+    }, 60_000);
   }
 
   /**
@@ -317,6 +361,10 @@ export function useDirectTyping({
   // in-flight call; the call already on the wire captured the old pane and cannot be recalled.
   useEffect(() => {
     lifecycle.current.resetMode();
+    // Explicit: the agent effect below must not read the old pane's identity.
+    // (Harmless once the active-gate lands — a disarmed mode announces
+    // nothing — but the ref should still mean "last seen", not "stale".)
+    prevAgentKey.current = undefined;
     // The new pane's field is not the one that disarm was about — neither the blur it scheduled nor
     // the notice it owes. Dropping the debt matters because a pane can change WHILE hidden: a push
     // notification deep-links into another pane, and without this the return trip announces "the app
@@ -326,7 +374,29 @@ export function useDirectTyping({
     resetSender();
   }, [paneKey, resetSender]);
 
-  useEffect(() => cancelPendingBlur, []);
+  // The agent under the pane changed: the arming belonged to the old session
+  // (the agent exited and the pane fell back to a shell), so the mode disarms
+  // WITH a notice — unlike the silent pane reset above, the user is looking
+  // at this pane and must learn the keyboard no longer reaches an agent.
+  // First mount never fires (prev starts unseen); same-name values never
+  // fire, so reconnect flaps stay quiet. Gated on active: a change with the
+  // mode off posts nothing (this also covers pane+agent changing together —
+  // the silent pane reset runs first and there is nothing left to announce).
+  useEffect(() => {
+    const prev = prevAgentKey.current;
+    prevAgentKey.current = agentKey;
+    if (prev === undefined || prev === agentKey) return;
+    if (!activeRef.current) return;
+    lifecycle.current.resetMode();
+    setStatus(t("directTyping.status.agentChanged"), "info");
+  }, [agentKey]);
+
+  useEffect(() => {
+    return () => {
+      cancelPendingBlur();
+      cancelIdleTimer();
+    };
+  }, []);
 
   // Android virtual Backspace/Enter can arrive as beforeinput without a useful keydown. A native
   // listener is intentional: React's synthetic beforeinput omits these events on some engines.
@@ -341,6 +411,7 @@ export function useDirectTyping({
       if (event.isComposing && key === "Backspace") return;
       event.preventDefault();
       enqueueKeys([key]);
+      pokeIdleTimer();
     };
     inputEl.addEventListener("beforeinput", onBeforeInput);
     return () => inputEl.removeEventListener("beforeinput", onBeforeInput);
@@ -362,13 +433,17 @@ export function useDirectTyping({
     if (committed !== null) {
       committedComposition.current = null;
       const remainder = next.startsWith(committed) ? next.slice(committed.length) : next;
-      if (remainder.length > 0) sender.enqueue(textToKeySequence(remainder));
+      if (remainder.length > 0) {
+        sender.enqueue(textToKeySequence(remainder));
+        pokeIdleTimer();
+      }
       setValue("");
       return;
     }
 
     if (next.length === 0) return;
     sender.enqueue(textToKeySequence(next));
+    pokeIdleTimer();
     setValue("");
   }
 
@@ -383,6 +458,7 @@ export function useDirectTyping({
     if (committed.length === 0) return;
     committedComposition.current = committed;
     sender.enqueue(textToKeySequence(committed));
+    pokeIdleTimer();
     setValue("");
   }
 
@@ -409,12 +485,15 @@ export function useDirectTyping({
     if (controlChords && event.ctrlKey && !event.metaKey && event.key.length === 1) {
       event.preventDefault();
       sender.enqueue([composeKey(modifiersOf(event), event.key.toLowerCase())]);
+      // A chord is typing too: it keeps Type mode's idle clock (upstream's auto-off) from running out.
+      pokeIdleTimer();
       return;
     }
     const key = keyForKeyDown(event.key);
     if (key === undefined) return;
     event.preventDefault();
     sender.enqueue([composeKey(modifiersOf(event), key)]);
+    pokeIdleTimer();
   }
 
   return {

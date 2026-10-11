@@ -10,6 +10,8 @@ import { UPDATE_MODE_HOLD, isReloadHeldBy, subscribeReloadHeld } from "@/lib/rel
 import { BootSplash, RootError, RootLayout } from "@/routes/root";
 import { HomeRoute } from "@/routes/home";
 import { SpaceRoute } from "@/routes/space";
+import { NewRoute } from "@/routes/new";
+import { NewAddRoute } from "@/routes/new-add";
 import { DetailRoute } from "@/routes/detail";
 import { OverviewRoute } from "@/routes/overview";
 import { CrewSkeleton, HistorySkeleton, SettingsSkeleton } from "@/components/route-skeleton";
@@ -170,6 +172,12 @@ export const router = createBrowserRouter([
         path: "pane/last",
         loader: ({ request }) => replace(lastPanePath(new URL(request.url).search) ?? "/"),
       },
+      // The New page (M48), a page since 1.19.0 and a bottom sheet before. No loader: it reads the root
+      // snapshot (for a pane's folder and branch) and asks the chosen machine's bridge for its own lists.
+      // Where it was opened from rides in the query (`?machine=`, `?pane=`, `?s=`), so a reload keeps it.
+      { path: "new", element: <NewRoute /> },
+      // "Add your own" (ADR 0094): a page below New, for a launcher this phone adds on one machine.
+      { path: "new/add", element: <NewAddRoute /> },
       // Settings is an INDEX of four sections (routes/settings.tsx). Its only loader is the pairing
       // forward: the QR `collie pair` prints still names `/settings?pair=<code>`, and the form now
       // lives on System. `replace`, as for `/pack` below, so Back does not land on the index and

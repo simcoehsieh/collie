@@ -1,3 +1,4 @@
+import { markLive, resetLiveness } from "@/lib/liveness";
 import { useState, type ComponentProps } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -34,6 +35,11 @@ describe("Composer — deliberate interrupt without a recall", () => {
   let keyTargets: string[];
   beforeEach(() => {
     clearStatus();
+    // Upstream 1.19's liveness gate (M46) sends nothing to a pane the phone has not read live; every
+    // pane these cases press keys into has just been read.
+    markLive("w1:p1", Date.now());
+    markLive("w1:p2", Date.now());
+    markLive("w1:p1", Date.now(), { host: "other" });
     keys = [];
     keyTargets = [];
     server.use(http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
@@ -43,6 +49,7 @@ describe("Composer — deliberate interrupt without a recall", () => {
     }));
   });
   afterEach(() => {
+    resetLiveness();
     vi.useRealTimers();
     Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
   });

@@ -11,6 +11,38 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.19.2
+
+Merged upstream v1.19.2 (2026-10-11, with v1.18.0, v1.18.1, v1.19.0 and v1.19.1 under it) — 162
+commits, 74 conflicted files. Infra taken whole: pairing always on with reads needing the token (ADR
+0086), secret masking, stricter headers, the unpair wipe, Claude Code 2.1.293's footer row, the CJK
+journal fix, Chat keeping messages sent mid-turn and showing slash commands, Type mode switching off,
+`--help` that changes nothing, the Mac memory figure. UI taken in the fork's design: the Keys editor
+(the fixed pad no longer exists, so the default board is upstream's), the left-hand layout, keeping
+Chat on the phone for offline reading, Send now, paths as links, copy icons, pictures in Files.
+
+- **Deployment: the phone must be paired before this goes live.** Every `/api` request needs a pairing
+  token from 1.18.0; this install had none and relied on the Access header alone.
+- **Dropped, upstream supersedes it: the fork's fixed `--app-h: 100dvh`** (1.17 merge). Upstream #394's
+  `min(100lvh, 100dvh + top inset)` is the same number here (no `viewport-fit=cover`, so the inset is
+  0). `.app-viewport` now reads the one token. Operator's call.
+- **The live feed reads `/api/events` over fetch** (`lib/live-feed.ts`), because EventSource cannot
+  send the pairing header and the feed would have been refused into slow polling. Tests with a fake
+  stream (chunk splits, 403 backoff, cap, abort).
+- **Kept the fork's, by the operator:** the dashboard's workspace chip strip (upstream deleted it;
+  `components/workspace-chips.tsx` carries it), no New page (`FORK_NEW_PAGE_ON`).
+- **Kept the fork's, by default:** no floating "+ New", no branch on the row or the header, no corner
+  model tag, no lost badge, the four-cause connection banner (with upstream's not-paired rule ported),
+  the tab strip's "+" with its launcher hold, the grouped pane menu (upstream's "New agent on a branch"
+  goes in Manage, off with the New page), the header's name/model lines, the fork keycap look.
+- **Same bug, fixed in the fork too:** the unpair wipe now clears the fork's send queue and notes;
+  the fork's dashboard cache keys on upstream's saved-copy latch; a send refused offline keeps its
+  queue row; the fork's beacon status, `diff` and `file` texts go through the secret mask.
+- **Merged into one:** `model` on AgentView (upstream's probe wins, the fork's session facts fill in,
+  `effort` stays the fork's), and `modelLabel` (a string → "Opus 5.5", `{ model, effort }` → the fork's).
+- **Tests:** the fork's `/api/config` memo is cleared with the operator-config store, the fork's
+  module stores keep their seams, five new locales are filled from English for the fork's keys.
+
 ## On top of 1.17.2
 
 Merged upstream v1.17.2 (2026-10-08, with v1.17.0 and v1.17.1 under it) — 183 commits, 44 conflicted

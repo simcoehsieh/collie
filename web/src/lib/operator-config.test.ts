@@ -3,7 +3,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 
 // Spied at the api seam, not over the network: the invariant under test is how MANY times the
 // store asks, and a mock records that synchronously — no waiting on a request that may never come.
-vi.mock("@/lib/api", () => ({ fetchConfig: vi.fn() }));
+vi.mock("@/lib/api", () => ({ fetchConfig: vi.fn(), __resetConfigMemo: vi.fn() }));
 
 import { fetchConfig } from "@/lib/api";
 import type { BridgeConfig } from "@/lib/types";

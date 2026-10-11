@@ -102,6 +102,6 @@ describe("bootBody — the five bodies as one", () => {
     // Local only, on the line before anything is read — the same declaration `/api/events` makes.
     expect(block).toContain('if (host.kind !== "local") return text("no boot bundle for a member host", 404);');
     // The same read gate the five routes it bundles pass.
-    expect(block).toContain('const denied = guard(req, cfg, "read", pairing);');
+    expect(block).toContain('const denied = guard(req, cfg, "read", pairingGate);');
   });
 });

@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { de } from "./messages/de";
-import { en, type Dictionary, type MessageKey } from "./messages/en";
+import { en, type MessageKey, type PartialDictionary } from "./messages/en";
 import { es } from "./messages/es";
+import { fr } from "./messages/fr";
+import { it as itIT } from "./messages/it";
 import { ja } from "./messages/ja";
 import { ko } from "./messages/ko";
+import { pt } from "./messages/pt";
+import { ru } from "./messages/ru";
+import { tr } from "./messages/tr";
 import { zh } from "./messages/zh";
 import { zhTW } from "./messages/zh-TW";
 
@@ -12,7 +17,7 @@ import { zhTW } from "./messages/zh-TW";
 //
 // The update band is ONE truncating row at the top of a phone, which is about forty characters wide.
 // A string that overflows it in German or Japanese is a string nobody can read — so the budget is
-// enforced here rather than recommended in a comment, over ALL SEVEN dictionaries, and it is why the
+// enforced here rather than recommended in a comment, over ALL TWELVE dictionaries, and it is why the
 // English strings are as terse as they are.
 //
 // The budget is measured with the SLOTS FILLED, because a slot is not what reaches the screen: the
@@ -29,7 +34,9 @@ import { zhTW } from "./messages/zh-TW";
 // the one state where no Collie update is involved, and M16/02's rule there is that the existing
 // self-updater's behaviour AND ITS WORDS are unchanged.
 
-const LOCALES: readonly (readonly [string, Dictionary])[] = [
+// FORK: `PartialDictionary`, because the five languages upstream added after 1.17 lack the fork's own
+// keys (messages/en.ts). No band key is the fork's; "carries every band key" below still checks.
+const LOCALES: readonly (readonly [string, PartialDictionary])[] = [
   ["en", en],
   ["de", de],
   ["es", es],
@@ -37,6 +44,11 @@ const LOCALES: readonly (readonly [string, Dictionary])[] = [
   ["ko", ko],
   ["zh", zh],
   ["zh-TW", zhTW],
+  ["ru", ru],
+  ["it", itIT],
+  ["fr", fr],
+  ["pt", pt],
+  ["tr", tr],
 ];
 
 /** Every key the band can print, plus the aria-label on its dismiss.
@@ -84,19 +96,19 @@ function bandKeys(): MessageKey[] {
  * time, so a fixed English sample would measure the budget against text that never reaches a German
  * screen. Measuring the worst word each dictionary actually holds is the honest reading.
  */
-function longestStateWord(dictionary: Dictionary): string {
+function longestStateWord(dictionary: PartialDictionary): string {
   // SAFETY: same construction as `bandKeys` — every own key of `en` is a `MessageKey`.
   const keys = (Object.keys(en) as MessageKey[]).filter((key) => key.startsWith("updateScreen.state."));
   let longest = "";
   for (const key of keys) {
-    const value = fill(dictionary[key]);
+    const value = fill(dictionary[key] ?? "");
     if (value.length > longest.length) longest = value;
   }
   return longest;
 }
 
 describe("i18n — the update band", () => {
-  it("holds every band string to the 40 character budget in all seven locales", () => {
+  it("holds every band string to the 40 character budget in all twelve locales", () => {
     const keys = bandKeys();
     expect(keys.length).toBeGreaterThan(0); // the assertion must never pass by finding nothing
 
@@ -104,14 +116,14 @@ describe("i18n — the update band", () => {
     for (const [locale, dictionary] of LOCALES) {
       const word = longestStateWord(dictionary);
       for (const key of keys) {
-        const line = fill(dictionary[key]).split("{word}").join(word);
+        const line = fill(dictionary[key] ?? "").split("{word}").join(word);
         if (line.length > BUDGET) over.push(`${locale} ${key}: ${line.length} — "${line}"`);
       }
     }
     expect(over, `over the ${BUDGET}-character band budget`).toEqual([]);
   });
 
-  it("carries every band key in all seven locales", () => {
+  it("carries every band key in all twelve locales", () => {
     // `Dictionary` already makes a missing key a compile error; this is the runtime half, so a
     // hand-edited bundle that lost a line fails a test rather than printing `undefined`.
     const keys = bandKeys();
@@ -126,7 +138,7 @@ describe("i18n — the update band", () => {
     const unknown = new Set<string>();
     for (const [, dictionary] of LOCALES) {
       for (const key of bandKeys()) {
-        for (const slot of dictionary[key].matchAll(/\{(\w+)\}/g)) {
+        for (const slot of (dictionary[key] ?? "").matchAll(/\{(\w+)\}/g)) {
           // `word` is filled per locale by `longestStateWord`, not from the table above.
           if (slot[1] === "word") continue;
           if (!Object.hasOwn(SAMPLE, slot[1])) unknown.add(slot[1]);

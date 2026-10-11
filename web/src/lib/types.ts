@@ -120,9 +120,11 @@ export interface AgentView {
    *  Mirrors `AgentView.statusLineAt` in bridge/types.ts. */
   statusLineAt?: number;
   /**
-   * FORK — which model the agent is running on, in the harness's own spelling (`claude-fable-5-1`,
-   * `gpt-6-astra`), read bridge-side off the newest turn of its session log. Mirrors
-   * `AgentView.model` in bridge/types.ts.
+   * Which model the agent is running on, in the harness's own words (`claude-fable-5-1`,
+   * `gpt-6-astra`, or a display name a `/model` printed). Upstream (1.19) and the fork both added
+   * this one wire field: upstream's `PaneWire.model`, the fork's `AgentView.model` in bridge/types.ts.
+   * **Absent, never a placeholder.** Read it through `modelLabel` (lib/model-label.ts): with a
+   * string for upstream's label above the belt, with `{ model, effort }` for the fork's reading.
    *
    * TEXT AND NOTHING ELSE, on the standing {@link statusLine} has: nothing branches on it, it
    * implies nothing about `agent` or `status`, and it changes no sort and no affordance. Rendered
@@ -170,7 +172,19 @@ export interface AgentView {
    * all, and a 1.8.x peer simply omits it — every one of those renders as nothing.
    */
   cache?: PaneCache;
+  /**
+   * What the checkout holding this pane's folder is on. Mirrors `PaneWire.gitHead` in bridge/types.ts.
+   *
+   * **Absent, never a placeholder**: a folder in no checkout, a reading the bridge has not taken yet,
+   * an older bridge and an older crew member all send no key, and every one of those renders exactly
+   * what it rendered before the field existed. Read it through `paneGitHead` (lib/git-head.ts), which
+   * also drops a malformed one from a peer. Text only, never markup: a branch name is the repo's.
+   */
+  gitHead?: GitHead;
 }
+
+/** What a checkout is on: a branch by name, or a detached head at a full object name. */
+export type GitHead = { kind: "branch"; name: string } | { kind: "detached"; sha: string };
 
 /**
  * One rule as the pane sheet reads it. Mirrors `CacheRuleWire` in bridge/types.ts.
@@ -315,6 +329,13 @@ export interface PairedDeviceWire {
   label: string;
   createdAt: number;
   lastSeenAt: number;
+  /**
+   * When the token stops working (epoch ms), or null for no expiry (M46 spec 01). Optional on this
+   * side so a fixture or an older answer without it reads as "no expiry".
+   */
+  expiresAt?: number | null;
+  /** True once `expiresAt` has passed. The device stays listed until it is revoked. */
+  expired?: boolean;
   /** True for the device making the request — i.e. the one you're reading this on. */
   current: boolean;
 }
@@ -328,6 +349,11 @@ export interface DevicesResponse {
   enforced: boolean;
   /** The label this request's token authenticated as, or null when it authenticated as nobody. */
   current: string | null;
+  /**
+   * True when this request's token belongs to a paired device whose expiry passed — so a cold open
+   * can say "pairing expired" without first failing a write. Absent reads as false.
+   */
+  currentExpired?: boolean;
   devices: PairedDeviceWire[];
 }
 
@@ -1193,7 +1219,17 @@ export type FilesListing =
  */
 export type FileRead =
   | { available: false; reason: ChangesUnavailableReason }
-  | { available: true; root: string; path: string; size: number; binary: boolean; truncated: boolean; text: string };
+  | {
+      available: true;
+      root: string;
+      path: string;
+      size: number;
+      /** The file's modification time, epoch ms. With `size` it is the version a held picture is keyed on (ADR 0090). Absent from an older bridge. */
+      mtimeMs?: number;
+      binary: boolean;
+      truncated: boolean;
+      text: string;
+    };
 
 /** GET …/files and GET …/files?dir= — a folder, asked by pane or by workspace. */
 export type FilesListResponse = ChangesWorkspace & FilesListing;
@@ -1263,6 +1299,13 @@ export interface ChatWindowBody {
    * the route is additive-optional over a crew link).
    */
   queued?: string[];
+  /**
+   * The keys that deliver {@link queued} now, in the neutral key spelling, declared by the bridge
+   * for this session's harness. Absent for every harness that has no such key and from a bridge one
+   * release behind, and both read as "no Send now button". Mirrors `ChatWindowBody` in
+   * bridge/journal/live.ts.
+   */
+  sendQueuedNow?: string[];
 }
 
 /**
@@ -1339,7 +1382,10 @@ export interface CreatedPane {
 
 /** Result of creating a new tab/space — on success `pane` is the fresh shell to navigate into. */
 export type CreateResponse =
-  | { ok: true; pane: CreatedPane }
+  // `replayed`: the answer to a launch whose request id the bridge already held (ADR 0091). The pane
+  // is the one the first request made; nothing new was started. `noPrompts`: the answer to a fresh
+  // one-off `run` says whether its line carries a flag known to skip permission prompts (ADR 0095).
+  | { ok: true; pane: CreatedPane; replayed?: true; noPrompts?: boolean }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
 
 /**
@@ -1532,7 +1578,94 @@ export interface Launcher {
    * shortened under home (`shortenHome`) wherever the row's folder is displayed.
    */
   cwd?: string;
+  /** `launchers.toml` or a phone (ADR 0094). Absent from an older bridge: read as the operator's. */
+  source?: "operator" | "added";
+  /** An added row's id, for rename and remove. */
+  id?: string;
+  /** `agent` when a harness reads the row; absent or `command` for a plain line. */
+  kind?: "agent" | "command";
+  /** The harness that reads an agent row. */
+  harness?: string;
+  /** The line skips permission prompts: badge it, and confirm once per device before it starts. */
+  noPrompts?: boolean;
+  /** Added rows: the pairing label of the device that added it, when, and how. */
+  addedBy?: string;
+  addedAt?: number;
+  addedAs?: "recipe" | "text";
 }
+
+/** One option chip of a recipe. Mirrors `RecipeOptionWire` in bridge/types.ts. */
+export interface RecipeOption {
+  id: string;
+  /** The chip's words: the CLI's own vocabulary, never translated. */
+  label: string;
+  /** What the option appends to the line, for a preview; the bridge builds the real line. */
+  args: string;
+  /** Options sharing a group exclude each other. */
+  group?: string;
+  /** The option makes the agent act without asking. */
+  noPrompts?: true;
+}
+
+/** One harness's recipe. Mirrors `RecipeWire` in bridge/types.ts. */
+export interface Recipe {
+  harness: string;
+  label: string;
+  binary: string;
+  options: RecipeOption[];
+}
+
+/** What "Add your own" needs about one machine. Mirrors `LaunchersAdding` in bridge/types.ts. */
+export interface LaunchersAdding {
+  /** `[phone] adds` in that machine's `launchers.toml`: phone rows may be added and may start. */
+  adds: boolean;
+  /** `[phone] free_text`: a line typed by hand may be added and may start. Off by default. */
+  freeText: boolean;
+  /** `[phone] run`: a one-off line may run there, and a `recentRuns` entry may run again. On by default (ADR 0095). */
+  run: boolean;
+  /** The absolute path of that machine's `launchers.toml`, written or not. */
+  file: string;
+  count: number;
+  max: number;
+  recipes: Recipe[];
+  /** Added rows that do not start there now. The same rows are in `items`, unavailable. */
+  off: { id: string; label: string; command: string; kind: "agent" | "command"; harness?: string; reason: "adds_off" | "free_text_off" }[];
+}
+
+/** Why an item does not start on that machine now. Mirrors `LauncherItem.reason` in bridge/types.ts. */
+export type LauncherItemReason = "not_found" | "adds_off" | "free_text_off";
+
+/**
+ * One thing the New page may start on ONE machine, with its availability there (ADR 0094). Mirrors
+ * `LauncherItem` in bridge/types.ts. An unavailable item is a disabled option with its reason; the
+ * reasons a whole machine has (not taking writes, an older Collie) are the phone's own to add.
+ */
+export interface LauncherItem {
+  /** `harness:<id>`, `row:<command>` or `shell`. Stable per machine. */
+  key: string;
+  /** What `startLaunch` sends for it. */
+  start: { harness: string } | { command: string } | { shell: true };
+  group: "agents" | "commands";
+  label: string;
+  harness?: string;
+  command?: string;
+  cwd?: string;
+  source: "builtin" | "operator" | "added";
+  noPrompts: boolean;
+  /** Whether it may start on a new branch: agents and the shell, never a command row. */
+  branch: boolean;
+  available: boolean;
+  reason?: LauncherItemReason;
+  id?: string;
+  addedBy?: string;
+  addedAt?: number;
+  addedAs?: "recipe" | "text";
+}
+
+/** POST /api/launchers/added and /rename. Mirrors `AddedLauncherResponse` in bridge/types.ts. */
+export type AddedLauncherResponse =
+  | { ok: true; row: Launcher; replayed?: true }
+  | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
 
 /**
  * GET /api/launchers — the rows for ONE host (a crew has one file per member), read live off its
@@ -1551,15 +1684,73 @@ export interface LaunchersResponse {
   handoffModels?: CodexHandoffModel[];
   launchers: Launcher[];
   home: string;
+  /**
+   * The agents this host starts by id, and whether each binary is on its login PATH (ADR 0091).
+   * Mirrors `harnesses` in bridge/types.ts. ABSENT from a bridge older than 1.19.0, which starts
+   * none by id: the New page then offers no agents for that machine and says why.
+   */
+  harnesses?: HarnessInfo[];
+  /** "Add your own" for that machine (ADR 0094). Absent from a bridge older than 1.19.0: offer no add. */
+  adding?: LaunchersAdding;
+  /** Every agent, row and the shell, each with its availability there (ADR 0094). Absent from an older bridge. */
+  items?: LauncherItem[];
+  /**
+   * The one-off lines run on that machine, newest first, at most twelve (ADR 0095). Mirrors
+   * `recentRuns` in bridge/types.ts. Listed while `[phone] run` is off too, each then unavailable.
+   * Absent from an older bridge: offer no history.
+   */
+  recentRuns?: RecentRun[];
+}
+
+/** One line in a machine's one-off command history. Mirrors `RecentRunWire` in bridge/types.ts. */
+export interface RecentRun {
+  /** The line, exactly as it ran. Running it again is `startRun(line, …)`. */
+  line: string;
+  /** The folder it last ran in, absolute, or `null` for home. */
+  cwd: string | null;
+  /** Epoch ms of the last run. */
+  at: number;
+  /** The line skips permission prompts: badge it, and confirm once per device before it runs. */
+  noPrompts: boolean;
+  available: boolean;
+  /** `run_off`: the operator turned one-off runs off on that machine. */
+  reason?: "run_off";
+}
+
+/**
+ * POST /api/launch/check: what a typed one-off line would be, before it runs (ADR 0095, amendment).
+ * A read. `problem` is the character rule's refusal (and then `noPrompts` is false). Mirrors
+ * `LaunchCheckResponse` in bridge/types.ts.
+ */
+export interface LaunchCheckResponse {
+  ok: true;
+  /** The line carries a flag known to skip permission prompts: confirm once per device before it runs. */
+  noPrompts: boolean;
+  problem?: "empty" | "too_long" | "forbidden_character";
+}
+
+/** POST /api/launch/recent/remove and /clear. Mirrors `RecentRunsResponse` in bridge/types.ts. */
+export type RecentRunsResponse =
+  | { ok: true; removed: number }
+  | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
+
+/** One agent a host can start by id. Mirrors `HarnessInfo` in bridge/types.ts. */
+export interface HarnessInfo {
+  /** The id `POST /api/launch` takes as `harness`, and the brand key `AgentIcon` draws. */
+  id: string;
+  /** What the page calls it. */
+  label: string;
+  /** Whether the binary was found on that host's login PATH. */
+  found: boolean;
 }
 
 /**
  * GET /api/folders, and the answer to POST /api/folders/star — ONE host's folder list for the
- * new-space sheet (#289), read off that machine's own `folders.json`. `recent` is newest first (at
+ * New page (#289), read off that machine's own `folders.json`. `recent` is newest first (at
  * most eight, only folders a space was created in), `favourites` in starred order (at most twelve),
  * and the two never overlap. `home` is that host's home dir, never an entry, for shortening a folder
  * to `~/…` without the client knowing which machine answered. A host on an older version answers
- * 404, which the sheet reads as "no list" and never as an error.
+ * 404, which the page reads as "no list" and never as an error.
  */
 export interface FoldersResponse {
   recent: string[];
@@ -1631,6 +1822,12 @@ export interface BridgeConfig {
    * older than the field sends — and the pane menu draws no "Screenshot & annotate…" row.
    */
   shot?: boolean;
+  /**
+   * Whether the bridge masks secret shapes before text reaches this phone (`COLLIE_REDACT`). The
+   * phone only SHOWS this and never sets it: a switch on the phone would let any paired or stolen
+   * phone unmask. **Absent is an older bridge** (or a member-scoped read), shown as unknown.
+   */
+  redact?: boolean;
 }
 
 /**
@@ -1731,6 +1928,14 @@ export function statusLabel(status: AgentStatus): string {
   return t(`status.label.${status}`);
 }
 
+/**
+ * The same status in the PAST tense, for a herd drawn from the saved copy (M46 spec 10): a cached
+ * row says what the pane was doing when the phone last heard, never what it is doing now.
+ */
+export function statusLabelPast(status: AgentStatus): string {
+  return t(`status.past.${status}`);
+}
+
 /** One Git worktree of the repo a space sits in. Mirrors `WorktreeView` in bridge/types.ts. */
 export interface WorktreeView {
   path: string;
@@ -1742,9 +1947,13 @@ export interface WorktreeView {
   prunable: boolean;
 }
 
-/** GET /api/workspace/:id/worktrees */
+/**
+ * GET /api/workspace/:id/worktrees. `defaultBranch` is the local branch a create with
+ * `base: { kind: "default" }` starts from; `null` when the repo has none to name, absent from a
+ * bridge that predates "Start from".
+ */
 export type WorktreeListResponse =
-  | { ok: true; worktrees: WorktreeView[] }
+  | { ok: true; worktrees: WorktreeView[]; defaultBranch?: string | null }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
 
 /** One folder in the picker: what to draw, and what to ask for next. */
@@ -2040,5 +2249,51 @@ export interface ArtifactResponse {
  */
 export type HandoffResponse =
   | { ok: true; pane: CreatedPane; artifact: ArtifactView }
+  | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
+
+/**
+ * Where a new worktree's branch starts (ADR 0089, amended): the repo's default branch, which the
+ * bridge resolves, or a named ref (the page sends the pane's own branch). Mirrors
+ * `WorktreeBaseRequest` in bridge/worktree-base.ts.
+ */
+export type WorktreeBaseChoice = { kind: "default" } | { kind: "ref"; ref: string };
+
+/**
+ * GET /api/worktree/plan — what a branch from a folder would be, before Start (ADR 0093). Mirrors
+ * `WorktreePlanResponse` in bridge/types.ts. `branchValid`, `defaultTarget` and `parentTarget` are
+ * there only when the query named a branch (and a parent).
+ */
+export type WorktreePlanResponse =
+  | {
+      ok: true;
+      repoRoot: string;
+      defaultBranch: string | null;
+      currentBranch: string | null;
+      remembered?: { base: "default" | "current"; folder: "default" | "parent"; parent?: string };
+      branchValid?: boolean;
+      defaultTarget?: { path: string; exists: boolean };
+      parentTarget?:
+        | { ok: true; path: string }
+        | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
+    }
+  | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
+
+/** Where a new branch's folder goes (ADR 0093): Herdr's own place, or a child of a parent folder. */
+export type WorktreeFolderChoice = { kind: "default" } | { kind: "parent"; parent: string };
+
+/**
+ * POST /api/workspace/:id/worktree — the new space, and whether the launcher was typed into it
+ * (ADR 0089). Mirrors `WorktreeCreateResponse` in bridge/types.ts. A launcher that failed after the
+ * create is still `ok: true`: the worktree exists, `pane` is where it is.
+ */
+export type WorktreeCreateResponse =
+  | {
+      ok: true;
+      pane: CreatedPane;
+      alreadyOpen: false;
+      launcherStarted: boolean;
+      launcherError?: string;
+      replayed?: true;
+    }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
 

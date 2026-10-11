@@ -22,6 +22,15 @@ export interface HarnessAdapter {
    * OPTIONAL: only for a harness that turns bracketed paste on, or the markers are typed as junk.
    */
   bracketedPaste?(text: string): boolean;
+  /**
+   * The minimum time in ms between the type call and the guarded Enter. The echo on screen proves
+   * the bytes are in the box, not that the TUI will act on a submit key yet; a harness that swallows
+   * an Enter sent right behind its own text declares a floor here, and the guarded send holds the
+   * submit until that long after the LAST type call (lib/reply-action.ts). A verify loop that
+   * already took longer pays nothing extra.
+   * OPTIONAL: adapters that need no settle omit it and send as before.
+   */
+  submitSettleMs?(): number;
   /** The exact Herdr snapshot `agent` string this adapter claims (its registry key). */
   agent: string;
   /** The adapter's OWN full block pipeline over the pane's styled lines — for Claude that is the
@@ -89,6 +98,19 @@ export interface HarnessAdapter {
    */
   modalOnScreen?(lines: StyledLine[]): boolean;
   /**
+   * Positive evidence that a full overlay box holds the keyboard — the /models-style overlay
+   * paints its own bordered box over the middle of the screen while the composer tail stays
+   * intact, so `composerReady` still answers true although typing would land in the overlay's
+   * filter, never the input box. Asked by the reply path (`lib/reply-action.ts`) before typing
+   * and when classifying a stalled send.
+   *
+   * OPTIONAL. Absent skips both checks for that adapter, which is the pre-existing behaviour. A
+   * throw propagates to the caller — the unread-dialog card treats it as `false`, the reply path
+   * lets the send reject, exactly like a throwing `composerReady`. Read from the harness's own
+   * captures; the suites pin the corpus.
+   */
+  overlayHoldsKeyboard?(lines: StyledLine[]): boolean;
+  /**
    * Literal on-screen text from the composer's prompt/draft tail — the region a DESTRUCTIVE write
    * aimed at that composer may be bound to. Null = no composer at the tail (the same screens
    * `composerReady` answers false about).
@@ -139,4 +161,16 @@ export interface HarnessAdapter {
    * heuristic gets, and is the pre-existing behaviour.
    */
   draftIsOpaque?(draft: string): boolean;
+  /**
+   * Tidy one raw block's rows for display only, after every grammar has run: chrome the harness paints
+   * inside the transcript that is not content (Grok's dark scrollbar track and its right padding).
+   * The terminal mirror calls it through the registry, on the wrapped view with grammars on, so the
+   * shared component never imports a harness module.
+   *
+   * Display only. Never hand the result back to a grammar, a guard or the reply path: it may drop or
+   * collapse rows, which would break the raw screen coordinates the send's verification reads.
+   *
+   * OPTIONAL; absence means the rows are shown as they are.
+   */
+  prepareDisplay?(lines: StyledLine[]): StyledLine[];
 }

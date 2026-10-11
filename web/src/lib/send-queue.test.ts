@@ -265,6 +265,25 @@ describe("the drain", () => {
     expect(rest).toEqual(["b"]);
   });
 
+  // FORK (merge of upstream 1.19): the guarded send refuses a pane that has not been read live
+  // lately. The queue waits for it rather than holding the row for a tap.
+  it("a pane not read live lately keeps its rows in line, unheld, and they go once it is", async () => {
+    enqueueSend({ paneId: "w1:p1", text: "a", kind: "message", agent: null });
+    enqueueSend({ paneId: "w1:p1", text: "b", kind: "message", agent: null });
+    enqueueSend({ paneId: "w1:p2", text: "c", kind: "message", agent: null });
+    const log: string[] = [];
+    const offline: ReplyOutcome = { status: "refused", reason: "offline", error: "reconnect" };
+    await drainSendQueue({ sender: sender({ a: offline }, log) });
+    expect(log).toEqual(["a", "c"]);
+    expect(queuedForPane(undefined, "w1:p1").map((r) => [r.text, r.held])).toEqual([
+      ["a", undefined],
+      ["b", undefined],
+    ]);
+    const live: string[] = [];
+    await drainSendQueue({ sender: sender({}, live) });
+    expect(live).toEqual(["a", "b"]);
+  });
+
   it("a link failure stops everything and keeps every row for the next live poll", async () => {
     enqueueSend({ paneId: "w1:p1", text: "a", kind: "message", agent: null });
     enqueueSend({ paneId: "w1:p2", text: "b", kind: "message", agent: null });

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -177,5 +180,38 @@ describe("navigationNetworkOnlyUnder — the same denylist under a mount", () =>
   it("escapes a mount that carries a regex character", () => {
     expect(matches(navigationNetworkOnlyUnder("/a.b/"), "/a.b/api/x")).toBe(true);
     expect(matches(navigationNetworkOnlyUnder("/a.b/"), "/aXb/api/x")).toBe(false);
+  });
+});
+
+// What the worker caches at RUNTIME, read off its source (it cannot run under jsdom). The navigation
+// denylist above only governs navigations; a fetch of `/api/*/files/image` or any other `/api/` read
+// stays off every cache because sw.ts registers no runtime route that matches it. Pinned so a route
+// added later has to change this test first (ADR 0087: no service-worker cache of API answers; ADR
+// 0090: a picture's bytes are held in memory only).
+describe("the service worker's runtime caching", () => {
+  const SW_CODE = readFileSync(resolve(import.meta.dirname, "../sw.ts"), "utf8")
+    .split("\n")
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join("\n");
+
+  it("registers exactly two routes: the navigation fallback and the /fonts/ cache", () => {
+    expect(SW_CODE.match(/registerRoute\(/g)?.length).toBe(2);
+    expect(SW_CODE).toContain("new NavigationRoute(createHandlerBoundToURL(");
+    expect(SW_CODE).toContain('url.pathname.startsWith(under("/fonts/"))');
+  });
+
+  // FORK: and the push-heal's META_CACHE (sw.ts `storeVapidKey`), which holds the bridge's public
+  // VAPID key for `pushsubscriptionchange` and nothing a session said. The wipe deletes it with
+  // every other runtime cache (lib/wipe.ts `clearCaches`).
+  it("opens the font cache and the push-heal key cache, and never names an /api path", () => {
+    const opened = [...SW_CODE.matchAll(/caches\.open\(([^)]*)\)/g)].map((m) => m[1]);
+    expect(new Set(opened)).toEqual(new Set(["FONT_CACHE", "META_CACHE"]));
+    // FORK: the worker POSTs two /api routes itself, and caches neither answer: the push heal's
+    // re-subscribe and the notification's one-tap approve (exempted since the 1.16.2 merge, because
+    // it runs with the app closed). Named exactly, so any other /api path still fails here.
+    const forkPosts = ['fetch(under("/api/subscribe")', "fetch(under(`/api/pane/${encodeURIComponent(data.paneId)}/keys"];
+    for (const post of forkPosts) expect(SW_CODE).toContain(post);
+    expect(forkPosts.reduce((code, post) => code.split(post).join(""), SW_CODE)).not.toMatch(/["'`]\/api\//);
+    expect(SW_CODE).not.toMatch(/files\/image/);
   });
 });

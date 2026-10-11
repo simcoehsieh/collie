@@ -86,11 +86,12 @@ const SWITCH_LIFTED = SWITCH_COHORT.filter((name) => !DECLINED_SWITCH.includes(n
 // The screens this adapter lifts. The `/resume` captures that list at least one session, seven of the
 // eight (`omp--v18-4-resume-nomatch.txt` has no rows and stays raw, below), the Ask tool's
 // one-question single-select dialog in all three keycap dialects: text (17.2.12), Nerd Font (18.4.4)
-// and glyph (18.4.10), and the tool-approval dialog in both captured presets: `nerd` with text keycaps
-// (18.1.17, `bash` and `write`, the latter in both selection states) and `unicode` with glyph keycaps
-// (18.4.10, `bash` and `write` in both selection states, and a fourteen-row `write`), and the compact
-// model picker's session state (18.4.10: the pointer moved, wrapped and at both window edges, searches,
-// over-context and truncated rows, role chips, and windows of 16, 15 and 5 rows).
+// and glyph (18.4.10, and 18.8 with option descriptions), and the tool-approval dialog in both
+// captured presets: `nerd` with text keycaps (18.1.17, `bash` and `write`, the latter in both selection
+// states) and `unicode` with glyph keycaps (18.4.10, `bash` and `write` in both selection states, and a
+// fourteen-row `write`), and the compact model picker's session state (18.4.10: the pointer moved,
+// wrapped and at both window edges, searches, over-context and truncated rows, role chips, and windows
+// of 16, 15 and 5 rows).
 const LIFTED = new Set([
   "omp--menu-resume-moved.txt",
   "omp--menu-resume.txt",
@@ -105,6 +106,8 @@ const LIFTED = new Set([
   "omp--select-menu.txt",
   "omp--v18-4-ask-single-moved.txt",
   "omp--v18-4-ask-single.txt",
+  "omp--v18-8-ask-single-described-moved.txt",
+  "omp--v18-8-ask-single-described.txt",
   "omp--approval-bash.txt",
   "omp--approval-write--deny.txt",
   "omp--approval-write.txt",
@@ -157,6 +160,13 @@ const DECLINED = new Set([
   //   (lib/agent-commands.ts's `omp` catalog), not a lifted block.
   "omp--slash-palette--filtered.txt",
   "omp--slash-palette.txt",
+  // — The pi-shaped composer's own slash palette (omp 18.8, 2026-10-07): the palette REPLACES the
+  //   status row rather than sitting under a box, and the draft lives on the filter row between the
+  //   composer's two rules. Still chrome — stripped, and the phone draws its own list — but the one
+  //   footer omp paints there that `locatePiComposer` accepts, because a slash command typed into the
+  //   composer can only be verified (and so submitted) while the palette is up. See pi-shape.ts.
+  "omp--v18-8-slash-palette.txt",
+  "omp--v18-8-slash-palette-w48.txt",
   // - The `ask` tool's MULTI-select dialog, in both footer dialects, and its review screen. Its toggle
   //   is an arrow walk then Space, a recipe no shared model carries, and its Enter TOGGLES before omp
   //   18.4 (`Space/Enter toggle`) and SUBMITS in 18.4.10 (`␣ toggle · ⏎ submit`); the review screen
@@ -219,6 +229,13 @@ describeAdapterConformance(ompAdapter, {
   ownFixtures,
   foreignFixtures: allForeignFixtures,
   neutralFixtures,
+  // The two pi-shaped palette captures: the composer is on screen and ready, and no region binds.
+  // The palette run stands between the composer's own rows and the tail — 8 rows of it in the wide
+  // capture, 10 in the 48-column one — so a `composerPrompt` naming those rows would sit further from
+  // the tail than `verifyExpectedPrompt` accepts and 409 every destructive sweep with "The input box
+  // changed while clearing it" (pi-shape.ts `piComposerPrompt`). Null means an unbound write, exactly
+  // as the boxed shape answers for the same palette sitting under its own composer (chrome.ts).
+  unboundComposerFixtures: ["omp--v18-8-slash-palette.txt", "omp--v18-8-slash-palette-w48.txt"],
 });
 
 // The corpus pin (mirroring claude/chrome.test.ts's): a newly-captured omp fixture must be filed into
@@ -316,6 +333,10 @@ describe("the omp corpus", () => {
     "omp--v18-4-switch-wrapped.txt",
     "omp--v18-4-switch.txt",
     "omp--v18-4-tree.txt",
+    "omp--v18-8-ask-single-described-moved.txt",
+    "omp--v18-8-ask-single-described.txt",
+    "omp--v18-8-slash-palette-w48.txt",
+    "omp--v18-8-slash-palette.txt",
     "omp--v18-pi-effort-hint.txt",
     "omp--v18-rule-draft.txt",
     "omp--v18-rule-effort-hint.txt",
@@ -425,6 +446,11 @@ const COMPOSER_FIXTURES = [
   "omp--v18-rule-draft.txt",
   "omp--v18-rule-idle.txt",
   "omp--v18-rule-wrapped.txt",
+  // The pi-shaped composer with its slash palette up (omp 18.8, 2026-10-07): the palette replaces
+  // the status row, and the typed command is verifiable on the filter row — which is the whole
+  // reason a `/…` send can complete at all on this shape (pi-shape.ts).
+  "omp--v18-8-slash-palette.txt",
+  "omp--v18-8-slash-palette-w48.txt",
 ];
 
 describe("composerReady — the gate the reply path pre-flights on", () => {

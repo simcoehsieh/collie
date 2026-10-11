@@ -111,9 +111,10 @@ const AGENT_VIEW_KEYS = {
   // published one, so a snapshot from a herd that has not is byte-identical to the baseline.
   statusLine: true,
   statusLineAt: true,
-  // FORK, and not a crew dimension either: which model and effort the agent is on, read bridge-side
-  // off its own session log. Optional-and-absent until the bridge has read one, so a snapshot from
-  // a herd it has not is byte-identical to the baseline.
+  // Not crew dimensions: which model (upstream and the fork both carry it) and, FORK, which effort
+  // the agent is on, read bridge-side off its own session log. Optional-and-absent until the bridge
+  // has read one, so a snapshot from a herd it has not is byte-identical to the baseline. An older
+  // bridge or peer omits both.
   model: true,
   effort: true,
   // Also not a crew dimension: the pane's prompt-cache reading (M28/02), computed on the machine the
@@ -123,6 +124,9 @@ const AGENT_VIEW_KEYS = {
   // its tab. Computed on the machine the pane lives on; an older peer omits both.
   soleTabName: true,
   tabPosition: true,
+  // Not a crew dimension: what the checkout holding the pane's folder is on, read off the disk of
+  // the machine the pane lives on. An older bridge or peer omits it.
+  gitHead: true,
 } satisfies Record<keyof AgentView, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -218,6 +222,7 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
       // REQUEST, so the claim this case makes about the two address dimensions is untouched.
       "effort",
       "focused",
+      "gitHead",
       "hasSession",
       "hint",
       "host",

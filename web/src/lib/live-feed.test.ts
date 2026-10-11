@@ -2,49 +2,32 @@ import { act, renderHook } from "@testing-library/react";
 
 import {
   __resetLiveFeed,
+  __setLiveFeedSupported,
   isLiveFeedHealthy,
+  LIVE_FEED_RETRY_MAX_MS,
+  LIVE_FEED_RETRY_MS,
   liveFeedAvailable,
   liveFeedUrl,
   openLiveFeed,
   parsePoke,
+  readEventStream,
   type Poke,
   useLiveFeedHealthy,
 } from "./live-feed";
+import { setDeviceToken } from "./pairing";
+import { FakeEventStream, flushStream, installFakeEventStream } from "@/test/fake-event-stream";
 
-// jsdom ships no EventSource. The fake below is the four members the client touches, and it keeps
-// the last instance reachable so a test can drive the stream from outside.
-class FakeEventSource {
-  static last: FakeEventSource | null = null;
-  static CLOSED = 2;
-  readyState = 0;
-  closed = false;
-  private handlers = new Map<string, Set<(e: Event) => void>>();
-  readonly url: string;
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.last = this;
-  }
-  addEventListener(type: string, fn: (e: Event) => void): void {
-    if (!this.handlers.has(type)) this.handlers.set(type, new Set());
-    this.handlers.get(type)!.add(fn);
-  }
-  emit(type: string, data?: string): void {
-    const event = data === undefined ? new Event(type) : new MessageEvent(type, { data });
-    for (const fn of this.handlers.get(type) ?? []) fn(event);
-  }
-  close(): void {
-    this.closed = true;
-    this.readyState = FakeEventSource.CLOSED;
-  }
-}
+let uninstall: () => void = () => {};
 
 beforeEach(() => {
-  Object.assign(globalThis, { EventSource: FakeEventSource });
   __resetLiveFeed();
+  uninstall = installFakeEventStream();
 });
 
 afterEach(() => {
+  uninstall();
   __resetLiveFeed();
+  vi.useRealTimers();
 });
 
 describe("liveFeedUrl", () => {
@@ -76,8 +59,10 @@ describe("liveFeedAvailable", () => {
     expect(liveFeedAvailable({ host: "badger" })).toBe(false);
   });
 
-  it("is unavailable where the platform has no EventSource", () => {
-    Object.assign(globalThis, { EventSource: undefined });
+  it("is unavailable where the platform cannot stream (and, by default, under the test runner)", () => {
+    __setLiveFeedSupported(false);
+    expect(liveFeedAvailable()).toBe(false);
+    __setLiveFeedSupported(null);
     expect(liveFeedAvailable()).toBe(false);
   });
 });
@@ -115,41 +100,192 @@ describe("parsePoke", () => {
   });
 });
 
+/** A body that yields `chunks` one read at a time. */
+function bodyOf(chunks: string[]): ReadableStream<Uint8Array> {
+  const enc = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const c of chunks) controller.enqueue(enc.encode(c));
+      controller.close();
+    },
+  });
+}
+
+describe("readEventStream", () => {
+  it("reassembles frames split across chunks, mid-line and mid-field, and skips comments", async () => {
+    const events: [string, string][] = [];
+    const retries: number[] = [];
+    await readEventStream(
+      bodyOf([
+        "retry: 25",
+        "00\n\n: ping\n\nevent: po",
+        'ke\ndata: {"kind":"sna',
+        'pshot"}\n',
+        "\nevent: poke\r\ndata: a\r",
+        "\ndata: b\r\n\r\n",
+        "data: cut off at the end",
+      ]),
+      (type, data) => events.push([type, data]),
+      (ms) => retries.push(ms),
+    );
+    expect(retries).toEqual([2500]);
+    expect(events).toEqual([
+      ["poke", '{"kind":"snapshot"}'],
+      ["poke", "a\nb"],
+    ]);
+  });
+});
+
 describe("openLiveFeed", () => {
-  it("reports open and drop once each, marks the shared flag, and delivers pokes", () => {
+  it("sends the pairing token and the XHR header, as every other /api read does", async () => {
+    setDeviceToken("tok-feed");
+    openLiveFeed("/api/events?pane=w1%3Ap1", { onPoke: () => {}, onHealth: () => {} });
+    await flushStream();
+    const stream = FakeEventStream.last!;
+    expect(stream.url).toBe("/api/events?pane=w1%3Ap1");
+    expect(stream.headers.get("authorization")).toBe("Bearer tok-feed");
+    expect(stream.headers.get("x-requested-with")).toBe("XMLHttpRequest");
+  });
+
+  it("reports open and drop once each, marks the shared flag, and delivers pokes", async () => {
     const pokes: Poke[] = [];
     const health: boolean[] = [];
     const feed = openLiveFeed("/api/events", { onPoke: (p) => pokes.push(p), onHealth: (h) => health.push(h) });
-    const source = FakeEventSource.last!;
+    await flushStream();
+    const stream = FakeEventStream.last!;
     expect(isLiveFeedHealthy()).toBe(false);
-    source.emit("open");
-    source.emit("open"); // a duplicate is not a transition
+    stream.open();
+    await flushStream();
     expect(health).toEqual([true]);
     expect(isLiveFeedHealthy()).toBe(true);
-    source.emit("poke", '{"kind":"pane","paneId":"w1:p1"}');
-    source.emit("poke", "garbage");
+    stream.write('event: poke\ndata: {"kind":"pane",');
+    stream.write('"paneId":"w1:p1"}\n\n');
+    stream.poke("garbage");
+    stream.write('data: {"kind":"snapshot"}\n\n'); // an unnamed event is not a poke
+    await flushStream();
     expect(pokes).toEqual([{ kind: "pane", paneId: "w1:p1" }]);
-    source.emit("error");
+    stream.end();
+    await flushStream();
     expect(health).toEqual([true, false]);
     expect(isLiveFeedHealthy()).toBe(false);
     feed.close();
-    expect(source.closed).toBe(true);
   });
 
-  it("closing an open stream reports the drop", () => {
+  it("a refusal is the stream being down, retried on a doubling backoff until it opens", async () => {
+    vi.useFakeTimers();
     const health: boolean[] = [];
     const feed = openLiveFeed("/api/events", { onPoke: () => {}, onHealth: (h) => health.push(h) });
-    FakeEventSource.last!.emit("open");
-    feed.close();
-    expect(health).toEqual([true, false]);
+    await flushStream();
+    FakeEventStream.last!.refuse(403);
+    await flushStream();
     expect(isLiveFeedHealthy()).toBe(false);
+    expect(FakeEventStream.all).toHaveLength(1);
+
+    vi.advanceTimersByTime(LIVE_FEED_RETRY_MS - 1);
+    expect(FakeEventStream.all).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    await flushStream();
+    expect(FakeEventStream.all).toHaveLength(2); // the first retry, after the bridge's 3 s
+
+    FakeEventStream.last!.drop(); // a transport failure counts the same
+    await flushStream();
+    vi.advanceTimersByTime(LIVE_FEED_RETRY_MS * 2 - 1);
+    expect(FakeEventStream.all).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    await flushStream();
+    expect(FakeEventStream.all).toHaveLength(3); // doubled
+
+    FakeEventStream.last!.open();
+    await flushStream();
+    expect(health).toEqual([true]);
+    expect(isLiveFeedHealthy()).toBe(true);
+    feed.close();
   });
 
-  it("the hook view follows the flag", () => {
+  it("caps the backoff, and after a stream that opened starts again from the base", async () => {
+    vi.useFakeTimers();
+    const feed = openLiveFeed("/api/events", { onPoke: () => {}, onHealth: () => {} });
+    for (let i = 0; i < 8; i++) {
+      await flushStream();
+      FakeEventStream.last!.refuse(403);
+      await flushStream();
+      vi.advanceTimersByTime(LIVE_FEED_RETRY_MAX_MS);
+    }
+    await flushStream();
+    expect(FakeEventStream.all).toHaveLength(9); // one per cap-sized wait, never a longer one
+    FakeEventStream.last!.open();
+    await flushStream();
+    FakeEventStream.last!.end();
+    await flushStream();
+    vi.advanceTimersByTime(LIVE_FEED_RETRY_MS);
+    await flushStream();
+    expect(FakeEventStream.all).toHaveLength(10);
+    feed.close();
+  });
+
+  it("follows the bridge's retry: for the next reconnect", async () => {
+    vi.useFakeTimers();
+    const feed = openLiveFeed("/api/events", { onPoke: () => {}, onHealth: () => {} });
+    await flushStream();
+    FakeEventStream.last!.open();
+    await flushStream();
+    FakeEventStream.last!.write("retry: 500\n\n");
+    FakeEventStream.last!.end();
+    await flushStream();
+    vi.advanceTimersByTime(500);
+    await flushStream();
+    expect(FakeEventStream.all).toHaveLength(2);
+    feed.close();
+  });
+
+  it("close aborts the open stream, reports the drop, and never reconnects", async () => {
+    vi.useFakeTimers();
+    const health: boolean[] = [];
+    const feed = openLiveFeed("/api/events", { onPoke: () => {}, onHealth: (h) => health.push(h) });
+    await flushStream();
+    const stream = FakeEventStream.last!;
+    stream.open();
+    await flushStream();
+    feed.close();
+    await flushStream();
+    expect(stream.aborted).toBe(true);
+    expect(health).toEqual([true, false]);
+    expect(isLiveFeedHealthy()).toBe(false);
+    vi.advanceTimersByTime(LIVE_FEED_RETRY_MAX_MS * 2);
+    await flushStream();
+    expect(FakeEventStream.all).toHaveLength(1);
+  });
+
+  it("close during a pending answer aborts it, and a retry timer is cancelled", async () => {
+    vi.useFakeTimers();
+    const feed = openLiveFeed("/api/events", { onPoke: () => {}, onHealth: () => {} });
+    await flushStream();
+    FakeEventStream.last!.refuse(403);
+    await flushStream();
+    feed.close(); // the retry timer is pending
+    vi.advanceTimersByTime(LIVE_FEED_RETRY_MAX_MS);
+    await flushStream();
+    expect(FakeEventStream.all).toHaveLength(1);
+
+    const again = openLiveFeed("/api/events", { onPoke: () => {}, onHealth: () => {} });
+    await flushStream();
+    again.close(); // the fetch has not been answered
+    await flushStream();
+    expect(FakeEventStream.last!.aborted).toBe(true);
+  });
+
+  it("the hook view follows the flag", async () => {
     const { result } = renderHook(() => useLiveFeedHealthy());
     expect(result.current).toBe(false);
-    openLiveFeed("/api/events", { onPoke: () => {}, onHealth: () => {} });
-    act(() => FakeEventSource.last!.emit("open"));
+    const feed = openLiveFeed("/api/events", { onPoke: () => {}, onHealth: () => {} });
+    await act(async () => {
+      await flushStream();
+      FakeEventStream.last!.open();
+      await flushStream();
+    });
     expect(result.current).toBe(true);
+    act(() => feed.close());
+    expect(result.current).toBe(false);
   });
 });
+

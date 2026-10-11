@@ -3,7 +3,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 
 // Spied at the api seam, not over the network — what these cases are about is WHICH host was asked
 // and HOW OFTEN, and a mock records both.
-vi.mock("@/lib/api", () => ({ fetchConfig: vi.fn() }));
+vi.mock("@/lib/api", () => ({ fetchConfig: vi.fn(), __resetConfigMemo: vi.fn() }));
 
 import { fetchConfig } from "@/lib/api";
 import { __resetOperatorCommands } from "./operator-config";

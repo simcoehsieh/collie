@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
 import { LayoutGrid, Library, ListTree, Network, Rows3 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type RefObject } from "react";
 import { useRevalidator } from "react-router";
 
 import { RouteHeader, SettingsGear } from "@/components/app-header";
@@ -9,7 +9,6 @@ import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { AgentList } from "@/components/agent-list";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { SpaceOverview } from "@/components/space-overview";
-import { NewSpaceSheet, type WorktreeRepo } from "@/components/new-space-sheet";
 import { QuotaCard } from "@/components/quota-card";
 import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
@@ -18,9 +17,12 @@ import { CrewFooterLink } from "@/components/crew-footer-link";
 import { useCrew } from "@/components/crew-provider";
 import { CrewTab } from "@/components/crew-tab";
 import { UpdateBanner } from "@/components/update-banner";
+import { Fab } from "@/components/ui/fab";
+import { useAnySheetOpen } from "@/components/ui/sheet";
 import { TabBar } from "@/components/ui/tab-bar";
 import { WorkspaceChangesList, type WorkspaceChangesRow } from "@/components/workspace-changes-list";
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
+import { useKeyboardOpen } from "@/hooks/use-keyboard";
 import { useLocale } from "@/hooks/use-locale";
 import { useWorkspaceChangeCounts } from "@/hooks/use-workspace-change-counts";
 import { useSpaceActions } from "@/hooks/use-spaces";
@@ -28,11 +30,13 @@ import { useNav } from "@/hooks/use-nav";
 import { usePaneOpen } from "@/hooks/use-pane-open";
 import { useScrollMemory } from "@/hooks/use-scroll-memory";
 import {
+  FORK_DASH_NEW_FAB_ON,
   FORK_DASH_SHELLS_ON,
   FORK_DASH_SUMMARY_CONTROLS_ON,
   FORK_DASH_TABS_ON,
   FORK_HEADING_NEW_TAB_ON,
 } from "@/lib/dash-tabs";
+import { useLaunchers } from "@/lib/launchers";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { useQuotaEnabled } from "@/lib/operator-config";
 import { isolateSpaces } from "@/lib/spaces";
@@ -41,8 +45,9 @@ import { setMachineHidden, useHiddenMachines } from "@/lib/hidden-machines";
 import type { ChangesLookup } from "@/lib/api";
 import type { DashView } from "@/lib/dash-view";
 import { t, tn } from "@/lib/i18n";
+import { prefetchFolders } from "@/lib/folders";
 import { glideForward } from "@/lib/glide";
-import { artifactsPath, spaceChangesPath, spacePath } from "@/lib/nav";
+import { artifactsPath, newPath, spaceChangesPath, spacePath } from "@/lib/nav";
 import { overviewPath } from "@/lib/overview";
 import type { WorkspaceGroup } from "@/lib/pane-groups";
 import { scopeKey, type Scope } from "@/lib/scope";
@@ -54,6 +59,7 @@ import { useRootData } from "@/lib/route-data";
 import * as api from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { setStatus } from "@/lib/status";
+import { FORK_NEW_PAGE_ON } from "@/lib/fork-shape";
 import { stampTopology } from "@/lib/poll-intent";
 
 /**
@@ -102,7 +108,7 @@ function ChangesTabBody({
 // Dashboard home screen. Every pane sits under the workspace it lives in, in the multiplexer's own
 // order (lib/pane-groups.ts, ADR 0063); urgency is a mark on a row and a heading and one summary
 // line on top, never a position. The operator may ask for Activity or Cache order instead, with the
-// toggle beside that line (ADR 0071): one ranked list, read once and held. The Spaces navigator sits
+// order select under that line (ADR 0071): one ranked list, read once and held. The Spaces navigator sits
 // last, under the thing it navigates to.
 // Launchers sit directly above Spaces: they are one-tap act-on-able actions like the herd above
 // them, but they CREATE rather than triage, so they sit under the herd and above the navigator
@@ -111,7 +117,7 @@ function ChangesTabBody({
 export function HomeRoute() {
   const data = useRootData();
   const nav = useNav();
-  const { newSpace, newWorktree, showWorktree, creatingSpace, newTab, creatingTab } = useSpaceActions();
+  const { creatingSpace, newTab, creatingTab, launching } = useSpaceActions();
   // Declared here rather than beside the pane menu below: `closePane`'s deps read it at once.
   const revalidator = useRevalidator();
   // FORK: CLOSING A PANE FROM THE LIST THAT MADE THE DECISION.
@@ -145,43 +151,13 @@ export function HomeRoute() {
   );
   const mayClose = !isReadOnly(data.device) ? closePane : undefined;
 
-  // Which repos a worktree could be branched from: one entry per repo, taken from the space that
-  // shows the repo ITSELF (a worktree's own space would branch from the same repo, so listing both
-  // would offer the same thing twice under two names). In the spaces list's order, so the first
-  // entry — the sheet's default — is the repo most recently used.
-  // Asked of the machine this view is showing (M22/03): absent `?h=` is the lead, as everywhere.
-  const canCreateWorktree = useMuxCapability("createWorktree", data.scope);
-  const worktreeRepos: WorktreeRepo[] = canCreateWorktree
-    ? data.workspaces
-        .filter((w) => w.repoRoot !== undefined && w.isWorktree === false)
-        .map((w) => ({ workspaceId: w.workspaceId, repoRoot: w.repoRoot!, label: w.label }))
-    : [];
-  // ONE TAP each in the new-space picker: the directories this operator is demonstrably already
-  // working in. Repo roots lead, because a project's root is what you want far more often than
-  // wherever a pane happens to have cd'd to; the panes' own cwds follow and fill in everything that
-  // is not a repo. Deduped in that order, and capped — a strip you scroll is not a shortcut.
-  //
-  // NARROWED TO THE MACHINE the picker will browse. A pack's rows come from every member, and a
-  // peer's path pasted into the lead's browser is a 404 with no explanation; `ambientPanes` is the
-  // same narrowing every other list on this page already does.
-  const dirShortcuts = useMemo(() => {
-    const host = data.scope?.host;
-    const onHost = <T extends { host?: string }>(row: T): boolean =>
-      host === undefined || row.host === undefined || row.host === host;
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const path of [
-      ...data.workspaces.filter(onHost).map((w) => w.repoRoot),
-      ...[...data.agents, ...data.shellPanes].filter(onHost).map((p) => p.cwd),
-    ]) {
-      if (path === undefined || path === "" || seen.has(path)) continue;
-      seen.add(path);
-      out.push(path);
-      if (out.length === 8) break;
-    }
-    return out;
-  }, [data.workspaces, data.agents, data.shellPanes, data.scope?.host]);
-  const [newSpaceOpen, setNewSpaceOpen] = useState(false);
+  // The New page's Favourites and Recent, read once ahead of the tap so the page opens at its final
+  // height (lib/folders.ts). Once per mount, for the machine this view shows.
+  const folderHost = data.scope?.host;
+  const folderSession = data.scope?.session;
+  useEffect(() => {
+    prefetchFolders({ host: folderHost, session: folderSession });
+  }, [folderHost, folderSession]);
   useLocale();
   // No `setLaunchOpen`: the launch strip is deliberately absent from this fork's dashboard (see the
   // note where upstream renders it, below), and an unused binding is a lint error.
@@ -262,6 +238,29 @@ export function HomeRoute() {
   const [reveal, setReveal] = useState<{ rowKey: string } | null>(null);
   const { refused: notPaired } = usePairing();
   const readOnly = isReadOnly(data.device) || notPaired;
+
+  // THE FLOATING NEW BUTTON (DESIGN.md §1, M48 spec 01), on the Dashboard tab only: Crew and Files
+  // are other lists, and a create entry over them would read as theirs. Drawn when this machine can
+  // open a space at all, which every start on the New page does, or has rows to run. A device that
+  // may not write gets none of it. A saved copy keeps the button drawn and refuses on the tap
+  // (`workspace-new-tab.tsx` does the same): a control that comes and goes moves what is around it.
+  const { launchers } = useLaunchers(data.scope);
+  const canCreateSpace = useMuxCapability("createSpace").capable;
+  // Whether this view can start anything at all: the empty dashboard's "Start your first agent" asks it.
+  const newOffered = view === "dashboard" && !readOnly && (canCreateSpace || launchers.length > 0);
+  // FORK: the floating button is off in production (lib/dash-tabs.ts `FORK_DASH_NEW_FAB_ON`).
+  const fabOffered = FORK_DASH_NEW_FAB_ON && newOffered;
+  const openNew = () => {
+    if (data.stale === true) return setStatus(t("space.readOnly.savedCopy"), "error");
+    // THE ONE NEW PAGE (M48 spec 01): the floating button, the Spaces header's folder button and the
+    // empty dashboard's first-agent card all go to it, on the machine this view shows.
+    nav.down(newPath({ machine: data.scope.host, session: data.scope.session }));
+  };
+  // Hidden while a sheet is up (it would sit dimmed under the backdrop, a second create entry next
+  // to the one being used) and while the keyboard is (the dashboard's filter field raises it, and
+  // the button would ride up over the list). Neither moves anything: the layer is fixed.
+  const sheetOpen = useAnySheetOpen();
+  const keyboardOpen = useKeyboardOpen();
   const herd = useMemo(() => [...data.agents, ...data.shellPanes], [data.agents, data.shellPanes]);
   // THE MACHINE FILTER (issue #288): the machines this device leaves off the list, as stored. The
   // list itself keeps the addressed machine and drops ids off the roster (lib/hidden-machines.ts). A
@@ -274,6 +273,8 @@ export function HomeRoute() {
   // scrolls, so nothing else restores this. Keyed on the scope (host + session), so two herdr
   // sessions — or two crew members — keep independent positions. See lib/scroll-memory.ts.
   const scrollRef = useScrollMemory<HTMLDivElement>(`home:${scopeKey(data.scope)}`);
+  // "+ New" shrinks to the round "+" once the list has scrolled, and grows back at the top (card 3.2).
+  const scrolled = useScrolledPast(scrollRef, 24);
 
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-screen-sm flex-1 flex-col">
@@ -349,8 +350,10 @@ export function HomeRoute() {
               glideKeyOf={paneOpen.glideKeyOf}
               onPress={paneOpen.press}
               error={data.error}
+              notPaired={notPaired}
               lastSeenAt={data.lastSeenAt}
               onClosePane={mayClose}
+              stale={data.stale === true}
               tabs={data.tabs}
               servers={data.servers}
               // Each workspace heading's "+" (M40/03): the list resolves each heading's own machine and
@@ -381,6 +384,9 @@ export function HomeRoute() {
                 ? { order: prefs.paneOrder, onOrderChange: setPaneOrder, onNeedsYouOnlyChange: setNeedsYouOnly }
                 : {})}
               onHold={setHeld}
+              // The empty dashboard's large "Start your first agent" card opens the same sheet.
+              // FORK: no New page on this install (lib/fork-shape.ts `FORK_NEW_PAGE_ON`).
+              onFirstStart={FORK_NEW_PAGE_ON && newOffered ? openNew : undefined}
               reveal={reveal}
               needsYouOnly={needsYouOnly}
               renderBody={
@@ -421,7 +427,7 @@ export function HomeRoute() {
                 shellPanes={navPanes.shellPanes}
                 host={navHost}
                 onOpen={drillInto}
-                onNewSpace={() => setNewSpaceOpen(true)}
+                onNewSpace={FORK_NEW_PAGE_ON ? openNew : undefined}
                 creatingSpace={creatingSpace}
                 open={spacesOpen}
                 onOpenChange={setSpacesOpen}
@@ -440,8 +446,18 @@ export function HomeRoute() {
         <CrewFooterLink scope={data.scope} className="px-4 pt-3" />
         <UpdateBanner className="px-4 pt-3" />
         {/* The footer below owns the safe area now, so the stamp only keeps its own air.
-            FORK: without the footer (lib/dash-tabs.ts) the stamp is the last row, so it takes it back. */}
-        <BuildStamp className={FORK_DASH_TABS_ON ? "px-4 pt-3 pb-2" : "px-4 pt-3 pb-[calc(var(--safe-bottom)+0.5rem)]"} />
+            FORK: without the footer (lib/dash-tabs.ts) the stamp is the last row, so it takes it back.
+            With the New button drawn (off here, lib/dash-tabs.ts), the stamp's air grows so the last
+            row scrolls clear of it. */}
+        <BuildStamp
+          className={
+            FORK_DASH_TABS_ON
+              ? fabOffered
+                ? "px-4 pt-3 pb-20"
+                : "px-4 pt-3 pb-2"
+              : "px-4 pt-3 pb-[calc(var(--safe-bottom)+0.5rem)]"
+          }
+        />
       </div>
 
       {/* The dashboard's footer (ADR 0066, ADR 0085): lists, each named for what it holds. Crew
@@ -485,7 +501,17 @@ export function HomeRoute() {
           z-rung, the safe-area inset — belongs to ToastViewport and is stated there once, which is
           what stopped it being three hand-rolled copies of the same four utilities. DESIGN.md §1. */}
       {/* Lifted by the footer's 56px row and its 1px rule, so a toast floats above the tabs. */}
-      <ToastViewport className={FORK_DASH_TABS_ON ? "bottom-[calc(3.5rem+1px)]" : undefined}>
+      {/* With the New button drawn, the lift also clears it (upstream 1.19). FORK: no footer and no
+          New button here (lib/dash-tabs.ts), so no lift. */}
+      <ToastViewport
+        className={
+          FORK_DASH_TABS_ON
+            ? fabOffered
+              ? "bottom-[calc(3.5rem+1px+1rem+3rem)]"
+              : "bottom-[calc(3.5rem+1px)]"
+            : undefined
+        }
+      >
         <StatusArea />
       </ToastViewport>
 
@@ -498,22 +524,42 @@ export function HomeRoute() {
         pane={held}
         scope={held === null ? data.scope : paneScope(data.scope, held, data.servers, data.sessions)}
         readOnly={readOnly}
+        // The herd on screen is the saved copy: its ids may have been reused, so nothing is renamed,
+        // focused or closed from it (the sheet shows a note, `useSpaceActions` refuses the creates).
+        savedCopy={data.stale === true}
         onRenamed={() => revalidator.revalidate()}
         onClosed={() => revalidator.revalidate()}
         herd={herd}
         onPinChange={(pane) => setReveal({ rowKey: paneRowKey(pane) })}
       />
 
-      <NewSpaceSheet
-        open={newSpaceOpen}
-        onClose={() => setNewSpaceOpen(false)}
-        onCreate={newSpace}
-        repos={worktreeRepos}
-        dirShortcuts={dirShortcuts}
-        scope={data.scope}
-        onOpenWorktree={(workspaceId, path) => void showWorktree(workspaceId, path)}
-        onCreateWorktree={(workspaceId, branch) => void newWorktree(workspaceId, branch)}
-      />
+      {fabOffered && !sheetOpen && !keyboardOpen && (
+        <Fab
+          label={t("home.new.label")}
+          // The footer's 56px row and 1px rule and the safe area under it, then 16px of air.
+          bottom="bottom-[calc(3.5rem_+_1px_+_env(safe-area-inset-bottom)_+_1rem)]"
+          busy={creatingSpace || launching.size > 0}
+          collapsed={scrolled}
+          onClick={openNew}
+        />
+      )}
     </div>
   );
+}
+
+/**
+ * Whether the element's scroll position is past `threshold` px. One passive listener, and a state
+ * change only when the answer flips, so a scroll repaints the button twice per trip, not per frame.
+ */
+function useScrolledPast(ref: RefObject<HTMLElement | null>, threshold: number): boolean {
+  const [past, setPast] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (el === null) return;
+    const read = () => setPast(el.scrollTop > threshold);
+    read();
+    el.addEventListener("scroll", read, { passive: true });
+    return () => el.removeEventListener("scroll", read);
+  }, [ref, threshold]);
+  return past;
 }

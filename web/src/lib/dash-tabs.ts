@@ -43,3 +43,18 @@ export const FORK_DASH_SHELLS_ON: boolean = import.meta.env.MODE === "test";
 // 1.17 migrates a stored Focus tab into that switch, ON, which would otherwise filter the list with no
 // way to turn it off. The switcher keeps its own order. Tests run with them (MODE "test").
 export const FORK_DASH_SUMMARY_CONTROLS_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO FLOATING "+ New" BUTTON ON THE DASHBOARD (2026-10-11, at the 1.19 merge). Upstream 1.19.0
+// puts a "+ New" button at the bottom right of the Dashboard tab that opens the New page. The
+// dashboard's shape here is the operator's (no footer, no launch strip — FORK.md), and the New page
+// stays one tap away from where creating already lived: the SPACES header's folder button, a pane's
+// "New agent on a branch", and the empty dashboard's "Start your first agent". Off at this gate,
+// routes/home.tsx draws no Fab. Tests run with it.
+export const FORK_DASH_NEW_FAB_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: THE WORKSPACE STRIP STAYS (operator, 2026-10-11, at the 1.19 merge: 「保留標籤列」). Upstream
+// 1.19.0 replaced the dashboard's chip strip with a Workspace select under the summary line (d7a323c3)
+// and deleted the strip. Off at this gate, components/agent-list.tsx draws the fork's copy of the strip
+// (components/workspace-chips.tsx) above the summary line, as 1.17.2 did, and no select row. Tests run
+// with upstream's select; routes/home-no-tabs.test.tsx pins the strip.
+export const FORK_DASH_SELECT_ON: boolean = import.meta.env.MODE === "test";

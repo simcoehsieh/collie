@@ -7,6 +7,7 @@ import { NoteSheet, NotesSheet } from "./notes-sheet";
 import { __resetNotes, addNote, buildNotesPrompt, markNotesSent, notesForPane, type NoteAnchor } from "@/lib/notes";
 import { __resetSendQueue, drainSendQueue, queuedForPane } from "@/lib/send-queue";
 import { useStatus } from "@/lib/status";
+import { markLive, resetLiveness } from "@/lib/liveness";
 import { server } from "@/test/setup";
 
 // The two sheets a note is made and spent through: what the capture surface shows and stores, and
@@ -27,6 +28,10 @@ beforeEach(() => {
   // The queue's drain is wired to the health store, which the suite re-anchors before every case —
   // so a row left here would be delivered by a timer mid-test rather than sitting where it was put.
   __resetSendQueue();
+  // The guarded send refuses a pane the bridge has not answered lately (M46 spec 11): the send cases
+  // below are about what happens AFTER the words leave, so their pane was read live just now.
+  resetLiveness();
+  markLive(PANE, Date.now(), { host: "notes-host" });
 });
 
 describe("NoteSheet", () => {

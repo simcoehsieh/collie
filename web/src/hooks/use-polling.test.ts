@@ -13,12 +13,14 @@ import {
   LOW_POWER_HOT_MS,
   saveDataRequested,
   POKE_GAP_MS,
+  RETRY_MS,
   SUPERSEDE_MS,
   intervalFor,
   type PollIntent,
   usePolling,
 } from "./use-polling";
-import { __resetLiveFeed } from "@/lib/live-feed";
+import { __resetLiveFeed, LIVE_FEED_RETRY_MS } from "@/lib/live-feed";
+import { FakeEventStream, flushStream, installFakeEventStream } from "@/test/fake-event-stream";
 import { fetchPane } from "@/lib/api";
 import { isCatchingUp, resetIdleLock, setLocked } from "@/lib/idle";
 import {
@@ -191,6 +193,93 @@ describe("intervalFor", () => {
   it("a pane the snapshot no longer knows about is not 'open'", () => {
     expect(intervalFor(idlePane, "w99:phantom", on({ changed: true }))).toBe(IDLE_MS);
   });
+
+  it("polls that got no answer retry on a doubling backoff that never exceeds the cadence", () => {
+    const home = makeData([]);
+    expect(intervalFor(home, null, on({ failures: 0 }))).toBe(IDLE_MS);
+    expect(intervalFor(home, null, on({ failures: 1 }))).toBe(RETRY_MS);
+    expect(intervalFor(home, null, on({ failures: 2 }))).toBe(RETRY_MS * 2);
+    expect(intervalFor(home, null, on({ failures: 3 }))).toBe(RETRY_MS * 4);
+    expect(intervalFor(home, null, on({ failures: 50 }))).toBe(IDLE_MS);
+    expect(intervalFor(home, null, on({ failures: 3, topologyBursting: true }))).toBe(BURST_MS);
+  });
+});
+
+describe("usePolling — retrying failed polls", () => {
+  // A stale render as the root loader hands it back: `failure` is what the run's own herd read said.
+  const failing = (failure: HomeData["failure"] = "network"): HomeData => ({
+    ...makeData([]),
+    error: true,
+    authError: failure === "other",
+    failure,
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    rr.state = "idle";
+    rr.revalidate.mockClear();
+    resetPollIntent();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Each loader result is a new object, so each rerender below is one more poll's answer.
+  it("backs off per failed result, resets on success, and does not hurry an auth refusal", () => {
+    const { rerender } = renderHook(({ data }: { data: HomeData }) => usePolling(data), {
+      initialProps: { data: failing() },
+    });
+    const expectNextTickAt = (ms: number) => {
+      rr.revalidate.mockClear();
+      vi.advanceTimersByTime(ms - 1);
+      expect(rr.revalidate).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(rr.revalidate).toHaveBeenCalledTimes(1);
+    };
+
+    expectNextTickAt(RETRY_MS);
+    act(() => rerender({ data: failing() }));
+    expectNextTickAt(RETRY_MS * 2);
+    act(() => rerender({ data: makeData([]) }));
+    expectNextTickAt(IDLE_MS);
+    act(() => rerender({ data: failing("other") }));
+    expectNextTickAt(IDLE_MS);
+    act(() => rerender({ data: failing() }));
+    expectNextTickAt(RETRY_MS);
+  });
+
+  // A 5xx is an answer: the proxy is up and the bridge behind it is not, most often mid-restart. A
+  // retry 0.5s later would be one more 5xx, and the second in a row latches the outage
+  // (lib/connection-health.ts `noteServerFailure`), so one proxy blip would turn the screen red.
+  it("a 5xx result does not shorten the gap, alone or in a run", () => {
+    const { rerender } = renderHook(({ data }: { data: HomeData }) => usePolling(data), {
+      initialProps: { data: failing("server") },
+    });
+    rr.revalidate.mockClear();
+    vi.advanceTimersByTime(IDLE_MS - 1);
+    expect(rr.revalidate).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+
+    // A 5xx between two no-answer polls ends the run: the next no-answer starts again at RETRY_MS.
+    act(() => rerender({ data: failing() }));
+    act(() => rerender({ data: failing("server") }));
+    act(() => rerender({ data: failing() }));
+    rr.revalidate.mockClear();
+    vi.advanceTimersByTime(RETRY_MS);
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+  });
+
+  // A stale render that made no read of its own (the latched navigation fast path) carries no
+  // `failure`, so it is not hurried either: the next ordinary poll is the read that decides.
+  it("a stale render with no read of its own keeps the ordinary gap", () => {
+    renderHook(({ data }: { data: HomeData }) => usePolling(data), {
+      initialProps: { data: { ...makeData([]), error: true } },
+    });
+    rr.revalidate.mockClear();
+    vi.advanceTimersByTime(IDLE_MS - 1);
+    expect(rr.revalidate).not.toHaveBeenCalled();
+  });
 });
 
 // The self-heal: a revalidation wedged in "loading" (a black-holed fetch) would otherwise no-op
@@ -332,6 +421,30 @@ describe("usePolling — superseding a wedged revalidation", () => {
     } finally {
       Reflect.deleteProperty(navigator, "onLine"); // restore the prototype getter
     }
+  });
+
+  // M46 pass 3: the network changing is the moment to ask, not the next beat of the cadence. Both
+  // events start a read at once and supersede one in flight: that read began on the network that
+  // just went away, and on a VPN with the radio off it would hang until its deadline.
+  it.each(["offline", "online"])("reads AT ONCE on `%s`, superseding a read already in flight", (event) => {
+    rr.state = "loading"; // a read is in flight, well inside SUPERSEDE_MS
+    renderHook(() => usePolling(hotData(), HOT_PANE));
+    window.dispatchEvent(new Event(event));
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads AT ONCE on `offline` from rest, before the next tick", () => {
+    rr.state = "idle";
+    renderHook(() => usePolling(makeData([]), null)); // the dashboard over an idle herd: IDLE_MS
+    window.dispatchEvent(new Event("offline"));
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("coming back to the foreground supersedes a read left in flight", () => {
+    rr.state = "loading";
+    renderHook(() => usePolling(hotData(), HOT_PANE));
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -536,33 +649,6 @@ describe("an update in flight is the fastest thing on the screen it is on", () =
   });
 });
 
-// FORK — the live feed. jsdom has no EventSource; this is the shape the hook touches, kept reachable
-// so a test can open, poke and drop the stream from outside.
-class FakeEventSource {
-  static last: FakeEventSource | null = null;
-  static CLOSED = 2;
-  readyState = 0;
-  closed = false;
-  private handlers = new Map<string, Set<(e: Event) => void>>();
-  readonly url: string;
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.last = this;
-  }
-  addEventListener(type: string, fn: (e: Event) => void): void {
-    if (!this.handlers.has(type)) this.handlers.set(type, new Set());
-    this.handlers.get(type)!.add(fn);
-  }
-  emit(type: string, data?: string): void {
-    const event = data === undefined ? new Event(type) : new MessageEvent(type, { data });
-    for (const fn of this.handlers.get(type) ?? []) fn(event);
-  }
-  close(): void {
-    this.closed = true;
-    this.readyState = FakeEventSource.CLOSED;
-  }
-}
-
 describe("intervalFor — the live feed", () => {
   const hot = () => makeData([makeAgent("w1:p1", "working")]);
   it("relaxes every herd-shaped rule to LIVE_FEED_MS while the stream is up", () => {
@@ -578,6 +664,13 @@ describe("intervalFor — the live feed", () => {
 
 describe("usePolling — the live feed", () => {
   const openPane = () => makeData([makeAgent("w1:p1", "working")]);
+  let uninstall: () => void = () => {};
+  /** Run the stream's promise chain to rest inside React's act. */
+  const settle = (fn: () => void = () => {}) =>
+    act(async () => {
+      fn();
+      await flushStream();
+    });
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -585,79 +678,92 @@ describe("usePolling — the live feed", () => {
     rr.revalidate.mockClear();
     resetPollIntent();
     __resetLiveFeed();
-    FakeEventSource.last = null;
-    Object.assign(globalThis, { EventSource: FakeEventSource });
+    uninstall = installFakeEventStream();
   });
   afterEach(() => {
+    uninstall();
     vi.useRealTimers();
     resetPollIntent();
     __resetLiveFeed();
-    Object.assign(globalThis, { EventSource: undefined });
   });
 
   it("opens one stream naming the followed pane at its window, and closes it on unmount", () => {
     const { unmount } = renderHook(() => usePolling(openPane(), "w1:p1"));
-    const source = FakeEventSource.last!;
+    const source = FakeEventStream.last!;
     expect(source.url).toBe("/api/events?pane=w1%3Ap1&lines=200");
     unmount();
-    expect(source.closed).toBe(true);
+    expect(source.aborted).toBe(true);
   });
 
   it("opens a herd-only stream on the home screen, and once the operator scrolls back", () => {
     renderHook(() => usePolling(openPane(), null));
-    expect(FakeEventSource.last!.url).toBe("/api/events");
+    expect(FakeEventStream.last!.url).toBe("/api/events");
     const { rerender } = renderHook(() => usePolling(openPane(), "w1:p1"));
-    expect(FakeEventSource.last!.url).toBe("/api/events?pane=w1%3Ap1&lines=200");
+    expect(FakeEventStream.last!.url).toBe("/api/events?pane=w1%3Ap1&lines=200");
     act(() => setFollowing(false));
     rerender();
-    expect(FakeEventSource.last!.url).toBe("/api/events");
+    expect(FakeEventStream.last!.url).toBe("/api/events");
   });
 
-  it("a poke revalidates at once; the timer falls back to LIVE_FEED_MS while the stream is up", () => {
+  it("a poke revalidates at once; the timer falls back to LIVE_FEED_MS while the stream is up", async () => {
     renderHook(() => usePolling(openPane(), "w1:p1"));
-    const source = FakeEventSource.last!;
-    act(() => source.emit("open")); // coming up is worth one read
+    const source = FakeEventStream.last!;
+    await settle(() => source.open()); // coming up is worth one read
     expect(rr.revalidate).toHaveBeenCalledTimes(1);
     rr.revalidate.mockClear();
     vi.advanceTimersByTime(HOT_MS * 3); // the hot gap no longer ticks
     expect(rr.revalidate).not.toHaveBeenCalled();
     vi.advanceTimersByTime(POKE_GAP_MS);
-    act(() => source.emit("poke", '{"kind":"pane","paneId":"w1:p1"}'));
+    await settle(() => source.poke('{"kind":"pane","paneId":"w1:p1"}'));
     expect(rr.revalidate).toHaveBeenCalledTimes(1);
     rr.revalidate.mockClear();
     vi.advanceTimersByTime(LIVE_FEED_MS);
     expect(rr.revalidate).toHaveBeenCalledTimes(1); // the safety net
   });
 
-  it("coalesces a burst of pokes onto POKE_GAP_MS", () => {
+  it("coalesces a burst of pokes onto POKE_GAP_MS", async () => {
     renderHook(() => usePolling(openPane(), "w1:p1"));
-    const source = FakeEventSource.last!;
-    act(() => source.emit("open"));
+    const source = FakeEventStream.last!;
+    await settle(() => source.open());
     rr.revalidate.mockClear();
     vi.advanceTimersByTime(POKE_GAP_MS);
-    act(() => {
-      source.emit("poke", '{"kind":"pane","paneId":"w1:p1"}');
-      source.emit("poke", '{"kind":"pane","paneId":"w1:p1"}');
-      source.emit("poke", '{"kind":"snapshot"}');
+    await settle(() => {
+      source.poke('{"kind":"pane","paneId":"w1:p1"}');
+      source.poke('{"kind":"pane","paneId":"w1:p1"}');
+      source.poke('{"kind":"snapshot"}');
     });
     expect(rr.revalidate).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(POKE_GAP_MS);
     expect(rr.revalidate).toHaveBeenCalledTimes(2); // the ones inside the gap became one more
   });
 
-  it("returns to the cadence ladder when the stream drops", () => {
+  it("returns to the cadence ladder when the stream drops", async () => {
     renderHook(() => usePolling(openPane(), "w1:p1"));
-    const source = FakeEventSource.last!;
-    act(() => source.emit("open"));
-    act(() => source.emit("error"));
+    const source = FakeEventStream.last!;
+    await settle(() => source.open());
+    await settle(() => source.end());
     rr.revalidate.mockClear();
     vi.advanceTimersByTime(HOT_MS);
     expect(rr.revalidate).toHaveBeenCalledTimes(1);
   });
 
+  // FORK (merge of upstream 1.19): every /api read needs the pairing token, and a refused stream is
+  // down, not gone. It is asked again on the feed's backoff while the poller keeps its own cadence.
+  it("a refused stream leaves the cadence ladder in charge and is asked again", async () => {
+    renderHook(() => usePolling(openPane(), "w1:p1"));
+    await settle(() => FakeEventStream.last!.refuse(403));
+    rr.revalidate.mockClear();
+    vi.advanceTimersByTime(HOT_MS);
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+    expect(FakeEventStream.all).toHaveLength(1);
+    vi.advanceTimersByTime(LIVE_FEED_RETRY_MS);
+    await settle();
+    expect(FakeEventStream.all).toHaveLength(2);
+  });
+
   it("does not open a stream for a member host", () => {
     renderHook(() => usePolling(openPane(), "w1:p1", { host: "badger" }));
-    expect(FakeEventSource.last).toBeNull();
+    expect(FakeEventStream.last).toBeNull();
   });
 
   // FORK: a poke that names a version the page already holds is a fetch we can prove would 304.
@@ -674,17 +780,17 @@ describe("usePolling — the live feed", () => {
     );
     await fetchPane("w1:p1");
     renderHook(() => usePolling(openPane(), "w1:p1"));
-    const source = FakeEventSource.last!;
-    act(() => source.emit("open"));
+    const source = FakeEventStream.last!;
+    await settle(() => source.open());
     rr.revalidate.mockClear();
     vi.advanceTimersByTime(POKE_GAP_MS);
-    act(() => source.emit("poke", '{"kind":"pane","paneId":"w1:p1","etag":"\\"held\\""}'));
+    await settle(() => source.poke('{"kind":"pane","paneId":"w1:p1","etag":"\\"held\\""}'));
     expect(rr.revalidate).not.toHaveBeenCalled();
     // A stamp for bytes we do NOT hold, and an unstamped poke, both read.
-    act(() => source.emit("poke", '{"kind":"pane","paneId":"w1:p1","etag":"\\"moved\\""}'));
+    await settle(() => source.poke('{"kind":"pane","paneId":"w1:p1","etag":"\\"moved\\""}'));
     expect(rr.revalidate).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(POKE_GAP_MS);
-    act(() => source.emit("poke", '{"kind":"pane","paneId":"w1:p1"}'));
+    await settle(() => source.poke('{"kind":"pane","paneId":"w1:p1"}'));
     expect(rr.revalidate).toHaveBeenCalledTimes(2);
   });
 });

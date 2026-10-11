@@ -625,6 +625,16 @@ export function buildNotesPrompt(notes: readonly Note[], options: NotesPromptOpt
   return parts.join("\n\n");
 }
 
+/**
+ * Forget every note, in memory and on disk. The unpair wipe runs it (lib/wipe.ts): a note quotes
+ * what a session showed, which is session content, and nothing saved under a pairing may outlive it.
+ */
+export function forgetAllNotes(): void {
+  panes = new Map();
+  loaded = true;
+  emit();
+}
+
 /** Tests only: forget everything, including what was persisted. */
 export function __resetNotes(): void {
   panes = new Map();

@@ -52,16 +52,19 @@ import {
 } from "lucide-react";
 
 import { DiffView, TokenLine, useSyntaxTokens } from "@/components/changes-view";
+import { isPlainClick, useFileLinks } from "@/components/file-links";
 import { MarkdownText } from "@/components/markdown-text";
 import { MIRROR_INVERT, MIRROR_SPACE } from "@/components/mirror-space";
 import { StatusDot } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Collapse } from "@/components/ui/collapse";
+import { CopyableBlock } from "@/components/ui/copyable-block";
 import { OneOf } from "@/components/ui/one-of";
 import { SectionLabel } from "@/components/ui/section-label";
 import { useLocale } from "@/hooks/use-locale";
 import type { ChatItem, ChatToolCall, ChatToolStatus } from "@/lib/chat-items";
+import { findFilePaths } from "@/lib/file-paths";
 import { clockTime } from "@/lib/format";
 import { t, tn, type PluralKey } from "@/lib/i18n";
 import type { Hunk, ToolQuestion } from "@/lib/types";
@@ -524,6 +527,79 @@ export function PathLabel({ path, className }: { path: string; className?: strin
 }
 
 /**
+ * A tool's path, tappable when it resolves under the Changes root and exists there (ADR 0088): an Edit, a Write or a
+ * Read opens that file in Files, a Read at the first line it read. The label is the same
+ * `PathLabel`, with the underline every in-app link wears; a path that resolves nowhere, or a screen
+ * with no opener, draws the plain label. Never inside a button: the caller only uses it in a row
+ * that is not one.
+ */
+function ToolPath({ path, line }: { path: string; line?: number }) {
+  const open = useFileLinks();
+  const target = open === null ? null : open(line === undefined ? { path } : { path, line });
+  if (target === null) return <PathLabel path={path} />;
+  return (
+    <a
+      href={target.href}
+      onClick={(e) => {
+        if (e.defaultPrevented || !isPlainClick(e)) return;
+        e.preventDefault();
+        target.onOpen();
+      }}
+      className="flex min-w-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+    >
+      <PathLabel path={path} className="[&>span]:underline [&>span]:underline-offset-2" />
+    </a>
+  );
+}
+
+/**
+ * What a call printed, with every path in it that resolves under the Changes root and exists there
+ * tappable (ADR 0088).
+ * A Grep or a Glob prints the files it found, one per line, and those are the paths worth a tap. The
+ * search's own folder (`where`) stays text: it sits inside a translated sentence, in a row that is
+ * the output's toggle button, and a link inside a button is not a link. Line by line, so a wrapped
+ * path is never joined across a break.
+ */
+function PathText({ text }: { text: string }) {
+  const open = useFileLinks();
+  const nodes = useMemo(() => {
+    if (open === null) return null;
+    const out: ReactNode[] = [];
+    let base = 0;
+    let at = 0;
+    for (const row of text.split("\n")) {
+      for (const f of findFilePaths(row)) {
+        const target = open(f);
+        if (target === null) continue;
+        const start = base + f.start;
+        const end = base + f.end;
+        if (start > at) out.push(text.slice(at, start));
+        out.push(
+          <a
+            key={start}
+            href={target.href}
+            onClick={(e) => {
+              if (e.defaultPrevented || !isPlainClick(e)) return;
+              e.preventDefault();
+              target.onOpen();
+            }}
+            className="underline underline-offset-2"
+          >
+            {text.slice(start, end)}
+          </a>,
+        );
+        at = end;
+      }
+      base += row.length + 1;
+    }
+    if (out.length === 0) return null;
+    if (at < text.length) out.push(text.slice(at));
+    return out;
+  }, [open, text]);
+  return <>{nodes ?? text}</>;
+}
+
+/**
  * The host's part of a card, and the glide it arrives and leaves on.
  *
  * Both halves go through `Collapse` (DESIGN.md §11, hard rule 1), so the blocks around the card
@@ -574,7 +650,7 @@ export function ToolCard({
   switch (tool.kind) {
     case "edit":
       return (
-        <Card data-waiting={anchor} className={cn("gap-0 overflow-hidden py-0", held)}>
+        <Card data-waiting={anchor} className={cn("gap-0 py-0", held)}>
           <ToolHead
             icon={tool.created ? FilePlusCorner : Pencil}
             label={t(tool.created ? "chat.card.create" : "chat.card.edit")}
@@ -586,17 +662,19 @@ export function ToolCard({
               </span>
             }
           >
-            <PathLabel path={tool.path} />
+            <ToolPath path={tool.path} />
           </ToolHead>
           {tool.diff && tool.diff.length > 0 && (
-            <HunkDiff hunks={tool.diff} path={tool.path} limit={preview ? 30 : 16} />
+            <CopyableBlock text={tool.diff.map((hunk) => [hunk.header, ...hunk.lines].join("\n")).join("\n")}>
+              <HunkDiff hunks={tool.diff} path={tool.path} limit={preview ? 30 : 16} />
+            </CopyableBlock>
           )}
           <WaitingArea waiting={waiting} />
         </Card>
       );
     case "execute":
       return (
-        <Card data-waiting={anchor} className={cn("gap-0 overflow-hidden py-0", held)}>
+        <Card data-waiting={anchor} className={cn("gap-0 py-0", held)}>
           <ToolHead icon={SquareTerminal} label={t("chat.card.run")} status={status} exitCode={tool.exitCode}>
             {tool.description && (
               <span className="font-content min-w-0 truncate text-muted-foreground">{tool.description}</span>
@@ -609,7 +687,7 @@ export function ToolCard({
     case "read":
       return (
         <LineTool anchor={anchor} icon={FileText} label={t("chat.card.read")} status={status} waiting={waiting}>
-          <PathLabel path={tool.path} />
+          <ToolPath path={tool.path} line={tool.range?.[0]} />
           {tool.range && (
             <span className="shrink-0 pl-1.5 text-muted-foreground tabular-nums">
               {t("chat.card.lines", { from: tool.range[0], to: tool.range[1] })}
@@ -869,7 +947,7 @@ function LineTool({
       {body && <p className="font-content whitespace-pre-wrap break-words px-2 pb-1.5 text-sm">{body}</p>}
       {open && output !== undefined && (
         <pre className="mx-2 mb-2 max-h-80 overflow-auto rounded-md border border-border bg-background px-2 py-1.5 font-mono text-[11px] leading-snug [font-variant-ligatures:none] whitespace-pre-wrap break-words">
-          {output}
+          <PathText text={output} />
         </pre>
       )}
       <WaitingArea waiting={waiting} line />
@@ -890,14 +968,20 @@ function CommandBlock({ command, output, preview }: { command: string; output?: 
   const shown = all ? lines : lines.slice(-TAIL);
   return (
     <>
-      <div className={cn("mx-2 mb-2 overflow-hidden rounded-md font-mono text-[11px] leading-[1.4]", MIRROR_SPACE, MIRROR_INVERT)}>
-        <div className="px-2.5 py-2">
-          <div className="line-clamp-6 whitespace-pre-wrap break-words">
-            <span className="text-[#23d18b]">$</span> {command}
+      <div className="mx-2 mb-2 rounded-md">
+        <CopyableBlock text={command} label={t("copyable.command")}>
+          {/* With the output open below, a one-line command is shorter than a copy icon's 44px reach,
+              and the output icon's reach would take the bottom of this one; min-h-11 keeps them apart. */}
+          <div className={cn("rounded-t-md px-2.5 py-2 font-mono text-[11px] leading-[1.4]", open && lines.length > 0 ? "min-h-11" : "rounded-b-md", MIRROR_SPACE, MIRROR_INVERT)}>
+            <div className="line-clamp-6 whitespace-pre-wrap break-words">
+              <span className="text-[#23d18b]">$</span> {command}
+            </div>
           </div>
-        </div>
+        </CopyableBlock>
         {open && lines.length > 0 && (
-          <pre className="m-0 overflow-x-auto border-t border-white/10 px-2.5 py-2 whitespace-pre">{shown.join("\n")}</pre>
+          <CopyableBlock text={output ?? ""} label={t("copyable.output")}>
+            <pre className={cn("m-0 overflow-x-auto rounded-b-md border-t border-white/10 px-2.5 py-2 font-mono text-[11px] leading-[1.4] whitespace-pre", MIRROR_SPACE, MIRROR_INVERT)}>{shown.join("\n")}</pre>
+          </CopyableBlock>
         )}
       </div>
       {/* Output that arrives after the card is on screen (the run the reader just allowed) slides
@@ -962,7 +1046,7 @@ function HunkDiff({ hunks, path, limit }: { hunks: Hunk[]; path: string; limit: 
   const max = open ? total : limit;
   const text = useMemo(() => numberedDiff(hunks, max), [hunks, max]);
   return (
-    <div className="border-t border-border">
+    <div className="overflow-hidden rounded-b-md border-t border-border">
       {text !== null ? <DiffView diff={text} path={path} /> : <PlainDiff hunks={hunks} path={path} limit={max} />}
       {/* The same sentence a command's output fold says, so one message serves both. */}
       {total > limit && (

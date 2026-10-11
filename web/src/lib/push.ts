@@ -8,6 +8,7 @@ import {
   urlB64ToUint8Array,
   type SubscribeAck,
 } from "@/lib/push-heal";
+import { rememberedEndpoint, rememberEndpoint } from "@/lib/push-endpoint";
 import type { BridgeConfig } from "@/lib/types";
 
 // Client-side control of Web Push: the browser subscription plus a per-device preference. We persist
@@ -25,9 +26,6 @@ import type { BridgeConfig } from "@/lib/types";
 // here across reloads.
 
 const PREF_KEY = "collie:push-disabled";
-/** The endpoint this device last registered with the bridge, so the next one can supersede it. */
-const ENDPOINT_KEY = "collie:push-endpoint";
-let volatileEndpoint: string | null | undefined;
 const PUSH_OPERATION_TIMEOUT_MS = 30_000;
 
 export type PushAvailability =
@@ -65,26 +63,6 @@ function setUserDisabled(disabled: boolean): void {
     else localStorage.removeItem(PREF_KEY);
   } catch {
     /* private mode / storage blocked — the preference just won't persist */
-  }
-}
-
-function rememberedEndpoint(): string | null {
-  if (volatileEndpoint !== undefined) return volatileEndpoint;
-  try {
-    return localStorage.getItem(ENDPOINT_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function rememberEndpoint(endpoint: string | null): void {
-  try {
-    if (endpoint === null) localStorage.removeItem(ENDPOINT_KEY);
-    else localStorage.setItem(ENDPOINT_KEY, endpoint);
-    volatileEndpoint = undefined;
-  } catch {
-    // Keep the acknowledgement for this page when persistent storage is unavailable.
-    volatileEndpoint = endpoint;
   }
 }
 
@@ -237,14 +215,16 @@ export function installResubscribeListener(): () => void {
   // partial `serviceWorker` carrying only the members they use, and a listener this page cannot
   // install is a no-op, never a throw on mount.
   if (sw === undefined || !("addEventListener" in sw)) return () => {};
-  const onMessage = (event: MessageEvent) => {
-    // SAFETY: `MessageEvent.data` is `any` — a structured clone from our own worker, which posts
-    // exactly `{ type, endpoint }`; anything else fails the comparisons and is ignored.
-    const data = event.data as { type?: string; endpoint?: string } | null;
-    if (data?.type === RESUBSCRIBED_MESSAGE && data.endpoint) rememberEndpoint(String(data.endpoint));
-  };
-  sw.addEventListener("message", onMessage);
-  return () => sw.removeEventListener("message", onMessage);
+  sw.addEventListener("message", onResubscribedMessage);
+  return () => sw.removeEventListener("message", onResubscribedMessage);
+}
+
+/** The worker's word that it re-subscribed: remember the new endpoint (upstream's push-endpoint store). */
+function onResubscribedMessage(event: MessageEvent): void {
+  // SAFETY: `MessageEvent.data` is `any` — a structured clone from our own worker, which posts
+  // exactly `{ type, endpoint }`; anything else fails the comparisons and is ignored.
+  const data = event.data as { type?: string; endpoint?: string } | null;
+  if (data?.type === RESUBSCRIBED_MESSAGE && data.endpoint) rememberEndpoint(String(data.endpoint));
 }
 
 // Unsubscribe this device and remember the choice. This is the case the server-side prune DOES

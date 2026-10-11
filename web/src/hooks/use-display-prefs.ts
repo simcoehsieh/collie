@@ -3,6 +3,7 @@ import { applePlatform } from "@/lib/env";
 import type { CSSProperties } from "react";
 import { asJsonBoolean, asJsonNumber, asJsonObject, asJsonString, parseJsonObject } from "@/lib/json";
 import type { JsonValue } from "@/lib/json";
+import { dropChatTails, isKeepChat, KEEP_CHAT_DEFAULT, type KeepChat } from "@/lib/chat-tail";
 
 // Terminal mirror display preferences, persisted in localStorage.
 // Safe to call in SSR contexts (localStorage guarded throughout).
@@ -121,6 +122,26 @@ export interface DisplayPrefs {
    * it has no journal for.
    */
   paneView: Record<string, PaneView>;
+  /**
+   * How long this phone keeps the Chat tail of each pane, to read with the bridge out of reach:
+   * `off`, `1d` (the default) or `7d` (M46 spec 09, lib/chat-tail.ts). Read at each write, so a change
+   * applies from the next write on. Choosing `off` also deletes every tail already kept.
+   *
+   * Optional in the TYPE only, so the many literal prefs in the component tests stay valid: every
+   * read goes through {@link keepChatOf}, and `loadPrefs` always fills it.
+   */
+  keepChat?: KeepChat;
+  /**
+   * Which thumb the pane screen is laid out for: `right` (the default) or `left`. Read by the pane
+   * (components/agent-chat.tsx), which hands it to the composer; `left` turns the belt round, with
+   * the Switch at its left end above Send, and puts Send and Attach left of the reply field
+   * (components/actions-row.tsx, composer.tsx).
+   *
+   * Optional, and absent until the operator picks one: every read goes through {@link handOf}, which
+   * answers `right` for an absent value, so the literal prefs in the component tests stay valid and
+   * a payload written before the setting existed reads the right hand.
+   */
+  hand?: Hand;
 }
 
 /** FORK: which of the pane's two representations is on screen. */
@@ -172,6 +193,21 @@ export function seedPaneView(paneKey: string, view: PaneView): void {
   } catch {
     // Ignore quota / SSR write errors — the pane simply opens on its default view.
   }
+}
+
+/** The two hands the pane screen can be laid out for. */
+export const HANDS = ["right", "left"] as const;
+export type Hand = (typeof HANDS)[number];
+export const HAND_DEFAULT: Hand = "right";
+
+/** Narrow a string of unknown provenance (a stored pref, a segmented value) to a Hand. */
+export function isHand(value: string | undefined): value is Hand {
+  return HANDS.some((hand) => hand === value);
+}
+
+/** The hand of a prefs value, with the default where a literal left it out. */
+export function handOf(prefs: DisplayPrefs): Hand {
+  return prefs.hand ?? HAND_DEFAULT;
 }
 
 /** The terminal font families offered in Settings. A closed list, not a free-text box: an
@@ -320,6 +356,7 @@ const DEFAULTS: DisplayPrefs = {
   controlsOpen: false,
   // FORK: empty is "nobody has chosen for any pane yet" — see `paneViewFor` for what that resolves to.
   paneView: {},
+  keepChat: KEEP_CHAT_DEFAULT,
 };
 
 /** A stored view word, or undefined — the one place the two spellings are checked. */
@@ -349,6 +386,19 @@ function readPaneView(raw: JsonValue | undefined): DisplayPrefs["paneView"] {
 
 function readFontFamily(value: string | undefined): FontFamily {
   return value !== undefined && isFontFamily(value) ? value : DEFAULTS.fontFamily;
+}
+
+function readHand(value: string | undefined): Hand | undefined {
+  return isHand(value) ? value : undefined;
+}
+
+function readKeepChat(value: string | undefined): KeepChat {
+  return isKeepChat(value) ? value : KEEP_CHAT_DEFAULT;
+}
+
+/** The Chat tail setting of a prefs value, with the default where a literal left it out. */
+export function keepChatOf(prefs: DisplayPrefs): KeepChat {
+  return prefs.keepChat ?? KEEP_CHAT_DEFAULT;
 }
 
 function clampChatFont(n: number): number {
@@ -417,6 +467,15 @@ export function applyDraftFontSize(pref: number, zoomsOnSmallInput: boolean): nu
   return zoomsOnSmallInput ? Math.max(size, IOS_NO_ZOOM_FONT_PX) : size;
 }
 
+/**
+ * The stored display preferences, read now. For a module that needs one value at the moment it acts
+ * rather than a subscription: the Chat tail's write-through (hooks/use-chat-window.ts) reads
+ * `keepChat` here on each write, so a change made in Settings applies to the very next write.
+ */
+export function loadDisplayPrefs(): DisplayPrefs {
+  return loadPrefs();
+}
+
 function loadPrefs(): DisplayPrefs {
   try {
     const raw = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
@@ -451,6 +510,11 @@ function loadPrefs(): DisplayPrefs {
       // mode existed carries no map, which reads as "no pane has been chosen for" and lets
       // `paneViewFor` answer per kind.
       paneView: readPaneView(p.paneView),
+      // The same independent default: a payload written before the setting existed reads 1 day.
+      keepChat: readKeepChat(asJsonString(p.keepChat)),
+      // Absent until the operator picks one, so a payload written before the setting existed (and
+      // one that picked the default) reads the right hand through {@link handOf}.
+      hand: readHand(asJsonString(p.hand)),
     };
   } catch {
     return DEFAULTS;
@@ -507,6 +571,10 @@ export interface UseDisplayPrefsReturn {
   setControlsOpen: (controlsOpen: boolean) => void;
   /** FORK: remember which view ONE pane opens in. `paneKey` is `paneScopeKey(scope, paneId)`. */
   setPaneView: (paneKey: string, view: PaneView) => void;
+  /** How long this phone keeps the Chat tail. `off` also deletes every tail already kept. */
+  setKeepChat: (keepChat: KeepChat) => void;
+  /** Which thumb the pane screen is laid out for. */
+  setHand: (hand: Hand) => void;
 }
 
 export function useDisplayPrefs(): UseDisplayPrefsReturn {
@@ -610,6 +678,25 @@ export function useDisplayPrefs(): UseDisplayPrefsReturn {
     });
   }, []);
 
+  const setKeepChat = useCallback((keepChat: KeepChat) => {
+    setPrefs((p) => {
+      const next: DisplayPrefs = { ...p, keepChat };
+      savePrefs(next);
+      return next;
+    });
+    // Outside the updater, which React may run twice: the delete is a side effect, and "off" means
+    // nothing is kept from this moment, not from the next write.
+    if (keepChat === "off") void dropChatTails();
+  }, []);
+
+  const setHand = useCallback((hand: Hand) => {
+    setPrefs((p) => {
+      const next: DisplayPrefs = { ...p, hand };
+      savePrefs(next);
+      return next;
+    });
+  }, []);
+
   return {
     prefs,
     setPaneView,
@@ -623,5 +710,7 @@ export function useDisplayPrefs(): UseDisplayPrefsReturn {
     setTapToFocus,
     setExpandClippedReply,
     setControlsOpen,
+    setKeepChat,
+    setHand,
   };
 }

@@ -1,8 +1,9 @@
 import { useEffect, useSyncExternalStore } from "react";
 
-import { fetchConfig } from "@/lib/api";
+import { fetchConfig, __resetConfigMemo } from "@/lib/api";
 import { acceptOperatorFonts, applyOperatorFonts, type OperatorFontFace } from "@/lib/operator-fonts";
 import { designPrefs, subscribeDesign } from "@/lib/design";
+import { getDeviceToken, subscribePairing } from "@/lib/pairing";
 import type {
   MuxConfig,
   OperatorCommand,
@@ -79,6 +80,13 @@ const listeners = new Set<() => void>();
 function emit(): void {
   for (const fn of listeners) fn();
 }
+
+// Reads need the pairing token (ADR 0086), so an unpaired cold open is refused this one-shot read.
+// The moment a token arrives, ask again: the freshly paired phone gets its rows, its faces and its
+// multiplexer block without a reload. Nothing happens once a read has succeeded.
+subscribePairing(() => {
+  if (!loaded && inflight === null && getDeviceToken() !== null) void loadOperatorCommands();
+});
 
 /** Read the list once per page load. Concurrent callers share the one in-flight request. */
 export function loadOperatorCommands(): Promise<void> {
@@ -340,6 +348,9 @@ export function useOperatorQuickReplies(): readonly OperatorQuickReplyRow[] {
 
 /** Test helper — reset module state between cases. */
 export function __resetOperatorCommands(): void {
+  // FORK: the fork memoises `/api/config` (lib/api.ts), so a reset of this store must forget that read
+  // too, or the next load answers from the read this reset meant to drop.
+  __resetConfigMemo();
   hostMux.clear();
   hostMuxInflight.clear();
   current = [];

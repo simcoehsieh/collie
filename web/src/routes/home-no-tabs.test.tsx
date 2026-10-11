@@ -25,6 +25,13 @@ vi.mock("@/lib/dash-tabs", () => ({
   FORK_HEADING_NEW_TAB_ON: false,
   FORK_DASH_SHELLS_ON: false,
   FORK_DASH_SUMMARY_CONTROLS_ON: false,
+  FORK_DASH_NEW_FAB_ON: false,
+  FORK_DASH_SELECT_ON: false,
+}));
+// FORK: the New page is off on this install (lib/fork-shape.ts); the rest of that module is real.
+vi.mock("@/lib/fork-shape", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/fork-shape")>()),
+  FORK_NEW_PAGE_ON: false,
 }));
 vi.mock("@/hooks/use-loading-stalled", () => ({
   useLoadingStalled: () => false,
@@ -72,6 +79,8 @@ function renderHome() {
   render(<RouterProvider router={router} />);
 }
 
+// The herd list is on screen: the fork's workspace strip (components/workspace-chips.tsx) is the one
+// control every render with a pane draws here.
 const settled = () => screen.findByRole("navigation", { name: /spaces/i });
 
 describe("dashboard without the footer (fork)", () => {
@@ -93,6 +102,23 @@ describe("dashboard without the footer (fork)", () => {
     // "collie" holds only a working agent: the Focus filter would have dropped it.
     expect(screen.getAllByText("collie").length).toBeGreaterThan(0);
     expect(screen.getByText(/1 working/i)).toBeInTheDocument();
+  });
+
+  it("draws no floating New button and no door to the New page (1.19)", async () => {
+    renderHome();
+    await settled();
+    expect(screen.queryByRole("button", { name: /new space/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Start your first agent/ })).toBeNull();
+    expect(document.querySelector('[data-slot="fab"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: /^\+?\s*New$/ })).toBeNull();
+  });
+
+  it("keeps the workspace strip on top and draws no Workspace select (1.19)", async () => {
+    renderHome();
+    await settled();
+    const strip = screen.getByRole("navigation", { name: /spaces/i });
+    expect(within(strip).getByRole("button", { name: /^All/ })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Workspace" })).toBeNull();
   });
 
   it("draws no Panes / Focus / Changes bar", async () => {

@@ -6,20 +6,27 @@ import {
   filesParent,
   filesPath,
   homePath,
+  decodedPath,
   isAncestor,
   machinePath,
   machinesPath,
   machineTabOf,
+  newAddPath,
+  newPath,
   pairLandingPath,
   panePath,
   parentChain,
   readFrom,
+  readNewAddKind,
+  readNewAt,
+  resolveTreeUp,
   resolveUp,
   resolveUpTo,
   resolveUpToExact,
   settingsPath,
   spaceChangesCommitPath,
   spaceFilesPath,
+  treeUpLanding,
   updatesPath,
   upTarget,
 } from "./nav";
@@ -129,6 +136,62 @@ describe("homePath", () => {
   });
 });
 
+describe("the New page's address", () => {
+  it("is /new, with the machine, the pane and the session in the query only when given", () => {
+    expect(newPath()).toBe("/new");
+    expect(newPath({})).toBe("/new");
+    expect(newPath({ machine: "mini" })).toBe("/new?machine=mini");
+    expect(newPath({ machine: "mini", pane: "w1:p1", session: "demo" })).toBe("/new?machine=mini&pane=w1%3Ap1&s=demo");
+    expect(newPath({ pane: "w1:p1" })).toBe("/new?pane=w1%3Ap1");
+  });
+
+  it("reads back what it wrote, and blank values as absent", () => {
+    expect(readNewAt("?machine=mini&pane=w1%3Ap1&s=demo")).toEqual({ machine: "mini", pane: "w1:p1", session: "demo" });
+    expect(readNewAt("")).toEqual({ machine: undefined, pane: undefined, session: undefined });
+    expect(readNewAt("?machine=%20&pane=")).toEqual({ machine: undefined, pane: undefined, session: undefined });
+  });
+
+  it("carries the item to open on (?pick=) back from Add your own, and reads it back", () => {
+    expect(newPath({ machine: "mini", pick: "row:claude --model opus" })).toBe("/new?machine=mini&pick=row%3Aclaude+--model+opus");
+    expect(readNewAt("?pick=row%3Aclaude+--model+opus").pick).toBe("row:claude --model opus");
+    expect(readNewAt("").pick).toBeUndefined();
+  });
+});
+
+describe("Add your own's address", () => {
+  it("is /new/add with the half to open on, then the machine, the pane and the session when given", () => {
+    expect(newAddPath()).toBe("/new/add?kind=agent");
+    expect(newAddPath({}, "command")).toBe("/new/add?kind=command");
+    expect(newAddPath({ machine: "mini", pane: "w1:p1", session: "demo" }, "agent")).toBe(
+      "/new/add?kind=agent&machine=mini&pane=w1%3Ap1&s=demo",
+    );
+  });
+
+  it("reads the half back: only command is Command", () => {
+    expect(readNewAddKind("?kind=command")).toBe("command");
+    expect(readNewAddKind("?kind=agent")).toBe("agent");
+    expect(readNewAddKind("?kind=other")).toBe("agent");
+    expect(readNewAddKind("")).toBe("agent");
+  });
+
+  it("sits below the New page: the dashboard, a space and a pane are above it, and so is /new", () => {
+    expect(isAncestor("/new", "/new/add")).toBe(true);
+    expect(isAncestor("/", "/new/add")).toBe(true);
+    expect(isAncestor("/pane/w1%3Ap1", "/new/add")).toBe(true);
+    expect(isAncestor("/settings", "/new/add")).toBe(false);
+    expect(isAncestor("/new/add", "/new")).toBe(false);
+  });
+
+  it("a cold deep link has the New page it names behind it, and that page's own parents", () => {
+    expect(parentChain("/new/add", "?kind=agent")).toEqual(["/", "/new"]);
+    expect(parentChain("/new/add", "?kind=command&machine=mini&pane=w1%3Ap1&s=demo")).toEqual([
+      "/?h=mini&s=demo",
+      "/pane/w1%3Ap1?h=mini&s=demo",
+      "/new?machine=mini&pane=w1%3Ap1&s=demo",
+    ]);
+  });
+});
+
 describe("updatesPath", () => {
   // A CHILD path of settings, not an anchor inside it — so "back" from the page lands on Settings
   // and the router can hold the two as separate routes.
@@ -218,6 +281,13 @@ describe("ancestorsOf / isAncestor: the level tree", () => {
     ["/settings", "/machines/bluefin", true],
     ["/machines/workshop", "/machines/bluefin", false],
     ["/pane/w1%3Ap1", "/machines/bluefin", false],
+    // The New page is opened from the dashboard, a space, or a pane's menu; nothing else is above it.
+    ["/", "/new", true],
+    ["/space/w1?h=badger", "/new", true],
+    ["/pane/w1%3Ap1", "/new", true],
+    ["/pane/w1%3Ap1/history", "/new", false],
+    ["/settings", "/new", false],
+    ["/new", "/new", false],
     ["/", "/nowhere", false],
   ])("%s above %s: %s", (from, here, expected) => {
     expect(isAncestor(from, here)).toBe(expected);
@@ -320,6 +390,11 @@ describe("parentChain: what a cold deep link gets behind it", () => {
     ["/machines", "", ["/", "/settings"]],
     ["/machines/bluefin", "", ["/", "/settings", "/machines"]],
     ["/machines/bluefin", "?h=badger", ["/?h=badger", "/settings?h=badger", "/machines?h=badger"]],
+    // The New page: the screen it names behind it. A pane's worktree gets the pane too.
+    ["/new", "", ["/"]],
+    ["/new", "?machine=mini", ["/?h=mini"]],
+    ["/new", "?pane=w1%3Ap1", ["/", "/pane/w1%3Ap1"]],
+    ["/new", "?machine=mini&pane=w1%3Ap1&s=demo", ["/?h=mini&s=demo", "/pane/w1%3Ap1?h=mini&s=demo"]],
     ["/nowhere", "", []],
   ])("%s%s → %j", (pathname, search, expected) => {
     expect(parentChain(pathname, search)).toEqual(expected);
@@ -331,6 +406,12 @@ describe("the Changes tree's paths", () => {
     expect(filesPath("w1:p1", undefined, { dir: "src/lib" })).toBe("/pane/w1%3Ap1/changes/files?dir=src%2Flib");
     expect(filesPath("w1:p1", undefined, { path: "a b.md" })).toBe("/pane/w1%3Ap1/changes/files?path=a+b.md");
     expect(spaceFilesPath("w1", undefined, { dir: "docs" })).toBe("/space/w1/changes/files?dir=docs");
+  });
+
+  it("carries a file's line after its path, and only a real line of a file (ADR 0088)", () => {
+    expect(filesPath("w1:p1", undefined, { path: "src/a.ts", line: 12 })).toBe("/pane/w1%3Ap1/changes/files?path=src%2Fa.ts&line=12");
+    expect(filesPath("w1:p1", undefined, { path: "a.ts", line: 0 })).toBe("/pane/w1%3Ap1/changes/files?path=a.ts");
+    expect(filesPath("w1:p1", undefined, { dir: "src", line: 3 })).toBe("/pane/w1%3Ap1/changes/files?dir=src");
   });
 
   it("keeps the machine and session in front of the folder", () => {
@@ -403,6 +484,55 @@ describe("resolveUpToExact: a folder level of the Files view", () => {
   });
 });
 
+describe("resolveTreeUp: the arrow inside the Files tree goes back where you came from", () => {
+  const parent = "/pane/w1/changes/files?dir=src/lib";
+
+  it("steps back onto a pane that printed the path, not up the folders", () => {
+    expect(resolveTreeUp("/pane/w1", parent)).toEqual({ kind: "back" });
+  });
+
+  it("steps back onto the diff a Preview came from, and onto a Markdown file a link came from", () => {
+    expect(resolveTreeUp("/pane/w1/changes?repo=.&path=a.ts", parent)).toEqual({ kind: "back" });
+    expect(resolveTreeUp("/pane/w1/changes/files?path=docs/README.md", parent)).toEqual({ kind: "back" });
+  });
+
+  it("still steps back onto the parent folder when that is where it came from", () => {
+    expect(resolveTreeUp(parent, parent)).toEqual({ kind: "back" });
+  });
+
+  it("replaces onto the parent folder on a cold deep link and on the first entry", () => {
+    expect(resolveTreeUp(undefined, parent)).toEqual({ kind: "replace", to: parent });
+    expect(resolveTreeUp("/pane/w1", parent, false)).toEqual({ kind: "replace", to: parent });
+  });
+});
+
+describe("treeUpLanding: naming where the tree's arrow lands", () => {
+  it("names a pane, its history, a space and the dashboard", () => {
+    expect(treeUpLanding("/pane/w1:p2?h=badger", true, false)).toBe("pane");
+    expect(treeUpLanding("/pane/w1/history", true, false)).toBe("pane");
+    expect(treeUpLanding("/space/w1", true, false)).toBe("workspace");
+    expect(treeUpLanding("/", true, false)).toBe("dashboard");
+  });
+
+  it("names a Changes diff or the change list as the list", () => {
+    expect(treeUpLanding("/pane/w1/changes?repo=.&path=a.ts", true, false)).toBe("list");
+    expect(treeUpLanding("/space/w1/changes/commit?repo=.", true, false)).toBe("list");
+    expect(treeUpLanding("/space/w1/changes", false, true)).toBe("list");
+  });
+
+  it("keeps the folder and parent labels when it steps back onto the tree's own root, folders and files", () => {
+    expect(treeUpLanding("/space/w1/changes", false, false)).toBe("parent");
+    expect(treeUpLanding("/pane/w1/changes/files?dir=a", false, false)).toBe("parent");
+    expect(treeUpLanding("/pane/w1/changes/files?path=a/b.md", true, false)).toBe("folder");
+  });
+
+  it("keeps the labels the arrow always had when it replaces", () => {
+    expect(treeUpLanding(undefined, true, false)).toBe("folder");
+    expect(treeUpLanding(undefined, false, false)).toBe("parent");
+    expect(treeUpLanding("/pane/w1", false, false, false)).toBe("parent");
+  });
+});
+
 describe("readPreviewAsked: the diff's Preview offer", () => {
   it("is true only for the one value the offer writes", () => {
     expect(readPreviewAsked({ from: "/pane/w1/changes", fileView: "preview" })).toBe(true);
@@ -411,3 +541,19 @@ describe("readPreviewAsked: the diff's Preview offer", () => {
     expect(readPreviewAsked(undefined)).toBe(false);
   });
 });
+
+describe("two spellings of one pane id", () => {
+  it("a colon and %3A name the same screen for every up move", () => {
+    expect(isAncestor("/pane/w1:p2", "/pane/w1%3Ap2/changes")).toBe(true);
+    expect(isAncestor("/pane/w1%3Ap2", "/pane/w1:p2/history")).toBe(true);
+    expect(resolveUp("/pane/w1%3Ap2/changes", "/pane/w1:p2", "/pane/w1%3Ap2")).toEqual({ kind: "back" });
+    expect(resolveUpTo("/space/w1%3Ax", "/space/w1:x")).toEqual({ kind: "back" });
+    expect(resolveUpToExact("/pane/w1:p2/changes/files?dir=a", "/pane/w1%3Ap2/changes/files?dir=a")).toEqual({ kind: "back" });
+  });
+
+  it("keeps a segment that is not valid encoding as written", () => {
+    expect(decodedPath("/pane/w1%zz")).toBe("/pane/w1%zz");
+    expect(isAncestor("/pane/w1%zz", "/pane/w1%zz/changes")).toBe(true);
+  });
+});
+

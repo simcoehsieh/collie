@@ -1,3 +1,6 @@
+import { appendFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { Command as Program, CommanderError } from "commander";
 
 import { cmdBeaconStatus, type BeaconEmitDeps, type BeaconStatusDeps, runBeaconEmit } from "./beacon.ts";
@@ -31,7 +34,7 @@ import {
 import { lifecycleDeps, updateDeps } from "./deps.ts";
 import { cmdDoctor, doctorDeps } from "./doctor.ts";
 import { cmdDocs, cmdSkill } from "./docs.ts";
-import { EXIT, type Io, realIo } from "./io.ts";
+import { asksForHelp, EXIT, type Io, realIo } from "./io.ts";
 import {
   cmdExecBridge,
   cmdLogs,
@@ -64,8 +67,10 @@ import {
 } from "./crew.ts";
 import {
   cmdDevices,
+  cmdDevicesClearExpiry,
   cmdDevicesList,
   cmdDevicesRevoke,
+  cmdDevicesSetExpiry,
   cmdPair,
   DEVICES_SUBCOMMANDS,
   type PairingDeps,
@@ -201,7 +206,14 @@ async function crewVerbDeps(io: Io, ui: Ui | null = null): Promise<CrewAddDeps> 
  */
 function pairingDeps(io: Io): PairingDeps {
   const ctx = loadContext(io.err);
-  return { ctx, io, files: realFiles, exec: realExec(ctx.env, ctx.home) };
+  return {
+    ctx,
+    io,
+    files: realFiles,
+    exec: realExec(ctx.env, ctx.home),
+    // The bridge's own trail: `devices revoke` records the launcher rows it removes there (ADR 0094).
+    appendAudit: (line) => appendFileSync(join(ctx.stateDir, "audit.log"), `${line}\n`, { mode: 0o600 }),
+  };
 }
 
 /**
@@ -628,8 +640,9 @@ export const COMMANDS: readonly Command[] = [
   // re-reads per request, so neither restarts anything.
   {
     name: "pair",
-    summary: "mint a one-time code and a QR for a phone to pair with (scan it, or enter the code in Settings)",
-    run: (_args, s) => cmdPair(pairingDeps(s.io)),
+    summary:
+      "mint a one-time code and a QR for a phone to pair with (scan it, or enter the code in Settings); `--expires 30d` limits its lifetime",
+    run: (args, s) => cmdPair(pairingDeps(s.io), args),
   },
   {
     name: "devices",
@@ -637,13 +650,23 @@ export const COMMANDS: readonly Command[] = [
     subcommands: [
       {
         name: "list",
-        summary: "the paired devices, with when each was paired and last seen",
+        summary: "the paired devices, with when each was paired, last seen, and expires",
         run: (_args, s) => cmdDevicesList(pairingDeps(s.io)),
       },
       {
         name: "revoke",
         summary: "drop one device by label: `devices revoke <label>`",
         run: (args, s) => cmdDevicesRevoke(pairingDeps(s.io), args),
+      },
+      {
+        name: "set-expiry",
+        summary: "give a device a lifetime from now: `devices set-expiry <label> 30d`",
+        run: (args, s) => cmdDevicesSetExpiry(pairingDeps(s.io), args),
+      },
+      {
+        name: "clear-expiry",
+        summary: "remove a device's expiry: `devices clear-expiry <label>`",
+        run: (args, s) => cmdDevicesClearExpiry(pairingDeps(s.io), args),
       },
     ],
     // Bare or misspelt lands here, and `cmdDevices` owns that message — as `cmdCrew` does.
@@ -851,8 +874,8 @@ export function helpText(commands: readonly Command[] = COMMANDS): string[] {
  * types the flag spelling as often as the verb, and the two must not answer differently.
  *
  * Only the FIRST argument is rewritten. `collie logs --version` is an argument to `logs`, exactly as
- * every other flag reaching a verb is (`buildProgram` turns commander's own `-h` off for the same
- * reason), and this must not start guessing at it.
+ * every other flag reaching a verb is (`buildProgram` turns commander's own help off, and only
+ * `-h`/`--help` are caught, by `helpGuard`), and this must not start guessing at it.
  */
 export function normalizeArgv(argv: readonly string[]): readonly string[] {
   const first = argv[0];
@@ -869,6 +892,44 @@ function emit(sink: (line: string) => void, chunk: string): void {
 }
 
 /**
+ * `collie <verb> --help` prints that verb's usage and runs nothing.
+ *
+ * Commander's help is off (every flag grammar lives in the verb), so `--help` and `-h` used to reach
+ * the verb body as ordinary arguments, and `collie update --help` began a real update (#392). The
+ * check sits here, in front of every verb and sub-verb body, so no verb can forget it and none has
+ * to know about it. `helpAsked` is decided in {@link run} from the RAW argv, because commander drops
+ * the literal `--` before an action sees its arguments, and only an argument before that `--` is a
+ * help request (see `asksForHelp`).
+ *
+ * No verb in the table forwards its arguments to another program, so none is exempt: `logs` reads
+ * its one optional argument as a line count, and the `tailscale` calls under `serve` carry fixed
+ * arguments of ours. A verb that ever passes the operator's arguments on to a child program must
+ * bypass this guard, because there `--help` belongs to that program.
+ */
+async function helpGuard(
+  session: Session,
+  helpAsked: boolean,
+  name: string,
+  summary: string,
+  internal: boolean,
+  args: readonly string[],
+  body: Command["run"],
+): Promise<number> {
+  if (!helpAsked) return body(args, session);
+  // A `_` verb is only ever spelled by another Collie (`_apply-update` by `update`), never by
+  // a person. A `--help` there means a caller built a wrong argv, so it fails loudly: an update whose
+  // second half answered usage with exit 0 would report success with nothing swapped.
+  if (internal) {
+    session.io.err(`error: \`collie ${name}\` is internal and has no usage; nothing was run`);
+    return EXIT.USAGE;
+  }
+  session.io.out(`usage: collie ${name} [options]`);
+  session.io.out("");
+  session.io.out(`  ${summary}`);
+  return EXIT.OK;
+}
+
+/**
  * Build the commander program for one invocation. The exit code is not commander's to decide, so
  * every action stashes its verb's return value here and {@link run} reads it back out.
  */
@@ -876,6 +937,7 @@ function buildProgram(
   session: Session,
   commands: readonly Command[],
   setCode: (code: number) => void,
+  helpAsked: boolean,
 ): Program {
   const program = new Program();
   program
@@ -910,18 +972,21 @@ function buildProgram(
       .command(c.name, { hidden: c.internal === true })
       .description(c.summary)
       // Every verb still receives its argv verbatim: the flag grammars live in the verbs (and are
-      // pinned there, against fake deps), so commander forwards rather than re-parses. `-h` is off
-      // for the same reason — today `collie logs --help` is a `logs` argument, not a help request.
+      // pinned there, against fake deps), so commander forwards rather than re-parses. Commander's
+      // own help is off for the same reason, so `-h` and `--help` are caught by {@link helpGuard}
+      // below, before any verb body runs, and not by commander.
       .allowUnknownOption(true)
       .allowExcessArguments(true)
       .helpOption(false)
       .argument("[args...]");
     if (c.subcommands === undefined) {
-      leaf.action(async (args: string[]) => setCode(await c.run(args, session)));
+      leaf.action(async (args: string[]) => setCode(await helpGuard(session, helpAsked, c.name, c.summary, c.name.startsWith("_"), args, c.run)));
       continue;
     }
     // A parent with children: commander matches a child by name, and anything else — including
-    // nothing at all — reaches the parent's own action.
+    // nothing at all — reaches the parent's own action. That action is NOT behind the guard: it is
+    // already a usage printer (bare, misspelt or `--help`, it prints its subcommand block and exits
+    // 2, and `scripts/collie-cli.test.sh` pins that), so it changes nothing and has nothing to stop.
     leaf.action(async (args: string[]) => setCode(await c.run(args, session)));
     for (const sub of c.subcommands) {
       leaf
@@ -931,7 +996,9 @@ function buildProgram(
         .allowExcessArguments(true)
         .helpOption(false)
         .argument("[args...]")
-        .action(async (args: string[]) => setCode(await sub.run(args, session)));
+        .action(async (args: string[]) =>
+          setCode(await helpGuard(session, helpAsked, `${c.name} ${sub.name}`, sub.summary, c.name.startsWith("_"), args, sub.run)),
+        );
     }
   }
   return program;
@@ -955,11 +1022,20 @@ export async function run(
     },
   };
   let code: number = EXIT.OK;
-  const program = buildProgram(session, commands, (c) => {
-    code = c;
-  });
+  const argvIn = normalizeArgv(rest);
+  // A leading `--` is commander's own "operands follow", so `collie -- update --help` is still a
+  // request for the usage of `update`; the scan starts after it.
+  const helpAsked = asksForHelp(argvIn[0] === "--" ? argvIn.slice(1) : argvIn);
+  const program = buildProgram(
+    session,
+    commands,
+    (c) => {
+      code = c;
+    },
+    helpAsked,
+  );
   try {
-    await program.parseAsync(normalizeArgv(rest), { from: "user" });
+    await program.parseAsync(argvIn, { from: "user" });
     return code;
   } catch (err) {
     if (err instanceof CommanderError) {

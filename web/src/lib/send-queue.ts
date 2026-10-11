@@ -9,6 +9,7 @@ import { sendGuardedReply, type ReplyOutcome } from "./reply-action";
 import { paneScopeKey, type Scope } from "./scope";
 import { setStatus } from "./status";
 import type { AgentStatus } from "./types";
+import { onWipe } from "./wipe";
 
 // FORK: the sends that could not leave the phone, kept to leave when the link is back.
 //
@@ -349,6 +350,14 @@ export async function drainSendQueue(
         setStatus(t("queue.sent"), "success");
         continue;
       }
+      if (outcome.status === "refused" && !forced) {
+        // Upstream's liveness gate (M46 spec 11, lib/reply-action.ts): this pane has not been read
+        // live lately, so NOTHING was typed. That is not the pane refusing the words: the row keeps
+        // its place without a hold, and a drain after the pane reads live again sends it. A Send now
+        // the operator tapped falls through and is held with the reason, so the tap is answered.
+        stopped.add(row.key);
+        continue;
+      }
       if (outcome.status === "error" && outcome.possiblyDelivered) {
         mark(row.id, t("fork.queue.possiblyDelivered"), true);
         stopped.add(row.key);
@@ -423,6 +432,23 @@ export function installSendQueueDrain(sender?: QueueSender): () => void {
   installed = off;
   return off;
 }
+
+/**
+ * Forget every queued send, in memory and on disk. FORK, for upstream's one wipe (M46 spec 02,
+ * lib/wipe.ts): a queued message is words typed under a pairing, exactly what the wipe clears from
+ * the drafts. Registered here rather than listed in wipe.ts, because this module reaches wipe.ts
+ * through lib/api.ts and a direct import back would be a cycle; wipe.ts also removes the stored key
+ * itself, for a wipe that runs before this module has loaded.
+ */
+export function forgetSendQueue(): void {
+  items = [];
+  loaded = true;
+  emit();
+}
+
+onWipe("send-queue", (context) => {
+  if (context.reason !== "password") forgetSendQueue();
+});
 
 /** Tests only: forget everything, including what was persisted. */
 export function __resetSendQueue(): void {

@@ -1,5 +1,12 @@
-// The live feed's client half: one EventSource on `GET /api/events`, and the health flag the cadence
-// and the pane loader read.
+// The live feed's client half: one streamed `fetch` of `GET /api/events`, read as Server-Sent
+// Events, and the health flag the cadence and the pane loader read.
+//
+// WHY NOT `EventSource`. Since upstream 1.18 every `/api` read needs the pairing token in an
+// `Authorization` header (ADR 0086, lib/pairing.ts `authHeader`), and an EventSource cannot send a
+// header. The stream was refused with a 403, EventSource does not retry a refusal, and the page fell
+// back to slow polling without a word. A fetch carries the same headers every other read carries
+// (lib/api.ts `doReq`), so the stream is read here by hand: `event:` / `data:` / `retry:` lines, and
+// the reconnect the browser used to own.
 //
 // WHAT A POKE IS. The bridge writes a line whenever the herd or the followed pane moves. The page
 // answers by running the loaders it always ran — the snapshot and the pane read — so a poke is a
@@ -13,7 +20,10 @@
 
 import { useSyncExternalStore } from "react";
 
+import { XHR_HEADER, XHR_HEADER_VALUE } from "./api";
+import { mounted } from "./base-path";
 import { asJsonString, parseJsonObject } from "./json";
+import { authHeader } from "./pairing";
 import { normalizeScope, type Scope } from "./scope";
 
 /**
@@ -77,6 +87,33 @@ function setHealthy(next: boolean): void {
 /** Tests only. */
 export function __resetLiveFeed(): void {
   setHealthy(false);
+  supportOverride = null;
+}
+
+/**
+ * Tests only: whether this platform may open the stream. `null` goes back to the default.
+ *
+ * Under Vitest the default is OFF. jsdom has a `fetch` (MSW's), so without this every component test
+ * that mounts the poller would open a stream nobody serves; with EventSource the same default came
+ * for free, because jsdom has none. A test of the stream turns it on.
+ */
+export function __setLiveFeedSupported(on: boolean | null): void {
+  supportOverride = on;
+}
+
+let supportOverride: boolean | null = null;
+
+function streamingSupported(): boolean {
+  if (supportOverride !== null) return supportOverride;
+  if (import.meta.env.MODE === "test") return false;
+  // Read off `globalThis`, as `EventSource` was: lib.dom types all four as always present, and an old
+  // WebView or an embedded browser may still lack one.
+  return (
+    globalThis.fetch !== undefined &&
+    globalThis.ReadableStream !== undefined &&
+    globalThis.AbortController !== undefined &&
+    globalThis.TextDecoder !== undefined
+  );
 }
 
 // ── The stream ────────────────────────────────────────────────────────────────
@@ -87,7 +124,7 @@ export function __resetLiveFeed(): void {
  * ask, rather than opening a connection that errors and reconnects every three seconds.
  */
 export function liveFeedAvailable(scope?: Scope): boolean {
-  if (globalThis.EventSource === undefined) return false;
+  if (!streamingSupported()) return false;
   return normalizeScope(scope).host === undefined;
 }
 
@@ -140,36 +177,130 @@ export function parsePoke(data: string): Poke | null {
   return null;
 }
 
+/** The wait before reconnecting when the bridge has not said (`retry:`); the bridge sends 3000. */
+export const LIVE_FEED_RETRY_MS = 3000;
+/** The longest wait between two attempts, however many failed in a row. */
+export const LIVE_FEED_RETRY_MAX_MS = 60_000;
+
 /**
- * Open the stream. The browser owns reconnection (EventSource retries on its own, at the `retry:`
- * the bridge sent); this only reports each open/drop to the caller and marks the shared flag.
+ * Read a Server-Sent Events body to its end, handing each dispatched event to `onEvent` and each
+ * `retry:` to `onRetry`. Comments (`: ping`) and `id:` are dropped; an event cut off by the end of
+ * the body is not dispatched (the SSE rule). A line or a frame may arrive split across chunks.
  *
- * A refused stream — the identity proxy's session expired, a bridge too old to serve the route — is
- * an `error` with `readyState === CLOSED`, which EventSource does NOT retry. The caller sees
- * `onHealth(false)` and the poller carries on at its own cadence, which is what happened before the
- * stream existed.
+ * Exported for the unit test.
+ */
+export async function readEventStream(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (type: string, data: string) => void,
+  onRetry: (ms: number) => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let type = "";
+  let data: string[] = [];
+  const line = (text: string) => {
+    if (text === "") {
+      if (data.length > 0) onEvent(type === "" ? "message" : type, data.join("\n"));
+      type = "";
+      data = [];
+      return;
+    }
+    if (text.startsWith(":")) return;
+    const colon = text.indexOf(":");
+    const field = colon === -1 ? text : text.slice(0, colon);
+    let value = colon === -1 ? "" : text.slice(colon + 1);
+    if (value.startsWith(" ")) value = value.slice(1);
+    if (field === "event") type = value;
+    else if (field === "data") data.push(value);
+    else if (field === "retry" && /^\d+$/.test(value)) onRetry(Number(value));
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    for (;;) {
+      const at = buffer.search(/\r|\n/);
+      if (at === -1) break;
+      // A CR that ends the chunk may be the first half of a CRLF: wait for the next chunk.
+      if (buffer[at] === "\r" && at === buffer.length - 1) break;
+      const width = buffer.startsWith("\r\n", at) ? 2 : 1;
+      line(buffer.slice(0, at));
+      buffer = buffer.slice(at + width);
+    }
+  }
+}
+
+/**
+ * Open the stream, and keep it open until `close()`.
+ *
+ * It is `fetch` with the pairing token and the XHR header (see the file header), so this owns the
+ * reconnect the browser used to: after the stream ends, fails, or is refused, the next attempt waits
+ * the bridge's `retry:` ({@link LIVE_FEED_RETRY_MS} until it says), doubled for each attempt in a row
+ * that did not open, up to {@link LIVE_FEED_RETRY_MAX_MS}. A refusal — the pairing gate's 403, the
+ * identity proxy's sign-in, a bridge too old to serve the route — is the stream being down, and it is
+ * retried on that backoff rather than given up on: EventSource gave up, which is how a token problem
+ * turned into slow polling for the rest of the page's life.
+ *
+ * The caller sees each open and drop once (`onHealth`), and the poller carries on at its own cadence
+ * while the stream is down, which is what happened before the stream existed.
  */
 export function openLiveFeed(url: string, handlers: LiveFeedHandlers): LiveFeed {
-  const source = new EventSource(url);
+  let closed = false;
   let up = false;
+  let failures = 0;
+  let retryMs = LIVE_FEED_RETRY_MS;
+  let attempt: AbortController | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const flip = (next: boolean) => {
     if (up === next) return;
     up = next;
     setHealthy(next);
     handlers.onHealth(next);
   };
-  source.addEventListener("open", () => flip(true));
-  source.addEventListener("error", () => flip(false));
-  source.addEventListener("poke", (event) => {
-    // SAFETY: a named event on an EventSource is always dispatched as a MessageEvent whose `data`
-    // is the frame's text (the platform's own contract for `event:` lines); the listener API types
-    // it as the base Event only because the name is a free string.
-    const poke = parsePoke((event as MessageEvent<string>).data);
+  const onEvent = (type: string, data: string) => {
+    if (type !== "poke") return;
+    const poke = parsePoke(data);
     if (poke) handlers.onPoke(poke);
-  });
+  };
+  const connect = async () => {
+    timer = null;
+    const ctl = new AbortController();
+    attempt = ctl;
+    try {
+      const res = await fetch(mounted(url), {
+        signal: ctl.signal,
+        cache: "no-store",
+        // As lib/api.ts `apiFetch`: a proxy's sign-in redirect is a refusal, not a page to follow.
+        redirect: "manual",
+        headers: { accept: "text/event-stream", [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() },
+      });
+      if (!res.ok || res.body === null) {
+        void res.body?.cancel().catch(() => {});
+      } else {
+        flip(true);
+        failures = 0;
+        await readEventStream(res.body, onEvent, (ms) => {
+          retryMs = ms;
+        });
+      }
+    } catch {
+      // A transport failure, or the abort `close()` sent: both end this attempt, below.
+    }
+    if (closed || attempt !== ctl) return;
+    attempt = null;
+    flip(false);
+    failures += 1;
+    timer = setTimeout(() => void connect(), Math.min(retryMs * 2 ** (failures - 1), LIVE_FEED_RETRY_MAX_MS));
+  };
+  void connect();
   return {
     close() {
-      source.close();
+      closed = true;
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      attempt?.abort();
+      attempt = null;
       flip(false);
     },
   };

@@ -87,6 +87,36 @@ describe("cmdArtifactAdd", () => {
     expect((await readdir(join(stateDir, "artifacts"))).length).toBe(2);
   });
 
+  // Since upstream 1.18 (ADR 0086) every `/api/*` call needs a pairing token, and the CLI's local
+  // credential (bridge/local-secret.ts) opens reads only. `artifact add` is unaffected because it
+  // never calls the bridge: it writes `<stateDir>/artifacts/` itself and the bridge's directory watch
+  // picks the record up. Pinned on the operator's own path (no store injected), with every HTTP call
+  // made to fail, so a change that routes this verb through `POST /api/artifacts` is caught here
+  // rather than as a 403 on every report an agent publishes.
+  test("needs no bridge and no token: the record lands in the state dir, and nothing is fetched", async () => {
+    const stateDir = await freshStateDir();
+    const io = capture();
+    const ctx = context({ CLAUDE_CODE_SESSION_ID: SESSION }, { stateDir });
+    const real = globalThis.fetch;
+    let fetched = 0;
+    globalThis.fetch = Object.assign(
+      () => {
+        fetched++;
+        return Promise.reject(new Error("no network in this test"));
+      },
+      { preconnect: real.preconnect },
+    );
+    try {
+      const code = await cmdArtifactAdd({ ctx, io, files: files({ "/work/report.html": "<p>hi</p>" }) }, ["report.html"]);
+      expect(code).toBe(EXIT.OK);
+    } finally {
+      globalThis.fetch = real;
+    }
+    expect(fetched).toBe(0);
+    const [record] = await new ArtifactStore(stateDir).list();
+    expect(record).toMatchObject({ title: "report", kind: "html", session: { kind: "id", value: SESSION } });
+  });
+
   test("the child-session marker is read through: the id lands, and the bridge decides the pane", async () => {
     const stateDir = await freshStateDir();
     const io = capture();

@@ -274,6 +274,17 @@ describe("which routes cross a link", () => {
     expect(crewRouteFor("/api/workspace/w1/files/x")).toBeNull();
     expect(crewRouteFor("/api/pane/w1:p1/files")).toBe("pane/w1:p1/files");
     expect(apiPathFor("workspace/w1/files")).toBe("/api/workspace/w1/files");
+    // The Files image read (ADR 0090): both forms, the literal `files/image`, nothing under it.
+    const paneImage = server.match(/^const PANE_FILES_IMAGE_ROUTE = (.+);$/m)![1]!;
+    const wsImage = server.match(/^const WORKSPACE_FILES_IMAGE_ROUTE = (.+);$/m)![1]!;
+    expect(paneImage).toBe("/^\\/api\\/pane\\/([^/]+)\\/files\\/image$/");
+    expect(wsImage).toBe("/^\\/api\\/workspace\\/([^/]+)\\/files\\/image$/");
+    expect(crewRouteFor("/api/pane/w1:p1/files/image")).toBe("pane/w1:p1/files/image");
+    expect(crewRouteFor("/api/workspace/w1/files/image")).toBe("workspace/w1/files/image");
+    expect(crewRouteFor("/api/pane/w1:p1/files/image/x")).toBeNull();
+    expect(crewRouteFor("/api/workspace/w1/files/exist")).toBeNull();
+    expect(apiPathFor("pane/w1:p1/files/image")).toBe("/api/pane/w1:p1/files/image");
+    expect(apiPathFor("workspace/w1/files/image")).toBe("/api/workspace/w1/files/image");
   });
 
   test("read vs write is decided exactly as server.ts decides it — history is a READ", () => {
@@ -296,6 +307,9 @@ describe("which routes cross a link", () => {
     // attempted against a stale member and never given the write budget (ADR 0083).
     expect(forwardKind("pane/w1:p1/files")).toBe("read");
     expect(forwardKind("workspace/w1/files")).toBe("read");
+    // The image read is the same read on another cap (ADR 0090).
+    expect(forwardKind("pane/w1:p1/files/image")).toBe("read");
+    expect(forwardKind("workspace/w1/files/image")).toBe("read");
   });
 
   test("the audit action a forward records is the one the peer will write", () => {
@@ -320,6 +334,8 @@ describe("which routes cross a link", () => {
     expect(forwardAuditAction("pane/w1:p1/diff")).toBeNull();
     expect(forwardAuditAction("pane/w1:p1/files")).toBeNull();
     expect(forwardAuditAction("workspace/w1/files")).toBeNull();
+    expect(forwardAuditAction("pane/w1:p1/files/image")).toBeNull();
+    expect(forwardAuditAction("workspace/w1/files/image")).toBeNull();
   });
 });
 
@@ -355,6 +371,35 @@ describe("a proxied read is the peer's response, unmodified (§9.1)", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("vary")).toBe("accept-encoding");
     expect(res.headers.get("x-crew-member")).toBeNull();
+  });
+
+  test("a member's picture keeps its size and mtime headers, so the phone can hold it (ADR 0090)", async () => {
+    const { transport } = transportOf(() =>
+      ok(
+        new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+          status: 200,
+          headers: {
+            "content-type": "image/png",
+            "x-collie-file-size": "4",
+            "x-collie-file-mtime": "1760000000000.5",
+            "x-crew-member": "laptop",
+          },
+        }),
+      ),
+    );
+    const [req, url] = get("/api/pane/w1:p1/files/image?host=laptop&path=a.png");
+    const res = await forward(req, url, { transport });
+    expect(res.headers.get("x-collie-file-size")).toBe("4");
+    expect(res.headers.get("x-collie-file-mtime")).toBe("1760000000000.5");
+    expect(res.headers.get("x-crew-member")).toBeNull();
+  });
+
+  test("a member that sends no size or mtime header gets none made up", async () => {
+    const { transport } = transportOf(() => ok(new Response("x", { status: 200, headers: { "content-type": "image/png" } })));
+    const [req, url] = get("/api/pane/w1:p1/files/image?host=laptop&path=a.png");
+    const res = await forward(req, url, { transport });
+    expect(res.headers.get("x-collie-file-size")).toBeNull();
+    expect(res.headers.get("x-collie-file-mtime")).toBeNull();
   });
 
   test("the lead never recomputes an ETag — the peer's is the peer's assertion about its own body", async () => {
@@ -986,5 +1031,17 @@ describe("journal, uploads and state stay host-local", () => {
     const contract = readFileSync(join(import.meta.dir, "..", "..", "MUX_CONTRACT.md"), "utf8");
     expect(contract).toContain("## Conformance across a crew link");
     expect(contract).toContain("listSessions` and the three worktree verbs have no forwardable route");
+  });
+});
+
+// ADR 0094: a phone's own launcher rows live on ONE machine; `?host=` writes reach that member's store.
+describe("the added-launcher routes cross the link as writes", () => {
+  test("add, remove, rename and the lead's forget are forwardable writes; nothing else under the path is", () => {
+    for (const route of ["launchers/added", "launchers/added/remove", "launchers/added/rename", "launchers/added/forget-device"]) {
+      expect(crewRouteFor(`/api/${route}`)).toBe(route);
+      expect(forwardKind(route)).toBe("write");
+    }
+    expect(crewRouteFor("/api/launchers/added/list")).toBeNull();
+    expect(crewRouteFor("/api/launchers/added/")).toBeNull();
   });
 });

@@ -10,6 +10,7 @@ import { t } from "@/lib/i18n";
 import { settingsPath } from "@/lib/nav";
 import { useScope } from "@/lib/session";
 import { MAINTAINER_MANAGED_UPDATES } from "@/lib/fork-shape";
+import { BandMain } from "@/components/ui/strip-host";
 
 // ── THE UPDATES PAGE ────────────────────────────────────────────────────────────────────────────
 //
@@ -64,10 +65,10 @@ export function UpdatesRoute() {
       {/* `relative` for the reason every scroller in this app carries it: an `sr-only` (position:
           absolute) deep in the page would otherwise escape the scroller and grow the document's own
           scrollbar. */}
-      <main className="relative flex min-h-0 flex-1 flex-col space-y-4 overflow-y-auto p-4">
+      <BandMain base={16} className="relative flex min-h-0 flex-1 flex-col space-y-4 overflow-y-auto p-4">
         <UpdateCheckControl />
         <UpdateCard />
-      </main>
+      </BandMain>
     </div>
   );
 }

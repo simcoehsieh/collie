@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, test } from "vitest";
 
 import { __resetLocale, setLocale, whenLocaleReady, type Locale } from "@/lib/i18n";
-import { en, type Dictionary } from "@/lib/i18n/messages/en";
+import { en, type PartialDictionary } from "@/lib/i18n/messages/en";
 import { de } from "@/lib/i18n/messages/de";
 import { es } from "@/lib/i18n/messages/es";
+import { fr } from "@/lib/i18n/messages/fr";
+import { it as itIT } from "@/lib/i18n/messages/it";
 import { ja } from "@/lib/i18n/messages/ja";
 import { ko } from "@/lib/i18n/messages/ko";
+import { pt } from "@/lib/i18n/messages/pt";
+import { ru } from "@/lib/i18n/messages/ru";
+import { tr } from "@/lib/i18n/messages/tr";
 import { zh } from "@/lib/i18n/messages/zh";
 import { zhTW } from "@/lib/i18n/messages/zh-TW";
 import { PUSH_TITLE_CODES } from "@/lib/push-title-codes";
@@ -25,7 +30,9 @@ function slotsOf(template: string): string[] {
   return [...template.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!).toSorted();
 }
 
-const TRANSLATIONS = { de, es, ko, ja, zh, "zh-TW": zhTW } satisfies Record<Exclude<Locale, "en">, Dictionary>;
+// FORK: `PartialDictionary` — the five languages upstream added after 1.17 lack the fork's own keys
+// (messages/en.ts); every push title is upstream's, so each one is asserted present below.
+const TRANSLATIONS = { de, es, ko, ja, zh, "zh-TW": zhTW, ru, it: itIT, fr, pt, tr } satisfies Record<Exclude<Locale, "en">, PartialDictionary>;
 
 describe("pushTitleTemplates", () => {
   test("gives every code, in English until another language is chosen", () => {
@@ -47,7 +54,9 @@ describe("every translation keeps English's slots", () => {
     test(locale, () => {
       for (const code of PUSH_TITLE_CODES) {
         const key = `pushTitle.${code}` as const;
-        expect(slotsOf(dictionary[key]), `${locale} ${key}`).toEqual(slotsOf(en[key]));
+        const value = dictionary[key];
+        expect(value, `${locale} ${key}`).toBeDefined();
+        expect(slotsOf(value ?? ""), `${locale} ${key}`).toEqual(slotsOf(en[key]));
       }
     });
   }

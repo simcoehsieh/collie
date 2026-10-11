@@ -4,6 +4,7 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 
 import { COLLAPSE_MS } from "@/components/ui/collapse";
 import { StripHost } from "@/components/ui/strip-host";
+import { __resetPairing, markNotPaired } from "@/lib/pairing";
 import { ConnectionBanner, GREEN_MS, REPROBE_MAX_MS, REPROBE_MIN_MS } from "./connection-banner";
 
 // THE BAR IS A STRIP, and this file mounts the band it appears in. `ConnectionBanner` registers a
@@ -105,9 +106,22 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   setOnline(true);
+  __resetPairing();
 });
 
 describe("ConnectionBanner — the single connection surface", () => {
+  // FORK, at the 1.19 merge: a device refused for want of pairing (upstream 1.18.0, ADR 0086) is not
+  // an outage, so the fork's red row stays away and the pairing strip names the remedy.
+  it("draws no connection row for a device refused for want of pairing", () => {
+    h.trouble = true;
+    h.lost = true;
+    markNotPaired();
+    renderBanner({ error: true });
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByText("Reconnecting…")).toBeNull();
+    expect(cfg.calls).toBe(0);
+  });
+
   it("shows the auth refusal with Reload and no connection treatment", () => {
     h.trouble = true;
     h.lost = true;
@@ -279,15 +293,13 @@ describe("ConnectionBanner — the single connection surface", () => {
     expect(row()?.querySelector("span.truncate.flex-1")).not.toBeNull();
   });
 
-  it("reserves no safe-area inset of its own — the band above the header does", () => {
-    // The reported iOS bug, at one of its three sources. This row set the inset for itself, as did
-    // the update ribbon and as did the header, each written when it might have been the first thing
-    // on the screen — so any two of them together paid for the notch twice. One owner now, and it is
-    // the band, because clearing the notch is a fact about the row's position in the viewport.
+  // FORK, at the 1.19 merge: upstream moved the band under the header (1.18.0), and the header owns
+  // the notch inset for good, so neither this row nor its band reserves one.
+  it("reserves no safe-area inset of its own — the header above it does", () => {
     h.trouble = true;
     const { container } = renderBanner();
     expect(row()?.className).not.toMatch(/safe-area/);
-    expect(container.querySelectorAll("[class*='safe-area-inset-top']")).toHaveLength(1);
+    expect(container.querySelectorAll("[class*='safe-area-inset-top']")).toHaveLength(0);
   });
 
   it("flashes green 'Connected' only after a visible bar recovers, then the band closes over it", () => {

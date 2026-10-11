@@ -23,6 +23,7 @@ import { useLoadingStalled } from "@/hooks/use-loading-stalled";
 import { useOnline } from "@/hooks/use-online";
 import { isConnecting } from "@/lib/connection";
 import { clockTime } from "@/lib/format";
+import { usePairing } from "@/lib/pairing";
 import * as api from "@/lib/api";
 import { useServerBuild } from "@/lib/server-build";
 import { setStatus } from "@/lib/status";
@@ -32,6 +33,11 @@ import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
 interface ConnectionBannerProps {
+  /**
+   * The screen is the SAVED COPY (upstream 1.18.0, M46 spec 10). FORK: accepted and not read — the
+   * fork's red row already dates what is on screen by `lastSeenAt`.
+   */
+  stale?: boolean;
   /**
    * The machine being viewed (upstream 1.17.0, a crew member's own fault). FORK: accepted and not
    * read — this install has no crew, and the fork's four-cause red row (one /api/health probe) is
@@ -91,7 +97,11 @@ export const GREEN_MS = 1_800;
 // and it outranks the update offer for the second it stands for exactly the reason amber does.
 export function ConnectionBanner({ bridge, error, authError, lastSeenAt }: ConnectionBannerProps) {
   useBridgeRestartNotice();
+  const { refused: notPaired } = usePairing();
   if (authError) return <AuthErrorBanner />;
+  // Refused for want of pairing (upstream 1.18.0, ADR 0086: reads need the token). The bridge
+  // answered, so this is not an outage, and the pairing strip on the route names the remedy.
+  if (notPaired && error) return null;
   return <ConnectionStateBanner bridge={bridge} error={error} lastSeenAt={lastSeenAt} />;
 }
 
