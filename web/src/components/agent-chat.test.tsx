@@ -3123,7 +3123,7 @@ describe("AgentChat — a knowledge-base link opens in the panel", () => {
 
     const frame = await screen.findByTitle("herdr-interface-anatomy");
     expect(frame.tagName).toBe("IFRAME");
-    expect(frame).toHaveAttribute("src", "/api/doc/herdr-interface-anatomy");
+    expect(frame).toHaveAttribute("data-src", "/api/doc/herdr-interface-anatomy");
     // Withheld capabilities, spelled on the embedder as well as in the response's own CSP: neither
     // side should be the only thing between an agent-written document and Collie's origin.
     expect(frame).toHaveAttribute("sandbox", "");
@@ -3283,7 +3283,7 @@ describe("AgentChat — what changed, the file viewer, and the mirror's chips", 
     await user.click(await screen.findByRole("button", { name: "Preview" }));
     const frame = await screen.findByTitle("report.html");
     expect(frame).toHaveAttribute("sandbox", "");
-    expect(frame.getAttribute("src")).toContain(`path=${encodeURIComponent(`${agent.cwd}/report.html`)}`);
+    expect(frame.getAttribute("data-src")).toContain(`path=${encodeURIComponent(`${agent.cwd}/report.html`)}`);
   });
 });
 

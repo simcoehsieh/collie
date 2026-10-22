@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ExternalLink, RefreshCw } from "lucide-react";
 
+import { AuthedFrame, openAuthedTab, useAuthedText } from "@/components/authed-frame";
 import { MarkdownText } from "@/components/markdown-text";
 import { Button } from "@/components/ui/button";
 import { HitArea } from "@/components/ui/hit-area";
 import { useLocale } from "@/hooks/use-locale";
 import { artifactRawSrc } from "@/lib/api";
+import { useAuthedUrl } from "@/lib/authed-url";
 import { t } from "@/lib/i18n";
 import type { Scope } from "@/lib/scope";
 import type { ArtifactView } from "@/lib/types";
@@ -17,28 +19,8 @@ import { cn } from "@/lib/utils";
 // and are rendered HERE, by the same renderer the thread uses — never by the frame. An image is an
 // `<img>`. Anything else is offered to a new tab (the share sheet, on a phone), never rendered.
 
-type Loaded = { phase: "loading" } | { phase: "ready"; text: string } | { phase: "failed" };
-
-function useRawText(src: string, enabled: boolean): Loaded {
-  const [state, setState] = useState<Loaded>({ phase: "loading" });
-  useEffect(() => {
-    if (!enabled) return;
-    const ctl = new AbortController();
-    setState({ phase: "loading" });
-    void (async () => {
-      try {
-        const res = await fetch(src, { signal: ctl.signal, credentials: "same-origin" });
-        if (!res.ok) throw new Error(String(res.status));
-        const text = await res.text();
-        if (!ctl.signal.aborted) setState({ phase: "ready", text });
-      } catch {
-        if (!ctl.signal.aborted) setState({ phase: "failed" });
-      }
-    })();
-    return () => ctl.abort();
-  }, [src, enabled]);
-  return state;
-}
+// Every read below carries the pairing token (components/authed-frame.tsx says why): the page as
+// `srcdoc` in its sandboxed frame, the picture as an object URL, the text through the same fetch.
 
 export function ArtifactViewer({
   artifact,
@@ -53,7 +35,8 @@ export function ArtifactViewer({
   const [nonce, setNonce] = useState(0);
   const src = artifactRawSrc(artifact.id, scope);
   const textual = artifact.kind === "markdown" || artifact.kind === "text";
-  const raw = useRawText(src, textual);
+  const raw = useAuthedText(textual ? src : null);
+  const picture = useAuthedUrl(artifact.kind === "image" ? src : null);
 
   if (artifact.kind === "html") {
     return (
@@ -73,19 +56,14 @@ export function ArtifactViewer({
             size="icon"
             className="relative size-8"
             aria-label={t("artifacts.viewer.openTab")}
-            onClick={() => window.open(src, "_blank", "noopener,noreferrer")}
+            onClick={() => openAuthedTab(src, artifact.title)}
           >
             <HitArea top={6} bottom={6} left={4} right={8} border={1} />
             <ExternalLink className="size-4" />
           </Button>
         </div>
         <div className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border bg-background">
-          <iframe
-            sandbox=""
-            src={`${src}#${String(nonce)}`}
-            title={artifact.title}
-            className="block h-full min-h-full w-full border-0"
-          />
+          <AuthedFrame key={nonce} path={src} nonce={nonce} title={artifact.title} className="block h-full min-h-full w-full border-0" />
         </div>
       </div>
     );
@@ -94,7 +72,8 @@ export function ArtifactViewer({
   if (artifact.kind === "image") {
     return (
       <div data-slot="artifact-viewer" className={cn("min-h-0 flex-1 overflow-auto overscroll-contain", className)}>
-        <img src={src} alt={artifact.title} className="mx-auto block max-w-full rounded-md" />
+        {picture.url !== null && <img src={picture.url} alt={artifact.title} className="mx-auto block max-w-full rounded-md" />}
+        {picture.failed && <p className="px-3 py-6 text-center text-sm text-muted-foreground">{t("artifacts.viewer.missing")}</p>}
       </div>
     );
   }
@@ -109,9 +88,9 @@ export function ArtifactViewer({
     return (
       <div data-slot="artifact-viewer" className={cn("min-h-0 flex-1 overflow-auto overscroll-contain px-3 py-2", className)}>
         {artifact.kind === "markdown" ? (
-          <MarkdownText text={raw.text} className="font-content text-sm" />
+          <MarkdownText text={raw.html} className="font-content text-sm" />
         ) : (
-          <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">{raw.text}</pre>
+          <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">{raw.html}</pre>
         )}
       </div>
     );
@@ -120,7 +99,7 @@ export function ArtifactViewer({
   return (
     <div data-slot="artifact-viewer" className={cn("flex flex-col items-center gap-3 px-4 py-8 text-center", className)}>
       <p className="text-sm text-muted-foreground">{t("artifacts.viewer.attachment")}</p>
-      <Button variant="secondary" onClick={() => window.open(src, "_blank", "noopener,noreferrer")}>
+      <Button variant="secondary" onClick={() => openAuthedTab(src, artifact.title)}>
         <ExternalLink className="size-4" />
         {t("artifacts.viewer.openTab")}
       </Button>

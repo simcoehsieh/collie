@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, RefreshCw, BookmarkPlus, Check } from "lucide-react";
 
+import { AuthedFrame, openAuthedTab } from "@/components/authed-frame";
 import { Button } from "@/components/ui/button";
 import { RightSheet } from "@/components/ui/right-sheet";
 import { useLocale } from "@/hooks/use-locale";
@@ -86,7 +87,7 @@ export function PreviewPanel({ open, onClose, paneId, path }: PreviewPanelProps)
     return <RightSheet open={open} onClose={onClose} title={t("preview.title")}>{null}</RightSheet>;
   }
 
-  const src = `${previewSrc(paneId, path)}#${String(nonce)}`;
+  const src = previewSrc(paneId, path);
   // 1 at "fit" and whenever the chosen width already fits — a page is never scaled UP, because
   // enlarging a 390px layout to fill a 400px panel only makes it blurry.
   const scale = width === 0 || panelWidth === 0 || panelWidth >= width ? 1 : panelWidth / width;
@@ -148,7 +149,7 @@ export function PreviewPanel({ open, onClose, paneId, path }: PreviewPanelProps)
             variant="ghost"
             size="sm"
             className="h-8 gap-1 px-2"
-            onClick={() => window.open(previewSrc(paneId, path), "_blank", "noopener,noreferrer")}
+            onClick={() => openAuthedTab(src, name)}
           >
             <ExternalLink className="size-4" />
             {t("preview.openExternally")}
@@ -159,13 +160,13 @@ export function PreviewPanel({ open, onClose, paneId, path }: PreviewPanelProps)
             gesture target, so the panel's scroll and the page's fight unless the frame is sized to
             its content and the OUTER box is the scroller. */}
         <div ref={hostRef} className="min-h-0 flex-1 overflow-auto overscroll-contain">
-          <iframe
-            // `sandbox=""` withholds every capability — no scripts, no forms, no popups, and above
-            // all no same-origin — which is the response's own CSP said again on the embedder. A
-            // page the agent generated out of things it read on the web must not be one word away
-            // from Collie's storage and its API.
-            sandbox=""
-            src={src}
+          {/* `sandbox=""` (components/authed-frame.tsx) withholds every capability — no scripts, no
+              forms, no popups, and above all no same-origin. A page the agent generated out of things
+              it read on the web must not be one word away from Collie's storage and its API. */}
+          <AuthedFrame
+            key={nonce}
+            path={src}
+            nonce={nonce}
             title={name}
             className="block border-0"
             style={{

@@ -42,6 +42,12 @@ Chat on the phone for offline reading, Send now, paths as links, copy icons, pic
   `effort` stays the fork's), and `modelLabel` (a string → "Opus 5.5", `{ model, effort }` → the fork's).
 - **Tests:** the fork's `/api/config` memo is cleared with the operator-config store, the fork's
   module stores keep their seams, five new locales are filled from English for the fork's keys.
+- **Fixed after the merge (2026-10-22): every framed bridge page read "device not paired".** An artifact,
+  a knowledge-base document and an agent's HTML file were each `<iframe src="/api/…">`, and a frame's
+  own request cannot carry the pairing token. They now arrive as `srcdoc`, read with the token, still
+  `sandbox=""` (`components/authed-frame.tsx`); artifact pictures and text use the same read, and "Open
+  in a new tab" opens a sandboxed copy. The 1.19.2 checks proved `collie artifact add` wrote the file,
+  not that the page could show it.
 
 ## On top of 1.17.2
 

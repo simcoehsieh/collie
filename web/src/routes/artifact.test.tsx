@@ -74,7 +74,8 @@ describe("ArtifactRoute", () => {
     expect(screen.getByText("From webapp › claude")).toBeInTheDocument();
     const frame = screen.getByTitle("Q3 report");
     expect(frame).toHaveAttribute("sandbox", "");
-    expect(frame.getAttribute("src")).toContain("/api/artifacts/q1-00000001/raw");
+    // FORK: the page arrives as srcdoc, fetched with the pairing token (components/authed-frame.tsx).
+    expect(frame.getAttribute("data-src")).toContain("/api/artifacts/q1-00000001/raw");
     const versions = screen.getByRole("group", { name: "Versions" });
     expect(versions).toHaveTextContent("v2");
     await userEvent.setup().click(screen.getByRole("button", { name: "v2", pressed: false }));

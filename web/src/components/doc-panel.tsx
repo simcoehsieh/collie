@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, Loader2, Search, StickyNote, X } from "lucide-react";
 
+import { AuthedFrame } from "@/components/authed-frame";
 import { NoteBadge } from "@/components/note-badge";
 import { NoteSheet } from "@/components/notes-sheet";
 import { Button } from "@/components/ui/button";
@@ -128,7 +129,7 @@ export function DocPanel({ open, onClose, initial, paneId, scope }: DocPanelProp
               spelled again on the embedder so neither side is the only thing standing between an
               agent-written document and Collie's origin. `block` because an inline-level iframe in
               a scrolling body leaves a baseline gap and `h-full` misbehaves. */}
-          <iframe src={current.path} sandbox="" title={current.slug} className="block min-h-0 w-full flex-1 border-0" />
+          <AuthedFrame key={current.path} path={current.path} title={current.slug} className="block min-h-0 w-full flex-1 border-0" />
         </div>
       ) : (
         <DocBrowser onOpen={openDoc} />
