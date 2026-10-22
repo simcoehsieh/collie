@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, Bell, ChevronRight, FlaskConical, Palette, Server, SlidersHorizontal } from "lucide-react";
+import { Activity, ArrowLeft, Bell, Bot, ChevronRight, FlaskConical, Mic, Palette, Server, SlidersHorizontal } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { RouteHeader } from "@/components/app-header";
@@ -17,7 +17,7 @@ import { BandMain } from "@/components/ui/strip-host";
 
 // ── THE SETTINGS INDEX ──────────────────────────────────────────────────────────────────────────
 //
-// Four rows, each opening a section (routes/settings-sections.tsx, which explains the split), then
+// Five rows, each opening a section (routes/settings-sections.tsx, which explains the split), then
 // Machines (a page, not a section) and, while Experiments holds anything, Experiments.
 //
 // This page used to BE the settings: seventeen cards in one column, over a thousand pixels of
@@ -48,7 +48,9 @@ interface Row {
 }
 
 // The order is the order of how standing a choice is. Appearance is changed most and changed first;
-// System is the page you open when something is wrong, which is rarely and deliberately.
+// System is the page you open when something is wrong, which is rarely and deliberately. Voice sits
+// between Device and Alerts and, unlike Experiments, is never hidden: a host that offers no speech
+// gets a page that says so, because a row that comes and goes teaches nobody where dictation lives.
 //
 // Experiments trails all four, and it is the only row that can be absent: it renders while
 // `lib/experiments.ts` holds something, because a row that opens an empty page is noise. It is last
@@ -68,11 +70,25 @@ const ROWS: Row[] = [
     blurb: "settings.section.appearance.blurb",
   },
   {
+    id: "harnesses",
+    to: (scope) => settingsSectionPath("harnesses", scope),
+    icon: Bot,
+    title: "settings.section.harnesses.title",
+    blurb: "settings.section.harnesses.blurb",
+  },
+  {
     id: "device",
     to: (scope) => settingsSectionPath("device", scope),
     icon: SlidersHorizontal,
     title: "settings.section.device.title",
     blurb: "settings.section.device.blurb",
+  },
+  {
+    id: "voice",
+    to: (scope) => settingsSectionPath("voice", scope),
+    icon: Mic,
+    title: "settings.section.voice.title",
+    blurb: "settings.section.voice.blurb",
   },
   {
     id: "alerts",
@@ -141,25 +157,28 @@ export function SettingsRoute() {
       <BandMain base={16} className="relative flex min-h-0 flex-1 flex-col space-y-4 overflow-y-auto p-4">
         <InstallControl />
 
-        {/* ONE card holding four rows, not four cards. They are a single list of siblings, and four
-            separated cards would say they are four unrelated subjects. The divider is on the button
-            rather than between them so the last row has none. */}
+        {/* ONE card holding the rows, not one card per row. They are a single list of siblings, and
+            separated cards would say they are unrelated subjects. The rows are a list group (M57 spec
+            17): index.css draws the line between two rows, so the last has none, and a theme's
+            `rows: cards` makes them cards inside this one card, like every other list. */}
         <Card className="gap-0 py-0">
-          {ROWS.map((row, i) => (
-            <button
-              key={row.id}
-              type="button"
-              onClick={() => nav.down(row.to(scope))}
-              className={`flex w-full items-center gap-3 p-4 text-left active:bg-muted/60 ${i > 0 ? "border-t border-border" : ""}`}
-            >
-              <row.icon className="size-5 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <div className="font-medium">{t(row.title)}</div>
-                <p className="truncate text-sm text-muted-foreground">{t(row.blurb)}</p>
-              </div>
-              <ChevronRight aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
-            </button>
-          ))}
+          <div data-slot="list-group">
+            {ROWS.map((row) => (
+              <button
+                key={row.id}
+                type="button"
+                onClick={() => nav.down(row.to(scope))}
+                className="flex w-full items-center gap-3 p-4 text-left active:bg-muted/60"
+              >
+                <row.icon className="size-5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">{t(row.title)}</div>
+                  <p className="truncate text-sm text-muted-foreground">{t(row.blurb)}</p>
+                </div>
+                <ChevronRight aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
+              </button>
+            ))}
+          </div>
         </Card>
 
         {/* Pinned to the bottom with `mt-auto`, exactly where it was before the split. */}

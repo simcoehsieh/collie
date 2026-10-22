@@ -550,7 +550,7 @@ firstrun HERDR_SOCKET_PATH="${F_HOME}/absent.sock" "$BIN" start \
   && fail "\`collie start\` came up with no multiplexer to mirror"
 assert_contains "$STDERR" "no COLLIE_MUX is set"
 assert_contains "$STDERR" "no multiplexers are running"
-assert_contains "$STDERR" "COLLIE_MUX=<herdr|tern|tmux|tuios|zellij> collie start"
+assert_contains "$STDERR" "COLLIE_MUX=<durable|herdr|tern|tmux|tuios|zellij> collie start"
 [ -f "${F_CONFIG}/.env" ] && fail "a refused start still wrote a config"
 
 # Exactly one found, and no terminal to ask at: auto-selected, said out loud, and written down.
@@ -2142,7 +2142,7 @@ for args in "stt" "stt nonsense"; do
   set -e
   assert_eq "$rc" "2"
 done
-assert_contains "$(cat "${TMP_ROOT}/err")" "usage: collie stt {setup|test|status|off}"
+assert_contains "$(cat "${TMP_ROOT}/err")" "usage: collie stt {setup|whistle|test|status|off}"
 
 # Not one of them shelled out to anything — `stt` never runs a tool it was not told to.
 assert_eq "$(cat "$PAIR_CALLS")" ""
@@ -2482,11 +2482,45 @@ assert_contains "$STDERR" "is a symlink"
 assert_eq "$(cat "$SETTINGS_ELSEWHERE")" "{}"
 rm -f "$CLAUDE_SETTINGS"
 
-# An unknown harness is a usage error, and writes nothing.
+# An unknown harness is a usage error, and writes nothing. Codex was the example here until M56
+# spec 13 gave it an emitter, so the name is now one no harness will ever take.
 rc=0
-beacon_env hooks install codex || rc=$?
+beacon_env hooks install not-a-harness || rc=$?
 assert_eq "$rc" "2"
+assert_contains "$STDERR" "usage: collie hooks install"
 [ ! -e "$CLAUDE_SETTINGS" ] || fail "a usage error still wrote a settings file"
+[ ! -e "${BEACON_HOME}/.codex" ] || fail "a usage error still wrote a Codex config"
+
+# ── The walky talky skill: skill install/status/uninstall ────────────────────
+# The unit suite pins the text edits against a fake; this proves the compiled binary writes the same
+# bytes, reports them as installed, and leaves the operator's own lines alone.
+beacon_env skill status || fail "\`collie skill status\` failed: ${STDERR}"
+assert_contains "$STDOUT" "absent"
+beacon_env skill status --check || fail "an absent skill read as drift: ${STDERR}"
+mkdir -p "${BEACON_HOME}/.codex"
+printf '# My rules\nBe brief.\n' > "${BEACON_HOME}/.codex/AGENTS.md"
+beacon_env skill install codex || fail "\`collie skill install codex\` failed: ${STDERR}"
+assert_contains "$(cat "${BEACON_HOME}/.codex/AGENTS.md")" "collie:walky-talky v1 begin"
+assert_contains "$(cat "${BEACON_HOME}/.codex/AGENTS.md")" "Be brief."
+beacon_env skill status || fail "\`collie skill status\` failed after install: ${STDERR}"
+assert_contains "$STDOUT" "AGENTS.md: installed"
+beacon_env skill status --check || fail "a fresh install read as stale: ${STDERR}"
+sed -i 's/Walky talky/Walky talky (older)/' "${BEACON_HOME}/.codex/AGENTS.md"
+rc=0
+beacon_env skill status --check || rc=$?
+assert_eq "$rc" "3"
+beacon_env skill uninstall codex || fail "\`collie skill uninstall codex\` failed: ${STDERR}"
+assert_eq "$(cat "${BEACON_HOME}/.codex/AGENTS.md")" "$(printf '# My rules\nBe brief.')"
+
+# `skill sync` (ADR 0111): the uninstall above is a standing no, a harness whose folder exists gets the
+# skill, and a second run prints nothing.
+beacon_env skill sync --json || fail "\`collie skill sync --json\` failed: ${STDERR}"
+assert_contains "$STDOUT" '"reason":"uninstalled"'
+assert_eq "$(cat "${BEACON_HOME}/.codex/AGENTS.md")" "$(printf '# My rules\nBe brief.')"
+[ -f "${CLAUDE_DIR}/skills/collie-walky-talky/SKILL.md" ] || fail "\`collie skill sync\` did not install into the Claude profile that exists"
+beacon_env skill sync || fail "a second \`collie skill sync\` failed: ${STDERR}"
+assert_eq "$STDOUT" ""
+beacon_env skill uninstall claude || fail "\`collie skill uninstall claude\` failed: ${STDERR}"
 
 # ── The emitter ──────────────────────────────────────────────────────────────
 # Outside a multiplexer: nothing at all, and exit 0.

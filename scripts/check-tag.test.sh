@@ -123,4 +123,80 @@ assert_contains "$out" "no release to tag"
 out="$(run_script "$d" "HEAD..HEAD")" || fail "an empty range must pass: $out"
 assert_contains "$out" "no release to tag"
 
+# ── 7. The soft release gate (M44 spec 08) ───────────────────────────────────
+# The fixture repo holds only a copy of check-tag.sh, so the gate runs the real harness-drift.ts through
+# HARNESS_DRIFT_SCRIPT. Every ledger agent is faked at 0.0.0 (never newer), so a machine that has
+# a newer codex installed cannot change the answer. Then one agent is faked newer.
+DRIFT="${ROOT}/scripts/harness-drift.ts"
+LEDGER="${ROOT}/web/src/lib/harness/verified-versions.json"
+quiet="$(bun -e 'const l = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(Object.keys(l.agents).map((a) => a + "=0.0.0").join(","));' "$LEDGER")"
+run_gate() { (cd "$1" && HARNESS_DRIFT_SCRIPT="$DRIFT" HARNESS_DRIFT_FAKE="${quiet},$2" bash scripts/check-tag.sh "${@:3}" 2>&1); }
+
+setup_case gate
+d="$TMP_ROOT/gate"
+release_commit "$d" 5.0.0 "chore(release): 5.0.0"
+
+# 7a. A newer installed agent stops the tag step and names the agent. No tag command is printed.
+if out="$(run_gate "$d" "claude=99.0.0")"; then fail "a drift must stop the tag step: $out"; fi
+assert_contains "$out" "not tagging"
+assert_contains "$out" "claude 99.0.0"
+assert_lacks "$out" "git tag -a"
+
+# 7b. An override that names the agent and the installed version passes the gate. The tag command
+# carries the Not verified line, which release.yml puts in the release notes.
+if out="$(run_gate "$d" "claude=99.0.0" --accept-drift claude=99.0.0)"; then fail "the release is still untagged: $out"; fi
+assert_contains "$out" "git tag -a v5.0.0"
+assert_contains "$out" "Not verified: claude 99.0.0"
+assert_lacks "$out" "not tagging"
+
+# 7c. An override for another version covers nothing.
+if out="$(run_gate "$d" "claude=99.0.0" --accept-drift claude=98.0.0)"; then fail "another version must not override: $out"; fi
+assert_contains "$out" "not tagging"
+
+# 7d. An override for one agent never covers another.
+if out="$(run_gate "$d" "claude=99.0.0" --accept-drift codex=99.0.0)"; then fail "another agent must not override: $out"; fi
+assert_contains "$out" "not tagging"
+
+# 7e. With no drift the tag command is plain, and the ACCEPT_DRIFT variable does the same as the flag.
+if out="$(run_gate "$d" "claude=0.0.0")"; then fail "the release is still untagged: $out"; fi
+assert_contains "$out" 'git tag -a v5.0.0'
+assert_lacks "$out" "Not verified"
+if out="$(cd "$d" && ACCEPT_DRIFT=claude=99.0.0 HARNESS_DRIFT_SCRIPT="$DRIFT" HARNESS_DRIFT_FAKE="${quiet},claude=99.0.0" bash scripts/check-tag.sh 2>&1)"; then fail "still untagged: $out"; fi
+assert_contains "$out" "Not verified: claude 99.0.0"
+
+# 7f. An already tagged release never reaches the gate: it passes even with a drift.
+git -C "$d" tag -a v5.0.0 -m "Collie 5.0.0"
+out="$(run_gate "$d" "claude=99.0.0")" || fail "a tagged release must pass: $out"
+assert_contains "$out" "has a local v<version> tag"
+
+# ── 8. An Edge tag publishes the cut version (M60 spec 01) ───────────────────
+# The files say plain 6.0.0; only the tag carries the suffix. That version is published on Edge, so
+# both modes pass and name the Edge tag and the Stable tag still to come.
+setup_case edge
+d="$TMP_ROOT/edge"
+release_commit "$d" 6.0.0 "chore(release): 6.0.0"
+git -C "$d" tag -a v6.0.0-edge.2 -m "Collie 6.0.0-edge.2"
+git -C "$d" tag -a v6.0.0-edge.10 -m "Collie 6.0.0-edge.10"
+out="$(run_script "$d")" || fail "a version on Edge must pass: $out"
+assert_contains "$out" "or an Edge tag"
+assert_contains "$out" "published on Edge as v6.0.0-edge.10"
+assert_contains "$out" "tag v6.0.0 when Stable supersedes it"
+out="$(run_script "$d" HEAD)" || fail "mode 2 must pass on Edge: $out"
+assert_contains "$out" "v6.0.0-edge.10"
+
+# 8b. A tag that only LOOKS like Edge does not count, and neither does another version's Edge tag.
+setup_case edge-not
+d="$TMP_ROOT/edge-not"
+release_commit "$d" 6.1.0 "chore(release): 6.1.0"
+git -C "$d" tag -a v6.1.0-edge.01 -m "leading zero"
+git -C "$d" tag -a v6.1.0-edgy.1 -m "not edge"
+git -C "$d" tag -a v6.1.1-edge.1 -m "another version"
+if out="$(run_script "$d")"; then fail "no real Edge tag of 6.1.0 exists, so it must fail: $out"; fi
+assert_contains "$out" 'git tag -a v6.1.0'
+
+# 8c. Once the Stable tag exists, the Edge note is gone.
+git -C "$TMP_ROOT/edge" tag -a v6.0.0 -m "Collie 6.0.0"
+out="$(run_script "$TMP_ROOT/edge")" || fail "a stable tag must pass: $out"
+assert_lacks "$out" "Edge"
+
 echo "✓ check-tag.test.sh — all cases passed"

@@ -4,6 +4,7 @@ import { ArrowRightLeft, BookOpen, Camera, ChevronDown, Copy, Ellipsis, FileCode
 import { BottomSheet } from "@/components/ui/sheet";
 import { Collapse } from "@/components/ui/collapse";
 import { SectionLabel } from "@/components/ui/section-label";
+import { WalkyIcon } from "@/components/walky-icon";
 import { ActionRow, DestructiveActionRow, RenameView } from "@/components/action-sheet-rows";
 import { HostChip } from "@/components/host-chip";
 import { useHostWriteBlock, useCrew } from "@/components/crew-provider";
@@ -65,6 +66,12 @@ interface PaneActionsSheetProps {
    *  absent over plain HTTP, a supported deploy), so an unusable row is HIDDEN — the same "a row is a
    *  thing you can do" rule find/history/zen follow. */
   onCopyOutput?: () => void;
+  /**
+   * Open the pane's Messages sheet (M62): the walky talky messages kept for this pane, newest first. A
+   * read in the sense find and history are, so the row sits with them and outside every write gate. The
+   * pane view passes it; the strip does not, and absence is the gate as it is for the others.
+   */
+  onMessages?: () => void;
   /** Open this pane's own settings — today one switch, the prompt-cache warning (ADR 0042).
    *
    *  The FOURTH read row, and it is a read in the sense the other three are: it changes a preference on
@@ -159,6 +166,12 @@ interface PaneActionsSheetProps {
    * the route is lead-local and a crew does not forward it. A write, so read-only hides it too.
    */
   onBranchOff?: () => void;
+  /**
+   * The pane is a durable program's conversation (a pane with no screen). Its sheet holds the writes only:
+   * no Pin to top, since the conversation list orders itself and ignores pins, and Close says what it
+   * closes (durable-simple, 2026-10-13).
+   */
+  conversation?: boolean;
 }
 
 const NO_HERD: readonly AgentView[] = [];
@@ -190,6 +203,7 @@ export function PaneActionsSheet({
   onCopyOutput,
   onSettings,
   onDisplay,
+  onMessages,
   openInRename = false,
   onZen,
   onDiff,
@@ -203,6 +217,7 @@ export function PaneActionsSheet({
   herd = NO_HERD,
   onPinChange,
   onBranchOff,
+  conversation = false,
 }: PaneActionsSheetProps) {
   useLocale();
   // Whether this pane is pinned on this device, read live from the store so the row's word is right
@@ -235,13 +250,15 @@ export function PaneActionsSheet({
   // Asked of the PANE's own machine, for `hostBlock`'s reason one step on (M22/03): a member runs
   // its own multiplexer, so a row this sheet offers has to be a row that machine can carry out.
   // Undefined on a solo install and for a pane on the lead, which is the lead's own answer.
-  const paneHost = { host: pane?.host };
+  // The session comes off the sheet's scope (M55): a program session's panes answer for their program.
+  const paneHost = { host: pane?.host, session: scope?.session };
   const canRename = useMuxCapability("renamePane", paneHost);
   const canClose = useMuxCapability("closePane", paneHost);
   const canFocus = useMuxCapability("setFocus", paneHost);
   // Asked of the LEAD, with no host: the branch-off route never leaves the lead, so the lead's own
-  // multiplexer is the one that must be able to do it.
-  const canWorktree = useMuxCapability("createWorktree");
+  // multiplexer is the one that must be able to do it. In the session the sheet acts in (M55): a
+  // program session on the lead makes no worktree, whatever its terminal neighbour can do.
+  const canWorktree = useMuxCapability("createWorktree", { session: scope?.session });
   const showBranchOff = onBranchOff !== undefined && branchOffOffered(canWorktree.capable, scope);
   const [focusing, setFocusing] = useState(false);
   // The mux name for the "Focus in <mux>" row and its toast — see `focusMux` below for why this
@@ -395,6 +412,7 @@ export function PaneActionsSheet({
     onHistory,
     onCopyOutput,
     onDiff,
+    onMessages,
     onSettings,
     onDisplay,
     onZen,
@@ -532,6 +550,15 @@ export function PaneActionsSheet({
           )}
           {pane && (
             <MenuGroup label={t("fork.paneActions.group.output")}>
+              {/* The pane's walky talky messages (upstream 1.23, M62): what other agents sent this pane
+                  and what it sent them. Things to read, so it leads the group that holds them. */}
+              {onMessages && (
+                <ActionRow
+                  icon={<WalkyIcon className="size-4 shrink-0 text-muted-foreground" />}
+                  label={t("walky.sheet.row")}
+                  onClick={closeThen(onMessages)}
+                />
+              )}
               {onDocs && (
                 <ActionRow
                   icon={<BookOpen className="size-4 shrink-0 text-muted-foreground" />}
@@ -575,7 +602,9 @@ export function PaneActionsSheet({
           <MenuGroup label={t("fork.paneActions.group.manage")}>
             {/* Pin to top / Unpin (ADR 0070) leads Manage: it changes this device and types into no
                 terminal, so a read-only device and a pane on a quiet machine can still pin. */}
-            {pane && (
+            {/* Not on a durable program's conversation (upstream 1.21, durable-simple): its list
+                orders itself and ignores pins. */}
+            {pane && !conversation && (
               <ActionRow
                 icon={
                   pinned ? (
@@ -629,7 +658,7 @@ export function PaneActionsSheet({
                 {canClose.capable && (
                   <DestructiveActionRow
                     icon={<XCircle className="size-4 shrink-0" />}
-                    label={t("paneActions.close.label")}
+                    label={conversation ? t("paneActions.close.conversation") : t("paneActions.close.label")}
                     confirmLabel={t("paneActions.close.confirm")}
                     closingLabel={t("paneActions.close.closing")}
                     armed={confirming}

@@ -22,6 +22,8 @@ function lines(name: string) {
 describe("extractInputDraft — the verify half of type-then-verify", () => {
   it("reads the stranded single-line draft verbatim", () => {
     expect(extractInputDraft(lines("muse--draft-single.txt"))).toBe("hello muse draft");
+    // Live 1.4.10 pair (#510): the prompt hint disappears once real text is typed.
+    expect(extractInputDraft(lines("muse--prompt-hint-typed-1410.txt"))).toBe("hel");
   });
 
   it("folds a wrapped draft with the single space FOLD_SEAM expects", () => {
@@ -55,6 +57,30 @@ describe("extractInputDraft — the verify half of type-then-verify", () => {
     );
   });
 
+  it("drops Muse 1.4.8's argument hint, painted in the rule's colour, after an exact command", () => {
+    // `❯ /model [<model-id>]` over one `/model` suggestion: the hint is not typed text.
+    expect(extractInputDraft(lines("muse--palette-hint.txt"))).toBe("/model");
+  });
+
+  it("reads the command alone when the highlighted first suggestion of several names it", () => {
+    // `/resume` lists two built-in skills under it; the bold first row is the one Enter runs.
+    expect(extractInputDraft(lines("muse--palette-hint-skills.txt"))).toBe("/resume");
+  });
+
+  it("stalls safe once the highlight has moved off the typed command", () => {
+    // After Down, Enter would run `/resume-claude`, so the typed text must not verify.
+    expect(extractInputDraft(lines("muse--palette-hint-moved.txt"))).not.toBe("/resume");
+  });
+
+  it("reads a command whose one suggestion is a built-in skill row, tags and all", () => {
+    // `  /plan · built-in · default skill  On an explicit planning request…` (Muse 1.4.8).
+    expect(extractInputDraft(lines("muse--palette-skill.txt"))).toBe("/plan");
+  });
+
+  it("keeps a typed argument, which arrives in the typed-text colour once the hint is gone", () => {
+    expect(extractInputDraft(lines("muse--palette-typed-arg.txt"))).toBe("/model x");
+  });
+
   it("reads attach tokens verbatim (the attach grammar verifies them, not this) (#278)", () => {
     expect(extractInputDraft(lines("muse--draft-image-chip.txt"))).toBe("[Image #1]");
     expect(extractInputDraft(lines("muse--draft-quoted-path.txt"))).toBe(
@@ -77,6 +103,10 @@ describe("extractInputDraft — the verify half of type-then-verify", () => {
     expect(extractInputDraft(lines("muse--tip-loop.txt"))).toBeNull();
     // The tip rotates per context: the paste variant is a placeholder too (#278).
     expect(extractInputDraft(lines("muse--tip-paste.txt"))).toBeNull();
+    // A prompt suggestion's words are the model's, in no text list: the placeholder colour alone
+    // keeps it from reading as a stranded draft (#510).
+    expect(extractInputDraft(lines("muse--prompt-hint.txt"))).toBeNull();
+    expect(extractInputDraft(lines("muse--prompt-hint-1410.txt"))).toBeNull();
     expect(extractInputDraft(lines("muse--approval-ls.txt"))).toBeNull();
     expect(extractInputDraft(lines("muse--approval-network.txt"))).toBeNull();
     expect(extractInputDraft(lines("muse--ask-color.txt"))).toBeNull();
@@ -162,11 +192,20 @@ describe("composerPrompt — the sweep's binding region", () => {
   it("is null exactly where composerReady is false", () => {
     for (const name of [
       "muse--approval-ls.txt",
+      "muse--approval-ls-147.txt",
+      "muse--approval-date-147.txt",
       "muse--approval-network.txt",
       "muse--ask-color.txt",
+      "muse--ask-multi-q1.txt",
+      "muse--ask-multi-q2.txt",
+      "muse--ask-season.txt",
       "muse--ask-toppings.txt",
+      "muse--ask-toppings-147.txt",
+      "muse--ask-toppings-147-moved.txt",
       "muse--ask-toppings-review.txt",
+      "muse--ask-multi-review.txt",
       "muse--trust-prompt.txt",
+      "muse--trust-prompt-147.txt",
       "muse--ask-color-notes-open.txt",
       "muse--tasks-popup-approval.txt",
     ]) {

@@ -20,6 +20,7 @@ import {
   fetchMachines,
   fetchPane,
   fetchBootSnapshot,
+  fetchPaneWalky,
   isApiErrorStatus,
   isPairingRefusal,
   readFailureKind,
@@ -29,8 +30,10 @@ import { noteUpdateRun } from "./self-update";
 import { splitLines } from "@/lib/blocks";
 import { type CacheHold, holdCacheReadings } from "@/lib/cache-hold";
 import { isLostLatched, type ReadFailureKind, wakeStrikeHolds } from "@/lib/connection-health";
-import { markSavedCopy } from "@/lib/liveness";
+import { markLive as markPaneLive, markSavedCopy } from "@/lib/liveness";
+import { paneGridOf, settleSessionCapabilities } from "@/lib/mux-capability";
 import { ambientSpaces, findPane } from "@/lib/hosts";
+import { noteSessionCards } from "@/lib/session-cards";
 import {
   loadLastPaneText,
   loadLastSnapshot,
@@ -56,6 +59,7 @@ import {
 import type {
   AgentView,
   BridgeStatus,
+  MuxFault,
   DeviceAuth,
   CrewStatusResponse,
   MachinesResponse,
@@ -70,6 +74,7 @@ import type {
   UpdateInfo,
   WorkspaceView,
 } from "@/lib/types";
+import type { WalkyRow } from "@/lib/walky";
 
 // A superseded revalidation is aborted via the loader's request.signal; that surfaces as an
 // AbortError we must RETHROW so React Router discards the stale run — swallowing it into the
@@ -115,6 +120,8 @@ export interface HomeData {
    */
   pending?: boolean;
   bridge: BridgeStatus | undefined;
+  /** Why the mux is down, when the bridge named it (a refused token). Absent otherwise. */
+  muxFault?: MuxFault;
   /** Per-device authorisation; undefined when the feature is off or not yet known. */
   device: DeviceAuth | undefined;
   agents: AgentView[];
@@ -223,6 +230,21 @@ export interface PaneData {
    * herd for. A missing row is then "not known", never "gone" (see {@link savedPaneRow}).
    */
   savedPane?: AgentView;
+  /**
+   * The pane's walky talky messages, newest first, each with its receipt (M62), or `null` when the
+   * list could not be read (an older bridge, a failed read, a saved copy). It is the cross-check
+   * behind the Chat card and the mirror row: an envelope header on a screen is only text until its id
+   * is found here (lib/walky.ts). `null` claims nothing either way; an empty list claims "none".
+   * Optional in the TYPE only, so hand-built fixtures stay valid.
+   */
+  walky?: WalkyRow[] | null;
+  /**
+   * How many times this pane's walky list has been read from the bridge in this page's life (M62). The
+   * list KEEPS its identity across a quiet poll, so identity cannot say "the list was read again";
+   * this number can. The Chat mark "no log record on this machine" waits for it to advance once
+   * (components/walky-log.tsx). A failed read does not count: it answered the old list again.
+   */
+  walkyReads?: number;
 }
 
 // ── THE COLD OPEN (M46 spec 10) ───────────────────────────────────────────────
@@ -357,6 +379,10 @@ function toHomeData(
   // out from under a running update, and it must reload once that run is done (M15/05). Stamped here
   // rather than in the card so the hold applies on every route, not only where the card is mounted.
   noteUpdateRun(snap.update?.run?.state);
+  // What each session is (M55): filed per (host, session) so a capability anywhere in the app is asked
+  // of the session it acts in (lib/session-cards.ts). A snapshot with no card fields files rows that
+  // read as today's terminal sessions.
+  noteSessionCards(snap.sessions, snap.servers);
   const memo = lastHome;
   const stale = error && drawnFromSave(lastSeenAt);
   if (
@@ -394,7 +420,7 @@ function buildHomeData(
   const agents = holdCacheReadings(holdIn, snap.agents);
   const shells = holdCacheReadings(holdIn, snap.shellPanes ?? []);
   paneCacheHold = new Map([...agents.held, ...shells.held]);
-  return {
+  const home: HomeData = {
     lastSeenAt,
     stale: error && drawnFromSave(lastSeenAt),
     bridge: snap.bridge,
@@ -417,6 +443,9 @@ function buildHomeData(
     error,
     authError: error && hasAuthError(scope),
   };
+  // Only while the bridge names why its mux is down (a refused token): every other home has no such key.
+  if (snap.muxFault !== undefined) home.muxFault = snap.muxFault;
+  return home;
 }
 
 // Last-known home for a scope, flagged stale — the cached snapshot if we have one, else an empty
@@ -701,6 +730,11 @@ async function stalePane(paneId: string, scope: Scope, lines: number, outage = f
     lastSeenAt,
     stale,
     savedPane,
+    // The walky list the pane last had (M62), so a failed mirror read does not turn every card and
+    // tagged row back into plain text for one poll. The count stays too: nothing was read again. A
+    // device refused for want of pairing is shown no kept message, as it is shown no kept text.
+    walky: refused ? null : (lastWalky.get(key) ?? null),
+    walkyReads: walkyReadCounts.get(key) ?? 0,
   };
 }
 
@@ -739,6 +773,37 @@ export function prefetchPaneData(paneId: string, scope: Scope | undefined): Prom
   return prefetchPane(paneId, scope, getRequestedLines(paneId, scope));
 }
 
+/** The last list each pane answered, so one failed poll does not turn every card back into plain text. */
+const lastWalky = new Map<string, WalkyRow[]>();
+/** How many reads of each pane's list the bridge answered, so the screen can tell "read again" from "same list". */
+const walkyReadCounts = new Map<string, number>();
+
+/**
+ * The pane's walky talky list, or `null` when it could not be read (M62). Never throws: the list is
+ * the cross-check for a card and a row style, and a screen that cannot be checked simply draws
+ * nothing extra. A failed or superseded poll answers the list the pane last had, so a card does not
+ * flicker back to plain text for one bad read; a pane that never had one (an older bridge with no
+ * route) stays `null`.
+ */
+async function readWalky(paneId: string, scope: Scope, signal: AbortSignal | undefined): Promise<WalkyRow[] | null> {
+  // A pane on a crew member is read the same way: the lead forwards `?host=` to the member, whose own
+  // log answers (CREW_PROTOCOL.md §21). A member that predates walky talky, or one that is down, is a
+  // refusal, which lands below as a list that could not be read.
+  const key = paneKey(paneId, scope);
+  try {
+    const fresh = await fetchPaneWalky(paneId, scope, signal);
+    // The previous list's own objects wherever nothing changed, so a poll that brought no new message
+    // hands the screen the same reference and no card, and no mirror, draws again for it.
+    const previous = lastWalky.get(key);
+    const rows = previous === undefined ? fresh : shareEqual(previous, fresh);
+    lastWalky.set(key, rows);
+    walkyReadCounts.set(key, (walkyReadCounts.get(key) ?? 0) + 1);
+    return rows;
+  } catch {
+    return lastWalky.get(key) ?? null;
+  }
+}
+
 export async function paneLoader({
   params,
   request,
@@ -764,6 +829,33 @@ export async function paneLoader({
   // empty degraded pane if never visited) INSTANTLY — never a 10s hang on a fetch that can't land.
   if (isNavigation && isLostLatched()) return stalePane(paneId, scope, lines);
 
+  // A PANE WITH NO SCREEN HAS NO MIRROR TO READ (ADR 0099 point 9). Its machine answers a mirror read
+  // with a refusal, which this loader would turn into a degraded pane on every poll: the connection
+  // bar flickering, the composer locked for want of text, the saved-copy rules reading an empty
+  // screen as an outage. So no read is made. What the pane IS comes from the snapshot, and its
+  // conversation from the Chat read, so this answers an empty, healthy mirror. The pane counts as live
+  // while the bridge is not known to be lost (lib/liveness.ts), which is what its Chat reads and its
+  // controls ask. Decided by the machine's own declaration, so a bridge that has not said no is read.
+  // A cold open in a named session can run before the root loader filed that session's card.
+  if (isNavigation) await settleSessionCapabilities(scope);
+  if (!paneGridOf(scope)) {
+    markPaneLive(paneId, Date.now(), scope);
+    markPollResult(false);
+    return {
+      paneId,
+      scope,
+      text: "",
+      truncated: false,
+      requestedLines: lines,
+      revision: 0,
+      error: false,
+      authError: false,
+      stale: false,
+      walky: await readWalky(paneId, scope, request?.signal),
+      walkyReads: walkyReadCounts.get(key) ?? 0,
+    };
+  }
+
   // FORK — the mirror this page last saw of the pane, on the tap, then the real read (see HomeData
   // .pending). Only the in-memory cache qualifies: the sessionStorage tier is for a cold boot and
   // may be hours old, and a mirror that old flagged live would be the dishonesty routes/root.tsx's
@@ -780,9 +872,14 @@ export async function paneLoader({
       revision: 0,
       error: false,
       authError: false,
+      // The walky list the pane last had (M62), so the pending frame keeps its cards.
+      walky: lastWalky.get(key) ?? null,
+      walkyReads: walkyReadCounts.get(key) ?? 0,
     };
   }
 
+  // The walky list is asked beside the mirror, not after it: the two reads share the poll's deadline.
+  const walkyRead = readWalky(paneId, scope, request?.signal);
   try {
     // On a 304 fetchPane returns the cached body, so `read.text` is populated either way; the
     // `?? lastPaneText` is just belt-and-suspenders. Both paths are a success (not the error
@@ -848,6 +945,8 @@ export async function paneLoader({
       error: false,
       authError: false,
       stale: false,
+      walky: await walkyRead,
+      walkyReads: walkyReadCounts.get(key) ?? 0,
     };
   } catch (e) {
     if (isAbortError(e)) throw e; // superseded revalidation — let React Router drop it
@@ -885,7 +984,9 @@ export interface DevicesData {
  * What a route renders when the loader did not run or threw. Exported because two callers need the
  * same fallback: the Settings System page's `useLoaderData()` default, and its tests.
  */
-export const EMPTY_DEVICES: DevicesData = { enforced: false, current: null, devices: [], error: false };
+// `error: true`, because this shape means "nobody asked the bridge" (#512): as a clean answer it
+// would render an empty registry as the fact that nothing is paired.
+export const EMPTY_DEVICES: DevicesData = { enforced: false, current: null, devices: [], error: true };
 
 // The nav-vs-revalidate discriminator for the settings and crew loaders — the same shape the root
 // loader's is (see the header comment): a revalidation re-runs at the SAME url, a navigation at a

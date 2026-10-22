@@ -3,11 +3,20 @@
 
 import type { ApiErrorCode, ApiErrorDetail } from "@/lib/api-error-codes";
 import { t } from "@/lib/i18n";
+import type { HeldRow } from "@/lib/surface/send";
+import type { Surface } from "@/lib/surface/surface";
+import type { HoldNote } from "@/lib/surface/hold";
 
 export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 
 export interface AgentView {
   paneId: string;
+  /**
+   * The pane's current session instance: four characters of [a-z0-9] that change when another session
+   * takes over the same pane id. A walky message addressed `<member>/<paneId>#<instance>` reaches only
+   * that session. Absent on a machine that predates it.
+   */
+  instance?: string;
   workspaceId: string;
   workspaceLabel: string;
   workspaceNumber: number;
@@ -85,6 +94,24 @@ export interface AgentView {
    * but it still shows on the muted line, because it is the only trace of what ran here.
    */
   terminalTitleStale?: boolean;
+  /**
+   * One line the program shows under this pane's title (a durable program, WIRE.md 7.11). Mirrors
+   * `AgentView.subtitle` in bridge/types.ts. **Absent on every pane with a screen**, on an older bridge
+   * and on an older crew member. Text only, never markup: read it through `paneSubtitle`
+   * (lib/pane-marks.ts), which drops anything that is not a non-empty string.
+   */
+  subtitle?: string;
+  /**
+   * A small mark next to the title: `{ count }` or `{ text }`. Mirrors `AgentView.badge` in
+   * bridge/types.ts, absent in the same cases. Read it through `paneBadge` (lib/pane-marks.ts).
+   */
+  badge?: PaneBadge;
+  /**
+   * How far a working durable conversation is: a step list or a percent (WIRE.md 7.12). Mirrors
+   * `AgentView.progress` in bridge/types.ts, absent in the same cases. Read it through `paneProgress`
+   * (lib/pane-marks.ts), and draw it only while the pane works or waits.
+   */
+  progress?: PaneProgress;
   /**
    * A finished sentence the bridge composed about this pane, for the operator to read. Absent on
    * almost every pane, and on every bridge older than the version that introduced it.
@@ -173,6 +200,18 @@ export interface AgentView {
    */
   cache?: PaneCache;
   /**
+   * The pane's active todo list, as the bridge read it from the session's task files or journal.
+   * Mirrors `PaneTodo` in bridge/todos.ts. **Absent, never a placeholder**, when the pane has no
+   * todos or on an older bridge. Text only, never markup.
+   */
+  todos?: PaneTodo[];
+  /**
+   * The subagents of this pane's session that have not finished yet. Mirrors `PaneSubagent` in
+   * bridge/subagents.ts; Claude Code only today. **Absent, never a placeholder**, when none is running
+   * or on an older bridge. Text only, never markup.
+   */
+  subagents?: PaneSubagent[];
+  /**
    * What the checkout holding this pane's folder is on. Mirrors `PaneWire.gitHead` in bridge/types.ts.
    *
    * **Absent, never a placeholder**: a folder in no checkout, a reading the bridge has not taken yet,
@@ -181,10 +220,151 @@ export interface AgentView {
    * also drops a malformed one from a peer. Text only, never markup: a branch name is the repo's.
    */
   gitHead?: GitHead;
+  /**
+   * The open asks a person may answer on this pane, as data, oldest first (ADR 0100). Mirrors
+   * `PaneWire.asks` in bridge/types.ts. Every open ask is listed (the bridge caps at 50); the card
+   * list shows the first five and folds the rest (lib/ask.ts `shownAsks`). **Absent on every pane with
+   * a screen**, on an older bridge and on an older crew member, which all read as "no asks as data
+   * here". An empty list is a real answer. Text only, never markup: every string came from a program.
+   */
+  asks?: Ask[];
+  /**
+   * The newest turn of a pane that has no screen (ADR 0101). A send or an abort names it, so a stale
+   * name is refused instead of landing on a turn the person never saw. Absent on a pane with a
+   * screen. Sent back unchanged, never shown.
+   */
+  turnId?: string;
+  /**
+   * The buttons this pane's program lists for the belt (M53 spec 07). Mirrors `PaneWire.actions` in
+   * bridge/types.ts. At most four, in the program's order. **Absent on every pane with a screen**, on
+   * an older bridge and on an older crew member, which all read as "no program buttons here". Text only,
+   * never markup: every label came from a program, and an icon it names that this list lacks draws none.
+   */
+  actions?: PaneAction[];
+  /**
+   * The pane's input surface as the bridge reads it from the screen (M56 spec 04). Mirrors
+   * `PaneWire.surface` in bridge/types.ts. The composer's Send slot is a function of it (M56 spec 06,
+   * lib/send-slot.ts). Absent on an older bridge and on a pane the bridge has not read yet, which the
+   * composer reads as `unknown(no-match)`.
+   */
+  surface?: Surface;
+  /**
+   * Mirrors `PaneWire.hooks` (M56 spec 11): the pane's hook source is `live` or `none`, or `holds`
+   * when its hooks also hold permissions for the phone (M56 spec 12). Absent on an older bridge.
+   */
+  hooks?: "live" | "holds" | "none";
+  /**
+   * Mirrors `PaneWire.hold` (M56 spec 12): the pane's hook-held permission, its tool, the input shown
+   * and its state. Absent when no hold waits or ended a moment ago, and on an older bridge.
+   */
+  hold?: HoldNote;
+  /**
+   * Mirrors `PaneWire.sendProtocol` (M56 spec 05): the bridge runs the Send Protocol for this pane, so
+   * the composer sends through it. Absent means sending text is off there (`COLLIE_SEND_PROTOCOL=0`, or
+   * a crew member older than the protocol), and the composer says so (M56 spec 06).
+   */
+  sendProtocol?: true;
+  /**
+   * Mirrors `PaneWire.held` (M56 spec 15): the pane's held sends, oldest first. The composer draws one
+   * queued row per entry, with the text and Cancel (Resend on an ended one).
+   */
+  held?: HeldRow[];
+}
+
+/** The icon names a program may give a belt action. Mirrors `PANE_ACTION_ICONS` in bridge/types.ts. */
+export const PANE_ACTION_ICONS = ["play", "pause", "check", "x", "refresh", "archive", "flag", "star", "send", "note", "search", "more"] as const;
+export type PaneActionIcon = (typeof PANE_ACTION_ICONS)[number];
+
+/** One button of a durable program's section of the belt. Mirrors `PaneAction` in bridge/types.ts. */
+export interface PaneAction {
+  id: string;
+  label: string;
+  icon?: PaneActionIcon;
+  busy?: boolean;
+  disabled?: boolean;
+}
+
+/** What a person may choose on an ask. Mirrors `AskOption` in bridge/types.ts. */
+export interface AskOption {
+  id: string;
+  label: string;
+  /** A permission option has one. The options of a choice and of a form's choice field have none. */
+  effect?: "allow" | "allow-always" | "deny" | "cancel";
+}
+
+/** One field of a form ask. Mirrors `AskField` in bridge/types.ts. */
+export interface AskField {
+  id: string;
+  label: string;
+  kind: "text" | "choice" | "toggle";
+  required?: true;
+  options?: AskOption[];
+  maxLength?: number;
+}
+
+/** The tool call an ask is about. Mirrors `AskTool` in bridge/types.ts. */
+export interface AskTool {
+  name: string;
+  summary: string;
+  output?: string;
+}
+
+/** One open ask, as the card draws it. Mirrors `Ask` in bridge/types.ts; ids are never shown. */
+export interface Ask {
+  id: string;
+  kind: string;
+  toolCallId: string;
+  revision: number;
+  title: string;
+  itemId: string;
+  options: AskOption[];
+  /** A choice ask only: more than one option may be picked. */
+  multiple?: true;
+  /** A text ask only. */
+  placeholder?: string;
+  /** A text ask only: the most characters. Absent reads as 500. */
+  maxLength?: number;
+  /** A form ask only. */
+  fields?: AskField[];
+  reason?: string;
+  tool?: AskTool;
+  /** Present when the bridge cut or changed the program's title or reason. Such an ask offers no "Always allow". */
+  cleaned?: true;
+  /** When the ask stops waiting, ISO 8601. The card shows the time left. Absent: it waits for a person. */
+  expiresAt?: string;
+}
+
+/** Who decided an ask first, and when, as a too-late answer says it. Mirrors `AskDecided` in bridge/types.ts. */
+export interface AskDecided {
+  by: "phone" | "program" | "timeout";
+  at: string;
 }
 
 /** What a checkout is on: a branch by name, or a detached head at a full object name. */
 export type GitHead = { kind: "branch"; name: string } | { kind: "detached"; sha: string };
+
+export type PaneTodoStatus = "pending" | "in_progress" | "completed";
+
+/** One item in a pane's todo list. Mirrors `PaneTodo` in bridge/todos.ts. */
+export interface PaneTodo {
+  id: string;
+  text: string;
+  status: PaneTodoStatus;
+  activeForm?: string;
+}
+
+/** One running subagent of a pane's session. Mirrors `PaneSubagent` in bridge/subagents.ts. */
+export interface PaneSubagent {
+  /** The id `GET /api/pane/<id>/subagent/<agentId>` takes, the same one an Agent card opens. */
+  agentId: string;
+  agentType?: string;
+  model?: string;
+  /** The call's short description, one line. Empty when Claude Code wrote no meta file for it. */
+  description: string;
+  /** ISO 8601. */
+  startedAt?: string;
+  spawnDepth?: number;
+}
 
 /**
  * One rule as the pane sheet reads it. Mirrors `CacheRuleWire` in bridge/types.ts.
@@ -299,6 +479,9 @@ export interface TabView {
 
 export type BridgeStatus = "connected" | "disconnected";
 
+/** Why the multiplexer is down, when the bridge can name it (mirrors MuxFault in bridge/types.ts). */
+export type MuxFault = "token-refused";
+
 /**
  * Per-device authorisation for this client (mirrors DeviceAuth in bridge/types.ts). Present in the
  * snapshot only when the feature is enabled on the bridge; absent = not enforced.
@@ -357,14 +540,18 @@ export interface DevicesResponse {
   devices: PairedDeviceWire[];
 }
 
-/** Why a `POST /api/pair` claim was rejected (the `error` field of its 400 body). */
+/**
+ * Why a `POST /api/pair` claim was rejected: the `error` field of its 400 body, or — for
+ * `identity-required` — the access gate's 403, which refuses before the claim is reached (#512).
+ */
 export type PairFailure =
   | "no-pending"
   | "expired"
   | "exhausted"
   | "bad-code"
   | "duplicate-label"
-  | "bad-request";
+  | "bad-request"
+  | "identity-required";
 
 /**
  * One entry in the snapshot's session registry — a named Herdr session the bridge is fanning out.
@@ -389,7 +576,34 @@ export interface SessionSummary {
    * a flat merged list would offer "default" twice with no way to tell them apart.
    */
   host?: string;
+  // ── THE SESSION CARD (M55) ──────────────────────────────────────────────────────────────────
+  //
+  // Every field below is optional because a bridge older than M55 sends none of them, and absent
+  // means what the phone did before: the session is a terminal session, its capabilities are asked
+  // of `/api/config`, and nothing about it is drawn differently. Read them through
+  // lib/session-cards.ts, never off the row by hand.
+  /** A terminal session (a multiplexer) or a program session (a durable program). */
+  kind?: SessionKind;
+  /** The multiplexer's name, or the program's cleaned host name. Printed, never branched on. */
+  mux?: string;
+  /** This session's capability set, the same keys `/api/config`'s `mux.capabilities` answers. */
+  caps?: Record<string, boolean>;
+  /** Whether the session runs on this machine or is reached over the network. */
+  where?: SessionWhere;
+  /** Whether the session answers yet. */
+  state?: SessionState;
+  /** Whether the session wears the Experimental mark. */
+  experimental?: boolean;
+  /** A program refused for its wire version: the one sentence that says why. Absent everywhere else. */
+  notice?: string;
 }
+
+/** {@link SessionSummary.kind}. */
+export type SessionKind = "terminal" | "program";
+/** {@link SessionSummary.where}. */
+export type SessionWhere = "local" | "remote";
+/** {@link SessionSummary.state}. */
+export type SessionState = "ready" | "starting" | "unreachable";
 
 /**
  * One member of the crew (CREW_PROTOCOL.md §9.2) — mirrors `ServerSummary` in bridge/types.ts field
@@ -684,6 +898,13 @@ export interface UpdateInfo {
    */
   dismissedCrewVersion?: string | null;
   /**
+   * When that crew close was made, epoch ms on the bridge's clock (1.21.1). Absent when none was, on
+   * an older bridge, and on a close written before the stamp: all three read as "the close covers
+   * every run of that version". A crew run that settles AFTER the stamp is a new run, and its failure
+   * may be named again.
+   */
+  dismissedCrewAt?: number | null;
+  /**
    * The release ahead changes the crew wire, and by how much — absent when it does not (M27/06).
    *
    * Absent on a solo install, absent when the release speaks the wire this install already speaks,
@@ -741,7 +962,34 @@ export interface UpdateInfo {
    * release above `current` as their target. `lib/update-screen.ts` is the reader.
    */
   peersTo?: string;
+  /** This machine's release line (M60 spec 01, ADR 0110). Absent on a bridge older than the field,
+   *  which is Stable. */
+  line?: ReleaseLine;
+  /**
+   * The Stable release "Go back now" installs, when this machine is on Stable and runs an Edge build
+   * that is ahead of every Stable release. `exceptions` names the state files that build cannot read
+   * (ADR 0110), which the page shows before the button. Absent otherwise.
+   */
+  back?: { to: string; exceptions: string[] };
 }
+
+/** A machine's release line: Stable takes final releases only, Edge also takes `-edge.N` builds. */
+export type ReleaseLine = "stable" | "edge";
+
+/** The answer of `POST /api/update/line`: the record as saved, with the request id it answers. */
+export interface ReleaseLineReceipt {
+  ok: true;
+  line: ReleaseLine;
+  /** Builds this machine rolled back from, which are never offered again. */
+  rejected: string[];
+  changedAt: number | null;
+  requestId: string;
+  /** The same request id with the same line was seen before; nothing changed this time. */
+  replay?: true;
+}
+
+/** The answer of `POST /api/update/back`: the same shape as a rollback's start. */
+export type GoBackStartResponse = RollbackStartResponse;
 
 /**
  * Where an update run is (mirrors `bridge/update-run.ts`). `done`, `rolled-back`, `stuck` and
@@ -788,6 +1036,13 @@ export interface UpdateRun {
    * on a bridge that predates it — both read as "no run to key on", which is the closed case.
    */
   runId?: string;
+  /**
+   * `rollback` when this run goes BACK to a build kept on disk (M60 spec 01): `to` is then the older
+   * version and `from` the one left. `switch` when it goes down to a Stable release after the line
+   * changed ("Go back now", or a member following its lead down). Absent on every update, and on a
+   * bridge older than the field.
+   */
+  action?: "rollback" | "switch";
   /**
    * The peer legs of a crew-wide run (M16/04). Absent on a solo run, and absent on a bridge that
    * predates it — the page then falls back to the census rows, which is the same screen with older
@@ -897,6 +1152,12 @@ export interface PreflightReport {
   schema: number;
   verdict: "green" | "amber" | "red";
   checks: PreflightCheck[];
+  /**
+   * The build `collie update --rollback` would go back to, when this machine keeps one (M60 spec 01):
+   * the version it runs now and the older one on disk. Absent when there is none, and on a bridge
+   * older than the field. The Updates page offers Roll back only when it is here.
+   */
+  rollback?: { from: string; to: string };
 }
 
 /**
@@ -906,8 +1167,37 @@ export interface PreflightReport {
  * REFUSES an update rather than allowing one. `crew` is optional because a bridge older than the
  * crew-wide check omits it; that reads the same as "no peer rows" on the phone.
  */
+/** One CHANGELOG group of a release, as its bullets' bold leads. The leads are the release's own
+ *  English, quoted, never translated; `name` is one of Added, Changed, Fixed, Packaging, Docs. */
+export interface ReleaseNotesGroup {
+  name: string;
+  leads: string[];
+}
+
+/** What one release changed (1.21.1). `url` is its GitHub release page. */
+export interface ReleaseNotes {
+  version: string;
+  url: string;
+  groups: ReleaseNotesGroup[];
+}
+
+/** `GET /api/update/check`'s `releaseNotes` (1.21.1). */
+export interface UpdateNotes {
+  /** The running version's notes, or null when the host could not read them. */
+  current: ReleaseNotes | null;
+  /** Each release in the delta that published notes, oldest first, like `newerVersions`. Releases
+   *  before 1.21.1 published none, so a delta of only those lists nothing. */
+  offered: ReleaseNotes[];
+}
+
 export interface UpdateCheckResponse extends UpdateInfo {
   preflight: PreflightReport | null;
+  /**
+   * What the releases changed (1.21.1). Only on this route, never on the snapshot: a list of
+   * sentences is the Updates page's, and the snapshot is polled by every open client. Absent on an
+   * older bridge, which reads as nothing to list.
+   */
+  releaseNotes?: UpdateNotes;
   /**
    * Every peer's version and preflight (M16/03). Absent on a solo install, and absent on a bridge
    * that predates the crew-wide check. Both read as "no peer rows", which is the same screen.
@@ -933,8 +1223,24 @@ export interface UpdateStartResponse {
   runId?: string;
 }
 
+/** `POST /api/update/rollback` — the 202 (M60 spec 01). The run is followed on the snapshot from here. */
+export interface RollbackStartResponse {
+  ok: true;
+  /** The version this machine leaves, and the older one it goes back to. */
+  from: string | null;
+  to: string | null;
+  /** The record as the bridge read it before the start, as on `POST /api/update`. */
+  run: UpdateRun | null;
+  /** The request id this device sent, which the run record carries as its run id. */
+  runId: string;
+  /** The same request id was seen before: this is that start's receipt, and nothing new started. */
+  replay?: true;
+}
+
 export interface SnapshotResponse {
   bridge: BridgeStatus;
+  /** Present only while `bridge` is `disconnected` for a cause the phone words. Absent on an older bridge. */
+  muxFault?: MuxFault;
   /** Per-device authorisation for the requesting client; absent when the feature is off. */
   device?: DeviceAuth;
   agents: AgentView[];
@@ -1009,7 +1315,7 @@ export type ToolCall =
   | { kind: "search"; query: string; where?: string; hits?: number }
   | { kind: "fetch"; url: string }
   | { kind: "delete" | "move"; path: string; to?: string }
-  | { kind: "task"; agent: string; summary: string }
+  | { kind: "task"; agent?: string; summary: string; agentId?: string }
   /** The agent asked the operator to choose. One entry per question the call carried. `answers[i]` is the list of chosen labels for question `i`, present only once the call completed with answers. */
   | { kind: "question"; name: string; summary: string; questions: readonly ToolQuestion[]; answers?: readonly (readonly string[])[] }
   | { kind: "other"; name: string; summary: string };
@@ -1082,6 +1388,13 @@ export interface TranscriptEntry {
    * job (`bridge/journal/types.ts` carries the long reasoning).
    */
   abandoned?: true;
+  /**
+   * The text of this turn is still growing, and the program will rewrite it under the same id. Draw a cursor and
+   * no time until it goes. Absent when false. Only a durable pane sets it (WIRE.md 7.15).
+   */
+  partial?: true;
+  /** The request id of the send that made this user turn. Matches the phone's own unsent line. Durable panes only. */
+  requestId?: string;
 }
 
 /** A file's state against HEAD, staged and unstaged together (ADR 0065). `?` = untracked. */
@@ -1258,6 +1571,50 @@ export type PaneHistoryResponse =
     };
 
 /**
+ * One conversation of a durable program's own list (GET /api/durable/conversations). Mirrors
+ * `DurableConversationRow` in bridge/durable. `paneId` is set on an open conversation that is in the
+ * live layout: the pane that shows it.
+ */
+export interface DurableConversationRow {
+  id: string;
+  title: string;
+  subtitle?: string;
+  workspaceId?: string;
+  tabId?: string;
+  startedAt: string;
+  endedAt?: string;
+  state: "open" | "closed";
+  items: number;
+  paneId?: string;
+}
+
+/**
+ * GET /api/durable/conversations?after=&limit=. Newest first, at most 100 a page; `next` absent is the
+ * last page. `available: false` is an ordinary answer, drawn as text and never as an error.
+ */
+export type DurableConversationsResponse =
+  | { available: true; items: DurableConversationRow[]; next?: string }
+  | { available: false; reason: "unsupported" | "unreachable"; detail?: string };
+
+/**
+ * GET /api/durable/conversation/:id/items?after=&limit=. Oldest first, at most 1000 a page; `more: true`
+ * means ask again with `after=next` for the NEWER items that follow.
+ */
+export type DurableConversationItemsResponse =
+  | { available: true; id: string; entries: TranscriptEntry[]; next?: string; more: boolean }
+  | { available: false; reason: "unsupported" | "unreachable" | "gone"; detail?: string };
+
+/** POST /api/durable/conversation/:id/reopen. The pane that now shows the conversation, when the program says. */
+export type ReopenConversationResponse =
+  | { ok: true; paneId?: string }
+  | {
+      ok: false;
+      error: string;
+      code?: ApiErrorCode;
+      detail?: ApiErrorDetail;
+    };
+
+/**
  * One turn of a live window, plus WHERE it sits. Mirrors `ChatEntry` in bridge/journal/live.ts.
  *
  * `seq` is assigned once by the bridge and never reassigned, which is what lets a client hold one
@@ -1280,6 +1637,12 @@ export interface ChatEntry extends TranscriptEntry {
 export interface ChatWindowBody {
   page: "live";
   gen: number;
+  /**
+   * Which session, as an opaque tag. Another one than the tag held means the pane's agent started a
+   * new session (pi's `/new`): drop what is held for the pane, older pages included (#526). Absent
+   * from a bridge one release behind, which leaves `gen` as the only rule.
+   */
+  session?: string;
   rev: number;
   /** The newest `seq` the window holds. Below `oldest` when the window is empty. */
   head: number;
@@ -1306,6 +1669,21 @@ export interface ChatWindowBody {
    * bridge/journal/live.ts.
    */
   sendQueuedNow?: string[];
+  /**
+   * The operator's newest prompt the live window holds, even when the first page left it out. STATE
+   * like {@link queued}: whole on every answer, replaced rather than merged. Absent when the window
+   * holds no prompt and from a bridge one release behind, and both read as "not known". Mirrors
+   * `ChatWindowBody` in bridge/journal/live.ts.
+   */
+  lastPrompt?: ChatPrompt;
+}
+
+/** The operator's newest prompt, capped by the bridge. Mirrors `ChatPrompt` in bridge/journal/live.ts. */
+export interface ChatPrompt {
+  uuid: string;
+  ts: string;
+  text: string;
+  truncated?: boolean;
 }
 
 /**
@@ -1316,6 +1694,8 @@ export interface ChatWindowBody {
 export interface ChatOlderBody {
   page: "older";
   gen: number;
+  /** The session the page was read from, as {@link ChatWindowBody.session} names it. */
+  session?: string;
   upserts: ChatEntry[];
   /** Turns exist before `upserts[0]` too. */
   hasOlder: boolean;
@@ -1345,8 +1725,29 @@ export interface ChatBefore {
  * no route at all, and the honest reading there is "update this machine". Mirrors bridge/types.ts.
  */
 export type PaneChatResponse =
-  | { paneId: string; available: false; reason: "disabled" | "no-session" | "no-log" }
+  | {
+      paneId: string;
+      available: false;
+      reason: "disabled" | "no-session" | "no-log";
+      /**
+       * Why a `no-session` answer has no session, when the bridge knows a reason the person can act
+       * on (bridge/types.ts). `shared-folder`: another pane runs the same harness in this folder and
+       * this pane's command line names no session (#508). Absent from an older bridge.
+       */
+      detail?: "shared-folder";
+    }
   | ({ paneId: string; available: true } & ChatBody);
+
+/** GET /api/pane/:id/subagent/:agentId — one Claude subagent's own JSONL transcript. */
+export type PaneSubagentResponse =
+  | { paneId: string; agentId: string; available: false }
+  | {
+      paneId: string;
+      agentId: string;
+      available: true;
+      entries: TranscriptEntry[];
+      fileTruncated: boolean;
+    };
 
 /**
  * `error` is the bridge's English sentence and stays what a client displays when it has nothing
@@ -1465,6 +1866,17 @@ export const MUX_CAPABILITIES = [
   "openWorktree",
   "pushTopologyEvents",
   "pushPaneEvents",
+  // A durable program's own controls, declared from its `caps` (bridge/mux/capabilities.ts). Unlike
+  // every capability above, an unanswered one reads ABSENT here: see `muxDeclared`.
+  "steerTurn",
+  "abortTurn",
+  "starters",
+  "renameSpace",
+  "programActions",
+  // The program serves its own conversation list and the items of one (`/api/durable/conversations`),
+  // and takes a reopen of a closed one. Both are read through `muxDeclared`, so they fail closed.
+  "programHistory",
+  "reopenConversation",
 ] as const;
 
 export type MuxCapability = (typeof MUX_CAPABILITIES)[number];
@@ -1508,7 +1920,7 @@ export interface MuxConfig {
    * bridge/mux/capabilities.ts.
    *
    * **Absent on any bridge older than the field, and absent reads as `push`** — the same fail-open
-   * direction the capabilities take (lib/mux-capability.ts). Read it through `useTopologyLatency()`
+   * direction the capabilities take (lib/mux-capability.ts). Read it through `muxTopologyLatency()`
    * rather than here, so that rule lives in exactly one place.
    */
   topologyLatency?: MuxTopologyLatency;
@@ -1644,14 +2056,17 @@ export interface LauncherItem {
   /** `harness:<id>`, `row:<command>` or `shell`. Stable per machine. */
   key: string;
   /** What `startLaunch` sends for it. */
-  start: { harness: string } | { command: string } | { shell: true };
+  start: { harness: string } | { command: string } | { shell: true } | { starter: string };
   group: "agents" | "commands";
   label: string;
   harness?: string;
   command?: string;
   cwd?: string;
-  source: "builtin" | "operator" | "added";
+  /** `program`: a starter the durable program offers (ADR 0102). */
+  source: "builtin" | "operator" | "added" | "program";
   noPrompts: boolean;
+  /** False on a starter: it takes no text, so the page shows no prompt field for it. Absent on every other item. */
+  takesPrompt?: false;
   /** Whether it may start on a new branch: agents and the shell, never a command row. */
   branch: boolean;
   available: boolean;
@@ -1734,6 +2149,54 @@ export type RecentRunsResponse =
   | { ok: true; removed: number }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
 
+// ── SENT (M61): the record of shell lines a person sent through Collie ───────────────────────────
+// The wire contract of GET /api/sent, POST /api/sent/remove and POST /api/sent/clear. Held in memory
+// only: nothing here is stored on the phone.
+
+/** Where the bridge reads from: this machine, or (on a crew lead) this machine and every member. */
+export type SentScope = "here" | "all";
+
+/** One distinct line on one machine. Repeats are merged by the bridge into `count`. */
+export interface SentEntry {
+  /** Stable per line on its machine (the first 16 hex characters of the line's sha256). */
+  id: string;
+  line: string;
+  /** Absolute folder, or `null` for home. */
+  cwd: string | null;
+  /** Epoch ms of the newest record. */
+  at: number;
+  /** Entry kinds, never harness names. */
+  kind: "shell" | "run";
+  count: number;
+  /** The machine id the crew already uses. */
+  host: string;
+}
+
+/** One machine the bridge asked, and whether it answered. */
+export interface SentMachine {
+  host: string;
+  label: string;
+  ok: boolean;
+  /** That machine records nothing (`COLLIE_SENT=off`). */
+  off?: boolean;
+  reason?: "old_version" | "unreachable" | "timeout";
+}
+
+/** GET /api/sent. `entries` is newest first. */
+export interface SentAnswer {
+  entries: SentEntry[];
+  /** A later page exists on at least one machine. */
+  more: boolean;
+  /** This bridge records nothing. */
+  off: boolean;
+  machines: SentMachine[];
+}
+
+/** POST /api/sent/remove and /clear. Idempotent: a missing id still answers ok. */
+export type SentWriteResponse =
+  | { ok: true }
+  | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
+
 /** One agent a host can start by id. Mirrors `HarnessInfo` in bridge/types.ts. */
 export interface HarnessInfo {
   /** The id `POST /api/launch` takes as `harness`, and the brand key `AgentIcon` draws. */
@@ -1756,6 +2219,27 @@ export interface FoldersResponse {
   recent: string[];
   favourites: string[];
   home: string;
+}
+
+/** One sub-folder in a browse answer: its name only, and whether it holds a `.git` entry (#467). */
+export interface FolderBrowseEntry {
+  name: string;
+  git: boolean;
+}
+
+/**
+ * GET /api/folders/browse — the New page's folder browser (#467, bridge/folder-browse.ts). `path` is
+ * the nearest folder that exists at or above the asked text, spelled under home as the text was;
+ * `filter` is the rest of the text after it ("" when the text named a folder); `folders` are the
+ * sub-folders of `path` whose names start with `filter`, case-insensitive, sorted by name, at most
+ * 200; `parent` is the folder above `path`, or `null` at home, the bound.
+ */
+export interface FolderBrowseResponse {
+  path: string;
+  parent: string | null;
+  folders: FolderBrowseEntry[];
+  filter: string;
+  truncated: boolean;
 }
 
 export interface BridgeConfig {
@@ -1792,6 +2276,11 @@ export interface BridgeConfig {
    * feature is absent, not disabled.
    */
   stt?: SttCapability;
+  /**
+   * The Whistle model on the host (ADR 0096). Mirrors `WhistleStatus` in bridge/types.ts. **Absent
+   * is an older bridge, or a crew member's own answer**, and Settings then offers no setup tap.
+   */
+  whistle?: WhistleStatus;
   /**
    * What this collie accepts as an attachment. Mirrors `UploadCapability` in bridge/types.ts.
    *
@@ -1854,6 +2343,107 @@ export interface SttCapability {
   available: boolean;
   /** Operator-facing prose when it could not. Absent when it could. */
   reason?: string;
+  /**
+   * What the phone must upload. Present only for the `whistle` provider (ADR 0096 Decision 4):
+   * `wav-16k` is 16 kHz mono 16-bit little-endian PCM WAV, and nothing else is accepted. Absent means
+   * the recording as the browser made it.
+   */
+  input?: "wav-16k";
+  /**
+   * The longest recording this provider takes, in milliseconds. Present only when it differs from
+   * the phone's 5-minute default: the `whistle` provider takes 4 minutes, because a WAV is about four
+   * times the size of a compressed recording and the 8 MiB upload cap stays.
+   */
+  maxDurationMs?: number;
+}
+
+/** Where the host's copy of the Whistle model stands (ADR 0096 Decision 2). */
+export type WhistleState = "absent" | "downloading" | "ready" | "failed";
+
+/**
+ * The Whistle model on the host and the host engine's switch, as `GET /api/stt/whistle` and
+ * `/api/config` report them. Mirrors `WhistleStatus` in bridge/types.ts.
+ */
+export interface WhistleStatus {
+  state: WhistleState;
+  /** Exact size of the pinned model, for the button and the bar. Always present. */
+  bytes: number;
+  /** Present while downloading: the bytes received so far. */
+  received?: number;
+  /** Present only when state is "ready": the held file's sha256, lowercase hex, a hash this build accepts. */
+  sha256?: string;
+  /** Present only when state is "ready" and the manifest names it: the Hugging Face revision the file came from. */
+  revision?: string;
+  /** Present only when state is "ready" and the manifest names it: when the host fetched the file, an ISO 8601 time. */
+  fetchedAt?: string;
+  /** Present when state is "failed": operator-facing prose, no paths. */
+  reason?: string;
+  /** True when the host STT provider is `whistle`. */
+  hostEngine: boolean;
+  /** True when another provider is configured, so Settings cannot turn the host engine on. */
+  hostTaken: boolean;
+}
+
+/**
+ * Why Settings may not switch the host to one choice (ADR 0097). Mirrors `SttHostSwitchReason` in
+ * bridge/types.ts, where each word is explained.
+ */
+export type SttHostSwitchReason =
+  | "env"
+  | "terminal"
+  | "unreadable"
+  | "not-ready"
+  | "codex-missing"
+  | "codex-signed-out"
+  | "codex-other-login"
+  | "codex-unknown";
+
+/** Whether one choice may be made from Settings, and if not, why. */
+export interface SttHostSwitch {
+  ok: boolean;
+  /** Absent when `ok`. */
+  reason?: SttHostSwitchReason;
+}
+
+/** The three choices Settings offers for the host's speech provider. */
+export type SttHostChoice = "whistle" | "codex" | "off";
+
+/**
+ * What the host's speech settings name, by name only. Never a path, an argument other than one model
+ * file's name, a key, or a URL's path. Mirrors `SttHostSetup` in bridge/types.ts.
+ */
+export interface SttHostSetup {
+  /** `local-cli`: the command's basename (`whistle-stt`, `whisper-cli`). */
+  command?: string;
+  /** `local-cli`: a model file's name. `openai-compatible`: the model. `whistle`: the pinned version, seven characters. */
+  model?: string;
+  /** `openai-compatible`: the service's host, with its port when it has one (`api.groq.com`). */
+  endpoint?: string;
+}
+
+/**
+ * The host's speech provider, as `GET /api/stt/host` and `PUT /api/stt/host` report it (ADR 0097).
+ * Mirrors `SttHostStatus` in bridge/types.ts.
+ */
+export interface SttHostStatus {
+  /** `whistle`, `codex`, `openai-compatible`, `local-cli`, or `none`. A name this app does not know is shown as is. */
+  provider: string;
+  available: boolean;
+  /** The host's own words when it cannot serve a request. English: it comes from the host. */
+  reason?: string;
+  /** For `codex` only: `honest`, or `codex-cli`, the fallback that wears the Codex CLI's headers. */
+  identity?: "honest" | "codex-cli";
+  /** Where the provider is named: the host's `stt.json`, the host's environment, or nowhere. */
+  configuredBy: "file" | "env" | "none";
+  switchable: Record<SttHostChoice, SttHostSwitch>;
+  /** The `codex` binary whose sign-in would pay, named in the consent. Present when the host found one. */
+  codexBin?: string;
+  /** The paired device that last changed the option from Settings, by its pairing label. Absent on an older host, or when it was last set elsewhere. */
+  changedBy?: string;
+  /** When that device changed it, an ISO 8601 time. Present exactly when `changedBy` is. */
+  changedAt?: string;
+  /** What the settings name: the command, the model, the service's host. Absent on an older host, or when they name nothing. */
+  setup?: SttHostSetup;
 }
 
 /**
@@ -2282,7 +2872,7 @@ export type WorktreePlanResponse =
 export type WorktreeFolderChoice = { kind: "default" } | { kind: "parent"; parent: string };
 
 /**
- * POST /api/workspace/:id/worktree — the new space, and whether the launcher was typed into it
+ * POST /api/worktree — the new space, and whether the launcher was typed into it
  * (ADR 0089). Mirrors `WorktreeCreateResponse` in bridge/types.ts. A launcher that failed after the
  * create is still `ok: true`: the worktree exists, `pane` is where it is.
  */
@@ -2296,4 +2886,12 @@ export type WorktreeCreateResponse =
       replayed?: true;
     }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
+/** A small mark next to a pane's title: a count, or a short word. Mirrors `PaneBadge` in bridge/types.ts. */
+export type PaneBadge = { count: number } | { text: string };
+
+/** How far a working pane is: up to 12 steps, or a percent. Mirrors `PaneProgress` in bridge/types.ts. */
+export type PaneProgress =
+  | { kind: "steps"; steps: { label: string; state: "done" | "running" | "todo" }[] }
+  | { kind: "percent"; value: number; label?: string };
+
 

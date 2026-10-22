@@ -32,6 +32,8 @@
 
 import { readFileSync } from "node:fs";
 
+import { isEdgeVersion, sectionVersion } from "./release-version.ts";
+
 /** The five group headings, in the order the release page prints them. */
 export const GROUPS = ["Added", "Changed", "Fixed", "Packaging", "Docs"] as const;
 
@@ -83,8 +85,12 @@ interface RawSection {
 /**
  * The lines of `## [version] - date`'s section, and the date out of that heading. The section runs
  * from its own heading to the next `## ` heading, or to the end of the file.
+ *
+ * An Edge build (`1.23.0-edge.1`, M60 spec 01) reads its base version's section: the tag carries the
+ * suffix and the CHANGELOG never does, so the Edge page and the Stable page list the same lines.
  */
-function sectionLines(changelog: string, version: string): RawSection {
+function sectionLines(changelog: string, tagged: string): RawSection {
+	const version = sectionVersion(tagged);
 	const lines = toLines(changelog);
 	const headingPattern = new RegExp(
 		`^## \\[${version.replace(/\./g, "\\.")}\\] - (\\d{4}-\\d{2}-\\d{2})\\s*$`,
@@ -386,7 +392,19 @@ export function changelogAnchor(version: string, date: string): string {
  * update banner (web/src/components/update-banner.tsx) to copy one command, so this may never sit
  * behind a `<details>` and may never sit below the change list.
  */
-function updateBlock(): string[] {
+function updateBlock(edge: boolean): string[] {
+	// AN EDGE BUILD IS A PRE-RELEASE (M60 spec 01). A Stable install never takes it on its own, and
+	// the routine command below would not either, so the page says what it is instead of printing a
+	// command that lands somewhere else. Stable supersedes it: the release of the same version is
+	// newer than every Edge build of it.
+	if (edge) {
+		return [
+			"## Update",
+			"",
+			"**This is an Edge build**, a pre-release for volunteers. A Stable install does not take it,",
+			"and the Stable release of the same version supersedes it.",
+		];
+	}
 	return [
 		"## Update",
 		"",
@@ -427,6 +445,26 @@ function verifyBlock(repo: string, tag: string, version: string): string[] {
 }
 
 /**
+ * The page block for agents the release was tagged over, from `claude 2.1.301` style entries. It has its
+ * own small heading and one sentence, so it is never a bullet at the end of the last group. An empty list
+ * gives no block.
+ */
+export function driftLines(entries: readonly string[]): string[] {
+	const named = entries.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+	if (named.length === 0) return [];
+	return ["**Not verified**", "", `Collie's readers were not verified on ${named.join(", ")}: each is newer than its verified version.`];
+}
+
+/**
+ * The agents a tag message names as not verified: the text after `Not verified:` as a list of
+ * `agent version` entries. A tag with no such line answers an empty list.
+ */
+export function notVerifiedOf(tagMessage: string): string[] {
+	const match = /^Not verified:\s*(.+)$/mu.exec(tagMessage);
+	return match?.[1] === undefined ? [] : match[1].split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+}
+
+/**
  * The whole release page body for one version.
  *
  * `previousTag` is a real tag on the remote or nothing. It is NOT derived from the CHANGELOG:
@@ -440,16 +478,19 @@ export function renderBody(
 	repo: string,
 	tag: string,
 	previousTag: string | null = null,
+	notVerified: readonly string[] = [],
 ): string {
 	const section = parseSection(changelog, version);
-	const anchor = changelogAnchor(version, section.date);
+	// The heading's own version: an Edge build links its base version's section.
+	const heading = sectionVersion(version);
+	const anchor = changelogAnchor(heading, section.date);
 	// THE URGENT LINE STAYS AS IT WAS WRITTEN, AND IT GOES FIRST (ADR 0046). It is the one sentence a
 	// reader has to see before the update command, so it sits above the block a phone came here to
 	// copy from. One line, the author's own, with no wrapper around it.
 	const urgent = parseUrgent(changelog, version);
 	const lines: string[] = [];
 	if (urgent) lines.push(`**Urgent.** ${urgent.reason}`, "");
-	lines.push(...updateBlock(), "", "## What changed", "");
+	lines.push(...updateBlock(isEdgeVersion(version)), "", "## What changed", "");
 
 	for (const group of section.groups) {
 		if (group.leads.length === 0) continue;
@@ -461,8 +502,13 @@ export function renderBody(
 		lines.push("");
 	}
 
+	// THE SOFT RELEASE GATE (M44 spec 08). A release tagged over a drift says so: one line per agent,
+	// A small heading and one sentence naming each agent and version. Nothing is printed when no drift was named.
+	const drift = driftLines(notVerified);
+	if (drift.length > 0) lines.push(...drift, "");
+
 	lines.push(
-		`Full detail with commits: [${version} in the changelog](https://github.com/${repo}/blob/${tag}/CHANGELOG.md#${anchor})`,
+		`Full detail with commits: [${heading} in the changelog](https://github.com/${repo}/blob/${tag}/CHANGELOG.md#${anchor})`,
 		"",
 	);
 
@@ -491,18 +537,19 @@ function main(argv: string[]): void {
 	const tag = flag(argv, "tag");
 	const previousTag = flag(argv, "previous-tag");
 	const changelogPath = flag(argv, "changelog") ?? "CHANGELOG.md";
+	const notVerified = flag(argv, "not-verified");
 
 	if (!version || !repo || !tag) {
 		console.error(
 			"usage: bun scripts/release-notes.ts --version 1.6.0 --repo AltanS/collie --tag v1.6.0 " +
-				"[--previous-tag v1.5.6] [--changelog CHANGELOG.md]",
+				"[--previous-tag v1.5.6] [--changelog CHANGELOG.md] [--not-verified \"claude 2.1.301\"]",
 		);
 		process.exit(1);
 	}
 
 	try {
 		const changelog = readFileSync(changelogPath, "utf8");
-		process.stdout.write(renderBody(changelog, version, repo, tag, previousTag || null));
+		process.stdout.write(renderBody(changelog, version, repo, tag, previousTag || null, notVerifiedOf(`Not verified: ${notVerified ?? ""}`)));
 	} catch (error) {
 		console.error(`✗ release-notes: ${error instanceof Error ? error.message : String(error)}`);
 		process.exit(1);

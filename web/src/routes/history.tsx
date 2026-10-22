@@ -7,6 +7,7 @@ import { NoteCountChip, type NotedTurn } from "@/components/note-badge";
 import { NoteSheet, NotesSheet } from "@/components/notes-sheet";
 import { ChatMessageList, type ChatMessageListHandle } from "@/components/ui/chat/chat-message-list";
 import { FindBar } from "@/components/find-bar";
+import { StretchTextContext } from "@/components/markdown-text";
 import { TranscriptView } from "@/components/transcript-view";
 import { useNotes } from "@/hooks/use-notes";
 import { NOTES_EVENT } from "@/hooks/use-hotkeys";
@@ -407,14 +408,16 @@ export function HistoryRoute() {
                   {data.fileTruncated ? t("history.startClipped") : t("history.startOfConversation")}
                 </div>
               )}
-              <TranscriptView
-                entries={shown}
-                agent={agent?.agent}
-                query={query}
-                focusedUuid={focusedUuid}
-                scope={scope}
-                onTurnLongPress={noteTurn}
-              />
+              <StretchTextContext.Provider value={prefs.stretchText}>
+                <TranscriptView
+                  entries={shown}
+                  agent={agent?.agent}
+                  query={query}
+                  focusedUuid={focusedUuid}
+                  scope={scope}
+                  onTurnLongPress={noteTurn}
+                />
+              </StretchTextContext.Provider>
             </>
           )}
         </ChatMessageList>

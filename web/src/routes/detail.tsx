@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLoaderData, useLocation, useParams, useSearchParams } from "react-router";
 
 import { AgentChat } from "@/components/agent-chat";
+import { WalkyLogProvider } from "@/components/walky-log";
 import { FileLinksProvider, usePaneFileLinks } from "@/components/file-links";
+import { SubagentSheet } from "@/components/subagent-sheet";
 import { useDashPrefs } from "@/hooks/use-dash-prefs";
 import { useLoadingStalled } from "@/hooks/use-loading-stalled";
 import { useNav } from "@/hooks/use-nav";
@@ -14,6 +16,7 @@ import { findPane, paneScope } from "@/lib/hosts";
 import { setStatus } from "@/lib/status";
 import { saveDraft } from "@/lib/drafts";
 import { rememberLastPane } from "@/lib/last-pane";
+import { useMuxCapability } from "@/lib/mux-capability";
 import type { AgentView } from "@/lib/types";
 import { useRootData } from "@/lib/route-data";
 
@@ -116,15 +119,24 @@ export function DetailRoute() {
     }
   }, [gone, root.bridge, root.error, nav, scope, paneId]);
 
-  // Up one level: to the space or the dashboard the pane was opened from (ADR 0067).
-  const up = () => nav.up(homePath(scope));
+  // Up one level: to the space or the dashboard the pane was opened from (ADR 0067). A pane with no screen
+  // is a durable program's conversation, and its way up is the machine's home, which is the conversation
+  // list there (M53 spec 12): a NAMED parent, so a pane reached from a space page or a link lands on the list.
+  const gridless = !useMuxCapability("paneGrid", scope).capable;
+  const dismissSubagent = useRef<(() => boolean) | null>(null);
+  const up = () => {
+    if (dismissSubagent.current?.() === true) return;
+    if (gridless) nav.upTo(homePath(scope));
+    else nav.up(homePath(scope));
+  };
   // The back arrow glides the header's dot, tile and name back down into the row this pane was
   // opened from (lib/glide.ts, the `pane` pair, rule 1), when the arrow lands where such a row can
   // be: the dashboard's Panes or Focus list, or a space. Not the dashboard's Changes tab, which lists
   // workspaces, so the arrow slides there as it always did. Where the row is gone or off screen, the
   // engine crossfades. The landing is the same resolution `nav.up` runs (`upTarget`).
   const backArrow = () => {
-    const lands = upTarget(location.pathname, readFrom(location.state), homePath(scope), canStepBack());
+    if (dismissSubagent.current?.() === true) return;
+    const lands = gridless ? "/" : upTarget(location.pathname, readFrom(location.state), homePath(scope), canStepBack());
     const rowsThere = GLIDE_PAIRS.pane.origin(lands) && (lands !== "/" || dashView !== "changes");
     if (rowsThere) glideBack("pane", panePath(paneId, scope), up);
     else up();
@@ -135,8 +147,9 @@ export function DetailRoute() {
   const herd = useMemo(() => [...root.agents, ...root.shellPanes], [root.agents, root.shellPanes]);
   const fileLinks = usePaneFileLinks({ paneId, scope, pane: agent, panes: herd, workspaces: root.workspaces });
 
-  return (
+  const view = (
     <FileLinksProvider value={fileLinks}>
+    <SubagentSheet paneId={paneId} scope={scope} dismissRef={dismissSubagent}>
       <AgentChat
         // Keyed by the pane's FULL address, not its id. The key exists to remount the composer on a
         // pane switch so a draft never follows you into another terminal — and `w1:p1` is a different
@@ -181,6 +194,10 @@ export function DetailRoute() {
           )
         }
       />
+    </SubagentSheet>
     </FileLinksProvider>
   );
+
+  // The pane's walky talky list, the cross-check behind the Chat card and the mirror's row style (lib/walky.ts).
+  return <WalkyLogProvider rows={pane.walky} reads={pane.walkyReads}>{view}</WalkyLogProvider>;
 }

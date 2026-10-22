@@ -89,9 +89,9 @@ ceiling: attention is something the bridge observes, never something a caller ca
 | `closeTab` | `POST /api/tab/:id/close` | `tab.close` — a bulk pane-close (**API** § Close) | `tern close <pane>` for every pane in the tab (**TN**) | `kill-window` (**T**) — and it ends the session too when it was the last window, exactly as tmux itself does | `close-tab-by-id <n>` (**Z**) — and zellij closes a tab whose last pane goes away, exactly as it does by hand | `close-window` for every pane on the workspace (**TU**), a bulk pane close |
 | `setFocus` | `POST /api/pane/:id/focus` — the pane sheet's "Show in terminal" row | `pane.focus {pane_id}`, ONE call: probed 2026-08-25 against the `collie-demo` sandbox session, the reply was `pane_info` and the next snapshot moved `focused_pane_id`, `focused_tab_id` AND `focused_workspace_id` together, so `tab.focus`/`workspace.focus` are never called. A pane that has gone answers `pane_not_found` (probed read-only against the live server) → `gone` | `tern focus <id>`, ONE call (**TN**): probed on a block in a background session, it moved the window to that session, showed the block's tab and focused the block together | `select-window -t <window> ; select-pane -t <pane>` — one invocation, both levels, because a screen showing the right window and the wrong pane is a half-kept promise (**T**, probed 2026-08-25 on the test server: `window_active` and `pane_active` moved together) — **plus `; switch-client -c <client_tty> -t <session>` for every attached non-control client sitting on another session**, because tmux's current window belongs to the SESSION and those two commands move nothing on a terminal that is showing a different one (**T**, probed 2026-08-25 on the two-session test server: focusing a `collie-tmux` pane answered `{ok:true}` while the client on `ss-wp` stayed put; with the switch-client leg the client moved and `#{session_name} #{pane_id}` followed). No client attached ⇒ nothing to switch, and the window/pane selection alone is right: the next attach lands there. The window id, the session id and the clients all come out of the same listing the snapshot uses, so a stale pane id is `gone` before anything is spawned; `can't find window:` / `can't find pane:` classify as `gone` | **no** (**Z**) — `action focus-pane-id` exists on 0.44.2 and does NOTHING: probed 2026-08-25 with a client attached, both `focus-pane-id terminal_3` and the bare `focus-pane-id 3` exited 0 while `list-clients` still reported the client on `terminal_0`, and `focus-next-pane` moved it, so the session was live. `go-to-tab <n>` DOES work (1-based over tab position, probed) — and a tab-level approximation is deliberately declined: the promise is "this pane is in front", and showing a tab whose focus sits on a neighbour is the quiet lie conformance exists to catch | `focus-window`. One call moves the session's focused window AND shows its workspace (**TU**). Probed with a real `tuios attach` in a pty and a tuios-web client over its websocket, both attached at once; see *Focus with a terminal and tuios-web attached* below. tuios has no verb that moves a client to another session, so when no client shows the pane's session and one shows another, the call is `refused` with that session's name. With no client attached it goes ahead, and the next attach lands there (probed). A window that has gone, or runs on another machine, is `gone` before anything is sent |
 | `createSpace` | `POST /api/workspace` | `workspace.create` (**API**) | `tern new session <name>` (**TN**) | `new-session -d -P -F` (**T**) — claimed: it is one verb, it is detached, and a duplicate name comes back as `refused` with tmux's own sentence. It carries the same `window-size manual` refusal as `createTab`: `new-session` spawns a window too, so tmux #4849 kills the server here as well | **no** (**Z**) — `zellij attach --create-background` does make a detached session, but every zellij verb is scoped to ONE session, so a session created here would be invisible to the adapter that made it | `new-session {name, cwd}`, detached. A taken name answers `session_exists`, which is `refused` with tuios's own sentence (**TU**) |
-| `listWorktrees` | `GET /api/workspace/:id/worktrees` | `worktree.list {cwd}` — answers for a repo NOTHING has open, so the sheet can list a checkout before there is a space to name it by (**H8**). The repo's own checkout comes back too, with `is_linked_worktree: false` | **no** (**TN**) | **no** (**T**) — tmux has no Git vocabulary; a `git worktree list` here would answer about the host, not about anything tmux knows | **no** (**Z**) — same, and see `createSpace` | **no**. Worktrees are left out of the first version, as agreed in #321 |
-| `createWorktree` | `POST /api/workspace/:id/worktree` | `worktree.create {cwd, branch, focus:false}` → the new workspace and its root pane, ready to navigate to (**H8**). **NOT ATOMIC:** probed in a session with no window server, the checkout was created and the open failed `worktree_open_failed` — the branch exists, nothing shows it, and a retry answers `worktree_create_failed` because the path is taken. Recovery is `openWorktree` | **no** (**TN**) | **no** (**T**) — `git worktree add` would run, but tmux keeps no record tying the checkout to the session showing it, so what it made could not be listed or removed again (ADR 0032) | **no** (**Z**) — same, plus one session means no second space to open it as | **no**, as `listWorktrees` |
-| `openWorktree` | `POST /api/workspace/:id/worktree/open` | `worktree.open {cwd, path, focus:false}` → `already_open` plus the space showing it; asking for one already up is an ANSWER, not a refusal (**H8**). `path` alone answers `not_git_worktree` — the repo must come with it | **no** (**TN**) | **no** (**T**) | **no** (**Z**) | **no**, as `listWorktrees` |
+| `listWorktrees` | none since 1.20.0 (`GET /api/workspace/:id/worktrees` had no caller and was removed) | `worktree.list {cwd}` — answers for a repo NOTHING has open, so the sheet can list a checkout before there is a space to name it by (**H8**). The repo's own checkout comes back too, with `is_linked_worktree: false` | **no** (**TN**) | **no** (**T**) — tmux has no Git vocabulary; a `git worktree list` here would answer about the host, not about anything tmux knows | **no** (**Z**) — same, and see `createSpace` | **no**. Worktrees are left out of the first version, as agreed in #321 |
+| `createWorktree` | `POST /api/worktree` (ADR 0093; the space-scoped `POST /api/workspace/:id/worktree` was removed in 1.20.0) | `worktree.create {cwd, branch, focus:false}` → the new workspace and its root pane, ready to navigate to (**H8**). **NOT ATOMIC:** probed in a session with no window server, the checkout was created and the open failed `worktree_open_failed` — the branch exists, nothing shows it, and a retry answers `worktree_create_failed` because the path is taken. Recovery is `openWorktree` | **no** (**TN**) | **no** (**T**) — `git worktree add` would run, but tmux keeps no record tying the checkout to the session showing it, so what it made could not be listed or removed again (ADR 0032) | **no** (**Z**) — same, plus one session means no second space to open it as | **no**, as `listWorktrees` |
+| `openWorktree` | none since 1.20.0 (`POST /api/workspace/:id/worktree/open` had no caller and was removed) | `worktree.open {cwd, path, focus:false}` → `already_open` plus the space showing it; asking for one already up is an ANSWER, not a refusal (**H8**). `path` alone answers `not_git_worktree` — the repo must come with it | **no** (**TN**) | **no** (**T**) | **no** (**Z**) | **no**, as `listWorktrees` |
 | `pushTopologyEvents` | `bridge/event-poker.ts` | full event catalog: workspace/tab/pane created, closed, renamed (**API** § Event stream) | `tern events` streams NDJSON topology lifecycle events (**TN**) | control mode pushes `%window-add`, `%session-changed` (**T**) | **no** (**Z**) — no CLI verb announces one. `zellij watch` is a read-only attach, `zellij pipe` needs a WASM plugin on the other end, and `action --help` has no event verb. The adapter censuses `list-panes` instead: 3 s after any change, doubling to 12 s while nothing moves | `subscribe`: `window-created/-closed/-exit/-retitled/-focused/-moved/-minimized/-restored`, `workspace-switched`, `workspace-renamed`, `session-created/-closed`, and `gap` (**TU**) |
 | `pushPaneEvents` | `bridge/event-poker.ts` | `pane.agent_status_changed`, pane-scoped (**API** § Event stream) | **no** (**TN**) | `%output`, but only for the panes of the session a control client is ATTACHED to (**T**) — so the adapter attaches one per watched session, capped, and a 5-second listing is the floor | `subscribe --ansi --format json --pane-id <id> …` — several panes per stream, newline-delimited JSON `pane_update` frames (**Z**). It also emits one `pane_closed`, the single topology fact zellij does push, which shortens the census rather than replacing it | `agent-state`, `attention`, `bell`, `notification` and `output`, routed to the watched panes (**TU**: `send-text` produced an `output` callback in **3 ms**, `tuios set-agent-state` an `agent-state` callback in **20 ms**, CLI start-up included). `output` is subscribed only while a pane is watched |
 | `listSessions` | `bridge/sessions.ts` `SessionRegistry.refresh()`, the snapshot's `sessions` list and `?session=<name>` | **yes** (**API**): a Herdr install keeps its sessions at `<configRoot>/herdr.sock` and `<configRoot>/sessions/<name>/herdr.sock`, and a cleanly stopped session removes its socket, so the whole answer is one directory listing and a few `exists` calls, off the socket entirely (`bridge/mux/herdr/sessions.ts`). One bridge fronts them all, which is the behaviour multi-session has always had | **no** (**TN**) — every session of the daemon is a space; separate daemons are not listed | **no**, probed 2026-09-08 on tmux 3.6b: every session of this server is already a Collie space, so the only other instance is another SERVER, and tmux has no verb that lists servers (`tmux list-servers` answers `unknown command`, and `list-sessions` needs a server to ask in). A scan of `/tmp/tmux-<uid>` is not an answer either: it misses every `-S /path` server, and `tmux -L probe kill-server` left the socket file on disk, so the scan cannot tell a live server from a dead one. A second tmux server is fronted by a second collie | **no**, and NOT because zellij cannot list. Probed 2026-09-08 on zellij 0.44.2: `list-sessions --no-formatting` names every session on this machine and marks the stopped ones `(EXITED - attach to resurrect)`, a detached session still answers `action list-panes --all --json`, and a session name IS this adapter's endpoint, so the list and the endpoints are both real. What is declined is the price: zellij has no socket, so every read is a process (two per census, per session), and one collie fronting five sessions would spawn ten processes per poll interval for panes nobody asked to see. One collie drives one zellij session, which is the shape zellij takes anyway, and it is the same fact that declines `createSpace` | **no** (**TU**). Every session of this daemon is already a space. Another daemon lives under another `XDG_RUNTIME_DIR`, and tuios has no verb that lists daemons |
@@ -145,6 +145,20 @@ adapter `COLLIE_MUX` names and no other, and the Herdr adapter is the only thing
 `HERDR_SOCKET_PATH` resolves to (`bridge/index.ts`). So Herdr need not be installed or running for a
 tmux or zellij collie — the
 [walkthrough](./docs/multiplexers.md#pointing-collie-at-a-multiplexer) starts one without it.
+
+### Sessions and sources
+
+A collie runs one terminal multiplexer as its primary session, plus the other sessions that adapter
+reports through `listSessions`. Since M55 it may also run durable agents beside it: each entry of
+`sources.json` (in the config dir next to `.env`, mode 0600) is one more session, named by the entry,
+built by the same factory with the durable adapter, and kept for the life of the process. Only
+discovered terminal sessions come and go with `refresh()`. A durable agent is never the primary, except on a
+durable-only collie (`COLLIE_MUX=durable` with the old `COLLIE_DURABLE_*` variables), where its one
+durable agent is the primary session named `default`. A pane's address stays (host, session, paneId), so two
+durable agents may use the same conversation id. On a collie that runs a durable agent, every entry of the
+snapshot's `sessions` carries a card (kind, mux, caps, where, state, experimental), and
+`/api/config?session=<name>` answers that session's capabilities; with no durable agent, both are what they
+were. The adapter reads its socket, URL and token from the source entry, never from the environment.
 
 ### What a space and a tab ARE, per multiplexer
 
@@ -232,6 +246,71 @@ Three traps worth naming, the first two found while writing this table:
   `foregroundCommand` — and the bridge marks the pair "a shell + a title" as a stale title
   (`bridge/state-engine.ts`), which the phone renders quietly instead of as the pane's name. Nothing
   is dropped: a title is never deleted on a guess about who wrote it.
+
+### A multiplexer with no screen
+
+`durable` is the one adapter whose panes have no terminal behind them: a durable agent owns its
+conversations and draws nothing ([ADR 0099](./.adr/0099-a-durable-program-is-a-mux-with-no-screen.md)).
+The contract names that case instead of bending the rules above for it, and the conformance suite
+holds it to what is written here.
+
+- **Focus.** There is no operator terminal to show a pane, so a world that cannot move focus out of
+  band (it leaves `focusOutOfBand` unset) owes the opposite of the focus rule: no pane is ever
+  reported `focused`, `setFocus` is not declared, and a call to it answers `unsupported`. Every other
+  adapter must supply `focusOutOfBand`, so the half that proves "the snapshot reports the terminal's
+  focus" still runs for all of them.
+- **Agent names.** A pane reports `durable` as its agent. The name is in
+  `MUX_SCREENLESS_AGENT_NAMES` ([`agents.ts`](./bridge/mux/agents.ts)) and not in `MUX_AGENT_NAMES`,
+  because that list is exactly the names the screen and journal readers answer to, and a durable pane
+  reaches neither: the bridge keeps its own log, and the phone shows Chat alone. `isMuxAgentName`
+  accepts both lists, so the name passes the floor without becoming a reader.
+- **The grid.** `paneGrid` is not declared, so the grid read answers `unsupported`, which is the
+  existing rule for a declined grid. Typed keys and new tabs answer the same way.
+- **The durable agent's own controls.** `steerTurn`, `abortTurn` and `starters` are declared from the
+  durable agent's `caps.steer`, `caps.abort` and `caps.starters` (WIRE.md section 4) of the last good read,
+  and no other adapter declares them. The phone draws Steer and Stop in the belt, and the new-tab and
+  new-space buttons that open the New page, only for a capability that is declared `true`.
+- **Durable agent actions.** `programActions` is declared from the durable agent's `caps.actions` of the last good read,
+  and no other adapter declares it. A pane the durable agent lists buttons for carries them as `actions` (at most
+  four, each cleaned by the adapter: a label of at most 16 characters, one of twelve icon names or none).
+  `paneActions(paneId)` reads them from the last listing and asks nothing; the snapshot attaches them at serialise
+  time, like `turnId`. A tap is `POST /api/pane/:id/action`, which hands the adapter ONE `action` control through
+  `controlTurn` with the receipt rules of send and abort (WIRE.md section 7.10), never retried. The durable agent's 404
+  `no-such-pane` is `gone`, its 404 `no-such-action` and 422 `action-refused` are `refused`, its 409 `stale` is
+  `stale`, and a POST that may have left without an answer is `unknown`. The phone draws the buttons in the
+  durable agent's section of the belt only for a declared `programActions`, and reads an unanswered one as absent.
+- **Renaming.** `renameTab` and `renameSpace` are declared from the durable agent's `caps.rename` of the last
+  good read, and no other adapter declares `renameSpace`. Each posts `POST /rename` with `kind: "tab"`
+  or `kind: "workspace"` and a request id the adapter mints (WIRE.md section 7.8), once and never
+  retried. A durable agent that declares no `rename` answers `unsupported` with no socket touched. The
+  durable agent's 404 is `gone`, its 422 `rename-refused` is `refused`, and a POST that may have left
+  without an answer is `refused` with a detail that says the rename may have been applied.
+  `renamePane` stays undeclared: a pane's title is the conversation's, and Collie keeps no operator
+  label for it. `renameSpace` is an optional method of the port (`renameSpace?`), so Herdr, tern, tmux,
+  zellij and tuios have none and never declare it: none of their adapters names a space today. The
+  phone draws the Rename row of the space sheet (`POST /api/space/:id/rename`) only for a declared
+  `renameSpace`, and reads an unanswered one as absent.
+- **Closing.** `closePane` and `closeTab` are declared from the durable agent's `caps.close` of the last good
+  read. Each posts `POST /close` with `kind: "pane"` or `kind: "tab"` and a request id the adapter mints
+  (WIRE.md section 7.9), once and never retried. A durable agent that declares no `close` answers
+  `unsupported` with no socket touched. The durable agent's 404 `no-such-target` is `gone`, its 422
+  `close-refused` is `refused`, its 409 `not-supported` is `unsupported`, and a POST that may have left
+  without an answer is `refused` with a detail that says the close may have been applied. There is no
+  workspace close capability: the phone has no control for it, so a workspace close stays on the wire.
+- **History and reopen.** `programHistory` is declared from the durable agent's `caps.history` and
+  `reopenConversation` from `caps.reopen` of the last good read, and no other adapter declares either
+  (M53 spec 11, WIRE.md section 7.16). Three optional methods of the port carry them:
+  `listConversations(page)` and `conversationItems(id, page)` are reads of the durable agent's own record, open
+  and closed, paged by an opaque cursor, asked only when the phone opens the list or a conversation;
+  `reopenConversation(id)` posts `POST /reopen` with a request id the adapter mints, once and never
+  retried, and answers the pane that shows the conversation again. A durable agent without the cap answers
+  `unsupported` with no socket touched. The durable agent's 404 is `gone`, its 422 `reopen-refused` is
+  `refused`, a cursor the durable agent never gave is `refused` before anything is sent, and a POST that may
+  have left without an answer is `refused` with a detail that says the conversation may have been
+  reopened. Each pane names its session `sessionId ?? pane.id`, the key of the bridge's own log of it.
+  The home of a durable machine is its conversation list, open and closed: the phone fills in the closed
+  ones only for a declared `programHistory`. A closed conversation opens read-only,
+  with the Reopen button only for a declared `reopenConversation`.
 
 ### Focus with a terminal and tuios-web attached
 

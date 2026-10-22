@@ -21,7 +21,7 @@ const fixtureLines = (name: string): StyledLine[] =>
   linesOf(readFileSync(join(PANES_DIR, name), "utf8"));
 
 /** Every registered agent string. agy and antigravity are two registrations of one adapter. */
-const AGENTS = ["claude", "codex", "grok", "omp", "agy", "antigravity", "muse", "opencode"] as const;
+const AGENTS = ["claude", "codex", "grok", "omp", "agy", "antigravity", "muse", "opencode", "hermes"] as const;
 
 /** What the post-pass answers for `agent` on `lines` — the exact composition the three call sites
  *  use (harness/index.ts buildBlocks, agent-chat's dialogPresent, dialog-guard's dialogDetector). */
@@ -44,6 +44,9 @@ describe("the cancel key each adapter declares", () => {
     ["opencode", "Escape"],
     ["omp", "Escape"],
     ["grok", "ctrl+c"],
+    // Hermes's classic CLI binds no Escape on its panels; Ctrl+C was probed as the way out of each
+    // (hermes/CLARIFY_NOTES.md, hermes/APPROVAL_NOTES.md).
+    ["hermes", "ctrl+c"],
   ])("%s declares %s", (agent, key) => {
     expect(adapterFor(agent)!.cancelKey).toBe(key);
   });
@@ -59,8 +62,8 @@ describe("the cancel key each adapter declares", () => {
 
 describe("a real unread modal gets the card", () => {
   // One capture per DECLARING adapter whose own grammars all decline it while `composerReady`
-  // answers a definite false. agy/antigravity have no such capture in the corpus — every AGY dialog
-  // fixture is one its prompt-select grammar reads — so they are covered by a hand-built screen.
+  // answers a definite false. agy/antigravity are covered by a hand-built screen here; their one real
+  // capture of that kind is in CARD_FIXTURES below.
   it.each([
     ["claude", "claude-lab--menu-status-screen--w82.txt", "Escape"],
     ["codex", "codex--ask-notes-focused.txt", "Escape"],
@@ -75,6 +78,10 @@ describe("a real unread modal gets the card", () => {
     // The compact model picker in a state its grammar declines (.adr/0079): task mode, whose footer
     // ends one segment past the way out.
     ["omp", "omp--v18-4-switch-task.txt", "Escape"],
+    // The two pickers. Under a clarify or approval panel the card's own rows tick every second, so
+    // Hermes claims no modal there (hermes/index.ts `hermesModalOnScreen`).
+    ["hermes", "hermes--model-picker.txt", "ctrl+c"],
+    ["hermes", "hermes--palette.txt", "ctrl+c"],
   ])("%s gets the card on %s", (agent, fixture, key) => {
     const lines = fixtureLines(fixture);
     const blocks = pass(agent, lines);
@@ -215,9 +222,6 @@ const CARD_FIXTURES = {
       "claude-lab--agents-screen--w82.txt",
       // corpus: `/status` screen, `Esc to cancel` footer — the M34 reference capture
       "claude-lab--menu-status-screen--w82.txt",
-      // README: a multiSelect with the pointer on its "Type something" field. Declined on purpose,
-      // since every toggle digit would be typed into the field, so the card is the honest answer.
-      "claude--v2283-multiselect-type-something-focused.txt",
       // corpus: `/tasks` panel, `Esc to close` footer; raw only at 40 columns, where its
       // footer wraps and the menu grammar declines. The w82 capture lifts `menu`, so no card.
       "claude-lab--tasks-panel--w40.txt",
@@ -238,16 +242,22 @@ const CARD_FIXTURES = {
   },
   codex: {
     // README: notes composer focused inside the ask card — a real dialog
-    modals: ["codex--ask-notes-focused.txt"],
+    modals: [
+      "codex--ask-notes-focused.txt",
+      // Codex 0.162.1 pickers: no grammar reads them yet, so the unread card covers them. The
+      // /resume list is read (session-picker.ts) and lifts as a menu, so it is not here.
+      "codex--v0162-picker-model.txt",
+      "codex--v0162-picker-permissions.txt",
+    ],
     notModals: [],
   },
   grok: {
     // README: checkbox ask (`[ ]`), digit submits — a real dialog, and `blocked` on the reply path
     modals: ["grok--ask-multi.txt", "grok--ask-multi-checked.txt"],
-    // README: a STRUCTURE fixture, "torn frame: square bubble, no composer". Not a live pane state:
-    // it exists to pin that `locateComposer` returns null on a torn buffer. Kept visible here
-    // because ctrl+c is grok's declared key and a torn frame is not a modal.
-    notModals: ["grok--user-bubble.txt"],
+    // grok--user-bubble.txt, the README's torn-frame STRUCTURE fixture, sat here until grok declared
+    // `modalOnScreen` (2026-10-12): a torn frame prints no key-hint footer, so it no longer gets the
+    // card, which would have offered ctrl+c over it.
+    notModals: [],
   },
   muse: {
     // README: the per-question note input, open and typed — real dialogs
@@ -258,27 +268,41 @@ const CARD_FIXTURES = {
     ],
     notModals: [],
   },
-  // No AGY capture in the corpus lands raw-only with no input box: every AGY dialog fixture is one
-  // its own prompt-select grammar reads. An entry appearing here is news either way.
+  // README: the `/resume` Conversations picker after a search that matched nothing, a real dialog
+  // with no row to select, so the menu grammar declines it and Escape is the way out. Every other
+  // AGY dialog fixture is one its grammars read.
+  // agy--working.txt is a mid-turn screen (M56 spec 14 review restored the first capture): its footer
+  // `esc to cancel` is also the key hint of an agy dialog, so the card shows on a busy pane and offers
+  // Escape over it. A known false positive of the agy grammar, left for its own fix.
   // FORK: two captures upstream does not have (harness/agy/agy.test.ts, NEUTRAL). Both are modals
   // the agy grammars deliberately leave raw with the composer refused — the `?` shortcuts overlay
   // (no rule anchors it) and a multi-select's focused Write-in field — so the card is the right
   // answer on both: its Escape is the way out of either, which a flat refusal never offered.
-  agy: { modals: ["agy--help-overlay.txt", "agy--multi-select-writein.txt"], notModals: [] },
-  antigravity: { modals: ["agy--help-overlay.txt", "agy--multi-select-writein.txt"], notModals: [] },
+  // FORK: upstream lists agy--ask-multi.txt here (no checkbox recipe upstream); the fork's agy
+  // multi-select grammar lifts it, so it gets buttons, not the card.
+  agy: {
+    modals: ["agy--help-overlay.txt", "agy--multi-select-writein.txt", "agy--resume-picker-nomatch.txt"],
+    notModals: ["agy--working.txt"],
+  },
+  antigravity: {
+    modals: ["agy--help-overlay.txt", "agy--multi-select-writein.txt", "agy--resume-picker-nomatch.txt"],
+    notModals: ["agy--working.txt"],
+  },
   // Every opencode picker: composerReady refuses it (the picker shape) and no grammar reads it, so
   // Escape, which closes a picker (probed on 1.18.32), is its way out. The permission steps and every
   // question dialog the grammars lift (single select, multi select, a many-question call, the Confirm
   // tab: question.ts and question-tabs.ts, issue 329) lift their buttons and get no card. What stays
   // raw is a real modal with `esc dismiss` in its footer, so it gets the card (ADR 0053): a
   // multi-select whose free-text input is open (a digit would be typed as text) and a list too long
-  // for a digit (fourteen options).
+  // for a digit (fourteen options). The Update Available confirm dialog is a modal too: Confirm is the
+  // highlighted button, so the composer is refused, and Escape dismisses it.
   opencode: {
     modals: [
       "oc--agents-picker.txt",
       "oc--command-palette.txt",
       "oc--question--multi--free-text.txt",
       "oc--question--tall14.txt",
+      "oc--update-available.txt",
     ],
     notModals: [],
   },
@@ -303,12 +327,23 @@ const CARD_FIXTURES = {
       "omp--v18-4-ask-multi.txt",
       "omp--v18-4-menu-model.txt",
       "omp--v18-4-menu-settings.txt",
+      // omp 18.6.1's Models picker and settings screen (lab, 2026-10-17).
+      "omp--v18-6-model-selector-empty--w120.txt",
+      "omp--v18-6-settings-screen--w120.txt",
       "omp--v18-4-resume-nomatch.txt",
       "omp--v18-4-switch-nerd.txt",
       "omp--v18-4-switch-nomatch.txt",
       "omp--v18-4-switch-quick-roles.txt",
       "omp--v18-4-switch-task.txt",
     ],
+    notModals: [],
+  },
+  // The model picker and the command palette, which keep the input looking idle while they hold the
+  // keyboard. A multi-select clarify stays raw with NO card: under any Hermes panel the rows the card
+  // signs tick every second, so a tap could never land (hermes/index.ts `hermesModalOnScreen`). The
+  // typed-answer screens are an input, not a modal, so none of those is here.
+  hermes: {
+    modals: ["hermes--model-picker.txt", "hermes--palette.txt"],
     notModals: [],
   },
 } satisfies Record<string, { modals: string[]; notModals: string[] }>;
@@ -372,7 +407,7 @@ describe("the declaration tracks the harness", () => {
 });
 
 describe("the card is built outside the adapter", () => {
-  // Eight adapters over the whole corpus: the slowest assertion in the file, and the one that has to
+  // Nine adapters over the whole corpus: the slowest assertion in the file, and the one that has to
   // stay exhaustive, so it gets its own budget rather than a sample.
   it("no adapter's own buildBlocks emits the kind, on any fixture", { timeout: 30_000 }, () => {
     for (const agent of AGENTS) {
@@ -444,5 +479,28 @@ describe("known live-box gaps the card inherits", () => {
 
     expect(museAdapter.composerReady!(lines)).toBe(true);
     expect(cardOf(pass("muse", lines))).toBeNull();
+  });
+});
+
+// Harness canary 2026-10-12 (Codex 0.159.3, Grok Build 1.0.50, Muse 1.4.6): with no positive gate,
+// the card flashed over the shell each agent leaves behind on exit and over the frames it paints
+// before its composer, and on grok it offered ctrl+c to that shell. The text below is what those
+// captures show, with the session ids and the shell prompt replaced.
+describe("the card stays off the shell an agent exits to, and off its first frames", () => {
+  const screen = (...rows: string[]) => splitLines(parseAnsi(rows.join("\n")));
+  const SHELL = "host:project user$ ";
+
+  it.each([
+    ["codex", screen("Token usage: total=245,954 input=245,944 output=10", "To continue this session, run:", "  codex resume 0000-session", SHELL)],
+    ["codex", screen("  >_ OpenAI Codex (v0.159.3)", "", "› Ask Codex to do anything", "", "  ? for shortcuts")],
+    ["grok", screen("Finishing session…", "Resume this session with:", "  grok --resume 0000-session", SHELL)],
+    ["muse", screen("  Muse Code 1.4.6", "❯ Reply with only OK.", "◆ OK", "To continue this session, run muse resume 0000-session", SHELL)],
+    ["muse", screen("  Muse Code 1.4.6")],
+    // hermes--exited, with the session id and the shell prompt replaced.
+    ["hermes", screen("Resume this session with:", "  hermes --resume 0000-session", "", "Session:        0000-session", SHELL)],
+  ])("%s: no card on %#", (agent, lines) => {
+    expect(adapterFor(agent)!.composerReady!(lines)).toBe(false);
+    expect(adapterFor(agent)!.modalOnScreen!(lines)).toBe(false);
+    expect(cardOf(pass(agent, lines))).toBeNull();
   });
 });

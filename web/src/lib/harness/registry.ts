@@ -6,8 +6,9 @@
 // claude, which lifts every block kind; codex, which is Tier 1 chrome plus Tier-2 probed trust /
 // approval / question lifts; grok, which is Tier 1 chrome plus Tier-2 probed permission / ask /
 // plan lifts; muse, which is Tier 1 chrome plus Tier-2 approval / single-select / multi-select /
-// trust lifts; opencode, which is Tier 1 chrome plus the Tier-2 permission-dialog lift; and omp,
-// which is Tier 1 and lifts none — it contributes chrome stripping and the composer gate only.
+// trust lifts; opencode, which is Tier 1 chrome plus the Tier-2 permission-dialog lift; hermes,
+// which is Tier 1 chrome plus Tier-2 clarify / dangerous-command approval lifts on its classic CLI;
+// and omp, which is Tier 1 and lifts none — it contributes chrome stripping and the composer gate.
 // Adapters register by their EXACT agent string only —
 // prefix-matching here was the AltanS/collie#99 reject: it would hand a harness's live keystroke
 // recipes to any agent string sharing the prefix. `hasBlockGrammar` replaces the old
@@ -19,10 +20,12 @@ import type { HarnessAdapter } from "./types";
 import { claudeAdapter } from "./claude";
 import { codexAdapter } from "./codex";
 import { grokAdapter } from "./grok";
+import { hermesAdapter } from "./hermes";
 import { ompAdapter } from "./omp";
 import { opencodeAdapter } from "./opencode";
 import { agyAdapter, antigravityAdapter } from "./agy";
 import { museAdapter } from "./muse";
+import { piAdapter } from "./pi";
 
 // Built FROM the adapter list (not a hand-written literal) so a key can't silently drift from its
 const ADAPTERS: Record<string, HarnessAdapter> = Object.fromEntries(
@@ -30,11 +33,13 @@ const ADAPTERS: Record<string, HarnessAdapter> = Object.fromEntries(
     claudeAdapter,
     codexAdapter,
     grokAdapter,
+    hermesAdapter,
     ompAdapter,
     opencodeAdapter,
     agyAdapter,
     antigravityAdapter,
     museAdapter,
+    piAdapter,
   ].map((a) => [a.agent, a]),
 );
 

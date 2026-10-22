@@ -4,6 +4,7 @@ import { en, type MessageKey as UpstreamMessageKey, type PartialDictionary } fro
 import { withForkOverrides, type ForkRuntimeDictionary } from "./fork-overrides";
 import type { ForkMessageKey } from "./fork-messages";
 import { interpolate, type TemplateVars } from "./template";
+import { reloadOnChunkError } from "../chunk-reload";
 
 // The translation runtime: one module-scoped store, one lookup function, one plural function.
 //
@@ -115,7 +116,7 @@ function notify(locale: Locale): void {
  *  English serving, which is exactly the degraded state the fallback exists for. */
 async function fetchDictionary(locale: Exclude<Locale, typeof DEFAULT_LOCALE>): Promise<void> {
   try {
-    const dictionary = await LOADERS[locale]();
+    const dictionary = await reloadOnChunkError(LOADERS[locale]);
     // FORK: the override layer is applied HERE, where a bundle enters the runtime — once per
     // locale, not once per `t()` call. See fork-overrides.ts for why it is a layer at all.
     loaded.set(locale, withForkOverrides(locale, dictionary));

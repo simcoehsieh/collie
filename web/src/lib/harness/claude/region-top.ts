@@ -84,29 +84,9 @@ export interface RegionTop {
   edge: boolean;
 }
 
-// FORK: the edges of a rounded box drawn INSIDE a picker — the `⌕ Search…` field Claude's `/config`
-// panel (and the `/resume` picker, which upstream's resume grammar now claims first) draws between its
-// title and its rows. Both edges are made of rule glyphs end to end, so `isHorizontalRule` would claim
-// either as the region's top; the scan treats the pair as one opaque row instead. Upstream's own pin
-// for `claude-lab--menu-config-panel--w82.txt` still opens the region at the box's bottom edge; the
-// fork's pin opens it at the panel's rule, with "Settings  Status   Config" as the title.
-const INNER_BOX_BOTTOM = /^╰─+╯$/;
-const INNER_BOX_TOP = /^╭─+╮$/;
-
 /** The nearest region top above the footer at `footerLine`, or null (see the header). */
 export function findRegionTop(texts: string[], footerLine: number): RegionTop | null {
   for (let i = footerLine - 1, seen = 0; i >= 0 && seen < MODAL_EDGE_WINDOW; i--, seen++) {
-    // FORK: a rounded box CLOSED inside the picker is content, not its edge. The box's bottom edge is
-    // all rule glyphs, so it read as the region's top and the title became a label under it. Skip to
-    // above the box's top edge and keep looking for the row the modal actually opened with.
-    if (INNER_BOX_BOTTOM.test(texts[i]!.trim())) {
-      let j = i - 1;
-      while (j >= 0 && i - j < REGION_SCAN_WINDOW && !INNER_BOX_TOP.test(texts[j]!.trim())) j--;
-      if (j < 0 || !INNER_BOX_TOP.test(texts[j]!.trim())) return null;
-      seen += i - j;
-      i = j;
-      continue;
-    }
     const kind = regionTopAt(texts, i, seen, footerLine);
     if (kind === "stop") return null;
     if (kind !== null) return { line: i, edge: kind === "edge" };

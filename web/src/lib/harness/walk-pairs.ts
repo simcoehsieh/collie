@@ -58,6 +58,7 @@ export const WALK_PAIRS: readonly WalkPair[] = [
   ["omp", "omp--select-menu.txt", "omp--select-menu-moved.txt"],
   ["omp", "omp--v18-4-ask-single.txt", "omp--v18-4-ask-single-moved.txt"],
   ["omp", "omp--v18-8-ask-single-described.txt", "omp--v18-8-ask-single-described-moved.txt"],
+  ["omp", "omp--v18-10-ask-batch.txt", "omp--v18-10-ask-batch-moved.txt"],
   // omp `/resume` picker. The unboxed pair differs in the ages too (`1 minute ago` against
   // `2 minutes ago`); `coreSignature` blanks them, so the pair holds.
   ["omp", "omp--v18-4-resume.txt", "omp--v18-4-resume-moved.txt"],
@@ -69,6 +70,10 @@ export const WALK_PAIRS: readonly WalkPair[] = [
     "claude--menu-resume-picker--w120-first.txt",
     "claude--menu-resume-picker--w120-third.txt",
   ],
+  // Claude Code 2.1.303 on a long list: the title counts the pointer, `(1 of 50)` against `(2 of 50)`,
+  // which `coreSignature` blanks and the card's title drops (2026-10-19). Two widths.
+  ["claude", "claude--v2303-menu-resume-picker--w119-first.txt", "claude--v2303-menu-resume-picker--w119-second.txt"],
+  ["claude", "claude--v2303-menu-resume-picker--w160-first.txt", "claude--v2303-menu-resume-picker--w160-second.txt"],
   // Claude "Switch model?" confirmation (2.1.289), two widths: the pointer on `Yes` against on `No`.
   // The 50-column pair also prints the edge row both ways (labelled, then bare), which
   // `coreSignature` leaves out of the identity.
@@ -97,6 +102,30 @@ export const WALK_PAIRS: readonly WalkPair[] = [
   ["opencode", "oc--permission-edit.txt", "oc--permission-edit--moved.txt"],
   // The second step, `Always allow`, two chips: Confirm and Cancel.
   ["opencode", "oc--permission-always-bash.txt", "oc--permission-always-bash--cancel.txt"],
+  // pi's stock `question` example, pi 0.87.1 and 1.1.0, full width and 50 columns, with and without
+  // option descriptions: the `>` pointer moved one row down.
+  ["pi", "pi--v0871-question-single.txt", "pi--v0871-question-single-moved.txt"],
+  ["pi", "pi--v110-question-single.txt", "pi--v110-question-single-moved.txt"],
+  ["pi", "pi--v0871-question-narrow.txt", "pi--v0871-question-narrow-moved.txt"],
+  ["pi", "pi--v110-question-narrow.txt", "pi--v110-question-narrow-moved.txt"],
+  ["pi", "pi--v0871-question-plain.txt", "pi--v0871-question-plain-moved.txt"],
+  ["pi", "pi--v110-question-plain.txt", "pi--v110-question-plain-moved.txt"],
+  // pi's stock `questionnaire` example: one question, then both pages of a tabbed one.
+  ["pi", "pi--v0871-questionnaire-single.txt", "pi--v0871-questionnaire-single-moved.txt"],
+  ["pi", "pi--v110-questionnaire-single.txt", "pi--v110-questionnaire-single-moved.txt"],
+  ["pi", "pi--v0871-questionnaire-tabs.txt", "pi--v0871-questionnaire-tabs-moved.txt"],
+  ["pi", "pi--v110-questionnaire-tabs.txt", "pi--v110-questionnaire-tabs-moved.txt"],
+  ["pi", "pi--v0871-questionnaire-tabs-second.txt", "pi--v0871-questionnaire-tabs-second-moved.txt"],
+  ["pi", "pi--v110-questionnaire-tabs-second.txt", "pi--v110-questionnaire-tabs-second-moved.txt"],
+  // The PR 397 question extension (pi 1.1.0): its one captured pair.
+  ["pi", "pi--v110-single-desc.txt", "pi--v110-single-moved.txt"],
+  // pi 1.2.0's folder trust prompt (pi/trust.ts), before and after one Down.
+  ["pi", "pi--trust-prompt.txt", "pi--trust-prompt-moved.txt"],
+  // gentle-pi 4.2.0's ask_user_choice (pi 1.3.0): unnumbered rows, the second capture after a real Down.
+  ["pi", "pi--v130-gentle-choice.txt", "pi--v130-gentle-choice-moved.txt"],
+  // pi's example permission-gate (pi 0.87.1), pi's own selector: Down at 120 columns, Up at 80.
+  ["pi", "pi--v0871-permission-gate.txt", "pi--v0871-permission-gate-moved.txt"],
+  ["pi", "pi--v0871-permission-gate-narrow.txt", "pi--v0871-permission-gate-narrow-moved.txt"],
 ];
 
 /**
@@ -138,6 +167,22 @@ export const WALK_GAPS = {
   "opencode | permission | This will allow edit until OpenCode is restarted.": {
     since: "2026-10-03",
     reason: "no second capture yet: one capture of the edit's `Always allow` step, pointer on Confirm",
+  },
+  "pi | select | Which package manager do you want to use?": {
+    since: "2026-10-12",
+    reason:
+      "the PR 397 extension is unpublished, so no second capture can be made; its paired `Which database " +
+      "provider` dialog proves the same grammar",
+  },
+  "pi | select | Auth": {
+    since: "2026-10-12",
+    reason:
+      "the PR 397 extension is unpublished, so no second capture can be made; both Auth captures have the " +
+      "pointer on the first row, and stock questionnaire tab pages have pairs",
+  },
+  "pi | select | 1": {
+    since: "2026-10-12",
+    reason: "the PR 397 extension is unpublished, so no second capture can be made of its compact tab strip",
   },
   "omp | select | Pick a colour": {
     since: "2026-10-03",

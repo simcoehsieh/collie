@@ -3,6 +3,7 @@ import { useRevalidator } from "react-router";
 import {
   CheckCircle2,
   CloudOff,
+  KeyRound,
   Loader2,
   LogIn,
   Plug,
@@ -27,7 +28,7 @@ import { usePairing } from "@/lib/pairing";
 import * as api from "@/lib/api";
 import { useServerBuild } from "@/lib/server-build";
 import { setStatus } from "@/lib/status";
-import type { BridgeStatus } from "@/lib/types";
+import type { BridgeStatus, MuxFault } from "@/lib/types";
 import { mounted } from "@/lib/base-path";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
@@ -46,6 +47,12 @@ interface ConnectionBannerProps {
   host?: string;
   /** Herdr link from the last snapshot (undefined before the first successful poll). */
   bridge: BridgeStatus | undefined;
+  /**
+   * Why the mux is down, when the bridge named it (upstream 1.23, M50 spec 14): a durable program
+   * that refused this machine's token. Read only beside a `disconnected` bridge from a fresh read.
+   * FORK: this install has no crew, so `host` is not consulted for it.
+   */
+  muxFault?: MuxFault | undefined;
   /** The last snapshot fetch failed (stale data on screen). */
   error: boolean;
   /** The failed snapshot request was rejected with HTTP 401 or 403. */
@@ -95,14 +102,14 @@ export const GREEN_MS = 1_800;
 // slot's PRIORITY moves with it: a lost connection is `OUTAGE`, trouble and the recovery flash are
 // `DEGRADED` (`lib/strip-priority.ts`). Green is not a fifth level — it is this same fact, resolved,
 // and it outranks the update offer for the second it stands for exactly the reason amber does.
-export function ConnectionBanner({ bridge, error, authError, lastSeenAt }: ConnectionBannerProps) {
+export function ConnectionBanner({ bridge, muxFault, error, authError, lastSeenAt }: ConnectionBannerProps) {
   useBridgeRestartNotice();
   const { refused: notPaired } = usePairing();
   if (authError) return <AuthErrorBanner />;
   // Refused for want of pairing (upstream 1.18.0, ADR 0086: reads need the token). The bridge
   // answered, so this is not an outage, and the pairing strip on the route names the remedy.
   if (notPaired && error) return null;
-  return <ConnectionStateBanner bridge={bridge} error={error} lastSeenAt={lastSeenAt} />;
+  return <ConnectionStateBanner bridge={bridge} muxFault={muxFault} error={error} lastSeenAt={lastSeenAt} />;
 }
 
 /**
@@ -190,6 +197,7 @@ function AuthErrorBanner() {
 
 function ConnectionStateBanner({
   bridge,
+  muxFault,
   error,
   lastSeenAt,
 }: Omit<ConnectionBannerProps, "authError">) {
@@ -291,7 +299,11 @@ function ConnectionStateBanner({
     setRetrying(false);
   }
 
-  const view = resolveView(tone, online, probe, lastSeenAt);
+  // Upstream 1.23 (M50 spec 14): a refused token is named as soon as the bar shows, amber or red. It
+  // is not a blip that waiting cures, and "reconnecting" would promise that it is. Only off a fresh
+  // read: a failed one leaves the last snapshot's mux status as no evidence of anything.
+  const tokenRefused = !error && bridge === "disconnected" && muxFault === "token-refused";
+  const view = tokenRefused ? tokenRefusedView(tone) : resolveView(tone, online, probe, lastSeenAt);
   // FORK: a restarting bridge gets no Retry — it is coming back on its own and the banner is already
   // asking after it; a spinner says so. A sign-in problem gets the link that fixes it instead.
   const restarting = tone === "red" && probe === "gateway";
@@ -352,6 +364,16 @@ function ConnectionStateBanner({
       </Notice>
     </StripSlot>
   );
+}
+
+// A durable program refused this machine's bearer token (upstream 1.23, M50 spec 14). The fix is on
+// this machine, in its `.env`, so the sentence names the variable. Green still says "Connected" once
+// the token works. Durable agents are inert on this install (no sources.json); kept for parity.
+function tokenRefusedView(tone: Tone) {
+  if (tone === "green") {
+    return { copy: t("connection.connected"), Icon: CheckCircle2, tone: "success" } as const;
+  }
+  return { copy: t("connection.tokenRefused"), Icon: KeyRound, tone: tone === "amber" ? "caution" : "danger" } as const;
 }
 
 // Copy + tone + icon per state. Green/amber are fixed; red names the cause — the bridge answering means

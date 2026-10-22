@@ -184,6 +184,19 @@ describe("mergeChat — the two empty answers are different facts", () => {
     expect(uuids(mergeChat(before, stale))).toEqual(["a", "b", "c"]);
   });
 
+  // #508: the bridge's reason behind a no-session rides on the status, and a reason that comes or
+  // goes is a status that moved.
+  it("carries a shared-folder detail, and a detail that moves moves the status", () => {
+    const shared: ChatAnswer = {
+      outcome: "body",
+      body: { paneId: "w1:p1", available: false, reason: "no-session", detail: "shared-folder" },
+    };
+    const once = mergeChat(EMPTY_CHAT_WINDOW, shared);
+    expect(once.status).toEqual({ kind: "unavailable", reason: "no-session", detail: "shared-folder" });
+    expect(mergeChat(once, shared)).toBe(once);
+    expect(mergeChat(once, unavailable).status).toEqual({ kind: "unavailable", reason: "no-session" });
+  });
+
   it("stays the same object when the status did not actually move", () => {
     const once = mergeChat(EMPTY_CHAT_WINDOW, stale);
     expect(mergeChat(once, stale)).toBe(once);
@@ -309,5 +322,58 @@ describe("what is queued", () => {
   it("is kept by a 404, because a version skew does not unsay it", () => {
     const one = mergeChat(held(), live({ rev: 2, upserts: [], queued: ["waiting"] }));
     expect(mergeChat(one, { outcome: "stale" }).queued).toEqual(["waiting"]);
+  });
+
+  it("carries the newest prompt the same way: replaced, identity kept, untouched by an older page", () => {
+    expect(EMPTY_CHAT_WINDOW.lastPrompt).toBeNull();
+    const prompt = { uuid: "p1", ts: "", text: "fix it" };
+    const one = mergeChat(held(), live({ rev: 2, upserts: [], lastPrompt: prompt }));
+    expect(one.lastPrompt).toEqual(prompt);
+    // The same prompt again, as a fresh object off the wire: the held one is kept.
+    const two = mergeChat(one, live({ rev: 3, upserts: [], lastPrompt: { ...prompt } }));
+    expect(two.lastPrompt).toBe(one.lastPrompt);
+    expect(mergeChat(two, older({ upserts: [entry("z", BASE - 1)] })).lastPrompt).toBe(one.lastPrompt);
+    const next = mergeChat(two, live({ rev: 4, upserts: [], lastPrompt: { uuid: "p2", ts: "", text: "now this" } }));
+    expect(next.lastPrompt?.uuid).toBe("p2");
+    // A bridge one release behind sends no field: not known.
+    expect(mergeChat(next, live({ rev: 5, upserts: [] })).lastPrompt).toBeNull();
+  });
+});
+
+// ── A NEW SESSION IN THE SAME PANE (#526) ─────────────────────────────────────
+// pi's `/new` keeps the pane and starts another session. The bridge names the session with an opaque
+// `session` tag, and a tag other than the one held replaces the thread whatever `gen` says.
+describe("mergeChat — the session tag", () => {
+  const oldSession = (): ChatWindow =>
+    mergeChat(
+      EMPTY_CHAT_WINDOW,
+      live({ session: "old", hasOlder: true, upserts: [entry("a", BASE), entry("b", BASE + 1)] }),
+    );
+
+  it("replaces everything held, older pages too, when the tag changes under the same gen", () => {
+    const paged = mergeChat(oldSession(), older({ session: "old", upserts: [entry("z", BASE - 1)], hasOlder: true }));
+    expect(uuids(paged)).toEqual(["z", "a", "b"]);
+
+    const next = mergeChat(paged, live({ session: "new", rev: 1, hasOlder: false, upserts: [] }));
+    expect(next.entries).toEqual([]);
+    expect(next.session).toBe("new");
+    expect(next.hasOlder).toBe(false);
+    expect(next.status).toEqual({ kind: "live" });
+  });
+
+  it("throws away an older page of the session it no longer holds", () => {
+    const moved = mergeChat(oldSession(), live({ session: "new", upserts: [] }));
+    const late = mergeChat(moved, older({ session: "old", upserts: [entry("z", BASE - 1)] }));
+    expect(late).toBe(moved);
+  });
+
+  it("leaves `gen` the only rule when a bridge one release behind sends no tag", () => {
+    const untagged = mergeChat(EMPTY_CHAT_WINDOW, live({ upserts: [entry("a", BASE)] }));
+    expect(untagged.session).toBeNull();
+    const delta = mergeChat(untagged, live({ rev: 2, head: BASE + 1, upserts: [entry("b", BASE + 1)] }));
+    expect(uuids(delta)).toEqual(["a", "b"]);
+    // A tag arriving over an untagged window says nothing against it either.
+    const tagged = mergeChat(delta, live({ session: "s", rev: 3, upserts: [] }));
+    expect(uuids(tagged)).toEqual(["a", "b"]);
   });
 });

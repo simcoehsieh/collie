@@ -57,7 +57,7 @@ describe("DocPanel", () => {
     render(<DocPanel open onClose={vi.fn()} initial={null} paneId="w1:p1" />);
     await user.click(await screen.findByRole("button", { name: /Herdr 介面解剖/ }));
     const frame = await screen.findByTitle("herdr-interface-anatomy");
-    expect(frame).toHaveAttribute("src", "/api/doc/herdr-interface-anatomy");
+    expect(frame).toHaveAttribute("data-src", "/api/doc/herdr-interface-anatomy");
     expect(frame).toHaveAttribute("sandbox", "");
     await user.click(screen.getByRole("button", { name: "Documents" }));
     expect(await screen.findByText("Medium Digest｜2026/09/10")).toBeInTheDocument();
@@ -74,7 +74,7 @@ describe("DocPanel", () => {
         paneId="w1:p1"
       />,
     );
-    expect(screen.getByTitle("notes")).toHaveAttribute("src", "/api/doc/notes");
+    expect(screen.getByTitle("notes")).toHaveAttribute("data-src", "/api/doc/notes");
     // The URL line names which document this is, as before.
     expect(screen.getByRole("dialog", { name: "notes" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Documents" }));

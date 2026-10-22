@@ -18,6 +18,7 @@ import type {
 import { useUpdateScreen } from "@/hooks/use-update-screen";
 import { __resetUpdateAsk } from "@/lib/update-ask";
 import { clearUpdateStarted } from "@/lib/update-ribbon";
+import { asJsonString, parseJsonObject } from "@/lib/json";
 import { UpdateCard } from "./update-card";
 import { UpdateScreen } from "./update-screen";
 
@@ -252,6 +253,64 @@ describe("update card — what it says before anything happens", () => {
   });
 });
 
+// ── WHAT THE RELEASES CHANGED (1.21.1) ─────────────────────────────────────────────────────────
+// Altan, 2026-10-13: "I also thought that we'd have release notes by now for new updates." The card
+// listed version numbers and nothing else, because nothing upstream carried notes to it.
+describe("release notes on the card", () => {
+  const notes = {
+    current: {
+      version: "1.3.0",
+      url: "https://github.com/AltanS/collie/releases/tag/v1.3.0",
+      groups: [{ name: "Fixed", leads: ["The red row closes when you tap its ✕."] }],
+    },
+    offered: [
+      {
+        version: "1.3.1",
+        url: "https://github.com/AltanS/collie/releases/tag/v1.3.1",
+        groups: [{ name: "Fixed", leads: ["A patch line."] }],
+      },
+      {
+        version: "1.4.0",
+        url: "https://github.com/AltanS/collie/releases/tag/v1.4.0",
+        groups: [
+          { name: "Added", leads: ["The Updates page lists what an update changes."] },
+          { name: "Fixed", leads: ["`collie doctor` names the check."] },
+        ],
+      },
+    ],
+  };
+  const serveNotes = (update: UpdateInfo) =>
+    server.use(http.get("/api/update/check", () => HttpResponse.json({ ...update, preflight: GREEN, releaseNotes: notes })));
+
+  it("names what the offered update brings, newest release first, before the confirm", async () => {
+    serveNotes(info());
+    renderCard(info());
+    expect(await screen.findByText("What's new in 1.4.0")).toBeInTheDocument();
+    expect(screen.getByText("The Updates page lists what an update changes.")).toBeInTheDocument();
+    expect(screen.getByText("A patch line.")).toBeInTheDocument();
+    // A lead's backticks render as code, not as backticks.
+    expect(screen.getByText("collie doctor").tagName).toBe("CODE");
+    // Notes about the version already installed are not notes about the update.
+    expect(screen.queryByText("The red row closes when you tap its ✕.")).not.toBeInTheDocument();
+    const pages = screen.getAllByRole("link", { name: "Release page" });
+    expect(pages[0]).toHaveAttribute("href", "https://github.com/AltanS/collie/releases/tag/v1.4.0");
+  });
+
+  it("after the update, names what the running version changed", async () => {
+    const current = info({ latest: "1.3.0", releaseAvailable: false, newerVersions: [] });
+    serveNotes(current);
+    renderCard(current);
+    expect(await screen.findByText("What changed in 1.3.0")).toBeInTheDocument();
+    expect(screen.getByText("The red row closes when you tap its ✕.")).toBeInTheDocument();
+  });
+
+  it("an older bridge sends no notes, and the card grows no section", async () => {
+    renderCard(info());
+    expect(await screen.findByText(/folds in 1\.3\.1, 1\.4\.0/)).toBeInTheDocument();
+    expect(screen.queryByText(/What's new in/)).not.toBeInTheDocument();
+  });
+});
+
 describe("Details fold — noise gone when there is nothing to do, open when something needs a look", () => {
   it("up to date: the done head text shows, and Preflight is collapsed behind a '6 checks' summary", async () => {
     const current = info({ latest: "1.3.0", releaseAvailable: false, newerVersions: [] });
@@ -325,6 +384,50 @@ describe("preflight red — the button is disabled with the red's own reason", (
     const button = await screen.findByRole("button", { name: "Update to 1.4.0" });
     await waitFor(() => expect(button).toBeDisabled());
     expect(screen.getByText("The preflight couldn't be run on this machine.")).toBeInTheDocument();
+  });
+
+  it("a failed read is asked again when the card opens next, so the button is not stuck until a reload", async () => {
+    server.use(http.get("/api/update/check", () => new HttpResponse(null, { status: 500 })));
+    const first = renderCard(info());
+    const stuck = await screen.findByRole("button", { name: "Update to 1.4.0" });
+    await waitFor(() => expect(stuck).toBeDisabled());
+    first.unmount();
+    serveCheck(info(), GREEN);
+    renderCard(info());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Update to 1.4.0" })).toBeEnabled());
+  });
+
+  it("a read that failed says the bridge was not reached, with a Retry, and not the preflight's sentence (issue 400)", async () => {
+    server.use(http.get("/api/update/check", () => HttpResponse.error()));
+    renderCard(info());
+    const button = await screen.findByRole("button", { name: "Update to 1.4.0" });
+    expect(await screen.findByText("Couldn't reach the bridge.")).toBeInTheDocument();
+    expect(button).toBeDisabled();
+    expect(screen.queryByText("The preflight couldn't be run on this machine.")).not.toBeInTheDocument();
+
+    // Retry reads again, and the answer clears the line and frees the button.
+    serveCheck(info(), GREEN);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Update to 1.4.0" })).toBeEnabled());
+    expect(screen.queryByText("Couldn't reach the bridge.")).not.toBeInTheDocument();
+  });
+
+  it("an answer of preflight: null keeps the preflight sentence and offers no Retry", async () => {
+    serveCheck(info(), null);
+    renderCard(info());
+    expect(await screen.findByText("The preflight couldn't be run on this machine.")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't reach the bridge.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+
+  it("a preflight that could not be run is asked again when the card opens next", async () => {
+    serveCheck(info(), null);
+    const first = renderCard(info());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Update to 1.4.0" })).toBeDisabled());
+    first.unmount();
+    serveCheck(info(), GREEN);
+    renderCard(info());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Update to 1.4.0" })).toBeEnabled());
   });
 });
 
@@ -1348,5 +1451,66 @@ describe("update card — the crew link sentence", () => {
     expect(await screen.findByRole("button", { name: "Update to 1.4.0" })).toBeInTheDocument();
     expect(screen.queryByText(LINE)).not.toBeInTheDocument();
     expect(screen.queryByText(/crew link/)).not.toBeInTheDocument();
+  });
+});
+
+// ── ROLL BACK (M60 spec 01) ─────────────────────────────────────────────────────────────────────
+
+describe("Roll back — offered from the preflight's kept build, confirmed in update mode", () => {
+  const KEPT: PreflightReport = { ...GREEN, rollback: { from: "1.3.0", to: "1.2.4" } };
+
+  it("is not offered when the preflight names no kept build", async () => {
+    renderCard(info());
+    await screen.findByRole("button", { name: "Update to 1.4.0" });
+    expect(screen.queryByRole("button", { name: /^Roll back/ })).toBeNull();
+  });
+
+  it("names the kept build; the tap opens Ready to start, and Roll back there sends the confirm with a request id", async () => {
+    const user = userEvent.setup();
+    const bodies: unknown[] = [];
+    server.use(
+      http.post("/api/update/rollback", async ({ request }) => {
+        const body = parseJsonObject(await request.text());
+        bodies.push(body);
+        const id = asJsonString(body?.requestId) ?? "";
+        return HttpResponse.json({ ok: true, from: "1.3.0", to: "1.2.4", run: null, runId: id }, { status: 202 });
+      }),
+    );
+    serveCheck(info(), KEPT);
+    renderCard(info());
+    await user.click(await screen.findByRole("button", { name: "Roll back to 1.2.4" }));
+    expect(screen.getByText("1.2.4 is still on this machine. A rollback switches to it and restarts. Nothing is downloaded.")).toBeInTheDocument();
+    const panel = screen.getByRole("dialog", { name: "Roll back to 1.2.4" });
+    expect(bodies).toHaveLength(0);
+    await user.click(within(panel).getByRole("button", { name: "Roll back" }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({ confirm: true, target: "1.2.4" });
+  });
+
+  it("stays available under a red preflight: going back is what a machine in trouble needs", async () => {
+    const red: PreflightReport = { ...KEPT, verdict: "red", checks: [{ id: "disk", verdict: "red", reason: "0 bytes free" }] };
+    serveCheck(info(), red);
+    renderCard(info());
+    expect(await screen.findByRole("button", { name: "Roll back to 1.2.4" })).toBeEnabled();
+  });
+
+  it("an Edge build that failed its check says it is not offered again, and offers no Retry (ADR 0110)", async () => {
+    const view = renderCard(info({ run: runAt("rolled-back", { from: "1.3.0", to: "1.4.0-edge.1" }) }));
+    expect(await screen.findByText("Edge build 1.4.0-edge.1 failed its check and was rolled back. It is not offered again.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    view.unmount();
+    // A strict release that failed keeps its Retry, and says nothing about Edge.
+    renderCard(info({ run: runAt("rolled-back", { from: "1.3.0", to: "1.4.0" }) }));
+    expect(await screen.findByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByText(/is not offered again/)).toBeNull();
+  });
+
+  it("a rollback run says so, and offers no Retry that would update to the older build", async () => {
+    const view = renderCard(info({ current: "1.2.4", run: runAt("done", { from: "1.3.0", to: "1.2.4", action: "rollback" }) }));
+    expect(await screen.findByText("Rolled back to 1.2.4.")).toBeInTheDocument();
+    view.unmount();
+    renderCard(info({ run: runAt("rolled-back", { from: "1.3.0", to: "1.2.4", action: "rollback" }) }));
+    expect(await screen.findByText("The rollback failed its check. This machine is still on 1.3.0.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 });

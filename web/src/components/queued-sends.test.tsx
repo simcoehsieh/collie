@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { http, HttpResponse } from "msw";
+import { sendAnswer, sendHandler } from "@/test/handlers";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { server } from "@/test/setup";
@@ -69,19 +69,20 @@ describe("QueuedSends", () => {
 
   it("keeps the uncertainty warning and shows a forced resend's refusal, including after reload", async () => {
     const user = userEvent.setup();
-    server.use(http.post(/\/api\/pane\/[^/]+\/reply$/, () =>
-      HttpResponse.json({ ok: false, error: "The pane is showing a dialog" })));
+    // Since upstream 1.22 the resend is one Send Protocol request; the bridge's refusal names the screen.
+    server.use(...sendHandler((request) =>
+      sendAnswer(request.id, "refused", "not_free", { detail: "The pane is showing a dialog" })));
     enqueueSend({ paneId: "w1:p1", text: "check first", kind: "message", agent: null, possiblyDelivered: true });
     const view = render(<QueuedSends paneId="w1:p1" />);
     await user.click(screen.getByRole("button", { name: /^Send again, message 1:/ }));
-    await waitFor(() => expect(screen.getByText("The pane is showing a dialog")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/The pane is showing a dialog/)).toBeInTheDocument());
     expect(screen.getByText(/May already have been sent; check the pane first/)).toBeInTheDocument();
     const raw = localStorage.getItem("collie:send-queue:v1")!;
     view.unmount();
     __resetSendQueue();
     localStorage.setItem("collie:send-queue:v1", raw);
     render(<QueuedSends paneId="w1:p1" />);
-    expect(screen.getByText("The pane is showing a dialog")).toBeInTheDocument();
+    expect(screen.getByText(/The pane is showing a dialog/)).toBeInTheDocument();
     expect(screen.getByText(/May already have been sent; check the pane first/)).toBeInTheDocument();
     expect(queuedForPane(undefined, "w1:p1")[0]?.possiblyDelivered).toBe(true);
   });
@@ -89,9 +90,9 @@ describe("QueuedSends", () => {
   it("distinguishes identical previews and resends only the chosen row's complete text", async () => {
     const user = userEvent.setup();
     const posted: string[] = [];
-    server.use(http.post<never, { text: string }>(/\/api\/pane\/[^/]+\/reply$/, async ({ request }) => {
-      posted.push((await request.json()).text);
-      return HttpResponse.json({ ok: true });
+    server.use(...sendHandler((request) => {
+      posted.push(request.text);
+      return sendAnswer(request.id, "sent");
     }));
     const first = "Same preview\nSame second line\nFirst tail";
     const second = "Same preview\nSame second line\nSecond tail";
@@ -136,12 +137,12 @@ describe("QueuedSends", () => {
     const user = userEvent.setup();
     const posted: string[] = [];
     server.use(
-      http.post<never, { text?: string }>(/\/api\/pane\/[^/]+\/reply$/, async ({ request }) => {
-        posted.push((await request.json()).text ?? "");
-        return HttpResponse.json({ ok: true });
+      ...sendHandler((request) => {
+        posted.push(request.text);
+        return sendAnswer(request.id, "sent");
       }),
     );
-    // No adapter for a shell, so the send is the one-shot reply and completes without an echo.
+    // One Send Protocol request: the bridge types, checks and submits, and answers `sent`.
     enqueueSend({ paneId: "w1:p1", text: "ls -la", kind: "message", agent: null });
     render(<QueuedSends paneId="w1:p1" />);
     await user.click(screen.getByRole("button", { name: /^Send now, message 1:/ }));

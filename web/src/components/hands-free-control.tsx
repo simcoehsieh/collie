@@ -1,80 +1,40 @@
-import { Mic, Volume2 } from "lucide-react";
+import { Volume2 } from "lucide-react";
 
-import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
-import { setHandsFreeEnabled, useHandsFree, useSttCapability } from "@/lib/stt";
 import { setReadAloudEnabled, ttsSupported, useReadAloud } from "@/hooks/use-tts";
 
-// The one voice SETTING (ADR 0029). Everything else about speech-to-text is an operator act on the
-// keyboard — `collie stt setup` mints the credential, exactly as `collie pair` does — so this page
-// carries the single question the phone gets to answer: does a finished transcript go into the
-// message box, or straight out?
+// FORK: THE READ-ALOUD ROW, ALONE (2026-10-22, at the 1.23 merge). This file was upstream's Settings
+// hands-free card, and the fork hung its Read aloud switch under that card's switch (hooks/use-tts.ts).
+// Upstream 1.20.0 folded the card into Settings → Voice (components/speech-control.tsx,
+// `HandsFreeCard`) and deleted this file. The card is upstream's now; what is left here is the fork's
+// row, drawn as a second row inside that card, which mounts it under its own hands-free switch.
 //
-// DEFAULT OFF, and it stays a deliberate act. With it on, words nobody has read reach a real
-// terminal; the send still takes the guarded reply path, but the review step is the operator, and
-// this switch is where they waive it. The composer keeps two refusals the switch cannot express — a
-// draft already in the box, and a password prompt on screen — and both fall back to inserting.
-//
-// Hidden where there is no microphone at all: no provider configured, or a browser that cannot
-// record (an insecure origin has no `mediaDevices`). Same predicate as the composer's button, so the
-// two can never disagree — a toggle for a feature that is absent teaches the user the app lies.
-export function HandsFreeControl() {
+// The other half of the hands-free loop — read each new reply aloud while hands-free is on. Only
+// offered where the browser can speak; only ACTS while hands-free is on, which is why it sits under
+// that switch rather than beside it, and is disabled while hands-free is off.
+export function ReadAloudRow({ handsFree }: { handsFree: boolean }) {
   useLocale();
-  const stt = useSttCapability();
-  const enabled = useHandsFree();
-  // FORK: the other half of the loop — read each new reply aloud while hands-free is on
-  // (hooks/use-tts.ts). Only offered where the browser can speak; only ACTS while hands-free is on,
-  // which is why it sits under that switch rather than beside it.
   const readAloud = useReadAloud();
-  const canSpeak = ttsSupported();
-  if (stt === null) return null;
-
+  if (!ttsSupported()) return null;
   return (
-    <Card className="gap-0 py-0">
-      <div className="flex items-center justify-between gap-4 p-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <Mic className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
-            <div className="font-medium">{t("settings.handsFree.title")}</div>
-            <p className="text-sm text-muted-foreground">
-              {t("settings.handsFree.description")}
-            </p>
-          </div>
-        </div>
-        <div className="flex h-6 w-11 shrink-0 items-center justify-center">
-          <Switch
-            checked={enabled}
-            onCheckedChange={setHandsFreeEnabled}
-            aria-label={t("settings.handsFree.ariaLabel")}
-          />
+    <div className="flex items-center justify-between gap-4 border-t border-border p-4">
+      <div className="flex min-w-0 items-start gap-3">
+        <Volume2 className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <div className="font-medium">{t("settings.readAloud.title")}</div>
+          <p className="text-sm text-muted-foreground">{t("settings.readAloud.description")}</p>
         </div>
       </div>
-      {canSpeak && (
-        <div className="flex items-center justify-between gap-4 border-t border-border p-4">
-          <div className="flex min-w-0 items-start gap-3">
-            <Volume2 className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-            <div className="min-w-0">
-              <div className="font-medium">{t("settings.readAloud.title")}</div>
-              <p className="text-sm text-muted-foreground">{t("settings.readAloud.description")}</p>
-            </div>
-          </div>
-          <div className="flex h-6 w-11 shrink-0 items-center justify-center">
-            <Switch
-              checked={readAloud}
-              disabled={!enabled}
-              onCheckedChange={setReadAloudEnabled}
-              aria-label={t("settings.readAloud.ariaLabel")}
-            />
-          </div>
-        </div>
-      )}
-      {!stt.available && stt.reason !== undefined && (
-        <p className="border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
-          {stt.reason}
-        </p>
-      )}
-    </Card>
+      <div className="flex h-6 w-11 shrink-0 items-center justify-center">
+        <Switch
+          checked={readAloud}
+          disabled={!handsFree}
+          onCheckedChange={setReadAloudEnabled}
+          aria-label={t("settings.readAloud.ariaLabel")}
+        />
+      </div>
+    </div>
   );
 }

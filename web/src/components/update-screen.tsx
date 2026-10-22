@@ -358,7 +358,11 @@ function Footer({
     first = (
       <Button size="lg" className="flex-1" disabled={busy} onClick={onStart}>
         {busy && <Loader2 aria-hidden="true" className="size-4 motion-safe:animate-spin" />}
-        {t("updateScreen.action.start")}
+        {screen.ask?.kind === "rollback"
+          ? t("updateScreen.action.startRollback")
+          : screen.ask?.kind === "back"
+            ? t("updateScreen.action.startBack")
+            : t("updateScreen.action.start")}
       </Button>
     );
     second = (
@@ -390,14 +394,40 @@ function Footer({
         {t("updateScreen.action.back")}
       </Button>
     );
+    // WHAT CHANGED, ONE TAP FROM DONE (1.21.1). The notes live on the Updates page, under the card,
+    // and the panel keeps its fixed rows: this is a door to them, the same way "Show log" is. It
+    // shares the row with a retry, in its short form, so a run that left a machine behind still
+    // offers both.
+    const target = view.phase === "done" ? view.target : null;
+    const whatChanged =
+      target === null
+        ? null
+        : (short: boolean) => (
+            <Button
+              variant="ghost"
+              size="lg"
+              className="flex-1"
+              onClick={() => {
+                screen.back();
+                onOpenUpdates();
+              }}
+            >
+              {short ? t("updateScreen.action.whatChangedShort") : t("updateScreen.action.whatChanged", { version: target })}
+            </Button>
+          );
     if (view.phase === "done" && view.retryNames.length > 0) {
       second = (
-        <Button variant="ghost" size="lg" className="flex-1" onClick={screen.retryMembers}>
-          {view.retryNames.length === 1
-            ? t("updateScreen.action.retryOne", { name: view.retryNames[0] ?? "" })
-            : tn("updateScreen.action.retryMany", view.retryNames.length)}
-        </Button>
+        <>
+          <Button variant="ghost" size="lg" className="flex-1" onClick={screen.retryMembers}>
+            {view.retryNames.length === 1
+              ? t("updateScreen.action.retryOne", { name: view.retryNames[0] ?? "" })
+              : tn("updateScreen.action.retryMany", view.retryNames.length)}
+          </Button>
+          {whatChanged?.(true)}
+        </>
       );
+    } else if (whatChanged !== null) {
+      second = whatChanged(false);
     } else if (view.phase === "rolled-back" || view.phase === "stopped" || view.phase === "failed") {
       second = (
         <>

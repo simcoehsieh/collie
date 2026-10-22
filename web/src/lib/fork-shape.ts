@@ -45,3 +45,28 @@ export const FORK_MODEL_TAG_ON: boolean = import.meta.env.MODE === "test";
 // without one. The route itself stays in the router, unreachable from the app. Tabs still open from
 // the tab strip's "+" (a launcher on its hold). Tests run with the page.
 export const FORK_NEW_PAGE_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO TASKS PILL ON THE BELT (2026-10-22, at the 1.23 merge). Upstream 1.23.0 adds a "Tasks
+// done/total" pill to the actions belt that opens the pane's task list. The belt keeps its own set of
+// verbs (lib/belt-pins.ts says why the operator wants nothing extra there), and the terminal-first pane
+// already shows the agent's own task list on screen. Off here, components/actions-row.tsx draws no
+// Tasks pill; the bridge still serves the list. Tests run with it.
+export const FORK_BELT_TASKS_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO SCREEN PILL ON THE BELT (2026-10-22, at the 1.23 merge). Upstream 1.22.0 adds a Screen pill
+// that shows the terminal's raw rows without cards. The pane here opens on the terminal already
+// (lib/pane-view.ts), so the pill would be a second door to the view the pane is in. Off here, the belt
+// draws no Screen pill; a contested read's notice still names the terminal view. Tests run with it.
+export const FORK_BELT_SCREEN_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO THEME PICKER (2026-10-22, at the 1.23 merge). Upstream 1.22.0 ships four themes (Collie,
+// Nightwatch, Daylight, Harbour) with import and export, picked from Settings. This install's look is
+// the fork's redesign (FORK.md, "The redesign": skin.css and lib/design.ts), which the new themes do
+// not know and would draw over. Off here, Settings shows no Theme select, import or export, and the
+// app stays on the default theme under the fork's skin. Tests run with the picker.
+export const FORK_THEMES_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO VIEWPORT LINE UNDER THE BUILD STAMP (2026-10-22, at the 1.23 merge). Upstream 1.20.0 shows
+// `vp inner/visual/screen` under the stamp on every dev build. This install's live build is always a
+// `-dev` build, so the line would stay on the phone. Off here, components/build-stamp.tsx draws none.
+export const FORK_VIEWPORT_STAMP_ON: boolean = import.meta.env.MODE === "test";

@@ -15,10 +15,15 @@ import { useState } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
 import { Composer } from "@/components/composer";
+import type { Surface } from "@/lib/surface/surface";
 import { useSheetPull } from "@/hooks/use-sheet-pull";
 
 import { Card, CardControls, Group, Section, type SectionDef } from "../layout";
+
 import { ChromeBlock, PhoneMock } from "./shared";
+
+/** A free box: the Send slot is Send. */
+const FREE_SURFACE: Surface = { revision: 1, turn: "idle", modal: "none", composer: "empty" };
 
 export const DEF: SectionDef = {
   id: "left-hand",
@@ -40,6 +45,7 @@ const PREFS = {
   // FORK: the two display prefs the fork adds (hooks/use-display-prefs.ts).
   controlsOpen: false,
   paneView: {},
+  stretchText: false,
 } as const;
 
 interface VariantDef {
@@ -99,7 +105,7 @@ function LeftHandPhone({ def }: { def: VariantDef }) {
                 isShell={false}
                 gone={false}
                 readOnly={false}
-                dialogPresent={false}
+                surface={FREE_SURFACE}
                 text="pane output"
                 terminalDraft={null}
                 rawTerminalDraft={null}

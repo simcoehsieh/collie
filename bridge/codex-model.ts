@@ -1,5 +1,6 @@
 import type { MuxAdapter } from "./mux/types.ts";
 import type { CodexHandoffModel } from "./types.ts";
+import { gateFor } from "./surface/key-gate.ts";
 
 // FORK: pick a Codex pane's model and reasoning effort from the Quick dock (2026-09-26).
 //
@@ -110,7 +111,7 @@ export interface DriveOptions {
 export type DriveOutcome = { ok: true } | { ok: false; reason: string };
 
 /** The three multiplexer calls a switch makes — the real adapter in the bridge, a fake in tests. */
-export type CodexModelClient = Pick<MuxAdapter, "readGrid" | "typeText" | "sendKeys">;
+export type CodexModelClient = Pick<MuxAdapter, "readGrid" | "typeText" | "writeKeys">;
 
 /**
  * Switch a live Codex pane to `model` at `effort`, for this session only.
@@ -152,7 +153,9 @@ export async function driveCodexModel(
   };
   const keys = async (k: readonly string[]): Promise<string | null> => {
     try {
-      const sent = await client.sendKeys(paneId, k);
+      // Through the key gate like every other key the bridge sends (bridge/surface/key-gate.ts): a
+      // person's tap on the Model row, sent as asked, and it moves the pane's revision.
+      const sent = await gateFor(client).press(paneId, k, "person_tap");
       return sent.ok ? null : sent.detail;
     } catch (err) {
       return err instanceof Error ? err.message : String(err);

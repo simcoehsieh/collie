@@ -43,8 +43,13 @@ exists to inject headers.
 
 Pairing gates every `/api` route, reads included. Only two routes stay open: `/api/health`, which
 a monitor or a load balancer asks, and `/api/pair`, which a device needs before it holds a token.
-The device header gates writes and one read, the [Files view](changes.md#files), which can show
-every file under a workspace's folder
+`/api/health` answers the build, the crew mode and three counts of the last seven days (how often the
+input box read as free, how often it could not be read, and how often a person sent by hand past a
+screen Collie could not read). The counts name no pane, no text and no person.
+
+The device header gates writes and two reads: the [Files view](changes.md#files), which can show
+every file under a workspace's folder, and the New page's
+[Browse](configure.md#favourite-and-recent-folders), which lists folder names under home
 ([ADR 0086](../.adr/0086-reads-need-the-pairing-token.md)).
 
 ```bash
@@ -134,6 +139,7 @@ bridge is out of reach. Every item below has a size bound and a lifetime.
 | Push endpoint | localStorage | until it changes | deleted |
 | App shell | Cache Storage | until the next build | kept |
 | Fonts and push titles | Cache Storage | until replaced | deleted |
+| Whistle speech model and engine files (only if you chose to copy them) | Cache Storage | until you remove them | deleted |
 | Herd and pane text, as last seen | IndexedDB `collie-store` | 24 hours | deleted |
 | Newest Chat turns of each pane | IndexedDB `collie-store` | 1 day, or the "Keep chat on this phone" setting | deleted |
 
@@ -169,10 +175,21 @@ Key security boundaries and risks:
   so another local user who holds no token reads nothing but `/api/health`. The token is the
   boundary: a local user who can read your browser profile can read the token too
   ([ARCHITECTURE.md §6](../ARCHITECTURE.md#6-security-model)).
+- **A held permission waits for a person's tap.** With `collie hooks install claude
+  --hold-permissions`, Claude's permission hook asks the bridge through a socket file. Only your
+  user can open it (mode 0600 in a 0700 folder). The hook checks the socket owner, the folder and
+  the state dir above it before it connects. The bridge answers only for a process it places on a
+  pane. It never answers alone. A tap must carry the hash of what the card showed. A screen card
+  never answers a request whose dialog is not on the screen
+  ([Permissions held for the phone](multiplexers.md#permissions-held-for-the-phone)).
 - **The Files view reads files off your disk.** It shows any file under a workspace's folder, except
   a `.git` folder, Collie's own state and config folders, and files named like a Collie state
   secret. So it asks for an authorised device, like a write
   ([ADR 0083](../.adr/0083-the-files-view-reads-the-changes-root.md)).
+- **The New page's Browse lists folder names under your home.** Names only, with the Files view's
+  limits: no dot-folders unless typed, no `.git`, no Collie state or config folder, no link out of
+  home, at most 200 rows. It needs an authorised device too
+  ([Favourite and recent folders](configure.md#favourite-and-recent-folders)).
 - **Every paired device can read files under the workspace's folder.** That includes `.env`
   files. Pair only the devices you trust with the shell itself.
 - **Credential files under a workspace's folder are readable.** A workspace opened in `~/.claude`,
@@ -198,16 +215,22 @@ Key security boundaries and risks:
   shortcut
   ([One-off commands](configure.md#one-off-commands-and-their-history),
   [ADR 0095](../.adr/0095-one-off-commands-and-their-history.md)).
-- **A single instance exposes all sessions.** By default, one Collie process fronts every
-  multiplexer session discovered under Herdr's configuration root, including sandbox sessions
+- **Each machine keeps the shell lines you send through Collie.** Sent keeps a line you send to a
+  shell pane, and each one-off command, in `sent.jsonl` in the state folder (mode 0600). A paired
+  device can read it, as it can read the panes. Some secrets are still kept
+  ([Sent: the shell lines you sent](#sent-the-shell-lines-you-sent)).
+- **A single instance exposes all Herdr sessions.** By default, one Collie process fronts every
+  Herdr session discovered under Herdr's configuration root, including sandbox sessions
   ([Multi-session](configure.md#multi-session)).
 - **Writes are recorded to `<state-dir>/audit.log`**, which is `~/.local/state/collie/audit.log`
   unless `COLLIE_STATE_DIR` moves it. The server logs all incoming keystrokes,
   replies, file uploads, and pane/tab lifecycle events. Note that an audit log provides visibility
   after the fact rather than access control. Characters sent in Type mode are never written to the
   log: `COLLIE_AUDIT_CONTENT=none` redacts each one, and the default preview records only a count of
-  `•` marks. Named keys such as Enter and Ctrl+C stay readable.
-  ([ARCHITECTURE.md §6](../ARCHITECTURE.md#6-security-model)).
+  `•` marks. Named keys such as Enter and Ctrl+C stay readable
+  ([ARCHITECTURE.md §6](../ARCHITECTURE.md#6-security-model)). A durable agent's answers, sends, stops,
+  button taps, starts, reopens and renames are recorded too
+  ([What is logged](durable-agents-security.md#what-is-logged)).
 - **Response headers.** Every response carries `X-Content-Type-Options: nosniff`,
   `Referrer-Policy: no-referrer` and `Permissions-Policy: camera=(), geolocation=(),
   microphone=(self), payment=(), usb=()`. The microphone stays allowed for the hands-free speech
@@ -236,6 +259,7 @@ Key security boundaries and risks:
 | `COLLIE_DEVICE_HEADER` | Name of the header your proxy injects with a device id. |
 | `COLLIE_DEVICE_ALLOWLIST` | Comma-separated device ids allowed to write; every other device stays read-only ([`docs/deployment.md`](deployment.md)). |
 | `COLLIE_REDACT=off` | Turns off the secret mask on pane text, diffs and file text ([below](#what-leaves-the-machine-is-masked)). On by default. |
+| `COLLIE_SENT=off` | Keeps no record of the shell lines you send ([below](#sent-the-shell-lines-you-sent)). On by default. |
 
 > 🚫 **Never use `tailscale funnel` with Collie.** Funnel routes traffic to the public internet,
 > whereas `tailscale serve` restricts access to your private tailnet. There is no supported use case
@@ -243,6 +267,118 @@ Key security boundaries and risks:
 
 Restrict access further with Tailscale ACLs and `COLLIE_TRUSTED_USER`. Provided as-is, without
 warranty.
+
+## Durable agents
+
+A durable agent you attach is code you run or deploy, and Collie treats its text as untrusted. A private socket
+keeps other users out but not a process of your own user, and a token is the only gate over https.
+The trust rules per transport, what Collie does to a durable agent's text and what the audit log keeps are in
+[Security of a durable agent](durable-agents-security.md).
+
+## The speech engine (Whistle)
+
+Whistle runs third-party code: a WebAssembly engine from Cactus Compute. It runs on the phone, or on
+the host as the bridge's user. Collie bounds what that code can reach. It cannot remove the reach
+entirely.
+
+- **Vendored and pinned.** The engine is two files, `needle.js` and `needle.wasm`, kept byte for byte
+  as upstream published them, with upstream's licence and a provenance note
+  (`web/public/stt/needle-3-93e88ede/`). A test pins the sha256 of both files and the list of the
+  sixteen functions the wasm may ask its host for. A new import is a reason to stop. Only a person
+  updates the pin, and reads the diff first. The model has its own pinned hash, and Collie keeps a
+  downloaded copy only when it matches.
+- **On the phone, a worker with its own policy.** The wasm runs in a dedicated worker. The bridge
+  serves every script under `stt/` with this policy, and no other page gets it:
+
+  ```
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'
+  ```
+
+  The worker has no network, no DOM and no way to load code from elsewhere. It cannot read the
+  pairing token, which sits in `localStorage`, and workers have no `localStorage`. Before it does
+  anything else, it compiles a tiny wasm module. A browser that does not give the worker its own
+  policy refuses that, and *This phone* shows as unavailable there.
+- **The page's policy does not change.** The document policy never gains `'wasm-unsafe-eval'`, and
+  it keeps `connect-src 'self'`.
+- **What the worker can still reach.** It can read and write this origin's IndexedDB and Cache
+  Storage, which no policy directive closes. `collie-store` holds recent pane and Chat text
+  ([What the phone keeps](#what-the-phone-keeps)). That text was already masked, but it is readable.
+  This reach is accepted, and named in the ADR. If it starts to matter, the next step is a sandboxed
+  frame around the worker.
+- **On the host, a child of Collie's own binary.** One short-lived child per dictation runs
+  `_whistle-transcribe` with a fixed argument list that Collie wrote. It checks the engine, the wasm
+  and the model against their pins before it compiles anything. It has a 60-second deadline, killed
+  with SIGKILL, a 256 KiB output cap and at most two at once. It gets none of the bridge's `COLLIE_*`
+  variables. The bridge sets only two, the state folder and the install folder, to paths it resolved
+  itself. Nothing from the request reaches the argument list but the recording.
+- **A second outbound call, by a person's tap.** The update check is the first. The model download is
+  the second: one file, from one pinned Hugging Face address, written only after its hash matched.
+  A phone never calls Hugging Face. It copies the model from the host, with the pairing token. The
+  routes need a write device, run on the lead only, allow one download at a time and are audited.
+- **Setup from Settings is an exception to "setup is a CLI act".** Providers that store a credential
+  or name a command stay in the terminal. Whistle does none of these. A stolen write token can
+  already type into terminals and start an update, so the setup tap gives it nothing new.
+- **Switching to Codex from Settings is the other exception.** A write device may switch the host
+  between Whistle, Codex and Off, and nothing else. Codex needs the full consent, the same words
+  `collie stt setup` prints, and a tap on **I accept**; the bridge then runs the CLI's own probe. A
+  stolen write token could point the host's speech at the operator's signed-in ChatGPT account. It
+  cannot add a key or a command, or replace one. The token can already type `codex` into a
+  terminal. [ADR 0097](../.adr/0097-codex-speech-can-be-chosen-from-settings.md) weighs this.
+  A switch from Settings also writes the paired device's name, as given at pairing, and the time into
+  `stt.json`, so **Host speech** can say who changed it last. No token and no address is written.
+  A run of `collie stt setup` drops that line.
+- **Paired devices can read what the host's speech settings name, by name only.** That is the
+  command's name, a model file's name and a speech service's host name, never a path, an argument,
+  a key or a URL path.
+
+Why it is built this way: [ADR 0096](../.adr/0096-speech-can-stay-on-the-phone.md). The setup steps
+are in [Voice input and Web Push](voice-and-push.md#whistle-speech-to-text-on-your-phone-or-your-host).
+
+## Walky talky
+
+Walky talky carries messages between agent sessions, so this section says what a message proves and
+what it does not. The commands are in [Walky talky](walky-talky.md).
+
+```sh
+# in .env, then run `collie restart`
+COLLIE_WALKY=off
+```
+
+That line makes this machine refuse every message for its panes. The CLI on the machine can still send.
+
+- **A crew key signs a message across machines.** A member signs a message with its crew key. The
+  lead checks the signature against the key it pinned for that member, then adds its own signature
+  for the machine that receives it. A solo install has no crew key. It signs nothing and sends nothing
+  off the machine.
+- **The receiver checks the sender, through the lead's word.** A member pins only its lead. So the
+  lead sends the sender's certificate with the message, and signs a short statement that this
+  certificate belongs to that member of the crew. The receiving machine checks that statement, then
+  checks the sender's signature against the certificate. If any check fails, it refuses the message.
+  It still trusts the lead about who is in the crew.
+- **Only the lead can write an outcome back.** The lead sends a member the outcomes of that member's
+  own messages. The member takes them only from its pinned lead, and only for a message it sent and
+  still logs. Outcomes and the record of what the lead got stay in memory, and go after 10 minutes.
+- **The phone's card needs the log.** The phone draws a message card only when the bridge's own log
+  holds that message id. A header that an agent only prints on the screen stays plain text, with the
+  mark "no log record on this machine".
+- **A pane token is no secret.** The token in an address, such as `#k3f9`, keeps a message from
+  reaching a new session that took a closed pane's id. `collie walky who` prints it to every agent,
+  and `<stateDir>/walky/instances.json` is readable by your user. It proves nothing about who sends.
+- **Every machine a message crosses keeps it.** The sender's machine, the lead and the receiving
+  machine each log the message in `<stateDir>/walky/`. The log keeps 7 days and at most 2,000 lines.
+  Never put a secret in a message.
+- **An agent's message is a peer's words.** The pane gets one line with the sender's header and no
+  body. The agent reads the body as the output of `collie walky inbox <id>`, which a harness treats
+  as data and not as your instruction. The installed skill tells the agent to weigh it and never to
+  run a destructive command because a peer asked.
+
+> **Note.** An agent runs as your user, so it can read the crew key and open the local socket. It
+> could sign a message or claim a pane that is not its own. The signature protects a message on its
+> way between machines and tells the receiver which machine sent it. It does not protect you from a
+> program on the same machine that lies about itself.
+
+Walky talky adds no outbound call. A message to another machine rides the crew link that already
+exists, and no model, cloud service or third party sees it.
 
 ## What leaves the machine is masked
 
@@ -299,6 +435,47 @@ A push notification also names a pane only by the name you gave it: the pane's l
 any program can set that title, and a title can hold a path, a command or a secret. A pane with no
 such name is called by its harness, for example `claude`.
 
+## Sent: the shell lines you sent
+
+Each machine keeps a record of the shell lines you send through Collie, so you can find and send one again.
+
+```bash
+# in your .env, to keep no record on this machine
+COLLIE_SENT=off
+```
+
+| question | answer |
+| --- | --- |
+| What is kept | A line you send to a shell pane, and each one-off command from the New page. For each line: the text, its folder, the time, and which of the two it was. |
+| What is never kept | Prompts to an agent, text for a program, keys from the Keys board, and Type mode. |
+| Where | `sent.jsonl` in the state folder, `~/.local/state/collie/` unless `COLLIE_STATE_DIR` moves it. The file is mode 0600, in a folder at 0700. |
+| How long | At most 5000 lines on each machine, and none older than 365 days. |
+| Who can read it | A paired device, as it can read the panes the lines went to. |
+| In a crew | Each machine keeps its own file. The lead asks its members when your phone asks, and keeps no copy. |
+
+Collie sends every line you tap, and then decides whether to keep it. It keeps nothing about a line
+that:
+
+- starts with a space or a tab,
+- sets a variable, such as `TOKEN=abc deploy` or `export AWS_SECRET_ACCESS_KEY=…`,
+- holds a URL with a password, such as `https://user:pass@host`,
+- holds a word such as `password`, `secret`, `token`, `bearer` or `authorization`,
+- holds a shape the secret mask knows, such as a `ghp_…` or `sk-…` key,
+- is longer than 4096 characters.
+
+Such a line leaves no row, no count and no log line with its text.
+
+To keep one line out, start it with a space. The shell runs it as usual, and Collie keeps nothing.
+
+> **Caution.** The check is a guess. It keeps a password you pass as a plain argument, such as
+> `mysql -pPASS`, and any secret with a shape it does not know. Start such a line with a space.
+
+To forget one line, use Forget on its row in the Sent sheet. To forget a whole machine, use Clear
+Sent. Both work while `COLLIE_SENT=off` is set. The audit log records each forget with a count, never
+the line. Every line goes through the secret mask before it leaves the machine.
+
+Why it is built this way: [ADR 0107](../.adr/0107-sent-keeps-shell-lines-per-machine.md).
+
 ## Secret files on Windows
 
 On Windows (experimental), Collie keeps its secret files private to your account, SYSTEM and
@@ -339,8 +516,19 @@ The one unprompted outbound call is the update check: an anonymous HTTPS `GET` t
 tags API (`bridge/update.ts`) that compares your version to the newest tag. It carries no data about
 you or your machine, only the static user-agent `collie-update-check`.
 
+The Whistle model download is the other outbound call. It happens only when a person taps **Download
+to host** or runs `collie stt whistle`, and it sends no data about you ([The speech engine
+(Whistle)](#the-speech-engine-whistle)).
+
+Walky talky adds no outbound call. A message to another machine rides the crew link and goes
+nowhere else ([Walky talky](#walky-talky)).
+
 If you set `COLLIE_ACCESS_TEAM`, Collie also fetches that Cloudflare Access team's public keys, at
 start and once an hour. That call is yours to turn on, and it sends nothing about you either.
+
+If you attach a durable agent by URL, Collie calls that URL on every poll with the durable agent's bearer token in
+the `Authorization` header. That call is yours to turn on too, and nothing is sent until you attach
+one ([Security of a durable agent](durable-agents-security.md#the-token-transport)).
 
 If collection is ever added, explicit opt-in is the ceiling — off by default, asked as a visible
 question, never carried by a flag or a default. Removing that promise would be a breaking change

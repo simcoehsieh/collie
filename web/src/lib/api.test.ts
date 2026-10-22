@@ -9,9 +9,13 @@ import { __resetSnapshotCache } from "./api";
 import { DEAD_DEBOUNCE_MS, isLive, resetLiveness } from "./liveness";
 import { resetBasePathForTests } from "./base-path";
 import { burstPaneId, resetPollIntent, sendCount } from "./poll-intent";
+import { setDeviceToken } from "./pairing";
+import { resetServerClockForTests, serverSkewMs } from "./server-clock";
 import {
+  apiErrorFields,
   handoffPane,
   checkForUpdates,
+  cancelHeldSend,
   checkRun,
   clearRecentRuns,
   createTab,
@@ -20,6 +24,7 @@ import {
   fetchFileImage,
   fetchHistory,
   fetchPane,
+  fetchPaneWalky,
   fetchSnapshot,
   filesImagePath,
   getNotifyPrefs,
@@ -29,12 +34,21 @@ import {
   refreshNow,
   removeRecentRun,
   sendKeys,
+  startLaunch,
+  fetchWalkyWho,
+  postWalky,
   sendReply,
   textBeforeLastSend,
   uploadFile,
   sttTimeoutFor,
   startRun,
   transcribeAudio,
+  fetchSttHost,
+  fetchSttModel,
+  fetchWhistleStatus,
+  removeWhistleModel,
+  setSttHost,
+  startWhistleSetup,
   withTimeout,
   XHR_HEADER,
   XHR_HEADER_VALUE,
@@ -519,6 +533,21 @@ describe("api client — the transcription deadline scales with the clip", () =>
 
   it("a nonsense size cannot produce a deadline shorter than the fixed allowance", () => {
     expect(sttTimeoutFor(-1)).toBe(80_000);
+    expect(sttTimeoutFor(-1, "audio/wav")).toBe(80_000);
+  });
+
+  it("a WAV waits for the host engine's deadline, half the clip and at most three minutes", () => {
+    const wav = (seconds: number) => 44 + seconds * 32_000;
+    const upload = (bytes: number) => Math.ceil((bytes * 8 * 1000) / 256_000);
+    // A short WAV keeps the flat 60 s, like any other clip of its size.
+    expect(sttTimeoutFor(wav(10), "audio/wav")).toBe(sttTimeoutFor(wav(10), "audio/webm"));
+    // Four minutes, the longest the host engine takes: 120 s for the engine on top of the upload.
+    expect(sttTimeoutFor(wav(240), "audio/wav")).toBe(upload(wav(240)) + 120_000 + 20_000);
+    expect(sttTimeoutFor(wav(240), "audio/wav; codecs=1")).toBe(upload(wav(240)) + 120_000 + 20_000);
+    // Never more than three minutes for the engine, whatever the size.
+    expect(sttTimeoutFor(wav(600), "audio/wav")).toBe(upload(wav(600)) + 180_000 + 20_000);
+    // Other providers' clips keep the flat budget.
+    expect(sttTimeoutFor(wav(240), "audio/webm")).toBe(upload(wav(240)) + 60_000 + 20_000);
   });
 });
 
@@ -799,6 +828,104 @@ describe("api client — identity proxy refusals", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 302 }));
     const result = await transcribeAudio(new Blob(["x"], { type: "audio/webm" }));
     expect(result).toMatchObject({ ok: false, status: 401 });
+  });
+});
+
+// WHISTLE (ADR 0096): the host's model and the phone's copy of it.
+/** The bridge's error code a promise rejected with, or undefined when it did not reject with one. */
+async function refusalCode(promise: Promise<unknown>): Promise<string | undefined> {
+  try {
+    await promise;
+  } catch (thrown) {
+    return apiErrorFields(thrown)?.code;
+  }
+  return undefined;
+}
+
+describe("the Whistle calls", () => {
+  const STATUS = { state: "absent", bytes: 16919407, hostEngine: false, hostTaken: false };
+
+  it("reads the status, starts the setup and removes the model on the right routes", async () => {
+    const seen: string[] = [];
+    server.use(
+      http.get("/api/stt/whistle", () => {
+        seen.push("GET /api/stt/whistle");
+        return HttpResponse.json(STATUS);
+      }),
+      http.post("/api/stt/whistle", () => {
+        seen.push("POST /api/stt/whistle");
+        return HttpResponse.json({ ...STATUS, state: "downloading", received: 0 }, { status: 202 });
+      }),
+      http.delete("/api/stt/whistle", () => {
+        seen.push("DELETE /api/stt/whistle");
+        return HttpResponse.json(STATUS);
+      }),
+    );
+    expect((await fetchWhistleStatus()).state).toBe("absent");
+    expect((await startWhistleSetup()).state).toBe("downloading");
+    expect((await removeWhistleModel()).state).toBe("absent");
+    expect(seen).toEqual(["GET /api/stt/whistle", "POST /api/stt/whistle", "DELETE /api/stt/whistle"]);
+  });
+
+  it("reads and switches the host's provider; Codex carries the consent id, the others carry none", async () => {
+    const HOST = {
+      provider: "none",
+      available: false,
+      configuredBy: "none",
+      switchable: { whistle: { ok: true }, codex: { ok: true }, off: { ok: true } },
+    };
+    const bodies: unknown[] = [];
+    server.use(
+      http.get("/api/stt/host", () => HttpResponse.json(HOST)),
+      http.put("/api/stt/host", async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json(HOST);
+      }),
+    );
+    expect((await fetchSttHost()).provider).toBe("none");
+    await setSttHost("whistle");
+    await setSttHost("off");
+    await setSttHost("codex", "codex-consent-80d08bef89cd");
+    expect(bodies).toEqual([
+      { provider: "whistle" },
+      { provider: "off" },
+      { provider: "codex", consent: "codex-consent-80d08bef89cd" },
+    ]);
+  });
+
+  it("carries the host's refusal code, so Settings can say it in the operator's language", async () => {
+    server.use(
+      http.put("/api/stt/host", () =>
+        HttpResponse.json({ error: "locked", code: "stt.host_provider_locked" }, { status: 409 }),
+      ),
+    );
+    await expect(setSttHost("off")).rejects.toThrow(/409/);
+    expect(await refusalCode(setSttHost("off"))).toBe("stt.host_provider_locked");
+  });
+
+  it("fetches the model by hash with the token and hands the stream back untouched", async () => {
+    setDeviceToken("tok-model-1");
+    let auth: string | null = null;
+    const sha = "b".repeat(64);
+    server.use(
+      http.get(`/api/stt/model/${sha}`, ({ request }) => {
+        auth = request.headers.get("authorization");
+        return new HttpResponse(new Uint8Array([1, 2, 3]), { headers: { "content-type": "application/octet-stream" } });
+      }),
+    );
+    const res = await fetchSttModel(sha);
+    expect(auth).toBe("Bearer tok-model-1");
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([1, 2, 3]);
+  });
+
+  it("throws the host's refusal when it no longer holds that model", async () => {
+    const sha = "c".repeat(64);
+    server.use(
+      http.get(`/api/stt/model/${sha}`, () =>
+        HttpResponse.json({ error: "unknown model", code: "stt.model_unknown" }, { status: 404 }),
+      ),
+    );
+    expect(await refusalCode(fetchSttModel(sha))).toBe("stt.model_unknown");
   });
 });
 
@@ -1233,6 +1360,16 @@ describe("one-off runs and their history (ADR 0095)", () => {
     ]);
   });
 
+  it("startLaunch sends a starter by its id and the request id, and never a folder", async () => {
+    const calls = capture();
+    await startLaunch({ kind: "starter", id: "notes-new" }, { cwd: "~/src/app", requestId: "id-3" }, { host: "badger" });
+    await startLaunch({ kind: "row", command: "htop" }, { cwd: "~/src/app", requestId: "id-4" });
+    expect(calls).toEqual([
+      { url: "/api/launch?host=badger", method: "POST", body: { starter: "notes-new", requestId: "id-3" } },
+      { url: "/api/launch", method: "POST", body: { command: "htop", requestId: "id-4", cwd: "~/src/app" } },
+    ]);
+  });
+
   it("checkRun posts the line to that machine's check and returns its answer, a read that sends nothing else", async () => {
     const calls = capture();
     await checkRun("claude --yolo", { host: "badger" });
@@ -1251,5 +1388,103 @@ describe("one-off runs and their history (ADR 0095)", () => {
       { url: "/api/launch/recent/remove?host=badger", method: "POST", body: { line: "make test" } },
       { url: "/api/launch/recent/clear?host=badger", method: "POST", body: {} },
     ]);
+  });
+});
+
+describe("api client: the bridge's clock", () => {
+  afterEach(() => resetServerClockForTests());
+
+  it("reads the Date header of a response, so a phone five minutes ahead counts on the bridge's clock", async () => {
+    server.use(
+      http.get("/api/snapshot", () =>
+        HttpResponse.json(fixtureSnapshot, { headers: { date: new Date(Date.now() - 5 * 60_000).toUTCString() } }),
+      ),
+    );
+    await fetchSnapshot();
+    expect(Math.abs(serverSkewMs() + 5 * 60_000)).toBeLessThan(2000);
+  });
+
+  it("a response without the header leaves the phone's own clock", async () => {
+    server.use(http.get("/api/snapshot", () => HttpResponse.json(fixtureSnapshot)));
+    await fetchSnapshot();
+    expect(serverSkewMs()).toBe(0);
+  });
+});
+
+describe("cancelHeldSend (M56 spec 15)", () => {
+  it("DELETEs the request with its pane and the session, and reads a cancel and a dismiss", async () => {
+    const seen: string[] = [];
+    server.use(
+      http.delete("/api/send/:id", ({ request, params }) => {
+        seen.push(`${String(params.id)} ${new URL(request.url).search}`);
+        return HttpResponse.json({ result: seen.length === 1 ? "cancelled" : "dismissed" });
+      }),
+    );
+    expect(await cancelHeldSend("req00001", "w1:p1", { session: "demo" })).toEqual({ result: "cancelled" });
+    expect(await cancelHeldSend("req00002", "w1:p1")).toEqual({ result: "dismissed" });
+    expect(seen).toEqual(["req00001 ?pane=w1%3Ap1&session=demo", "req00002 ?pane=w1%3Ap1"]);
+  });
+
+  it("a 409 is the answer 'going out now', not an error", async () => {
+    server.use(http.delete("/api/send/:id", () => HttpResponse.json({ result: "refused", reason: "busy" }, { status: 409 })));
+    expect(await cancelHeldSend("req00001", "w1:p1")).toEqual({ result: "refused", reason: "busy" });
+  });
+
+  it("a refused cancel carries the stored receipt when the request already went out", async () => {
+    server.use(http.delete("/api/send/:id", () => HttpResponse.json({ result: "refused", reason: "busy", receipt: { requestId: "req00001", outcome: "sent", keys: [] } }, { status: 409 })));
+    expect(await cancelHeldSend("req00001", "w1:p1")).toEqual({ result: "refused", reason: "busy", receipt: { outcome: "sent" } });
+  });
+
+  it("an unknown request (404) and a body that is not an answer both throw", async () => {
+    server.use(http.delete("/api/send/:id", () => HttpResponse.json({ error: "no such request" }, { status: 404 })));
+    await expect(cancelHeldSend("req00001", "w1:p1")).rejects.toMatchObject({ status: 404 });
+    server.use(http.delete("/api/send/:id", () => HttpResponse.json({ nope: true })));
+    await expect(cancelHeldSend("req00001", "w1:p1")).rejects.toMatchObject({ status: 502 });
+  });
+
+  it("never leaves this machine: a crew member's pane throws before any request", async () => {
+    const urls: string[] = [];
+    server.use(http.delete("/api/send/:id", ({ request }) => (urls.push(request.url), HttpResponse.json({ result: "cancelled" }))));
+    await expect(cancelHeldSend("req00001", "w1:p1", { host: "badger" })).rejects.toMatchObject({ status: 400 });
+    expect(urls).toEqual([]);
+  });
+});
+
+describe("the walky talky routes (M62)", () => {
+  it("reads a pane's list newest first, scoped to the machine that owns the pane", async () => {
+    const urls: string[] = [];
+    server.use(http.get(/\/api\/pane\/[^/]+\/walky/, ({ request }) => (urls.push(request.url), HttpResponse.json({ messages: [] }))));
+    await expect(fetchPaneWalky("w1:p1", { host: "badger" })).resolves.toEqual([]);
+    expect(urls).toEqual(["http://localhost:3000/api/pane/w1%3Ap1/walky?limit=50&host=badger"]);
+  });
+
+  it("posts the body as given and hands back a list for one receipt", async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      http.post("/api/walky", async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json({ receipt: { id: "wt_aaaaaaaaaaaa", state: "accepted", verified: "local", at: 1, by: "solo", target: "local/w1:p1" } });
+      }),
+    );
+    const receipts = await postWalky({ id: "wt_aaaaaaaaaaaa", to: "local/w1:p1", body: "hi", replyTo: "wt_bbbbbbbbbbbb" });
+    expect(bodies).toEqual([{ id: "wt_aaaaaaaaaaaa", to: "local/w1:p1", body: "hi", replyTo: "wt_bbbbbbbbbbbb" }]);
+    expect(receipts.map((r) => r.state)).toEqual(["accepted"]);
+  });
+
+  it("hands back every receipt of a fan-out", async () => {
+    const receipts = await postWalky({ id: "wt_aaaaaaaaaaaa", to: "all", body: "hi" });
+    expect(receipts).toHaveLength(2);
+  });
+
+  it("lists the reachable targets, with no skipped panes and no refusals from a bridge that sends none", async () => {
+    server.use(http.get("/api/walky/who", () => HttpResponse.json({ targets: [] })));
+    await expect(fetchWalkyWho()).resolves.toEqual({ targets: [], skipped: [], refusals: null });
+  });
+
+  it("hands back the skipped shell panes and the refusal counts when the bridge sends them", async () => {
+    const skipped = [{ address: "bluefin/w1:p2", memberId: "bluefin", machine: "bluefin", label: "zsh" }];
+    const refusals = { counts: { "rate limit": 3 }, since: 1_700_000_000_000 };
+    server.use(http.get("/api/walky/who", () => HttpResponse.json({ targets: [], skipped, refusals })));
+    await expect(fetchWalkyWho()).resolves.toEqual({ targets: [], skipped, refusals });
   });
 });

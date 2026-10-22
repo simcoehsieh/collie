@@ -42,6 +42,13 @@ export interface TodoItem {
   status: TodoStatus;
 }
 
+/**
+ * The pane's visible text, plain (no escape sequences), read when an adapter's `discover` asks for
+ * it. Null when the multiplexer cannot hand a screen over or the read failed. See
+ * {@link JournalAdapter.discover} for why it is a thunk and why its text is never trusted as a path.
+ */
+export type PaneScreen = () => Promise<string | null>;
+
 /** One renderable piece of a turn. Deliberately small — the phone renders these as text nodes. */
 export type TranscriptPart =
   | { kind: "text"; text: string; truncated?: boolean }
@@ -135,6 +142,16 @@ export interface TranscriptEntry {
    * about one session. Both paths carry the flag, and the VIEWS hide it.
    */
   abandoned?: true;
+  /**
+   * The text of this turn is still growing: the program has written part of it and will rewrite it under the same
+   * id. A view draws a cursor and no time until it goes. ABSENT when false. Only a durable pane sets it (WIRE.md 7.15).
+   */
+  partial?: true;
+  /**
+   * The request id of the send that made this user turn, when the program says so. The phone matches its own unsent
+   * line to the turn by it. Only a durable pane sets it (WIRE.md 7.15).
+   */
+  requestId?: string;
 }
 
 /** What the history endpoint answers with, minus the pane id the route adds. */
@@ -157,6 +174,26 @@ export interface TranscriptPage {
 export interface TranscriptSource {
   /** Absolute path of the log this ref names, or null when it isn't on disk / isn't ours to read. */
   resolve(ref: AgentSessionRef): Promise<string | null>;
+  /**
+   * The key a ref WILL resolve to once its log exists, for a ref that names a session whose log has
+   * not been written yet. Only the live window asks, and only after `resolve` answered null: a
+   * session with a key here is a NEW EMPTY session, not "no log" (#526).
+   *
+   * Optional, and only pi has it. pi reports its new session as a PATH before it writes the file
+   * (on start and after `/new`), so the bridge knows exactly where the log will be and can confine
+   * that place now. An id ref names no place, so for the other harnesses a missing log stays "no log".
+   */
+  pending?(ref: AgentSessionRef): Promise<string | null>;
+  /**
+   * The real folders that hold this session's subagent logs, for the subagent tracker
+   * (bridge/subagents.ts). Each one is contained in the adapter's own roots; the tracker only lists
+   * and reads inside them.
+   *
+   * Optional, and only Claude has it: Claude Code writes `<session>/subagents/agent-<id>.jsonl` and a
+   * `.meta.json` beside it. No other harness writes subagent files today. A harness that starts to
+   * gives its source this method, and its panes get the belt's agents mark with no other change.
+   */
+  subagentDirs?(ref: AgentSessionRef): Promise<string[]>;
   /**
    * Size + mtime of a log, WITHOUT reading it — the store's cache-validity check.
    *
@@ -187,6 +224,39 @@ export interface TranscriptSource {
    * pre-check: a tick where size and mtime did not move needs no call here at all.
    */
   readSince(key: string, cursor: Cursor): Promise<ReadSince>;
+}
+
+/**
+ * One process from a pane's foreground group, as argv. The multiplexer saw it; the adapter
+ * decides what it means. argv only — nothing here names a harness, so the route can pass it
+ * through without knowing which grammar will read it.
+ */
+export interface ForegroundProcess {
+  readonly argv: readonly string[];
+  /**
+   * The process id, when the multiplexer reports it (Herdr does). The hook edges (M56 spec 11) use it
+   * to check that the pid an edge names is in the pane's foreground. Absent means "not reported".
+   */
+  readonly pid?: number;
+}
+
+/**
+ * What the bridge knows about a pane beyond its folder, handed to {@link JournalAdapter.discover}.
+ * Each hint comes from one method of reaching the pane (the screen, the process list), and an
+ * adapter reads only the ones it needs. Either may be absent: a multiplexer without the call, or a
+ * pane that has no such thing, simply yields no hint.
+ */
+export interface DiscoverHints {
+  /** The pane's visible text, as a thunk read only when asked ({@link PaneScreen}). */
+  screen?: PaneScreen;
+  /** The pane's foreground argv ({@link ForegroundProcess}). */
+  processes?: readonly ForegroundProcess[];
+  /**
+   * True when another pane running the same harness sits in the same folder. Set only then, never
+   * `false`. A folder walk cannot tell those panes' sessions apart, so an adapter that answers by
+   * folder must answer null here rather than hand this pane a neighbour's session (#508).
+   */
+  shared?: true;
 }
 
 /**
@@ -229,20 +299,56 @@ export interface JournalAdapter {
    */
   reducer(): RowReducer;
   /**
-   * Find the session running in `cwd` without a reported ref — or null when none matches.
+   * Find the session running in the pane without a reported ref, or null when none matches.
    *
-   * OPTIONAL, and absent everywhere but the harness whose panes carry no `agentSession`:
-   * custom-source session reports never surface in the pane record, and Muse has no integration
-   * of its own (see journal/muse.ts). The history and chat routes call this when the
-   * pane names no session, and `toPaneWire` offers the History affordance on its presence, so a
-   * discoverable pane reads exactly like a reporting one.
+   * OPTIONAL, and absent everywhere but the harnesses whose panes carry no `agentSession`:
+   * custom-source session reports never surface in the pane record (Herdr keeps a session only
+   * from its own integrations), Muse has no integration of its own (journal/muse.ts), and OpenClaw
+   * reports through a source Herdr drops (journal/openclaw.ts). The history and chat routes call
+   * this when the pane names no session, and `toPaneWire` offers the History affordance on its
+   * presence, so a discoverable pane reads exactly like a reporting one.
+   *
+   * Two clues, and an adapter takes the one its harness gives. `cwd` is the pane's folder, which is
+   * enough where a folder holds one session (Muse). `screen` is the pane's visible text, for a
+   * harness that prints which session it is on and whose folder says nothing (OpenClaw's agent
+   * workspace is shared by every session of that agent). It is a THUNK, read only when an adapter
+   * asks, so an adapter that never calls it costs no multiplexer read; it answers null when the
+   * multiplexer cannot hand a screen over. The text is the pane's own output, so it is a hint and
+   * never a path: whatever an adapter reads off it must pass the same shape checks and the same
+   * `resolve` as a reported ref.
+   *
+   * `processes` is the pane's own foreground argv, when the multiplexer can say: several live
+   * sessions may share one `cwd` (two tabs in one workspace), and newest-wins across them shows
+   * every pane the same transcript. An adapter that can read its session out of argv answers
+   * exactly; one that cannot — or a multiplexer that offers none — falls back to the cwd walk,
+   * but only while `shared` is unset: with a same-harness neighbour in the folder the walk's
+   * answer may be the neighbour's session, and no session beats another pane's (#508).
+   * Absent is always a legal answer to ignore, never an error.
    *
    * The returned ref is an ordinary id ref: it goes through the same `resolve`, containment and
    * caching as a reported one, so discovery widens WHICH panes answer, never how an answer is
-   * read. It must be cheap enough to run per tap — bounded walk, early exit — because the chat
-   * route calls it on every poll that finds no ref.
+   * read. It must be cheap enough to run per tap (bounded walk, early exit, one screen read),
+   * because the chat route calls it on every poll that finds no ref.
    */
-  discover?(cwd: string): Promise<AgentSessionRef | null>;
+  discover?(cwd: string, hints?: DiscoverHints): Promise<AgentSessionRef | null>;
+  /**
+   * Correct a reported ref the multiplexer kept after the harness moved to another session, or
+   * return it unchanged.
+   *
+   * OPTIONAL, and present only on grok, whose in-agent `/resume` Herdr does not take
+   * (journal/grok.ts). Called only while the pane still runs this harness, because a pane whose
+   * agent exited has no live session to move to. Like `discover`, the answer is an ordinary id ref
+   * that goes through the same `resolve` and containment.
+   */
+  reconcile?(ref: AgentSessionRef, cwd: string): Promise<AgentSessionRef>;
+  /**
+   * This adapter's `discover` answers null whenever `hints.shared` is set and nothing else names the
+   * pane's session (Muse, #508). The chat route then says WHY there is no session
+   * (`detail: "shared-folder"`), so the phone can name the remedy. OPTIONAL and set only where it is
+   * true: an adapter that reads a screen (OpenClaw) can still answer in a shared folder, and its
+   * null there means something else.
+   */
+  readonly sharedFolderBlind?: true;
   /**
    * The prompt-cache reading for one session, off the same log `parse` reads — or null when there is
    * nothing to read yet.

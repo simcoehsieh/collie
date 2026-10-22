@@ -22,7 +22,8 @@ describe("CinemaCapsule", () => {
     const { container } = render(<CinemaCapsule name="docs" status="blocked" onExit={vi.fn()} />);
     // The dot is colour-only and deliberately unnamed here (the capsule's own label is the
     // accessible name for the control) — so it is found as the element it is, not by text.
-    expect(container.querySelector(".bg-status-blocked, .bg-status-blocked-mark, .border-status-blocked, .border-status-blocked-mark")).not.toBeNull();
+    // Since 1.20.2 (#420) a status mark is a shape drawn in currentColor, so its colour is a text class.
+    expect(container.querySelector(".bg-status-blocked, .bg-status-blocked-mark, .border-status-blocked, .border-status-blocked-mark, .text-status-blocked-mark")).not.toBeNull();
   });
 
   it("draws no dot for a shell pane, which has no agent status to report", () => {

@@ -222,6 +222,11 @@ TLS carrying the crew secret. A member is a full Collie with no front door, and 
 agents, journal, uploads and audit log. Management runs entirely through the CLI, with no Herdr UI
 actions. The wire itself is specified in [`CREW_PROTOCOL.md`](../CREW_PROTOCOL.md).
 
+A peer is one Collie instance, with one terminal multiplexer and the durable agents attached to it
+([Durable agents in a crew](#durable-agents-in-a-crew)). A host with two terminal multiplexers runs one peer for
+each. Each such peer has its own port and state directory, joins the crew on its own, and appears as
+a machine of its own in the list.
+
 ![Code reaches a member over your own ssh, never over the crew link.](images/crew/crew-ssh-rides.svg)
 
 Code rides your own ssh to every machine. `crew add` installs a member that way and `crew update`
@@ -232,6 +237,60 @@ levels it. The crew link carries runtime data, and it never becomes a distributi
 A deputy is one peer the lead named ahead of time. It binds a standby door with three routes, and
 that door is never published. The lead's silence arms it, and your own pairing credential spends it,
 so the phone can reach the deputy while the lead is gone.
+
+## Durable agents in a crew
+
+A member's durable agents show on the lead's phone, in the one Durable agents section, and the member's own
+Collie answers for them.
+
+```bash
+# on a member that runs a durable agent beside Herdr, tmux or zellij: no second instance
+collie durable attach desk --socket /run/user/1000/desk/app.sock --restart
+# on a durable-only member that shares its host with another peer
+collie crew join <lead-address> --label desk-agents
+```
+
+One Collie carries one terminal multiplexer and every durable agent attached to it, so a Herdr instance
+and its durable agents are one peer, and it needs no label of its own. A durable-only instance
+(`COLLIE_MUX=durable`) is a peer of its own. It joins under the host name unless you pass `--label`,
+so give it a name when another peer already uses that host.
+
+| What | Where it happens |
+| --- | --- |
+| A durable agent's row | The lead's Durable agents section, with the member's name on it. The lead's own durable agents name no machine |
+| The durable agent's card | The member tells the lead in its hello, so the phone reads it without asking again |
+| The push for a question | The lead. A member in a crew sends no push for its own questions |
+| The push caps | The lead, counted for each member and each durable agent ([Pushes from a durable agent](voice-and-push.md#pushes-from-a-durable-agent)) |
+| An answer, a send, a stop, a belt action, a reopen and a starter tap | The member that owns the durable agent, forwarded by the lead |
+| The receipt for each of those | The member. The lead keeps no copy, and a retry with the same request id replays on the member |
+
+A lead older than 1.21.0 still lists a member's durable agents, but without the question card, and its
+Terminal tab polls a pane that has no terminal. The member says so once in its log, and
+`collie doctor` on the member shows the row `durable-lead`. Update the lead to fix it.
+
+## Messages between machines
+
+An agent can message an agent on another machine of the crew, and the lead relays every such message.
+
+```sh
+# on the lead: every agent pane of every machine
+collie walky who
+```
+
+A member sends the message to the lead. The lead checks the member's signature, then passes the
+message on to the machine that the address names, and that machine checks the lead's. The lead also
+sends the sender's certificate, so that machine checks the sender's signature too. A member's own
+`who` lists its own panes only. The lead learns the outcome of every message, and sends it back to the
+member that sent it. Run `collie walky status <id>` on the sender's machine or on the lead
+([Across a crew](walky-talky.md#across-a-crew)).
+
+On the phone, a pane on a member shows its messages as a lead's own pane does. The lead reads the
+list from that member's log, so the cards and the Messages sheet look the same on every machine
+([On the phone](walky-talky.md#on-the-phone)).
+
+> **Note.** A member needs Collie 1.23.0 to take a message and to show its messages on the phone. A
+> message to an older member is refused `not sent: older member`, and a member under an older lead
+> gets `not sent: older lead`. Run `collie crew update --all` to level the crew ([Update a crew](upgrading.md#updating-the-rest-of-the-crew)).
 
 ## Machines
 
@@ -268,7 +327,7 @@ filled up. Each disk shows the same numbers as `df`: "used" is df's Used, and th
 The total is what you can still fill as a normal user, so it can be a few percent under df's Size,
 which also counts the space reserved for root. Collie reads the disks once a minute, in the background.
 A disk that does not answer, such as a network mount that hangs, never holds up the rest, and Collie
-stops showing it after three and a half minutes without an answer. No program is started for it.
+stops showing it after three and a half minutes without an answer. No durable agent is started for it.
 
 **Network counts each byte once.** On Linux, Collie adds up the physical interfaces, such as `eth0`,
 `enp3s0` and `wlan0`. It leaves out every interface whose bytes also cross a physical one:

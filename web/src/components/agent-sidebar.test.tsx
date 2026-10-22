@@ -87,9 +87,9 @@ describe("ThreadSidebar", () => {
     const { container } = render(
       <ThreadSidebar agents={[...fixtureAgents, idleAgent]} currentPaneKey="" onSelect={vi.fn()} />,
     );
-    // FORK: a dot is the palette's MARK half (index.css `--status-X-mark`), so the lit heading carries
-    // `bg-status-blocked-mark`, not the text half upstream's selector names.
-    const lit = [...container.querySelectorAll("h3")].filter((h) => h.querySelector(".bg-status-blocked-mark"));
+    // FORK: the mark is upstream's shape (#420) inked in the palette's MARK half (index.css
+    // `--status-X-mark`, components/status-badge.tsx TONE), not the text half upstream's selector names.
+    const lit = [...container.querySelectorAll("h3")].filter((h) => h.querySelector(".text-status-blocked-mark"));
     expect(lit.map((h) => h.textContent)).toEqual([expect.stringContaining("webapp")]);
   });
 
@@ -241,11 +241,11 @@ describe("ThreadSidebar", () => {
         onSelect={vi.fn()}
       />,
     );
-    // The same status palette the badges use: the needs-you heading dot, the working count's dot, and
-    // the Shells section's bullet — the palette's MARK half, since a bullet is a fill and not a word
-    // (FORK, index.css `--status-X-mark`). The exact class names are the assertion: a dot drawn in the
-    // text half would otherwise pass.
-    for (const cls of ["bg-status-blocked-mark", "bg-status-working-mark", "bg-status-unknown-mark"]) {
+    // The same status palette the badges use: the needs-you heading mark, the working count's mark
+    // (both shapes), and the Shells section's plain bullet — inked in the palette's MARK half, since a
+    // mark is a fill and not a word (FORK, index.css `--status-X-mark`). The exact class names are the
+    // assertion: a mark drawn in the text half would otherwise pass.
+    for (const cls of ["text-status-blocked-mark", "text-status-working-mark", "bg-status-unknown-mark"]) {
       expect(container.getElementsByClassName(cls).length).toBeGreaterThan(0);
     }
   });
@@ -753,5 +753,20 @@ describe("ThreadSidebar: the order toggle", () => {
     expect(headings()).toEqual(["Pinned", expect.stringContaining("Newest first")]);
     // The oldest pane of the three, first on the sheet, because it is pinned.
     expect(names()[0]).toContain("webapp");
+  });
+});
+
+describe("ThreadSidebar: subtitle and badge of a durable pane", () => {
+  it("draws the badge next to the name and the subtitle as a third line", () => {
+    const durable: AgentView = { ...idleAgent, agent: "durable", sessionName: "Ticket #3", subtitle: "a customer cannot log in", badge: { count: 2 } };
+    const { container } = render(<ThreadSidebar agents={[durable]} currentPaneKey="" onSelect={vi.fn()} />);
+    expect(container.querySelector('[data-slot="pane-badge"]')).toHaveTextContent("2");
+    expect(container.querySelector('[data-slot="pane-row-subtitle"]')).toHaveTextContent("a customer cannot log in");
+  });
+
+  it("draws neither for a pane that has none", () => {
+    const { container } = render(<ThreadSidebar agents={[idleAgent]} currentPaneKey="" onSelect={vi.fn()} />);
+    expect(container.querySelector('[data-slot="pane-badge"]')).toBeNull();
+    expect(container.querySelector('[data-slot="pane-row-subtitle"]')).toBeNull();
   });
 });

@@ -80,7 +80,11 @@ export function PairedDevices({ data }: { data: DevicesData }) {
   // token, its token was rejected by a write, or the registry itself says it authenticated as
   // nobody while pairing is on. Deliberately NOT shown on a failed load — an unreachable bridge is
   // not evidence that this device is unpaired.
-  const unpaired = !token || refused || (data.enforced && data.current === null && !data.error);
+  // A failed load (`data.error`, which is also the no-loader placeholder's shape) says nothing
+  // about pairing, so it offers no form either (#512): the load-error line above is the whole
+  // answer until the bridge replies, never an empty registry read as "nothing is paired".
+  const unpaired =
+    !data.error && (!token || refused || (data.enforced && data.current === null));
 
   const pairedAsMessage = data.current
     ? t("settings.devices.pairedAs", { device: data.current })
@@ -114,7 +118,7 @@ export function PairedDevices({ data }: { data: DevicesData }) {
       )}
 
       {data.devices.length > 0 && (
-        <ul className="divide-y divide-border border-t border-border">
+        <ul data-slot="list-group" className="border-t border-border">
           {data.devices.map((d) => (
             <DeviceRow
               key={d.label}
@@ -431,5 +435,7 @@ function failureText(reason: PairFailure): string {
       return t("settings.devices.pair.failure.duplicateLabel");
     case "bad-request":
       return t("settings.devices.pair.failure.badRequest");
+    case "identity-required":
+      return t("settings.devices.pair.failure.identityRequired");
   }
 }

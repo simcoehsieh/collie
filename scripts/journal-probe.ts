@@ -160,6 +160,9 @@ async function candidateRefsUnder(
     }
   }
 
+  if (agent === "openclaw") return openclawCandidates(root);
+  if (agent === "hermes") return hermesCandidates(root);
+
   const logs = await logsNewestFirst(root);
   const refs: AgentSessionRef[] = [];
   for (const log of logs.slice(0, MAX_CANDIDATES)) {
@@ -169,6 +172,77 @@ async function candidateRefsUnder(
     if (ref !== null) refs.push(ref);
   }
   return { refs, total: logs.length };
+}
+
+/**
+ * OpenClaw keeps one SQLite per agent (`<root>/agents/<id>/agent/openclaw-agent.sqlite`) and names a
+ * session by its key, which is what the adapter's footer discovery hands over. So the candidates are
+ * the newest keys of every agent's `session_nodes`. Keys only, read-only, as above.
+ */
+async function openclawCandidates(root: string): Promise<{ refs: AgentSessionRef[]; total: number }> {
+  let agents: string[];
+  try {
+    agents = await readdir(join(root, "agents"));
+  } catch {
+    return { refs: [], total: 0 };
+  }
+  const refs: AgentSessionRef[] = [];
+  for (const agent of agents.toSorted()) {
+    let db: Database;
+    try {
+      db = new Database(join(root, "agents", agent, "agent", "openclaw-agent.sqlite"), { readonly: true });
+    } catch {
+      continue;
+    }
+    try {
+      const rows = db
+        .query<{ session_key: string }, [number]>("select session_key from session_nodes order by updated_at desc limit ?")
+        .all(MAX_CANDIDATES);
+      for (const r of rows) refs.push({ kind: "id", value: r.session_key });
+    } catch {
+      // a database of another shape: the adapter's own schema check says so when it is asked
+    } finally {
+      db.close();
+    }
+  }
+  return { refs, total: refs.length };
+}
+
+/**
+ * Hermes keeps one SessionDB per profile: `<root>/state.db` for the default profile and
+ * `<root>/profiles/<name>/state.db` for each named one. Herdr names a session by its id, so the
+ * candidates are the newest ids of every one of those databases, the adapter's own search order.
+ * Ids only, read-only, as above.
+ */
+async function hermesCandidates(root: string): Promise<{ refs: AgentSessionRef[]; total: number }> {
+  const dbs = [join(root, "state.db")];
+  try {
+    for (const name of (await readdir(join(root, "profiles"))).toSorted()) {
+      if (!name.startsWith(".")) dbs.push(join(root, "profiles", name, "state.db"));
+    }
+  } catch {
+    // no profiles folder: the root's own database is all there is
+  }
+  const refs: AgentSessionRef[] = [];
+  for (const path of dbs) {
+    let db: Database;
+    try {
+      db = new Database(path, { readonly: true });
+    } catch {
+      continue;
+    }
+    try {
+      const rows = db
+        .query<{ id: string }, [number]>("select id from sessions order by started_at desc limit ?")
+        .all(MAX_CANDIDATES);
+      for (const r of rows) refs.push({ kind: "id", value: r.id });
+    } catch {
+      // a database of another shape: the adapter's own resolve says so when it is asked
+    } finally {
+      db.close();
+    }
+  }
+  return { refs, total: refs.length };
 }
 
 function summarise(entries: TranscriptEntry[]): string {

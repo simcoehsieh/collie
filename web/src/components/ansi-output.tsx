@@ -33,12 +33,14 @@ import {
   segmentClassName,
   segmentStyle,
 } from "@/components/mirror-space";
-import { renderCells } from "@/components/painted-cells";
+import { renderCells, renderWideCells } from "@/components/painted-cells";
 import { AuthedImageCard } from "@/components/authed-image-card";
 import { findMatches, splitSegment, type FindMatch } from "@/lib/find";
 import { findLinks, type LinkMatch } from "@/lib/links";
 import { findFilePaths } from "@/lib/file-paths";
 import { isPlainClick, useFileLinks, type FileLinkOpener } from "@/components/file-links";
+import { useWalkyLog } from "@/components/walky-log";
+import { findWalkyIds } from "@/lib/walky";
 
 /**
  * A link in the mirror: an autolinked URL (opens a new tab), or a path the agent printed that
@@ -214,6 +216,14 @@ const NO_BLOCK_RUNS: readonly (readonly TableRun[])[] = Object.freeze([]);
 //      and win inline hit-testing, so a tap on visible text goes to the text. Only empty space
 //      beside a link can bleed to the anchor.
 // Don't convert it to a px value, and don't "fix" it to fit the line box — that would undo (1).
+// A walky talky row (M62), the envelope's header or any row that prints an id, once the pane's log has vouched for it: a muted tone and a
+// mark at its left edge, for that line only. The mark is an OUTSET box-shadow in `currentColor`,
+// so it takes no width, no padding and no border and the row's text does not move by a pixel (DESIGN.md
+// §2); it is drawn on an inline wrapper, so it adds no text node and no find or link offset. There is no
+// `dark:` variant anywhere in it: the colour is whatever the mirror's text already is, and the mirror's
+// own filter carries it into the light theme (.adr/0002).
+const WALKY_ROW_CLASS = "opacity-70 shadow-[-3px_0_0_0_currentColor]";
+
 const LINK_CLASS =
   "underline decoration-1 underline-offset-2 break-all cursor-pointer py-[0.35em]";
 
@@ -488,6 +498,9 @@ export const AnsiOutput = memo(function AnsiOutput({
   // The mirror is agent output and is not translated — but the two strings the image cluster
   // renders are Collie's own words, so this subscribes for the same reason every t() caller does.
   useLocale();
+  // The pane's walky talky list. A header row earns its style only when the log holds the row's id; a
+  // pane with no messages pays nothing (renderLine reads the text of no row at all).
+  const walkyLog = useWalkyLog();
   // One parse, or none: a caller holding a MirrorModel has already paid for it (agent-chat, whose
   // three probes derive from the same object). The `text` path is what it always was.
   const ownLines = useMemo(
@@ -618,14 +631,16 @@ export const AnsiOutput = memo(function AnsiOutput({
   // span per painted run, with no style object (components/painted-cells.tsx).
   let offset = 0;
   let currentAssigned = false;
+  // Fixed-column rows use two-cell glyphs; wrapping prose keeps its natural advances.
+  let paintCells = renderCells;
 
   // A run of plain text at global offset `start` → nodes, with find matches split out and
   // highlighted. `currentAssigned` refs only the first slice of the focused match (a match can span
   // segments on a colour change) so scrollIntoView targets one stable node.
   const renderFind = (run: string, start: number): ReactNode => {
-    if (matches.length === 0) return renderCells(run);
+    if (matches.length === 0) return paintCells(run);
     return splitSegment(run, start, matches).map((p, j) => {
-      if (p.matchIndex === null) return <Fragment key={j}>{renderCells(p.text)}</Fragment>;
+      if (p.matchIndex === null) return <Fragment key={j}>{paintCells(p.text)}</Fragment>;
       const isCurrent = p.matchIndex === currentMatch;
       const attach = isCurrent && !currentAssigned;
       if (attach) currentAssigned = true;
@@ -658,7 +673,7 @@ export const AnsiOutput = memo(function AnsiOutput({
               : "bg-yellow-400/30",
           )}
         >
-          {renderCells(p.text)}
+          {paintCells(p.text)}
         </span>
       );
     });
@@ -750,6 +765,7 @@ export const AnsiOutput = memo(function AnsiOutput({
     trailing: ReactNode = null,
   ): ReactNode => {
     if (li > 0) offset += 1; // the "\n" separating this line from the previous
+    paintCells = inRun || !wrap ? renderWideCells : renderCells;
     const segNodes = line.segments.map((s, si) => {
       const segStart = offset;
       offset += s.text.length;
@@ -761,11 +777,24 @@ export const AnsiOutput = memo(function AnsiOutput({
     });
     // A run's own rows are never clipped; see `inRun` above. Outside a run this is unchanged: a
     // repeated rule, or a framed menu row, keeps the single-row clip it has always had.
-    const content = line.noWrap && wrap && !inRun ? (
+    const clipped = line.noWrap && wrap && !inRun ? (
       <span className="inline-block max-w-full overflow-hidden align-bottom whitespace-pre break-normal [&_a]:break-normal">{segNodes}</span>
     ) : (
       segNodes
     );
+    // A tagged row is the SAME nodes inside one wrapper span; a row of no message is returned as it was.
+    // The header row, and any other row that prints an id the log holds (the agent's own `collie walky send`
+    // output, a reply line): the same tag. The id is looked up, never trusted.
+    const tagged =
+      walkyLog !== null && walkyLog.byId.size > 0 && findWalkyIds(lineText(line)).some((hit) => walkyLog.byId.has(hit.id));
+    const content =
+      tagged ? (
+        <span data-slot="walky-row" className={WALKY_ROW_CLASS}>
+          {clipped}
+        </span>
+      ) : (
+        clipped
+      );
     return (
       <Fragment key={lineKey(line)}>
         {li > 0 && lead ? "\n" : null}

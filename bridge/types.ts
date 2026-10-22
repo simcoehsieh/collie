@@ -1,6 +1,9 @@
 // Domain model for the bridge. These are OUR types, decoupled from Herdr's wire shapes
 // (which live only in mux/herdr/client.ts). The rest of the app talks in these terms.
 
+import type { HeldRow } from "../web/src/lib/surface/send.ts";
+import type { Surface } from "../web/src/lib/surface/surface.ts";
+import type { HoldNote } from "../web/src/lib/surface/hold.ts";
 import type { Confidence } from "./cache/claims.ts";
 import type { PaneCache } from "./cache/engine.ts";
 import type { ApiErrorDetail, ErrorCode } from "./error-codes.ts";
@@ -8,6 +11,9 @@ import type { GitHead } from "./git-head.ts";
 import type { ChatBody } from "./journal/live.ts";
 import type { AgentSessionRef, TranscriptEntry } from "./journal/types.ts";
 import type { MuxCapability, MuxSpaceCapacity, MuxTopologyLatency } from "./mux/capabilities.ts";
+import type { SttWireIdentity } from "./stt/config.ts";
+import type { PaneSubagent } from "./subagents.ts";
+import type { PaneTodo } from "./todos.ts";
 import type { UpdateRun } from "./update-run.ts";
 
 // Re-exported so the wire surface has ONE import site: a consumer of PaneHistoryResponse gets the
@@ -18,8 +24,18 @@ export type { ChatBody, ChatEntry, ChatOlderBody, ChatWindowBody } from "./journ
 export type { CacheStateName, PaneCache } from "./cache/engine.ts";
 export type { Confidence } from "./cache/claims.ts";
 export type { GitHead } from "./git-head.ts";
+export type { PaneTodo, PaneTodoStatus } from "./todos.ts";
+export type { PaneSubagent } from "./subagents.ts";
 
 export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
+
+/** A small mark next to a pane's title: a count, or a short word. Exactly one key (WIRE.md section 3). */
+export type PaneBadge = { count: number } | { text: string };
+
+/** How far a working pane is: a list of steps, or a percent with an optional label (WIRE.md section 7.12). */
+export type PaneProgress =
+  | { readonly kind: "steps"; readonly steps: readonly { readonly label: string; readonly state: "done" | "running" | "todo" }[] }
+  | { readonly kind: "percent"; readonly value: number; readonly label?: string };
 
 /**
  * A single pane the user might want to monitor or drive. Usually an agent-bearing pane (the
@@ -115,6 +131,25 @@ export interface AgentView {
    */
   terminalTitleStale?: boolean;
   /**
+   * One line the program shows under this pane's title (WIRE.md section 3, `Pane.subtitle`). Text only,
+   * trimmed and capped at 120 characters by the adapter that read it.
+   *
+   * ONE PRODUCER, like {@link PaneWire.asks}: only a pane from an adapter whose panes have no screen
+   * carries it (the `durable` adapter). Absent on every other pane and from every older bridge or crew
+   * member, which all read as "no subtitle", so a solo body stays byte-identical.
+   */
+  subtitle?: string;
+  /**
+   * A small mark next to the title: a count (an integer, 0 to 9999) or a short word (at most 12
+   * characters). Same producer and same absence rule as {@link subtitle}.
+   */
+  badge?: PaneBadge;
+  /**
+   * How far a working conversation is (WIRE.md section 7.12). Same producer and same absence rule as
+   * {@link subtitle}. The phone draws it only while the pane works or waits.
+   */
+  progress?: PaneProgress;
+  /**
    * A finished English sentence about this pane, composed in the bridge and rendered as text the
    * client does not interpret. Absent on almost every pane.
    *
@@ -156,12 +191,6 @@ export interface AgentView {
    */
   statusLineAt?: number;
   /**
-   * FORK — the reasoning effort the newest turn ran at (`xhigh`, `medium`), the harness's own word,
-   * read off the session log by bridge/session-facts.ts. Presentation only, on the terms
-   * {@link statusLine} holds, and the same absences as {@link model}.
-   */
-  effort?: string;
-  /**
    * How long this pane's prompt cache stays warm, read from the harness's own transcript
    * (bridge/cache/tracker.ts). Attached at serialise time exactly as {@link lastActiveAt} is, so it
    * rides `toPaneWire`'s rest spread onto the wire.
@@ -172,6 +201,19 @@ export interface AgentView {
    * solo body byte-identical to 1.8.2's for every non-agent pane (`solo-baseline.test.ts`).
    */
   cache?: PaneCache;
+  /**
+   * The pane's active todo list, read from the session's task files or journal by the todo tracker
+   * (bridge/todos.ts). Attached at serialise time and ABSENT, NEVER A PLACEHOLDER: a pane with no
+   * tasks carries no key at all.
+   */
+  todos?: PaneTodo[];
+  /**
+   * The subagents of this pane's session that have not finished yet, read from the session's
+   * subagent meta files by the subagent tracker (bridge/subagents.ts). Claude Code only in this
+   * release. Attached at serialise time and ABSENT, NEVER A PLACEHOLDER: a pane with none running
+   * carries no key at all, never `[]`.
+   */
+  subagents?: PaneSubagent[];
   /**
    * The model this pane's agent is on, as its harness names it: a `/model` chosen since the last turn
    * first (Claude), else the model that turn ran on (`claude-opus-5-5`, `provider:model` for opencode
@@ -184,6 +226,16 @@ export interface AgentView {
    * (bridge/session-facts.ts) fills it, beside {@link effort}. Same standing either way.
    */
   model?: string;
+  /**
+   * The effort this pane's agent runs at, in its harness's own word: pi's thinking level, Claude's
+   * `/effort`, Codex's reasoning effort, opencode's variant (`high`, `xhigh`, `max`). A level set
+   * since the last turn first, as {@link model} does. Rides only beside {@link model}, from the same
+   * probe. Display only: the phone draws it after the model and nothing decides on it.
+   *
+   * ABSENT, NEVER A PLACEHOLDER: no model, a log that names no level, or an older bridge.
+   * FORK: bridge/session-facts.ts fills it from the session log when the probe has none.
+   */
+  effort?: string;
   /**
    * What the checkout holding this pane's folder is on: a branch, or a detached head at a full
    * object name. Read off disk by `bridge/git-head.ts` (two small files, no git process, no lock) and
@@ -214,6 +266,13 @@ export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent"> & {
    *  file is missing still answers `available:false` with reason `no-log`. */
   hasSession?: boolean;
   /**
+   * The pane's walky talky instance token (bridge/walky/instances.ts): four characters of [a-z0-9]
+   * that name the session holding this pane id now. A multiplexer reuses a pane id once the pane
+   * closes; the token does not carry over, so `<member>/<pane>#<token>` reaches this pane only.
+   * Absent from a bridge built without walky talky, and from an older member (CREW_PROTOCOL §21).
+   */
+  instance?: string;
+  /**
    * Which member of the crew this pane lives on — the `?h=` value completing the `(host, session,
    * paneId)` address (CREW_PROTOCOL.md §4). Present exactly when {@link SnapshotResponse.servers}
    * is; absent on every solo snapshot (§11). Pane ids are only unique per machine, which is why a
@@ -235,7 +294,303 @@ export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent"> & {
    * none: there is no third state to get wrong.
    */
   session?: string;
+  /**
+   * The open asks a person may answer on this pane, as data, oldest first (ADR 0100).
+   *
+   * ONE PRODUCER: only a pane from an adapter that raises asks as data carries the key (the
+   * `durable` adapter, `MuxAdapter.openAsks`). The screen reader never fills it, so every ask has
+   * one owner. Absent on every other pane, and absent from every older bridge, which the phone reads
+   * as "no asks as data here". An empty list is a real answer: this pane takes answers by id and
+   * has none open.
+   *
+   * EVERY open ask is listed, up to the adapter's cap of 50 per pane (WIRE.md section 6). The push
+   * guard caps pushes, never this list; the phone draws the first five and opens the rest on a tap.
+   */
+  asks?: Ask[];
+  /**
+   * The newest turn of this pane: the one running now, or the last one that ran (ADR 0101).
+   *
+   * ONE PRODUCER, like {@link asks}: only a pane from an adapter that takes guarded controls carries
+   * it (the `durable` adapter, `MuxAdapter.paneTurn`). The phone sends it back unchanged as the
+   * `turnId` of a send or an abort, so the bridge can refuse a control aimed at a turn the person did
+   * not see. Absent on every other pane and from every older bridge.
+   */
+  turnId?: string;
+  /**
+   * The belt buttons this pane's program lists, in its order (WIRE.md section 4, `PaneAction`).
+   *
+   * ONE PRODUCER, like {@link asks}: only a pane from an adapter that takes program actions carries
+   * the key (the `durable` adapter, `MuxAdapter.paneActions`, when the program declared `caps.actions`).
+   * At most 4, each cleaned by the adapter. Absent on every other pane and from every older bridge,
+   * which the phone reads as "no program buttons here".
+   */
+  actions?: PaneAction[];
+  /**
+   * The pane's input surface as the bridge reads it from the screen (M56 spec 04): turn, modal,
+   * composer and the reason a claim is unknown, with the revision of the read.
+   *
+   * Present only while Surface shadow mode is on (`COLLIE_SURFACE_SHADOW=1`) and the shadow has read
+   * the pane; absent on every other pane and from every older bridge. Nothing on the phone decides a
+   * send by it yet (spec 06 turns it into the composer's input).
+   */
+  surface?: Surface;
+  /**
+   * Whether the pane's hook source is live (M56 spec 11): `live` while the harness's own hooks send
+   * edges from the pane's process, `holds` when those hooks also hold permissions (M56 spec 12),
+   * `none` otherwise (hooks not installed, or the pane started before the install). Present only with `surface`, on a session whose adapter can place edges. Absent from
+   * an older bridge.
+   */
+  hooks?: "live" | "holds" | "none";
+  /**
+   * The pane's hook-held permission (M56 spec 12): the tool, the input shown and the state (held,
+   * sent, answered at the desk, voided). Present only while a hold waits or a short while after it
+   * ended. The input is masked like the mirror under redaction. Absent from an older bridge.
+   */
+  hold?: HoldNote;
+  /**
+   * Present (and `true`) when this bridge runs the Send Protocol (`COLLIE_SEND_PROTOCOL=1`, M56 spec
+   * 05) and the pane carries a Surface: the phone's composer then sends through `POST /api/send`.
+   * Absent otherwise, so a bridge without the flag sends the same bytes as before.
+   */
+  sendProtocol?: true;
+  /**
+   * The pane's held sends (M56 spec 15), oldest first: what the harness could not take during its turn
+   * and Collie sends once the pane reads free, plus ended ones whose text waits for a Resend. Present
+   * only when there is at least one; the text takes the mirror's mask like a title does.
+   */
+  held?: HeldRow[];
 };
+
+/** The icon names a program may give a belt action. The phone maps each to one of its own glyphs. */
+export const PANE_ACTION_ICONS = ["play", "pause", "check", "x", "refresh", "archive", "flag", "star", "send", "note", "search", "more"] as const;
+export type PaneActionIcon = (typeof PANE_ACTION_ICONS)[number];
+
+/** One button of a durable program's section of the belt. `label` is at most 16 characters. */
+export interface PaneAction {
+  id: string;
+  label: string;
+  icon?: PaneActionIcon;
+  /** Running now: the phone shows a spinner and sends no second tap. */
+  busy?: true;
+  /** Not available now: the phone dims it and sends no tap. */
+  disabled?: true;
+}
+
+/** What a person may choose on an ask (WIRE.md section 4). */
+export interface AskOption {
+  /** Unique inside its ask. Sent back unchanged as `optionId` (or in `optionIds`, or as a form value). */
+  id: string;
+  label: string;
+  /** On a `permission` option only. A `choice` option, and an option of a form field, has none. */
+  effect?: "allow" | "allow-always" | "deny" | "cancel";
+}
+
+/** One field of a `form` ask (WIRE.md section 7.14). */
+export interface AskField {
+  /** Unique inside its ask. The key of the field's value in the answer. */
+  id: string;
+  label: string;
+  kind: "text" | "choice" | "toggle";
+  required?: true;
+  /** A `choice` field: 1 to 8 options. A pick answers with the option's id. */
+  options?: AskOption[];
+  /** A `text` field: 1 to 2000 characters. */
+  maxLength?: number;
+}
+
+/** The tool call an ask is about, when the program wants it drawn. */
+export interface AskTool {
+  name: string;
+  /** One line: the arguments, shortened. */
+  summary: string;
+  output?: string;
+}
+
+/**
+ * One open ask, as the phone draws it (ADR 0100). Every string was cleaned and capped by the adapter
+ * that read it (WIRE.md section 6), and every id is sent back unchanged, never shown.
+ */
+export interface Ask {
+  /** New after every restart of the program, even for the same tool call. */
+  id: string;
+  /**
+   * `permission`, `choice`, `text` or `form` (WIRE.md section 7.14). A card for any other kind (a program
+   * newer than this build) is not answerable.
+   */
+  kind: string;
+  /** The program's id for the tool call. The same across a restart; the push guard keys on it. */
+  toolCallId: string;
+  /** Starts at 1 and rises when the program changes this ask in place. Sent back as `revision`. */
+  revision: number;
+  /** One line the card leads with. */
+  title: string;
+  /** The item the card sits under, usually the tool item. */
+  itemId: string;
+  /**
+   * A `permission` ask: one to six, each with an effect. A `choice` ask: one to eight, none with an effect.
+   * A `text` and a `form` ask: none. An ask that needs options and has none is shown as not answerable.
+   */
+  options: AskOption[];
+  /** A `choice` ask only: more than one option may be picked. */
+  multiple?: true;
+  /** A `text` ask only: the hint in the empty field. */
+  placeholder?: string;
+  /** A `text` ask only: 1 to 2000 characters (500 when the program named none). */
+  maxLength?: number;
+  /** A `form` ask only: one to six fields. A form with none is shown as not answerable. */
+  fields?: AskField[];
+  reason?: string;
+  tool?: AskTool;
+  /**
+   * Present when the adapter's cleaning cut or changed the title or the reason (WIRE.md section 6).
+   * The card says the text was shortened and offers no `allow-always` on such an ask.
+   */
+  cleaned?: true;
+  /**
+   * The words the program chose for a notification about this ask (WIRE.md section 6). The bridge MAY use
+   * them for a push and falls back to its own text. Cleaned by the adapter; a lead cleans them again.
+   */
+  push?: AskPushText;
+  /**
+   * When the ask stops waiting, ISO 8601 (WIRE.md 7.3), as the program sent it. Absent: it waits for a person.
+   * The phone shows the time left; past it the program decides the ask by `timeout`.
+   */
+  expiresAt?: string;
+}
+
+/**
+ * Who decided an ask first, and when (WIRE.md 7.3, the 409 `decided` body). `phone`: an answer from a phone,
+ * `program`: the program itself, `timeout`: the ask's `expiresAt` passed. `at` is ISO 8601.
+ */
+export interface AskDecided {
+  by: "phone" | "program" | "timeout";
+  at: string;
+}
+
+/** A push title (60 characters at most) and line (120 at most) a program chose for an ask. */
+export interface AskPushText {
+  title?: string;
+  line?: string;
+}
+
+/**
+ * `POST /api/pane/:id/answer`'s body, as the bridge reads it (ADR 0100). `requestId` is a UUID the
+ * phone mints per tap; a retry of the same tap sends the same one.
+ */
+export type AnswerRequest = AnswerBase & AnswerPayload;
+
+interface AnswerBase {
+  requestId: string;
+  askId: string;
+  /** The revision the phone saw. */
+  revision: number;
+}
+
+/** What a form answers: a field's id to its value, a string for a text or choice field and a boolean for a toggle. */
+export type AnswerValues = Record<string, string | string[] | boolean>;
+
+/**
+ * What the person chose, by the kind of the ask (WIRE.md section 7.14). Exactly one key names the shape:
+ * `optionId` for a `permission`, `optionIds` for a `choice` (one when it is not `multiple`), `text` for a
+ * `text` ask and `values` for a `form`.
+ */
+export type AnswerPayload =
+  | { optionId: string; note?: string }
+  | { optionIds: string[] }
+  | { text: string }
+  | { values: AnswerValues };
+
+/**
+ * What `POST /api/pane/:id/answer` answers, one shape for every outcome (ADR 0100).
+ *
+ *  • `taken` (200): the program took the answer and closed the ask.
+ *  • `too-late` (200): the ask is not open any more (answered, stopped, or from before a restart).
+ *    `decided` says who decided it first and when, when the program said so (a 409 `decided`).
+ *  • `stale` (409): the ask changed since the phone read it. `ask` is its current form when the
+ *    program sent one. Nothing ran.
+ *  • `unknown` (504): the answer may or may not have reached the program. The receipt stays, so
+ *    "Try again" with the SAME request id replays rather than answers twice.
+ *  • `maybe-applied` (200): an earlier try with this request id had an unknown outcome, and this
+ *    retry found the ask closed or changed. The first try may be what closed it, so the phone says
+ *    "may already be applied, check the chat" instead of an error.
+ *  • `refused` (409): nothing ran, and the same request would be refused again. `reason` is the
+ *    mux refusal's word (ADR 0022): `unsupported` when this pane takes no answers at all, or
+ *    `request-id-reused` when this request id was already used for another answer.
+ *
+ * `replayed: true` marks an answer read off the receipt of an earlier request with this id.
+ */
+export type AnswerResponse =
+  | { ok: true; outcome: "taken"; replayed?: true }
+  | { ok: false; outcome: "too-late"; decided?: AskDecided; replayed?: true }
+  | { ok: false; outcome: "stale"; ask?: Ask; replayed?: true }
+  | { ok: false; outcome: "unknown"; detail: string }
+  | { ok: false; outcome: "maybe-applied"; replayed?: true }
+  | { ok: false; outcome: "refused"; reason: "unsupported" | "refused" | "request-id-reused"; detail: string; replayed?: true };
+
+/**
+ * `POST /api/pane/:id/send`'s body (ADR 0101). Exactly one of `turnId` and `askId`: the turn the
+ * phone last showed, or an open ask it answers inside. `requestId` is a UUID the phone mints per
+ * intent; a retry of the same intent sends the same one. `text` is 1 to 32768 UTF-8 bytes.
+ */
+export interface SendRequest {
+  requestId: string;
+  text: string;
+  /** While a turn runs: join it (true) or wait for the next turn (false, the default). */
+  steer?: boolean;
+  turnId?: string;
+  askId?: string;
+}
+
+/** `POST /api/pane/:id/abort`'s body (ADR 0101). Exactly one of `turnId` and `askId`. */
+export interface AbortRequest {
+  requestId: string;
+  turnId?: string;
+  askId?: string;
+}
+
+/**
+ * `POST /api/pane/:id/action`'s body (M53 spec 07). `turnId` is optional: a button belongs to the pane,
+ * and a phone that names the turn it saw gets `stale` when the turn has moved.
+ */
+export interface ActionRequest {
+  requestId: string;
+  actionId: string;
+  turnId?: string;
+}
+
+/** What a control names: the turn the phone saw, or an open ask. Never both, never neither. */
+export type ControlTarget = { readonly kind: "turn"; readonly id: string } | { readonly kind: "ask"; readonly id: string };
+
+/** A send, an abort or a belt action, as the bridge reads it off the phone's body and hands it to the adapter. */
+export type ControlRequest =
+  | { readonly act: "send"; readonly requestId: string; readonly target: ControlTarget; readonly text: string; readonly steer: boolean }
+  | { readonly act: "abort"; readonly requestId: string; readonly target: ControlTarget }
+  | { readonly act: "action"; readonly requestId: string; readonly actionId: string; readonly turnId?: string };
+
+/**
+ * What `POST /api/pane/:id/send` and `/abort` answer, one shape for both (ADR 0101).
+ *
+ *  • `ok` (200): the program accepted the act. It answers when it took it, not when the turn ends.
+ *  • `stale` (409): the turn named is not the newest one, or the ask is not open. Nothing ran.
+ *    `turnId` and `askIds` are what is current, so the phone can reload and show what changed.
+ *  • `unknown` (504): the act may or may not have reached the program. The receipt stays, so
+ *    "Try again" with the SAME request id replays rather than acts twice.
+ *  • `maybe-applied` (200): an earlier try with this request id had an unknown outcome, and this
+ *    retry found the turn moved on. The first try may be what moved it, so the phone says "may
+ *    already be applied, check the chat" instead of an error.
+ *  • `refused` (409): nothing ran, and the same request would be refused again. `reason` is the
+ *    mux refusal's word (ADR 0022): `unsupported` when this pane or program cannot take the act, or
+ *    `request-id-reused` when this request id was already used for another send or stop.
+ *
+ * `replayed: true` marks an outcome read off the receipt of an earlier request with this id, or a
+ * program that said it saw this request id before.
+ */
+export type ControlResponse =
+  | { ok: true; outcome: "ok"; replayed?: true }
+  | { ok: false; outcome: "stale"; turnId: string; askIds: string[]; replayed?: true }
+  | { ok: false; outcome: "unknown"; detail: string }
+  | { ok: false; outcome: "maybe-applied"; replayed?: true }
+  | { ok: false; outcome: "refused"; reason: "unsupported" | "refused" | "request-id-reused"; detail: string; replayed?: true };
 
 /**
  * Strip a pane down to its wire shape. The one place the session ref leaves the bridge's hands.
@@ -267,15 +622,20 @@ export function journalAgentOf(pane: AgentView): string {
  * session is addressable — reported on the pane record, or discoverable by an adapter that finds
  * its own (`JournalAdapter.discover`). Keyed off the live `agent` either way, so an exited
  * agent's pane still offers no affordance and reads like every other shell pane.
+ *
+ * `instance` is the pane's walky talky instance token, from the bridge's instance registry; absent,
+ * the wire carries no `instance` key.
  */
 export function toPaneWire(
   pane: AgentView,
   hasJournal: (agent: string) => boolean,
   discoversSessions: (agent: string) => boolean = () => false,
+  instance?: string,
 ): PaneWire {
   const { agentSession, sessionAgent: _sessionAgent, ...rest } = pane;
   const addressable = agentSession !== undefined || discoversSessions(pane.agent);
-  return addressable && hasJournal(pane.agent) ? { ...rest, hasSession: true } : rest;
+  const wire: PaneWire = addressable && hasJournal(pane.agent) ? { ...rest, hasSession: true } : rest;
+  return instance === undefined ? wire : { ...wire, instance };
 }
 
 /** A Herdr workspace ("space") — a project-scoped container of tabs. From `workspace.list`. */
@@ -339,6 +699,22 @@ export interface TabView {
 export type BridgeStatus = "connected" | "disconnected";
 
 /**
+ * Why the multiplexer refused the last read, when the phone can say it in words (M50 spec 14). Only one
+ * today: a durable program over HTTPS that answered 401 or 403 to the peer's bearer token. Every other
+ * failure stays the plain `disconnected`, which the phone already words.
+ */
+export type MuxFault = "token-refused";
+
+/**
+ * The fault a failed read's message names, or undefined. The durable HTTPS client starts the detail of a
+ * refused token with `token-refused` (bridge/mux/durable/http-client.ts `TOKEN_REFUSED`), and the
+ * adapter throws that detail as the message of a failed `snapshot()`.
+ */
+export function muxFaultOf(message: string): MuxFault | undefined {
+  return message.startsWith("token-refused") ? "token-refused" : undefined;
+}
+
+/**
  * One entry in the snapshot's `sessions` list — a herdr session this bridge fronts. Additive: a
  * single-session deployment reports exactly one (the primary), so nothing about the UI changes.
  */
@@ -365,6 +741,35 @@ export interface SessionSummary {
   host?: string;
 }
 
+/** Whether a session answers (M55): a program says `starting` until it is ready. */
+export type SessionState = "ready" | "starting" | "unreachable";
+
+/**
+ * One session's card (M55, the shared contract). Carried on every entry of the snapshot's `sessions`
+ * on an instance that runs a durable program (`sources.json`), and on the crew `hello` as
+ * `sessions`. An instance with no program carries none, so its bytes are what they were.
+ */
+export interface SessionCard {
+  name: string;
+  kind: "terminal" | "program";
+  /** herdr, tmux, zellij, tuios, tern, or the program's hello `host.name` cleaned, else "durable". */
+  mux: string;
+  /** The capability set of this session, the same shape `/api/config` answers today. */
+  caps: Record<string, boolean>;
+  where: "local" | "remote";
+  state: SessionState;
+  experimental: boolean;
+  /**
+   * A program only, and only while it is refused for its wire version (WIRE.md section 2): the one sentence
+   * that says why, for example "The durable agent speaks wire v2, this Collie speaks v1. Update Collie, or the agent's SDK." Absent
+   * everywhere else.
+   */
+  notice?: string;
+}
+
+/** One entry of the snapshot's `sessions`: the summary, with the card when the instance runs a program. */
+export type SessionEntry = SessionSummary | (SessionSummary & SessionCard);
+
 /**
  * Per-device authorisation state for the requesting client (see `deviceAuth()` in server.ts).
  * Reported in the snapshot so the UI can show a read-only state. Optional on the wire so an older
@@ -384,6 +789,11 @@ export interface DeviceAuth {
 /** GET /api/snapshot — the current herd view. */
 export interface SnapshotResponse {
   bridge: BridgeStatus;
+  /**
+   * Why the multiplexer is down, when the phone can say it (M50 spec 14). Present only while `bridge`
+   * is `disconnected` for that cause, so every other body, and its ETag, is unchanged.
+   */
+  muxFault?: MuxFault;
   /** Per-device authorisation for the requesting client; absent when the feature is off. */
   device?: DeviceAuth;
   /** Agent-bearing panes, in place order: space, tab, position in the tab. Never by status (ADR 0063). */
@@ -397,7 +807,7 @@ export interface SnapshotResponse {
    * Every herdr session this bridge fronts (primary first, then alphabetical). Always present; a
    * single-session deployment lists just the primary, so the switcher UI can stay hidden.
    */
-  sessions: SessionSummary[];
+  sessions: SessionEntry[];
   /**
    * Every member of the crew, the lead's own entry included (CREW_PROTOCOL.md §9.2).
    *
@@ -734,6 +1144,15 @@ export interface UpdateStatus {
    * the other down with it, even when both name the same version.
    */
   dismissedCrewVersion: string | null;
+  /**
+   * When the crew notice above was closed, epoch ms on this machine's clock (1.21.1). Absent when
+   * none was, or when the close was written before the stamp existed.
+   *
+   * It is what lets a close cover ONE run: a crew run that settles after it is a new run of the
+   * same version, and the band may name its failure again. Absent reads as "covers every run of
+   * that version", which is what a close made before the stamp meant.
+   */
+  dismissedCrewAt?: number;
   /** The running process is behind the on-disk bridge source — needs `systemctl --user restart collie`. */
   bridgeStale: boolean;
   /**
@@ -769,6 +1188,18 @@ export interface UpdateStatus {
    * shown (M15/05, ADR 0046).
    */
   newerVersions?: string[];
+  /**
+   * This machine's release line (M60 spec 01, ADR 0110): `stable`, ADR 0020's strict releases, or
+   * `edge`, which adds the `-edge.N` pre-releases. Absent on an older bridge, which is Stable.
+   */
+  line?: "stable" | "edge";
+  /**
+   * BACK TO STABLE, case 2 (M60 spec 01): this machine is on Stable, runs an Edge build, and no
+   * Stable release is at or above it. `to` is the newest Stable below it, the target of "Go back
+   * now". `exceptions` names every state file that build cannot read (ADR 0110; empty by rule), which
+   * the page shows before the button. Absent in every other case.
+   */
+  back?: { to: string; exceptions: string[] };
   /**
    * The detached updater's run record (`<state dir>/update.json`, M15/04) — read from disk on every
    * snapshot, so a bridge that has just been restarted BY an update reports the run it is part of
@@ -844,6 +1275,46 @@ export type PaneHistoryResponse =
     };
 
 /**
+ * One conversation of a durable program's own list (M53 spec 11, WIRE.md 7.16). `paneId` is set on an open
+ * conversation that is in the live layout: the pane that shows it.
+ */
+export interface DurableConversationRow {
+  id: string;
+  title: string;
+  subtitle?: string;
+  workspaceId?: string;
+  tabId?: string;
+  startedAt: string;
+  endedAt?: string;
+  state: "open" | "closed";
+  items: number;
+  paneId?: string;
+}
+
+/**
+ * GET /api/durable/conversations?after=&limit=: the program's conversations, newest first, open and closed, at
+ * most 100 a page; `next` absent is the last page. `available: false` is an ordinary answer: a multiplexer with
+ * no program history (`unsupported`), or a program that cannot be asked now (`unreachable`).
+ */
+export type DurableConversationsResponse =
+  | { available: true; items: DurableConversationRow[]; next?: string }
+  | { available: false; reason: "unsupported" | "unreachable"; detail?: string };
+
+/**
+ * GET /api/durable/conversation/:id/items?after=&limit=: one conversation, oldest first, at most 1000 items a
+ * page, read from the program and never from the bridge's log. `more: true` means ask again with `after=next`.
+ * `gone` is a conversation the program does not know.
+ */
+export type DurableConversationItemsResponse =
+  | { available: true; id: string; entries: TranscriptEntry[]; next?: string; more: boolean }
+  | { available: false; reason: "unsupported" | "unreachable" | "gone"; detail?: string };
+
+/** POST /api/durable/conversation/:id/reopen: the pane that shows the conversation again, when the next listing has it. */
+export type ReopenConversationResponse =
+  | { ok: true; paneId?: string }
+  | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
+
+/**
  * GET /api/pane/:id/chat — the same conversation as `history`, asked the other way round.
  *
  * `history` answers "show me this session" and pays a bounded whole-window read for it. This answers
@@ -862,7 +1333,19 @@ export type PaneHistoryResponse =
  * with no session; a 404 is the answer for a bridge with no route.
  */
 export type PaneChatResponse =
-  | { paneId: string; available: false; reason: "disabled" | "no-session" | "no-log" }
+  | {
+      paneId: string;
+      available: false;
+      reason: "disabled" | "no-session" | "no-log";
+      /**
+       * Why a `no-session` answer has no session, when the bridge knows a reason the person can act
+       * on. `shared-folder`: another pane runs the same harness in the same folder, and this pane's
+       * command line names no session, so Collie will not guess which log is this pane's (#508).
+       * Additive-optional (CREW_PROTOCOL.md §7.1): absent on every other answer and from an older
+       * member, and a phone that predates it reads the plain `no-session`.
+       */
+      detail?: "shared-folder";
+    }
   | ({ paneId: string; available: true } & ChatBody);
 
 /**
@@ -1114,47 +1597,8 @@ export type CreateResponse =
   | { ok: true; pane: CreatedPane; replayed?: true; noPrompts?: boolean }
   | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
 
-/** One Git worktree of the repo a space sits in (ADR 0032). */
-export interface WorktreeView {
-  /** Absolute checkout path — the identity, and what `open` is asked with. */
-  path: string;
-  /** The branch checked out there; `null` for a detached head. */
-  branch: string | null;
-  /**
-   * The space showing it, or `null` when it exists on disk and nothing does.
-   *
-   * `null` is what hides the Remove row: removal is addressed by space, so a checkout nothing shows
-   * cannot be removed from the phone at all.
-   */
-  openWorkspaceId: string | null;
-  /** `false` for the repo's own checkout, which is listed for context and is never removable. */
-  linked: boolean;
-  /** The multiplexer believes the checkout is gone and its administrative files could be pruned. */
-  prunable: boolean;
-}
-
 /**
- * GET /api/workspace/:id/worktrees — the worktrees of the repo that space sits in.
- *
- * `defaultBranch` is the LOCAL branch a create with `base: { kind: "default" }` starts from
- * (`resolveDefaultBranch`, bridge/worktree-base.ts), or `null` when the repo has none to name.
- */
-export type WorktreeListResponse =
-  | { ok: true; worktrees: WorktreeView[]; defaultBranch: string | null }
-  | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
-
-/**
- * POST /api/workspace/:id/worktree[/open] — the space now showing the checkout.
- *
- * `alreadyOpen` says the space was already there, which is an ANSWER and not a failure: the phone
- * navigates to `pane` either way.
- */
-export type WorktreeOpenResponse =
-  | { ok: true; pane: CreatedPane; alreadyOpen: boolean }
-  | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
-
-/**
- * POST /api/workspace/:id/worktree — the new worktree's space, plus what happened to the launcher
+ * POST /api/worktree — the new worktree's space, plus what happened to the launcher
  * (ADR 0089).
  *
  * `launcherStarted` is false when no launcher was asked for AND when one was asked for and could not
@@ -1534,6 +1978,53 @@ export type RecentRunsResponse =
   | { ok: true; removed: number }
   | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
 
+// ── Sent: the shell lines a person sent through Collie, per machine (ADR 0107, bridge/sent.ts) ──
+
+/** `GET /api/sent`. One answer per bridge asked; a lead's `scope=all` merges its members' into it. */
+export interface SentAnswer {
+  /** Newest first, at most `limit`. */
+  entries: SentEntry[];
+  /** A later page exists on at least one machine: ask again with `before` set to the last `at`. */
+  more: boolean;
+  /** This bridge records nothing (`COLLIE_SENT=off`). */
+  off: boolean;
+  /** One per machine asked; a solo bridge lists itself. */
+  machines: SentMachine[];
+}
+
+/** One distinct line on one machine: its newest record, and how many records it has. */
+export interface SentEntry {
+  /** Stable per line on its machine: the first 16 hex characters of the line's sha256. */
+  id: string;
+  line: string;
+  /** Absolute, or `null` for home. */
+  cwd: string | null;
+  /** Epoch ms of the newest record. */
+  at: number;
+  /** A line sent to a shell pane, or a one-off run from the New page. Never a harness name. */
+  kind: "shell" | "run";
+  count: number;
+  /** The machine id the crew already uses; `local` on a bridge that never enrolled. */
+  host: string;
+}
+
+/** One machine a `GET /api/sent` asked. */
+export interface SentMachine {
+  host: string;
+  label: string;
+  ok: boolean;
+  /** That machine records nothing (`COLLIE_SENT=off`). */
+  off?: boolean;
+  /** Why it did not answer: a Collie that predates Sent, no connection, or no answer in 2 s. */
+  reason?: "old_version" | "unreachable" | "timeout";
+}
+
+/** `POST /api/sent/remove` and `/api/sent/clear`. `removed` is how many records went. */
+export interface SentRemoveResponse {
+  ok: true;
+  removed: number;
+}
+
 /**
  * POST /api/launch/check `{ run }` (ADR 0095, amendment): what a one-off line would be, before it runs.
  * A READ: it runs nothing and stores nothing. `noPrompts` is {@link scanNoPrompts}'s answer on the
@@ -1554,8 +2045,8 @@ export interface LaunchCheckResponse {
 export interface LauncherItem {
   /** Stable per machine: `harness:<id>`, `row:<command>`, or `shell`. */
   key: string;
-  /** What `POST /api/launch` (and `POST /api/worktree`) names to start it. */
-  start: { harness: string } | { command: string } | { shell: true };
+  /** What `POST /api/launch` (and `POST /api/worktree`) names to start it. A starter is run by `POST /api/launch` alone (ADR 0102). */
+  start: { harness: string } | { command: string } | { shell: true } | { starter: string };
   /** Agents: Collie reads the pane as that harness. Commands: a plain line, no agent status. */
   group: "agents" | "commands";
   label: string;
@@ -1565,9 +2056,16 @@ export interface LauncherItem {
   command?: string;
   /** A row's pinned folder. */
   cwd?: string;
-  source: "builtin" | "operator" | "added";
+  /** `program`: a starter the durable program offers (ADR 0102). */
+  source: "builtin" | "operator" | "added" | "program";
   /** True when the line skips permission prompts: badge it, and confirm once per device. */
   noPrompts: boolean;
+  /**
+   * False on a starter: it takes no text of any kind, so the page shows no prompt field and a launch
+   * body carrying text is refused. Absent on every other item (ADR 0102). This is NOT `noPrompts`,
+   * which marks a line that skips an agent's permission prompts.
+   */
+  takesPrompt?: false;
   /** Whether it may start on a new branch: agents and the shell, never a command row. */
   branch: boolean;
   available: boolean;
@@ -1611,6 +2109,27 @@ export interface FoldersResponse {
   recent: string[];
   favourites: string[];
   home: string;
+}
+
+/** One sub-folder in a browse answer: its name only, and whether it holds a `.git` entry (#467). */
+export interface FolderBrowseEntry {
+  name: string;
+  git: boolean;
+}
+
+/**
+ * GET /api/folders/browse — the New page's folder browser (#467, bridge/folder-browse.ts). `path` is
+ * the nearest folder that exists at or above the asked text, spelled under home as the text was;
+ * `filter` is the rest of the text after it ("" when the text named a folder); `folders` are the
+ * sub-folders of `path` whose names start with `filter`, case-insensitive, sorted by name, at most
+ * 200; `parent` is the folder above `path`, or `null` at home, the bound.
+ */
+export interface FolderBrowseResponse {
+  path: string;
+  parent: string | null;
+  folders: FolderBrowseEntry[];
+  filter: string;
+  truncated: boolean;
 }
 
 /**
@@ -1724,6 +2243,13 @@ export interface BridgeConfig {
    */
   stt?: SttCapability;
   /**
+   * The Whistle model on this host (ADR 0096), so Settings can offer the setup tap. Present on every
+   * lead and solo collie that knows the feature; absent on an older bridge, and on a crew member's
+   * own answer, because speech is lead-only (ADR 0029). A `?host=<member>` read carries the lead's,
+   * like `stt`.
+   */
+  whistle?: WhistleStatus;
+  /**
    * What this collie accepts as an attachment. **Absent is a bridge older than this field**, which
    * a client reads as the contract that shipped before it: 10 MB, images only. Present, it is the
    * whole answer — the phone builds its file picker's `accept` list from it and refuses an oversize
@@ -1787,6 +2313,124 @@ export interface SttCapability {
   available: boolean;
   /** Operator-facing prose when it could not. Absent when it could. */
   reason?: string;
+  /**
+   * What the phone must upload. Present only for the `whistle` provider (ADR 0096 Decision 4):
+   * `wav-16k` is 16 kHz mono 16-bit little-endian PCM WAV, and nothing else is accepted. Absent means
+   * the recording as the browser made it.
+   */
+  input?: "wav-16k";
+  /**
+   * The longest recording this provider takes, in milliseconds. Present only when it differs from
+   * the phone's 5-minute default: the `whistle` provider takes 4 minutes, because a WAV is about four
+   * times the size of a compressed recording and the 8 MiB upload cap stays.
+   */
+  maxDurationMs?: number;
+}
+
+/**
+ * Why Settings may not switch the host to one choice (ADR 0097), as a code the phone translates:
+ *
+ *  - `env`               the deployment's environment names the speech settings; it wins, and no phone changes it
+ *  - `terminal`          a provider set up in a terminal with a key, an endpoint or a command
+ *  - `unreadable`        `stt.json` is there and cannot be read; it is the operator's to fix
+ *  - `not-ready`         Whistle: the model is not on the host yet
+ *  - `codex-missing`     Codex: no `codex` binary was found on the host
+ *  - `codex-signed-out`  Codex: `codex login status` says it is not signed in
+ *  - `codex-other-login` Codex: signed in, but not with ChatGPT (an API key, say)
+ *  - `codex-unknown`     Codex: the sign-in could not be checked (a timeout, an answer not understood)
+ */
+export type SttHostSwitchReason =
+  | "env"
+  | "terminal"
+  | "unreadable"
+  | "not-ready"
+  | "codex-missing"
+  | "codex-signed-out"
+  | "codex-other-login"
+  | "codex-unknown";
+
+/** Whether one choice may be made from Settings, and if not, why. */
+export interface SttHostSwitch {
+  ok: boolean;
+  /** Absent when `ok`. */
+  reason?: SttHostSwitchReason;
+}
+
+/**
+ * What the host's speech settings name, by name only (Settings → Voice titles its card with it).
+ * Every field is optional and is dropped when it holds a hidden character. Never a path, an argument
+ * other than the one model file's name, a key, an environment value, or a URL's path or query.
+ * Mirrors `SttHostSetup` in web/src/lib/types.ts.
+ */
+export interface SttHostSetup {
+  /** `local-cli`: the command's basename (`whistle-stt`, `whisper-cli`). */
+  command?: string;
+  /**
+   * `local-cli`: the basename of the first argument that names a model file (`ggml-base.bin`).
+   * `openai-compatible`: the configured model (`whisper-large-v3`). `whistle`: the pinned model's
+   * version, the first seven characters of its revision.
+   */
+  model?: string;
+  /** `openai-compatible`: the service's host, with its port when it has one (`api.groq.com`, `127.0.0.1:8080`). */
+  endpoint?: string;
+}
+
+/**
+ * The host's speech provider, as `GET /api/stt/host` and `PUT /api/stt/host` report it (ADR 0097).
+ * Mirrors `SttHostStatus` in web/src/lib/types.ts.
+ */
+export interface SttHostStatus {
+  /** `whistle`, `codex`, `openai-compatible`, `local-cli`, or `none`. A name this build does not know is passed through. */
+  provider: string;
+  /** Whether it could serve a request right now. False for `none`. */
+  available: boolean;
+  /** Operator-facing prose when it could not: the provider's own words, or why the settings do not resolve. */
+  reason?: string;
+  /** For `codex` only: the identity recorded at setup. `codex-cli` is the fallback that wears the Codex CLI's headers. */
+  identity?: SttWireIdentity;
+  /** Where the provider is named: `stt.json` in the state dir, the bridge's environment, or nowhere. */
+  configuredBy: "file" | "env" | "none";
+  /** The three choices Settings offers, each with whether it may be made now. */
+  switchable: { whistle: SttHostSwitch; codex: SttHostSwitch; off: SttHostSwitch };
+  /** The `codex` binary whose sign-in would pay, for the consent's words. Present when one was found. */
+  codexBin?: string;
+  /**
+   * The paired device that last changed the option from Settings, by its pairing label. Absent when
+   * the option was last set in a terminal, by the environment, or by a device the bridge could not
+   * name. Never a token, an address or a header value.
+   */
+  changedBy?: string;
+  /** When that device changed it, an ISO 8601 time. Present exactly when `changedBy` is. */
+  changedAt?: string;
+  /** What the settings name: the command, the model, the service's host. Absent when they name nothing, or do not resolve. */
+  setup?: SttHostSetup;
+}
+
+/** Where the host's copy of the Whistle model stands (ADR 0096 Decision 2). */
+export type WhistleState = "absent" | "downloading" | "ready" | "failed";
+
+/**
+ * The Whistle model on the host and the host engine's switch, as `GET /api/stt/whistle` and
+ * `/api/config` report them. Mirrors `WhistleStatus` in web/src/lib/types.ts.
+ */
+export interface WhistleStatus {
+  state: WhistleState;
+  /** Exact size of the pinned model, for the button and the bar. Always present. */
+  bytes: number;
+  /** Present while downloading: the bytes received so far. */
+  received?: number;
+  /** Present only when state is "ready": the held file's sha256, lowercase hex, a hash this build accepts. */
+  sha256?: string;
+  /** Present only when state is "ready" and the manifest names it: the Hugging Face revision the file came from. */
+  revision?: string;
+  /** Present only when state is "ready" and the manifest names it: when the host fetched the file, an ISO 8601 time. */
+  fetchedAt?: string;
+  /** Present when state is "failed": operator-facing prose, no paths. */
+  reason?: string;
+  /** True when the host STT provider is `whistle`. */
+  hostEngine: boolean;
+  /** True when another provider is configured, so Settings cannot turn the host engine on. */
+  hostTaken: boolean;
 }
 
 /**

@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { useTheme } from "@/hooks/use-theme";
 import type { Theme } from "@/hooks/use-theme";
 import { useLocale } from "@/hooks/use-locale";
+import { FORK_THEMES_ON } from "@/lib/fork-shape";
 import { t, type MessageKey } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +31,9 @@ export function ThemeControl() {
   useLocale();
   const { theme, setTheme } = useTheme();
   const Icon = themeIcon(theme);
+  // FORK: upstream 1.22 renamed this card "Appearance" when its theme picker took the word "Theme". With
+  // the picker off (FORK_THEMES_ON) the card keeps its own name. Tests run with upstream's word.
+  const title = FORK_THEMES_ON ? t("settings.theme.title") : t("fork.theme.title");
 
   return (
     <Card className="gap-0 py-0">
@@ -37,7 +41,7 @@ export function ThemeControl() {
         <div className="flex min-w-0 items-start gap-3">
           <Icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
-            <div className="font-medium">{t("settings.theme.title")}</div>
+            <div className="font-medium">{title}</div>
             <p className="text-sm text-muted-foreground">{t("settings.theme.description")}</p>
           </div>
         </div>
@@ -45,7 +49,7 @@ export function ThemeControl() {
 
       <div
         role="radiogroup"
-        aria-label={t("settings.theme.title")}
+        aria-label={title}
         className="flex gap-1 border-t border-border p-2"
       >
         {OPTIONS.map((option) => {

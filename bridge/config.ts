@@ -1,16 +1,18 @@
 import { chmodSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import {
   configFilePaths,
   hostFilePerms,
   readConfigFiles,
+  tightenPrivateFile,
   type ConfigFileLayer,
   type Environment,
   type FilePerms,
+  type PrivateFileVerdict,
 } from "./config-source.ts";
-import { HOST, type Host } from "./host.ts";
+import { HOST, type Host, isInside } from "./host.ts";
 import { diskIo } from "./operator-file.ts";
 import { secretFileVerdict } from "./owner-only.ts";
 import type { AuditContent } from "./audit.ts";
@@ -90,6 +92,21 @@ function normaliseUploadTypes(raw: string[]): string[] {
  * things on the two platforms this bridge supports. One path stays one path, so an existing value
  * parses to exactly what it always meant.
  */
+/**
+ * The Hermes home a `HERMES_HOME` belongs to, the way Hermes itself reads it
+ * (`get_default_hermes_root`, hermes_constants.py): anything inside `~/.hermes`, a named profile
+ * included, belongs to `~/.hermes`; `<root>/profiles/<name>` elsewhere belongs to `<root>`; any other
+ * value is a home of its own. The journal then searches that home and every profile under it, so a
+ * bridge started inside one profile's environment still finds the default profile and the others.
+ */
+export function hermesHome(value: string | undefined, home: string, host: Host = HOST): string {
+  const native = join(home, ".hermes");
+  if (value === undefined || value.trim() === "") return native;
+  const path = resolve(value.trim());
+  if (isInside(host, path, native)) return native;
+  return basename(dirname(path)) === "profiles" ? dirname(dirname(path)) : path;
+}
+
 function envRoots(
   name: string,
   fallback: string | string[],
@@ -399,6 +416,12 @@ export interface Config {
    */
   redact: boolean;
   /**
+   * Whether this machine keeps Sent, its record of the shell lines a person sent through Collie
+   * (`COLLIE_SENT`, default on). Off: nothing is recorded and a read lists nothing; remove and clear
+   * still work. See `bridge/sent.ts` and ADR 0107.
+   */
+  sent: "on" | "off";
+  /**
    * Per-device authorisation. Name of a request header carrying an opaque device identifier,
    * injected by a trusted upstream reverse proxy. Empty = the feature is off (no behaviour change).
    * When set, devices whose header value isn't in {@link deviceAllowlist} are read-only. See
@@ -448,6 +471,25 @@ export interface Config {
    * already-discovered session; they never build a filesystem path.
    */
   multiSession: boolean;
+  /**
+   * Surface shadow mode (`COLLIE_SURFACE_SHADOW=1`, M56 spec 04): the bridge computes each agent pane's
+   * Surface from the screen on every poll beside the old readers, logs every disagreement and serves
+   * the Surface on the snapshot and on `GET /api/surface`. Off by default; nothing decides a send by it.
+   */
+  surfaceShadow: boolean;
+  /**
+   * The Send Protocol (`COLLIE_SEND_PROTOCOL`, M56 spec 05): `POST /api/send` runs a send as one
+   * bridge-side request with a lock, a probe, a predicted-state check, the key gate and a receipt, and
+   * the phone's composer uses it on panes the snapshot marks. Turns on the Surface computation too.
+   * On by default since M56 spec 06: it is the only way text reaches a pane from the phone, and a reply
+   * that submits text runs it too. `COLLIE_SEND_PROTOCOL=0` turns sending text off (the keys still work).
+   */
+  sendProtocol: boolean;
+  /**
+   * Walky talky (`COLLIE_WALKY`, M62): whether this machine takes messages for its panes. Off refuses
+   * every message with `refused: off`; the CLI on this machine still sends. On by default.
+   */
+  walky: boolean;
   /**
    * Whether `tailscale serve` is bypassed (COLLIE_SKIP_SERVE=1) because an operator-run reverse
    * proxy (Caddy/Nginx) fronts the loopback bridge instead. The bridge itself handles every request
@@ -626,7 +668,10 @@ export function resolveJournalRoots(
       join(env.GROK_HOME ?? join(home, ".grok"), "sessions"),
       env,
     ),
-    hermes: envRoots("COLLIE_HERMES_ROOT", join(home, ".hermes"), env),
+    // Hermes's own home var first, as for the others, read as Hermes reads it (`hermesHome`). A
+    // root's named profiles are found under it (bridge/journal/hermes.ts), so one root serves the
+    // default profile and every named one.
+    hermes: envRoots("COLLIE_HERMES_ROOT", hermesHome(env.HERMES_HOME, home), env),
     // Muse keeps date-partitioned session logs under the XDG data dir, one session.jsonl per
     // session uuid. Muse publishes no home var of its own, so the Collie override is the only
     // relocation.
@@ -635,6 +680,8 @@ export function resolveJournalRoots(
       join(env.XDG_DATA_HOME ?? join(home, ".local", "share"), "muse", "sessions"),
       env,
     ),
+    // OpenClaw keeps one SQLite per agent under its state folder, which `OPENCLAW_STATE_DIR` moves.
+    openclaw: envRoots("COLLIE_OPENCLAW_ROOT", env.OPENCLAW_STATE_DIR ?? join(home, ".openclaw"), env),
   };
 }
 
@@ -686,6 +733,15 @@ const diskFilePerms: FilePerms = hostFilePerms(HOST, {
     }
   },
 }, (path, repair) => secretFileVerdict(path, { repair }));
+
+/**
+ * Hold another private file the bridge reads at owner-only, by the rule `.env` and `config.toml` follow:
+ * tighten in place and say so, never refuse. `sources.json` (M55) is the one caller, because a `url`
+ * entry there carries a bearer token.
+ */
+export function holdPrivateFile(path: string, repairAcl = false): PrivateFileVerdict {
+  return tightenPrivateFile(path, diskFilePerms, repairAcl);
+}
 
 export function loadConfig(env: Environment = process.env): Config {
   const stateDir = resolveStateDir(env);
@@ -760,6 +816,7 @@ export function loadConfig(env: Environment = process.env): Config {
     accessAud: envList("COLLIE_ACCESS_AUD", env),
     auditContent: envEnum("COLLIE_AUDIT_CONTENT", ["preview", "none"] as const, "preview", env),
     redact: envBool("COLLIE_REDACT", true, env),
+    sent: envEnum("COLLIE_SENT", ["on", "off"] as const, "on", env),
     deviceHeader: (env.COLLIE_DEVICE_HEADER ?? "").trim(),
     deviceAllowlist: envList("COLLIE_DEVICE_ALLOWLIST", env),
     allowedOrigins: envList("COLLIE_ALLOWED_ORIGINS", env),
@@ -771,6 +828,9 @@ export function loadConfig(env: Environment = process.env): Config {
     vapidSubject: env.COLLIE_VAPID_SUBJECT ?? "mailto:admin@example.com",
     stateDir,
     multiSession: envBool("COLLIE_MULTI_SESSION", true, env),
+    surfaceShadow: envBool("COLLIE_SURFACE_SHADOW", false, env),
+    sendProtocol: envBool("COLLIE_SEND_PROTOCOL", true, env),
+    walky: envBool("COLLIE_WALKY", true, env),
     skipServe: envBool("COLLIE_SKIP_SERVE", false, env),
     basePath: normaliseBasePath(env.COLLIE_BASE_PATH),
   };

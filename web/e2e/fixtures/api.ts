@@ -1,6 +1,5 @@
 import type { Page, Route } from "@playwright/test";
 
-import type { Locale } from "@/lib/i18n/locale";
 import type { MachineAlerts } from "@/lib/types";
 import { TOUR_REQUESTED, TOUR_STORAGE_KEY, TOUR_VERSION } from "@/lib/tour";
 import {
@@ -34,9 +33,6 @@ import { censusFor, fixtureMachines, fixtureMachinesSolo, historyFor } from "@/t
 // ships one; two workers on one scope is a fight, not a fixture. The MSW handler array stays the
 // unit layer's, and this module re-states the ROUTING (nine lines of it) rather than the data.
 
-/** The locale pin. A BARE string under this key, not JSON — `src/lib/i18n/index.ts:44`. */
-const LOCALE_STORAGE_KEY = "collie:locale:v1";
-
 /** `/api/update/check` reports the bridge's own version, which `SnapshotResponse` does not carry.
  *  It is level with `latest` in the default world, so the two only ever have to agree with each
  *  other, never with the real build stamp. */
@@ -61,59 +57,15 @@ interface CreateSpaceBody {
   readonly cwd?: string;
 }
 
-/** `POST /api/folders/star`'s body, as `lib/api.ts`'s `starFolder` posts it. */
-interface StarFolderBody {
-  readonly folder: string;
-  readonly starred: boolean;
-}
-
 /** The home the stub's multiplexer opens a blank create in — the fixture new space's own folder. */
 const STUB_HOME = fixtureNewSpace.pane.cwd;
-
-/**
- * The folder list the stub keeps, standing in for the bridge's `folders.json` (#289,
- * `bridge/folders.ts`). ONE PER PAGE, built by {@link installApiStub}, so no case inherits another's
- * Recent. It keeps the bridge's rules in small: a create that named a folder records it at the top
- * of Recent, never home and never a favourite; a star moves a Recent folder to Favourites, an unstar
- * moves it back; a star on a folder in neither list is the bridge's 409. The bounds are the bridge's
- * business and are pinned there, not re-typed here.
- */
-class FolderWorld {
-  private recent: string[] = [];
-  private favourites: string[] = [];
-
-  body() {
-    return { recent: [...this.recent], favourites: [...this.favourites], home: STUB_HOME };
-  }
-
-  /** A create that worked: the folder the multiplexer reported, when the operator named one. */
-  record(typed: string, reported: string): void {
-    if (typed.trim() === "" || reported === STUB_HOME || this.favourites.includes(reported)) return;
-    this.recent = [reported, ...this.recent.filter((f) => f !== reported)];
-  }
-
-  /** `true` when the star was taken (or changed nothing), `false` for the bridge's `folders.unknown`. */
-  star(folder: string, starred: boolean): boolean {
-    if (starred) {
-      if (this.favourites.includes(folder)) return true;
-      if (!this.recent.includes(folder)) return false;
-      this.recent = this.recent.filter((f) => f !== folder);
-      this.favourites = [...this.favourites, folder];
-      return true;
-    }
-    if (!this.favourites.includes(folder)) return true;
-    this.favourites = this.favourites.filter((f) => f !== folder);
-    this.recent = [folder, ...this.recent];
-    return true;
-  }
-}
 
 /**
  * Answer the one request. Split out of the route so the dispatch reads as a table and so an
  * unmatched path is a loud 501 rather than a silent fall-through to the static server, which would
  * hand the app `index.html` for a JSON fetch and fail somewhere far away from the cause.
  */
-async function answer(route: Route, path: string, folders: FolderWorld): Promise<void> {
+async function answer(route: Route, path: string): Promise<void> {
   const method = route.request().method();
 
   if (path === "/api/snapshot") return fulfillJson(route, fixtureSnapshot);
@@ -156,6 +108,9 @@ async function answer(route: Route, path: string, folders: FolderWorld): Promise
       fileTruncated: false,
     });
   }
+  if (/^\/api\/pane\/[^/]+\/subagent\/[^/]+$/.test(path)) {
+    return fulfillJson(route, { paneId: "w1:p1", agentId: "a000000", available: false });
+  }
   if (/^\/api\/pane\/[^/]+\/reply$/.test(path)) {
     // The fake pane stays honest: the draft the POST carried is what the next mirror read renders,
     // exactly as the unit layer's handler does it.
@@ -185,6 +140,14 @@ async function answer(route: Route, path: string, folders: FolderWorld): Promise
       truncated: false,
     });
   }
+  // Walky talky (M62): no messages, and a send answers an accepted receipt for the one address.
+  if (/^\/api\/pane\/[^/]+\/walky$/.test(path)) return fulfillJson(route, { messages: [] });
+  if (path === "/api/walky/who") return fulfillJson(route, { targets: [] });
+  if (path === "/api/walky" && method === "POST") {
+    // SAFETY: the body is the app's own, `lib/api.ts`'s `postWalky` is the only caller and it posts `{ id, to, body, replyTo? }`.
+    const posted = route.request().postDataJSON() as { id: string; to: string };
+    return fulfillJson(route, { receipt: { id: posted.id, state: "accepted", verified: "local", at: Date.now(), by: "solo", target: posted.to } });
+  }
   if (/^\/api\/pane\/[^/]+$/.test(path)) {
     return fulfillJson(route, {
       paneId: "w1:p1",
@@ -199,8 +162,7 @@ async function answer(route: Route, path: string, folders: FolderWorld): Promise
   if (path === "/api/tab" && method === "POST") return fulfillJson(route, fixtureNewTab);
 
   // A new space: the fixture's fresh shell pane, opened where the create asked — a blank field is
-  // home — and reported back the way a multiplexer reports it. A create that named a folder then
-  // lands at the top of Recent, exactly as the bridge records it.
+  // home, and reported back the way a multiplexer reports it.
   if (path === "/api/workspace" && method === "POST") {
     // SAFETY: the body is the app's own — `lib/api.ts`'s `createWorkspace` is the only caller and it
     // posts `{ label?, cwd? }`. Both fields are optional there, so a body with neither is a create in
@@ -208,23 +170,7 @@ async function answer(route: Route, path: string, folders: FolderWorld): Promise
     const body = route.request().postDataJSON() as CreateSpaceBody;
     const typed = body.cwd ?? "";
     const reported = typed.trim() === "" ? STUB_HOME : typed.trim();
-    folders.record(typed, reported);
     return fulfillJson(route, { ...fixtureNewSpace, pane: { ...fixtureNewSpace.pane, cwd: reported } });
-  }
-
-  // The new-space sheet's folder list (#289), from the page's own FolderWorld.
-  if (path === "/api/folders" && method === "GET") return fulfillJson(route, folders.body());
-  if (path === "/api/folders/star" && method === "POST") {
-    // SAFETY: as above — `lib/api.ts`'s `starFolder` is the only caller and posts `{ folder, starred }`.
-    const body = route.request().postDataJSON() as StarFolderBody;
-    if (!folders.star(body.folder, body.starred)) {
-      return fulfillJson(
-        route,
-        { error: `${body.folder} is not in Recent, so it cannot be starred`, code: "folders.unknown", detail: { folder: body.folder } },
-        409,
-      );
-    }
-    return fulfillJson(route, folders.body());
   }
 
   // The DEFAULT world is solo, so the census refuses exactly as a non-lead bridge does. A case that
@@ -295,16 +241,15 @@ export interface ApiStubOptions {
  * order to reason about: a case that wants a different answer for one endpoint registers its own
  * `page.route` AFTER this call and Playwright checks the newest handler first.
  *
- * It also pre-spends the first-launch tour by default, which is what keeps every existing `app` spec
- * working unedited.
+ * It also pre-spends the first-launch tour, which is what keeps every `app` spec working unedited:
+ * the sheet is full-height, so an unseeded origin would put it over the screen a case looks at.
  *
  * Call it before the first `page.goto`.
  */
 export async function installApiStub(page: Page, options: ApiStubOptions = {}): Promise<void> {
   await (options.tour === "fresh" ? seedTourRequested(page) : seedTourSeen(page));
-  const folders = new FolderWorld();
   await page.route("**/api/**", async (route) => {
-    await answer(route, new URL(route.request().url()).pathname, folders);
+    await answer(route, new URL(route.request().url()).pathname);
   });
 }
 
@@ -403,20 +348,6 @@ export function fill(template: string, vars: Readonly<Record<string, string | nu
     out = out.split(`{${slot}}`).join(String(value));
   }
   return out;
-}
-
-/**
- * Pin the locale before the first navigation. There is no URL parameter and no `Accept-Language`
- * path in this app; the storage key is the only mechanism, and it has to be written before the
- * bundle's first script runs, which is what `addInitScript` is for.
- */
-export async function pinLocale(page: Page, locale: Locale): Promise<void> {
-  await page.addInitScript(
-    ([key, value]) => {
-      window.localStorage.setItem(key, value);
-    },
-    [LOCALE_STORAGE_KEY, locale],
-  );
 }
 
 /**

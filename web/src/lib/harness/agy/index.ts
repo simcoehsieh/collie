@@ -20,11 +20,13 @@
 
 import { trimTrailingBlank, type Block, type StyledLine } from "../../blocks";
 import type { HarnessAdapter } from "../types";
+import { detectConversationsRegion } from "./conversations";
 import { detectPromptSelectRegion } from "./prompt-select";
 import { detectMultiSelectRegion } from "./multi-select";
 import { detectMenuRegion } from "./menu";
 import { detectAutocompleteRegion } from "./autocomplete";
 import { extractInputDraft, extractStatusLines, hasInputBox, stripChrome } from "./chrome";
+import { lineText } from "./markers";
 
 function withRawAbove(lines: StyledLine[], startLine: number, block: Block): Block[] {
   const before = trimTrailingBlank(lines.slice(0, startLine));
@@ -75,6 +77,15 @@ export function agyBuildBlocks(lines: StyledLine[]): Block[] {
       blocks.push({ kind: "autocomplete", autocomplete: auto.model, lines: lines.slice(auto.startLine) });
       return blocks;
     }
+  }
+
+  const picker = detectConversationsRegion(lines.map((l) => lineText(l).trimEnd()));
+  if (picker) {
+    const before = trimTrailingBlank(lines.slice(0, picker.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
+    blocks.push({ kind: "menu", menu: picker.model, lines: lines.slice(picker.startLine) });
+    return blocks;
   }
 
   return [{ kind: "raw", lines: stripChrome(lines) }];

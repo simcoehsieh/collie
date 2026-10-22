@@ -266,6 +266,13 @@ describe("every translated dictionary", () => {
     for (const key of missing[0]!) if (missing.every((set) => set.has(key))) forkKeys.add(key);
   });
 
+  // FORK: upstream's no-em-dash rule (1.22) holds upstream's strings; the fork's own English
+  // strings (the keys the five untranslated bundles all lack) keep their wording.
+  it("en has no em dash in any value", () => {
+    const offenders = englishKeys.filter((key) => !forkKeys.has(key) && en[key].includes("\u2014"));
+    expect(offenders, "en values with an em dash").toEqual([]);
+  });
+
   it.each(translated)(
     "%s has English's keys, English's slots on every key, no em dash, and is not English",
     async (code) => {

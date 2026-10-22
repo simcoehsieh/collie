@@ -123,7 +123,7 @@ function fakeCodex(opts: { paintAfter?: number; busy?: boolean } = {}) {
       draft += t;
       return { ok: true, value: undefined };
     },
-    async sendKeys(_paneId: string, keys: readonly string[]): Promise<MuxAck> {
+    async writeKeys(_paneId: string, keys: readonly string[]): Promise<MuxAck> {
       for (const k of keys) {
         log.push(k);
         const painted = screen !== "composer" && pending === 0;

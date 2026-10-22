@@ -12,9 +12,11 @@ import { CrewSettingsCard } from "@/components/crew-settings-card";
 import { KeepChatControl } from "@/components/keep-chat-control";
 import { FontSettingsControl } from "@/components/font-settings";
 import { HandControl } from "@/components/hand-control";
-import { HandsFreeControl } from "@/components/hands-free-control";
+import { SentSuggestionsControl } from "@/components/sent-suggestions-control";
+import { SpeechControl } from "@/components/speech-control";
 import { HapticsControl } from "@/components/haptics-control";
 import { HarnessBarControl } from "@/components/harness-bar-control";
+import { HarnessPrefsControl } from "@/components/harness-prefs-control";
 import { LowPowerControl } from "@/components/low-power-control";
 import { LanguageControl } from "@/components/language-control";
 import { NotifyPrefsControl } from "@/components/notify-prefs-control";
@@ -23,6 +25,7 @@ import { PairedDevices } from "@/components/paired-devices";
 import { PushControl, usePushAvailability } from "@/components/push-control";
 import { SnoozeControl } from "@/components/snooze-control";
 import { ThemeControl } from "@/components/theme-control";
+import { ThemePickerControl } from "@/components/theme-picker-control";
 import { CompactionsControl } from "@/components/compactions-control";
 import { ToolCallsControl } from "@/components/tool-calls-control";
 import { TypefaceControl } from "@/components/typeface-control";
@@ -30,7 +33,10 @@ import { UpdatesSettingsCard } from "@/components/updates-settings-card";
 import { ZenControl } from "@/components/zen-control";
 import { useServerDiagnostics } from "@/hooks/use-server-diagnostics";
 import { EMPTY_DEVICES, type DevicesData } from "@/lib/loaders";
+import { settingsSectionPath } from "@/lib/nav";
 import { useOptionalRootData } from "@/lib/route-data";
+import { useScope } from "@/lib/session";
+import { FORK_THEMES_ON } from "@/lib/fork-shape";
 
 // ── THE SETTINGS SECTIONS ───────────────────────────────────────────────────────────────────────
 //
@@ -52,8 +58,14 @@ import { useOptionalRootData } from "@/lib/route-data";
 // ── THE SPLIT ────────────────────────────────────────────────────────────────
 // Appearance — how this phone PRESENTS itself. Anything you would change to make the app look
 //              different, including what the mirror renders with.
+// Harnesses  — what Chat lifts out of each harness's own screen, per harness. The status line is
+//              the first member; it sits after Appearance because it decides what the screen shows.
 // Device     — how this phone TREATS you. Feedback, input, and what the pane menu is allowed to
 //              offer. Nothing here changes a pixel until you do something.
+// Voice      — how your voice becomes text: a hub with this phone's own choice and hands-free, and
+//              two pages below it, Host speech (the host's option, for every device) and Whistle
+//              model (its copies). Its row is never hidden; a host that offers nothing gets a page
+//              that says so.
 // Alerts     — when Collie speaks up, on this device and bridge-wide.
 // System     — what this thing is talking to, and whether it is well. Diagnostics and access.
 // Experiments— what is not finished. The odd one out: it is the only section that can be absent,
@@ -67,7 +79,12 @@ import { useOptionalRootData } from "@/lib/route-data";
 export function SettingsAppearanceRoute() {
   return (
     <SettingsPage title="settings.section.appearance.title">
-      {/* The one people come here for, so it is first on the page they land on for it. */}
+      {/* Which theme, then which half of it: the picker sits directly above the three-way (System,
+          Light, Dark) because the two are one question asked twice, and a person who finds one
+          should find the other. First on the page, because it is the one people come here for.
+          FORK: no theme picker, import or export on this install (lib/fork-shape.ts FORK_THEMES_ON):
+          the look is the fork's redesign, and the three-way below is first again. */}
+      {FORK_THEMES_ON && <ThemePickerControl />}
       <ThemeControl />
       {/* Beside appearance because both are "how this phone presents itself". */}
       <LanguageControl />
@@ -97,19 +114,32 @@ export function SettingsAppearanceRoute() {
   );
 }
 
+export function SettingsHarnessesRoute() {
+  return (
+    <SettingsPage title="settings.section.harnesses.title">
+      {/* One card, one row per harness the web has an adapter for, Claude Code first. Its own page
+          rather than a card on Appearance: the rows are per HARNESS, a list that grows with every
+          adapter, and Appearance is a handful of cards about the phone. Each switch is a standing
+          per-device choice about what Chat lifts out of that harness's screen. */}
+      <HarnessPrefsControl />
+    </SettingsPage>
+  );
+}
+
 export function SettingsDeviceRoute() {
   return (
     <SettingsPage title="settings.section.device.title">
       {/* Renders nothing where vibrate is unsupported. */}
       <HapticsControl />
-      {/* Renders nothing where no provider is configured or the browser cannot record. */}
-      <HandsFreeControl />
       {/* AVAILABILITY ONLY. This row does not turn zen on — it decides whether the pane's actions
           sheet offers the "Zen mode" row at all. Off by default, because zen takes away every way
           back except one floating button. */}
       <ZenControl />
       {/* FORK: Low power — the poll cadence, per device. Same family as the rows above. */}
       <LowPowerControl />
+      {/* Whether a shell pane offers lines from Sent above its box as you type (M61). A standing choice
+          about this phone's composer, stored with the display prefs. */}
+      <SentSuggestionsControl />
       {/* How a pane's Changes view finds repos (ADR 0065). Read by the pane menu, not by here. */}
       <ChangesControl />
       {/* FORK: NO FIRST-RUN ROW HERE (2026-09-20). Upstream ends this page with "show the first
@@ -123,6 +153,37 @@ export function SettingsDeviceRoute() {
       {/* What this phone keeps of each pane's Chat, and for how long (M46 spec 09). Here, beside the
           Changes search, because it is a standing decision about the device, not about a look. */}
       <KeepChatControl />
+    </SettingsPage>
+  );
+}
+
+export function SettingsVoiceRoute() {
+  return (
+    <SettingsPage title="settings.section.voice.title">
+      {/* The hub (ADR 0096, ADR 0097): what happens when the mic is pressed, this phone's own choice,
+          one row for the host's option with a way in, hands-free, and one row for the model. Says why
+          it is empty on a host that offers nothing, since the index row is never hidden. */}
+      <SpeechControl page="hub" />
+    </SettingsPage>
+  );
+}
+
+/** Settings → Voice → Host speech: the host's five options, for every device on it. */
+export function SettingsVoiceHostRoute() {
+  const scope = useScope();
+  return (
+    <SettingsPage title="settings.voice.hostPage.title" parent={settingsSectionPath("voice", scope)}>
+      <SpeechControl page="host" />
+    </SettingsPage>
+  );
+}
+
+/** Settings → Voice → Whistle model: the model's credit and its two copies, on the host and on this phone. */
+export function SettingsVoiceModelRoute() {
+  const scope = useScope();
+  return (
+    <SettingsPage title="settings.voice.model.title" parent={settingsSectionPath("voice", scope)}>
+      <SpeechControl page="model" />
     </SettingsPage>
   );
 }

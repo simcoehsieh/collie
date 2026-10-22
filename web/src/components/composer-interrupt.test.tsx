@@ -5,10 +5,21 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/setup";
 import { clearStatus, useStatus } from "@/lib/status";
+import type { Surface } from "@/lib/surface/surface";
 import { Composer } from "./composer";
 import { BottomSheet } from "./ui/sheet";
 
 type Props = ComponentProps<typeof Composer>;
+
+// Since upstream 1.22 the composer reads the pane's Surface (M56 spec 06) instead of a dialog flag:
+// a free box, and a modal ask that owns the keyboard (the old `dialogPresent: true`).
+const FREE: Surface = { revision: 1, turn: "idle", modal: "none", composer: "empty" };
+const ASK: Surface = {
+  revision: 2,
+  turn: "idle",
+  modal: { ask: { id: "ask-menu", kind: "menu", options: [{ id: "1", label: "Yes" }], channel: "keys", hash: "0a1b2c" } },
+  composer: "unknown",
+};
 
 function rig(overrides: Partial<Props> = {}) {
   let update: (next: Partial<Props>) => void = () => { throw new Error("Rig not mounted"); };
@@ -16,10 +27,10 @@ function rig(overrides: Partial<Props> = {}) {
     const actionStatus = useStatus();
     const [props, setProps] = useState<Props>({
       paneId: "w1:p1", agent: "claude", isShell: false, status: "working", gone: false,
-      readOnly: false, dialogPresent: false, text: "working", terminalDraft: null,
+      readOnly: false, surface: FREE, text: "working", terminalDraft: null,
       rawTerminalDraft: null,
       prefs: { wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system",
-        rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {} },
+        rawTerminal: false, tapToFocus: true, expandClippedReply: true, controlsOpen: true, paneView: {}, stretchText: false },
       display: { open: false, onToggle: vi.fn() }, onSent: vi.fn(), ...overrides,
     });
     update = (next) => act(() => setProps((current) => ({ ...current, ...next })));
@@ -80,7 +91,7 @@ describe("Composer — deliberate interrupt without a recall", () => {
   it.each([
     { agent: "agy" }, { agent: "antigravity" }, { agent: undefined, isShell: true },
     { agent: "claude", isShell: true }, { status: "idle" as const },
-    { status: "blocked" as const }, { dialogPresent: true }, { readOnly: true }, { gone: true },
+    { status: "blocked" as const }, { surface: ASK }, { readOnly: true }, { gone: true },
   ])("does not offer interrupt for %j", (props) => {
     rig(props);
     expect(screen.queryByRole("button", { name: "Interrupt agent" })).toBeNull();
@@ -88,13 +99,13 @@ describe("Composer — deliberate interrupt without a recall", () => {
   });
 
   it.each([
-    { paneId: "w1:p2" }, { scope: { host: "other" } }, { dialogPresent: true },
+    { paneId: "w1:p2" }, { scope: { host: "other" } }, { surface: ASK },
     { display: { open: true, onToggle: vi.fn() } }, { status: "idle" as const },
   ])("disarms when the pane or interaction changes: %j", async (next) => {
     const view = rig();
     fireEvent.click(screen.getByRole("button", { name: "Interrupt agent" }));
     view.update(next);
-    view.update({ dialogPresent: false, status: "working", display: { open: false, onToggle: vi.fn() } });
+    view.update({ surface: FREE, status: "working", display: { open: false, onToggle: vi.fn() } });
     // The second physical press after switching must only arm the new pane, never send Esc.
     await act(async () => fireEvent.click(screen.getByRole("button", { name: /^(Interrupt agent|Tap again to interrupt)$/ })));
     expect(keys).toEqual([]);

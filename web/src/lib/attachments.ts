@@ -134,6 +134,18 @@ export function markerFor(attachment: Pick<MarkedAttachment, "n" | "kind">): str
 }
 
 /**
+ * The number the next chip takes: `next`, or one past the highest marker number already in `text`
+ * when that is higher. A marker can stand in the text with no chip behind it (text copied from
+ * another pane, or typed), and a new chip that reused its number would make it a twin: Send swaps
+ * every copy of a chip's marker for its path, so the photo went in twice (minibuch, 2026-10-14).
+ */
+export function nextMarkerNumber(text: string, next: number): number {
+  let highest = 0;
+  for (const m of text.matchAll(/\[(?:Image|File) #(\d+)\]/g)) highest = Math.max(highest, Number(m[1]));
+  return Math.max(next, highest + 1);
+}
+
+/**
  * Put a marker into the draft at `caret` (the end when there is none), padded so it never welds to
  * a word: a space before it unless the text there already ends in whitespace, and a space after it
  * unless the text there already starts with some. Returns the new text and where the caret goes,
@@ -187,7 +199,7 @@ export function markerMissing(
  * is lost by accident, and the chip says so before Send ({@link markerMissing}). A marker-looking
  * string with no chip behind it is left exactly as typed.
  */
-export function composeLine(text: string, attachments: readonly MarkedAttachment[]): string {
+export function composeLine(text: string, attachments: readonly MarkedAttachment[], keepLeading = false): string {
   let line = text;
   const orphans: string[] = [];
   for (const attachment of attachments) {
@@ -197,7 +209,10 @@ export function composeLine(text: string, attachments: readonly MarkedAttachment
     }
     line = line.split(markerFor(attachment)).join(attachment.path);
   }
-  const words = line.trim();
+  // A shell line may start with a space or a tab: that is how a person keeps it out of Sent (M61), so
+  // the bridge must see it. Only when no chip path stands in front of it, and only the end is cut.
+  const words = keepLeading && orphans.length === 0 ? line.trimEnd() : line.trim();
+  if (keepLeading && orphans.length === 0 && words.trim() === "") return "";
   return [...orphans, ...(words === "" ? [] : [words])].join(" ");
 }
 

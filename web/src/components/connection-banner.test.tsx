@@ -53,6 +53,7 @@ let rerenderBanner: () => void = () => {};
 function renderBanner(
   props: {
     bridge?: "connected" | "disconnected";
+    muxFault?: "token-refused";
     error?: boolean;
     authError?: boolean;
     lastSeenAt?: number;
@@ -64,6 +65,7 @@ function renderBanner(
     return (
       <ConnectionBanner
         bridge={props.bridge ?? "disconnected"}
+        muxFault={props.muxFault}
         error={props.error ?? false}
         authError={props.authError ?? false}
         lastSeenAt={props.lastSeenAt}
@@ -180,7 +182,8 @@ describe("ConnectionBanner — the single connection surface", () => {
     setOnline(false);
     renderBanner();
     await act(async () => {});
-    expect(screen.getByText("Offline — can't reach Collie")).toBeInTheDocument();
+    // Upstream 1.22 took the em dash out of its own sentences; either spelling is this case.
+    expect(screen.getByText(/^Offline(,| —) can't reach Collie$/)).toBeInTheDocument();
     expect(row()?.className).toMatch(/bg-status-blocked/); // offline is always red
   });
 
@@ -244,7 +247,7 @@ describe("ConnectionBanner — the single connection surface", () => {
     setOnline(true);
     renderBanner({ error: true, lastSeenAt: new Date(2026, 0, 2, 14, 32).getTime() });
     await act(async () => {});
-    expect(announced("alert")).toHaveTextContent(/Can't reach Collie through the tunnel — last seen \d/);
+    expect(announced("alert")).toHaveTextContent(/Can't reach Collie through the tunnel(\.| —) [Ll]ast seen \d/);
   });
 
   it("leaves the red row undated when nothing can date it", async () => {
@@ -252,7 +255,33 @@ describe("ConnectionBanner — the single connection surface", () => {
     cfg.reachable = false;
     renderBanner({ error: true });
     await act(async () => {});
-    expect(announced("alert")).not.toHaveTextContent(/last seen/);
+    expect(announced("alert")).not.toHaveTextContent(/last seen/i);
+  });
+
+  // Upstream 1.23 (M50 spec 14), drawn in the fork's banner: a durable program that refused this
+  // machine's token. Waiting does not cure it, so amber names it at once instead of "Reconnecting…",
+  // and red keeps the same sentence rather than the probe's cause.
+  it("names a refused token in amber and in red, and never says Reconnecting or Herdr for it", async () => {
+    const TOKEN = "The durable agent refused the token. Check COLLIE_DURABLE_TOKEN on this peer.";
+    h.trouble = true;
+    renderBanner({ muxFault: "token-refused" });
+    expect(announced("status")).toHaveTextContent(TOKEN);
+    expect(row()?.className).toMatch(/bg-status-working/);
+    h.lost = true;
+    cfg.reachable = true;
+    act(() => rerenderBanner());
+    await act(async () => {});
+    expect(announced("alert")).toHaveTextContent(TOKEN);
+    expect(announced("alert")).not.toHaveTextContent("Herdr is down");
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+  });
+
+  it("does not name a refused token on a failed read, where the cached mux status proves nothing", async () => {
+    h.lost = true;
+    cfg.reachable = false;
+    renderBanner({ muxFault: "token-refused", error: true });
+    await act(async () => {});
+    expect(announced("alert")).not.toHaveTextContent("refused the token");
   });
 
   it("Retry re-probes the bridge", async () => {

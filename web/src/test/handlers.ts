@@ -5,24 +5,30 @@ import type {
   CacheRuleWire,
   ChangeCommitDiffResponse,
   ChangeCommitResponse,
+  ChatEntry,
   CreateResponse,
   FileEntry,
   FileReadResponse,
   FilesListResponse,
   CrewStatusResponse,
   MachineAlerts,
+  PaneChatResponse,
   PaneChangeDiffResponse,
   PaneChangesResponse,
   ServerSummary,
   SessionSummary,
   SnapshotResponse,
   TabView,
+  ToolQuestion,
   TranscriptEntry,
+  TranscriptPart,
   WorkspaceView,
 } from "@/lib/types";
-import { asJsonString, parseJsonObject } from "@/lib/json";
+import { asJsonObject, asJsonString, parseJsonObject, type JsonObject } from "@/lib/json";
+import type { Surface } from "@/lib/surface/surface";
 
 import { censusFor, fixtureMachinesSolo, historyFor } from "./machine-fixtures";
+import type { WalkyReceipt, WalkyRow, WalkySendBody } from "@/lib/walky";
 
 // A couple of fixture agents covering the triage groups, reused across tests.
 export const fixtureAgents: AgentView[] = [
@@ -36,6 +42,8 @@ export const fixtureAgents: AgentView[] = [
     status: "blocked",
     cwd: "/home/you/webapp",
     focused: false,
+    // The bridge runs the Send Protocol for every terminal pane (on by default since M56 spec 06).
+    sendProtocol: true,
   },
   {
     paneId: "w2:p1",
@@ -47,6 +55,7 @@ export const fixtureAgents: AgentView[] = [
     status: "working",
     cwd: "/home/you/collie",
     focused: true,
+    sendProtocol: true,
   },
 ];
 
@@ -62,6 +71,7 @@ export const fixtureShellPanes: AgentView[] = [
     cwd: "/home/you/collie",
     focused: false,
     kind: "shell",
+    sendProtocol: true,
   },
 ];
 
@@ -153,6 +163,7 @@ export const fixtureCrewAgents: AgentView[] = [
     cwd: "/home/you/moonward",
     focused: false,
     host: "workshop",
+    sendProtocol: true,
   },
 ];
 
@@ -322,6 +333,64 @@ export const fixtureTranscript: TranscriptEntry[] = [
   },
 ];
 
+/** Ask histories used by the Chat browser cases alongside real terminal captures. */
+function ompAskChat(summary: string, questions: readonly ToolQuestion[]): PaneChatResponse {
+  const part: TranscriptPart = {
+    kind: "tool",
+    name: "ask",
+    summary,
+    id: "omp-ask-1",
+    call: { kind: "question", name: "ask", summary, questions },
+  };
+  const turn: ChatEntry = {
+    uuid: "omp-ask-turn",
+    ts: "2026-10-13T09:00:00.000Z",
+    role: "assistant",
+    seq: 1_000_000,
+    parts: [part],
+  };
+  return {
+    paneId: fixtureAgents[0]!.paneId,
+    available: true,
+    page: "live",
+    gen: 1,
+    rev: 1,
+    head: turn.seq,
+    oldest: turn.seq,
+    hasOlder: false,
+    upserts: [turn],
+  };
+}
+
+export const fixtureOmpAskSingleChat = ompAskChat("Pick a colour", [
+  {
+    question: "Pick a colour",
+    multiple: false,
+    options: [{ label: "Red" }, { label: "Blue" }, { label: "Other (type your own)" }],
+  },
+]);
+
+export const fixtureOmpAskBatchChat = ompAskChat("Where should the note go?", [
+  {
+    header: "Location",
+    question: "Where should the note go?",
+    multiple: false,
+    options: [{ label: "Above" }, { label: "Below" }, { label: "Separate" }, { label: "Other (type your own)" }],
+  },
+  {
+    header: "Alternative",
+    question: "Which alternative should we keep?",
+    multiple: false,
+    options: [{ label: "Above" }, { label: "Below" }, { label: "Separate" }, { label: "Other (type your own)" }],
+  },
+  {
+    header: "Confirm",
+    question: "Confirm this plan?",
+    multiple: false,
+    options: [{ label: "Above" }, { label: "Below" }, { label: "Separate" }, { label: "Other (type your own)" }],
+  },
+]);
+
 /**
  * A journal image reference in the ONE shape `imageSrc` accepts: a blob path on the owning collie,
  * `/api/blobs/<64 hex>` (`lib/api.ts` § BLOB_REF). Anything else is refused there and renders as no
@@ -379,6 +448,179 @@ const BOX_RULE = "─".repeat(40);
  */
 export function paneTextWithDraft(base = "hello from the pane"): string {
   return `${base}\n${BOX_RULE}\n❯ ${typedDraft}\n${BOX_RULE}`;
+}
+
+// ── The fake bridge's Send Protocol (M56 spec 06) ────────────────────────────────────────────────
+// Every text the composer sends is one request to `POST /api/send` (a pane on this machine) or to the
+// pane's reply route with an `id` (a pane on a crew member, which answers under `send`). The fake
+// records each request and answers `sent` unless a test answers otherwise with `sendHandler`.
+
+/** One request the fake bridge took, with the machine it was for when the pane is on a member. */
+export interface SentRequest {
+  id: string;
+  pane: string;
+  text: string;
+  mode: string;
+  rowsHash?: string;
+  /** The person's extra confirm after the cap's notice (M56 spec 09). */
+  capAck?: boolean;
+  /** A resend of an ended held row (M56 spec 15): the old request id; the text is empty. */
+  resendOf?: string;
+  host?: string;
+}
+let sends: SentRequest[] = [];
+/** The Send Protocol requests the fake bridge took in this test, oldest first. */
+export function recordedSends(): readonly SentRequest[] {
+  return sends;
+}
+/** Reset between tests (msw.ts afterEach). */
+export function resetSends(): void {
+  sends = [];
+}
+
+/** The parts of an answer a test names; everything else is a plain receipt. */
+export interface SendAnswerParts {
+  readonly offers?: readonly string[];
+  readonly rowsHash?: string;
+  readonly surface?: Surface;
+  readonly detail?: string;
+  /** The cap's answer (M56 spec 09): the count, the limit, the harness and its version. */
+  readonly cap?: { readonly count: number; readonly limit: number; readonly harness: string; readonly version: string };
+  /** The receipt's `queued`: the send went in while the turn ran and waits for its end. */
+  readonly queued?: boolean;
+}
+
+/** An answer body the way the bridge writes one: a receipt with the outcome and reason, then the offers. */
+export function sendAnswer(id: string, outcome: string | null, reason?: string, parts: SendAnswerParts = {}): JsonObject {
+  const body: JsonObject = { offers: [...(parts.offers ?? [])] };
+  if (outcome !== null) {
+    const receipt: JsonObject = reason === undefined ? { requestId: id, outcome, keys: [] } : { requestId: id, outcome, reason, keys: [] };
+    if (parts.queued === true) receipt.queued = true;
+    body.receipt = receipt;
+  }
+  if (parts.rowsHash !== undefined) body.rowsHash = parts.rowsHash;
+  if (parts.surface !== undefined) body.surface = parseJsonObject(JSON.stringify(parts.surface)) ?? {};
+  if (parts.detail !== undefined) body.detail = parts.detail;
+  if (parts.cap !== undefined) body.cap = { ...parts.cap };
+  return body;
+}
+
+function sentRequest(body: JsonObject | undefined, pane: string, host: string | null): SentRequest {
+  const rowsHash = asJsonString(body?.rowsHash);
+  const request: SentRequest = {
+    id: asJsonString(body?.id) ?? "",
+    pane,
+    text: asJsonString(body?.text) ?? "",
+    mode: asJsonString(body?.mode) ?? "send",
+  };
+  if (rowsHash !== undefined) request.rowsHash = rowsHash;
+  if (body?.capAck === true) request.capAck = true;
+  const resendOf = asJsonString(body?.resendOf);
+  if (resendOf !== undefined) request.resendOf = resendOf;
+  if (host !== null) request.host = host;
+  return request;
+}
+
+/**
+ * Answer every Send Protocol request with `answer` (this machine and crew members alike), recording
+ * each one. Use with `server.use(...)`.
+ */
+export function sendHandler(answer: (request: SentRequest) => JsonObject) {
+  return [
+    http.post("/api/send", async ({ request }) => {
+      const body = parseJsonObject(await request.text());
+      const sent = sentRequest(body, asJsonString(body?.pane) ?? "", null);
+      sends.push(sent);
+      return HttpResponse.json(answer(sent));
+    }),
+    http.post(/\/api\/pane\/[^/]+\/reply/, async ({ request }) => {
+      const url = new URL(request.url);
+      const body = parseJsonObject(await request.text());
+      // The old reply shape (no request id) is the dialog-note and prompt paths: keep the fake pane honest.
+      if (asJsonString(body?.id) === undefined) {
+        recordReply({ text: asJsonString(body?.text) ?? "", submit: body?.submit === true });
+        return HttpResponse.json({ ok: true });
+      }
+      const pane = decodeURIComponent(url.pathname.split("/")[3] ?? "");
+      const sent = sentRequest(body, pane, url.searchParams.get("host"));
+      sends.push(sent);
+      const send = answer(sent);
+      const receipt = asJsonObject(send.receipt);
+      const ok = receipt === undefined || receipt.outcome === "sent" || receipt.outcome === "effective" || receipt.outcome === "discarded";
+      return HttpResponse.json({ ok, send });
+    }),
+  ];
+}
+
+// ── The fake bridge's walky talky (M62) ─────────────────────────────────────────────────────────
+// `GET /api/pane/:id/walky` answers the rows a test set with `setWalkyRows` (none by default), and
+// `POST /api/walky` records each body and answers an accepted receipt per target, one for `all`.
+
+/** An agent message to this pane, held and verified by its lead: the card's happy path. */
+export const fixtureWalkyAgent: WalkyRow = {
+  v: 1,
+  id: "wt_k3f9x2m8q1a0",
+  kind: "agent",
+  from: { memberId: "bluefin", address: "bluefin/w6:p3", harness: "claude", label: "collie-workspace#fix-465" },
+  to: "bluefin/w1:p1",
+  replyTo: null,
+  at: Date.parse("2026-10-17T09:30:00Z"),
+  body: "Tests are green on fix-465. You can merge.",
+  signer: "bluefin",
+  signature: "c2ln",
+  receipt: { id: "wt_k3f9x2m8q1a0", state: "delivered", verified: "origin", at: Date.parse("2026-10-17T09:30:02Z"), by: "bluefin", target: "bluefin/w1:p1" },
+};
+
+/** An operator message from a paired phone, a reply to the agent's, written locally. */
+export const fixtureWalkyOperator: WalkyRow = {
+  v: 1,
+  id: "wt_p0q9r8s7t6u5",
+  kind: "operator",
+  from: { memberId: "bluefin", address: null, harness: null, label: "phone-altan" },
+  to: "bluefin/w1:p1",
+  replyTo: "wt_k3f9x2m8q1a0",
+  at: Date.parse("2026-10-17T09:31:00Z"),
+  body: "Stop and report what you changed.",
+  signer: null,
+  signature: null,
+  receipt: { id: "wt_p0q9r8s7t6u5", state: "inbox-only", reason: "dialog open", verified: "local", at: Date.parse("2026-10-17T09:31:01Z"), by: "solo", target: "bluefin/w1:p1" },
+};
+
+/** The address of the pane the walky fixtures belong to: the target of the two rows above, the sender of the one below. */
+export const fixtureWalkySelf = "bluefin/w1:p1";
+
+/** A message THIS pane sent to another agent pane (the list holds sent rows too), with its receipt. */
+export const fixtureWalkySent: WalkyRow = {
+  v: 1,
+  id: "wt_s3ntaaaa0001",
+  kind: "agent",
+  from: { memberId: "bluefin", address: "bluefin/w1:p1", harness: "claude", label: "collie-workspace#this-pane" },
+  to: "bluefin/w6:p3#k3f9",
+  replyTo: null,
+  at: Date.parse("2026-10-17T09:32:00Z"),
+  body: "Merged. Thanks.",
+  signer: "bluefin",
+  signature: "c2ln",
+  receipt: { id: "wt_s3ntaaaa0001", state: "delivered", verified: "local", at: Date.parse("2026-10-17T09:32:02Z"), by: "bluefin", target: "bluefin/w6:p3" },
+};
+
+let walkyRows: WalkyRow[] = [];
+let walkyPosts: WalkySendBody[] = [];
+/** The rows `GET /api/pane/:id/walky` answers with, newest first. */
+export function setWalkyRows(rows: readonly WalkyRow[]): void {
+  walkyRows = [...rows];
+}
+/** The `POST /api/walky` bodies the fake bridge took in this test, oldest first. */
+export function recordedWalkyPosts(): readonly WalkySendBody[] {
+  return walkyPosts;
+}
+/** Reset between tests (msw.ts afterEach). */
+export function resetWalky(): void {
+  walkyRows = [];
+  walkyPosts = [];
+}
+function walkyReceipt(id: string, to: string): WalkyReceipt {
+  return { id, state: "accepted", verified: "local", at: Date.now(), by: to.split("/")[0] ?? "solo", target: to };
 }
 
 // Default happy-path handlers; individual tests can override via server.use(...).
@@ -692,6 +934,29 @@ export function fixtureFileImage(path: string): Uint8Array | null {
 }
 
 export const handlers = [
+  // The session page's recent sends (M56 spec 09): none, unless a test says otherwise.
+  http.get("/api/send/receipts", () => HttpResponse.json({ receipts: [] })),
+  http.get(/\/api\/pane\/[^/]+\/walky/, () => HttpResponse.json({ messages: walkyRows })),
+  http.post("/api/walky", async ({ request }) => {
+    const body = parseJsonObject(await request.text());
+    const posted: WalkySendBody = {
+      id: asJsonString(body?.id) ?? "",
+      to: asJsonString(body?.to) ?? "",
+      body: asJsonString(body?.body) ?? "",
+    };
+    const replyTo = asJsonString(body?.replyTo);
+    if (replyTo !== undefined) posted.replyTo = replyTo;
+    walkyPosts.push(posted);
+    if (posted.to === "all") {
+      return HttpResponse.json({ receipts: ["bluefin/w1:p1", "minibuch/w2:p1"].map((to) => walkyReceipt(posted.id, to)) });
+    }
+    if (posted.to.endsWith("/all")) {
+      return HttpResponse.json({ receipts: [walkyReceipt(posted.id, `${posted.to.slice(0, -4)}/w1:p1`)] });
+    }
+    return HttpResponse.json({ receipt: walkyReceipt(posted.id, posted.to) });
+  }),
+  // No agents, no shell panes, no refusals; a test that needs more overrides it with server.use(...).
+  http.get("/api/walky/who", () => HttpResponse.json({ targets: [], skipped: [], refusals: null })),
   http.get("/api/snapshot", () => HttpResponse.json(fixtureSnapshot)),
   // FORK: the cold-boot bundle answers 404 by default — i.e. "a bridge without the route", which is
   // the fallback path every other suite in this tree should be exercising. A suite that wants the
@@ -719,6 +984,9 @@ export const handlers = [
       files: [],
       truncated: false,
     }),
+  ),
+  http.get(/\/api\/pane\/[^/]+\/subagent\/[^/]+$/, () =>
+    HttpResponse.json({ paneId: "w1:p1", agentId: "a000000", available: false }),
   ),
   // The Changes view: the list, or with ?repo=&path= one file's diff. Asked by pane or by
   // workspace, the answer is the same list (ADR 0065).
@@ -787,10 +1055,9 @@ export const handlers = [
       upserts: fixtureTranscript.map((e, i) => Object.assign({}, e, { seq: FIXTURE_SEQ_BASE + i })),
     }),
   ),
-  http.post<never, { text?: string; submit?: boolean }>(/\/api\/pane\/[^/]+\/reply$/, async ({ request }) => {
-    recordReply(await request.json());
-    return HttpResponse.json({ ok: true });
-  }),
+  // Every text from the composer: one Send Protocol request, answered `sent`. The reply route's old
+  // shape (dialog notes, prompt fields) keeps the fake pane's input line honest, as before.
+  ...sendHandler((request) => sendAnswer(request.id, "sent")),
   http.post(/\/api\/pane\/[^/]+\/keys$/, () => HttpResponse.json({ ok: true })),
   http.post(/\/api\/pane\/[^/]+\/close$/, () => HttpResponse.json({ ok: true })),
   http.post(/\/api\/pane\/[^/]+\/rename$/, () => HttpResponse.json({ ok: true })),

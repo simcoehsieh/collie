@@ -13,8 +13,16 @@ import { snoozeUpdate } from "@/lib/api";
 import { timeAgoShort } from "@/lib/format";
 import { useOptionalRootData } from "@/lib/route-data";
 import { openUpdateMode, type UpdateAsk } from "@/lib/update-ask";
-import { noteSnapshotCrew, noteSnapshotRun, readUpdateState, useUpdateRun } from "@/lib/update-run-store";
+import {
+  holdReadRetry,
+  noteSnapshotCrew,
+  noteSnapshotRun,
+  readUpdateState,
+  retryUpdateRead,
+  useUpdateRun,
+} from "@/lib/update-run-store";
 import { noteUpdateRun } from "@/lib/self-update";
+import { leadPieces, notesView, type NotesView } from "@/lib/update-notes";
 import {
   crewAction,
   crewActionLabel,
@@ -124,7 +132,7 @@ export function UpdateCard() {
   // carry (it shells out to git and to `doctor`; paying that on every snapshot poll for a card nobody
   // has opened is the wrong trade). The store also reconciles the standby door's copy of the run,
   // which is the one reader that still answers while the front door restarts.
-  const { check, checked, run } = useUpdateRun();
+  const { check, checked, readFailed, run } = useUpdateRun();
   // THIS DEVICE'S CLAIM ON AN UPDATE, which update mode stamps when "Start update" is accepted. The
   // card goes inert on it for the beat before the first run record, when `running` is still false and
   // a second tap would ask the bridge twice (the bridge refuses with `update.in_progress` anyway).
@@ -150,7 +158,12 @@ export function UpdateCard() {
   // THE URGENT MARKER (ADR 0046), or null. Read exactly as every other field on this card is read:
   // off the snapshot first, off the card's own check second, and never re-derived here.
   const urgent = snapshot?.urgent ?? check?.urgent ?? null;
+  // WHAT THE RELEASES CHANGED (1.21.1). Off the card's own check only: the snapshot never carries
+  // notes. The offer's notes while one is waiting, the running version's otherwise.
+  const notes = notesView(check?.releaseNotes, releaseAvailable);
   const preflight = check?.preflight ?? null;
+  // The build a rollback would go back to, off the preflight only (M60 spec 01), or null.
+  const rollback = preflight?.rollback ?? null;
   const runState = run?.state;
   const running = runInFlight(run);
   // Nothing on this card may be tapped while an update is being asked for, started, or driven.
@@ -227,6 +240,31 @@ export function UpdateCard() {
     return () => ac.abort();
   }, [settled]);
 
+  // EXCEPT WHEN THE HELD ANSWER IS UNUSABLE AT OPEN. The store reads once per document, so a read
+  // that failed or carried no preflight (a bridge mid-restart right after an update) would otherwise
+  // keep this button disabled until the app is reloaded; opening the card is the moment to ask again.
+  const unusableAtOpen = useRef(checked && preflight === null);
+  useEffect(() => {
+    if (!unusableAtOpen.current) return;
+    const ac = new AbortController();
+    void readUpdateState(ac.signal);
+    return () => ac.abort();
+  }, []);
+
+  // A READ THAT FAILED IS ASKED AGAIN WHILE THIS CARD IS OPEN (issue 400). The store owns the
+  // schedule and the no-overlap rule; the card only says it is here, and the store stops when it
+  // leaves.
+  useEffect(() => holdReadRetry(), []);
+  const [retrying, setRetrying] = useState(false);
+  async function retryRead() {
+    setRetrying(true);
+    try {
+      await retryUpdateRead(true);
+    } finally {
+      setRetrying(false);
+    }
+  }
+
   // THE SNAPSHOT'S OWN COPY, HANDED TO THE STORE. `routes/root.tsx` publishes it too, and that is the
   // one that matters in the app — this card is a route away and may not be mounted at all. It is
   // published here as well so a card mounted WITHOUT that root (the playground, a unit test) still
@@ -275,6 +313,11 @@ export function UpdateCard() {
   // machine that also happens to be packaged. Checking packageManaged first would bury that fault
   // under a sentence about a boundary that is working exactly as designed, on every visit, until the
   // real problem is found some other way.
+  // THE READ FAILED, WHICH IS NOT THE PREFLIGHT FAILING (issue 400). With no answer held, a timeout
+  // or a dropped connection used to print "the preflight couldn't be run on this machine", a claim
+  // about this machine from a card that never heard from it. The button stays disabled all the same,
+  // because nothing has cleared the update; the line names the real reason and carries the retry.
+  const unreachable = readFailed && preflight === null && !packageManaged;
   const blockedReason =
     redCheck !== undefined
       ? redCheck.reason
@@ -469,7 +512,17 @@ export function UpdateCard() {
                 during the restart gap the preflight read fails BECAUSE the bridge is down, so
                 printing "the preflight couldn't be run" there draws the outage this card exists
                 not to draw. */}
-            {blocked && !moving && <p className="text-xs text-status-blocked">{blockedReason}</p>}
+            {blocked && !moving && unreachable && (
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs text-status-blocked">{t("settings.updateCard.bridgeUnreachable")}</p>
+                <Button variant="ghost" size="sm" disabled={retrying} onClick={() => void retryRead()}>
+                  {t("settings.updateCard.retry")}
+                </Button>
+              </div>
+            )}
+            {blocked && !moving && !unreachable && (
+              <p className="text-xs text-status-blocked">{blockedReason}</p>
+            )}
             {dismissed && <p className="text-xs text-muted-foreground">{t("settings.updateCard.dismissed")}</p>}
             {majorAvailable !== null && (
               <p className="text-xs text-muted-foreground">
@@ -478,6 +531,35 @@ export function UpdateCard() {
             )}
           </div>
       )}
+
+      {/* ROLL BACK (M60 spec 01). Offered only when the preflight names a build kept on disk, which is
+          the bridge's one answer to "is there a previous build"; absent on a checkout that advances
+          in place, a packaged install and a first install. NOT gated on a red preflight: going back is
+          exactly what a machine in trouble may need. It opens update mode at "Ready to start" like
+          every other action here, and that screen's start is the confirm. Async like the sections
+          below, so it arrives in a `Collapse` under the action row and never moves the button. */}
+      {/* FORK: updates here are maintainer-managed (lib/fork-shape.ts MAINTAINER_MANAGED_UPDATES), so
+          the phone offers no Roll back, as it offers no Update. */}
+      <Collapse open={!MAINTAINER_MANAGED_UPDATES && rollback !== null && !packageManaged}>
+        {!MAINTAINER_MANAGED_UPDATES && rollback !== null && !packageManaged ? (
+          <div className="flex flex-col gap-1.5 border-t border-border px-4 py-3">
+            <div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={moving}
+                onClick={() =>
+                  openUpdateMode({ kind: "rollback", version: rollback.to, major: false, peersOnly: false, current: rollback.from })
+                }
+              >
+                <RotateCcw className="size-4" />
+                {t("settings.updateCard.rollback.action", { version: rollback.to })}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">{t("settings.updateCard.rollback.note", { version: rollback.to })}</p>
+          </div>
+        ) : null}
+      </Collapse>
 
       {/* EVERY ARRIVAL ON THIS CARD IS A `Collapse` (DESIGN.md §7, hard rule 1). The three sections
           below are all async: the run record lands on a poll, and the peer lines and the preflight
@@ -530,6 +612,10 @@ export function UpdateCard() {
         ) : null}
       </Collapse>
 
+      {/* WHAT THE RELEASES CHANGED (1.21.1). Async like the sections above it, so it arrives in a
+          `Collapse` below the action row and never moves the button. */}
+      <Collapse open={notes !== null}>{notes !== null ? <NotesSection notes={notes} /> : null}</Collapse>
+
       {/* The preflight in full, under the row its one-line summary already reports into. */}
       <Collapse open={preflight !== null && preflight.checks.length > 0}>
         {preflight !== null && preflight.checks.length > 0 ? (
@@ -548,6 +634,81 @@ export function UpdateCard() {
  * that check already resolved, and its absence costs a command and nothing else.
  */
 const PACKAGE_CHECK_ID = "package";
+
+/**
+ * The release notes: each bullet's bold lead, under its group, per release. The leads are the
+ * release's own English and are quoted, not translated, like the urgent sentence above. The group
+ * names and the heading are this app's words and are translated. Open by default: the operator came
+ * to this page to read what an update brings, or what the one just taken changed.
+ */
+function NotesSection({ notes }: { notes: NotesView }) {
+  const [open, setOpen] = useState(true);
+  const several = notes.entries.length > 1;
+  const label =
+    notes.kind === "offered"
+      ? t("settings.updateCard.notes.offered", { version: notes.version })
+      : t("settings.updateCard.notes.current", { version: notes.version });
+  return (
+    <div className="border-t border-border px-4 py-3">
+      <SectionHeader label={label} level={3} open={open} onToggle={setOpen} controls="update-notes-body" />
+      <Collapse open={open}>
+        <div id="update-notes-body" className="mt-1.5 space-y-3">
+          {notes.entries.map((entry) => (
+            <section key={entry.version} aria-label={several ? entry.version : undefined} className="space-y-2">
+              {several && <p className="text-xs font-medium">{entry.version}</p>}
+              {entry.groups.map((group) => (
+                <div key={group.name}>
+                  <p className="text-xs text-muted-foreground">{groupName(group.name)}</p>
+                  <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-xs">
+                    {group.leads.map((lead, i) => (
+                      <li key={`${group.name}-${i}`}>
+                        {leadPieces(lead).map((piece, j) =>
+                          piece.code ? (
+                            <code key={j} className="font-mono">
+                              {piece.text}
+                            </code>
+                          ) : (
+                            <span key={j}>{piece.text}</span>
+                          ),
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              <a
+                href={entry.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-block text-xs text-muted-foreground underline underline-offset-2"
+              >
+                {t("settings.updateCard.notes.page")}
+              </a>
+            </section>
+          ))}
+        </div>
+      </Collapse>
+    </div>
+  );
+}
+
+/** A CHANGELOG group's name in this locale. A name this build does not know is shown as sent. */
+function groupName(name: string): string {
+  switch (name) {
+    case "Added":
+      return t("settings.updateCard.notes.group.Added");
+    case "Changed":
+      return t("settings.updateCard.notes.group.Changed");
+    case "Fixed":
+      return t("settings.updateCard.notes.group.Fixed");
+    case "Packaging":
+      return t("settings.updateCard.notes.group.Packaging");
+    case "Docs":
+      return t("settings.updateCard.notes.group.Docs");
+    default:
+      return name;
+  }
+}
 
 /**
  * The peer lines. Read-only by construction: this function renders no interactive element at all,
@@ -759,6 +920,13 @@ function RunSection({ run, onRetry }: { run: UpdateRun; onRetry?: () => void }) 
   const version = run.to ?? run.from ?? "";
   const still = run.from ?? "";
   const now = useTick(inFlight);
+  // A ROLLBACK RUN (M60 spec 01) says so, and offers no Retry: Retry opens an UPDATE to `run.to`,
+  // which on a rollback is the older build. The Roll back row above is the way to try again.
+  const rollback = run.action === "rollback";
+  // AN EDGE BUILD THAT FAILED ITS CHECK (ADR 0110): the runner rejected it, so no line offers it
+  // again, and a Retry would ask for a build the updater now refuses. Only an update's failure: a
+  // rollback or a switch that fails left no new build behind.
+  const failedEdge = run.action === undefined && run.state === "rolled-back" && EDGE_BUILD.test((run.to ?? "").replace(/^v/, ""));
   // Off the run's OWN start stamp, which the host wrote, so the number is the run's age and not this
   // tab's age. A phone opened mid-run joins the count where the run actually is.
   const elapsed = run.startedAt > 0 ? Math.max(0, now - run.startedAt) : null;
@@ -779,7 +947,7 @@ function RunSection({ run, onRetry }: { run: UpdateRun; onRetry?: () => void }) 
         role="status"
       >
         {inFlight && <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" />}
-        <span className="min-w-0">{stateLine(run, version, still, restartOver)}</span>
+        <span className="min-w-0">{rollback ? rollbackLine(run, version, still, restartOver) : stateLine(run, version, still, restartOver)}</span>
       </div>
 
       {/* PROOF OF LIFE, and the cheapest there is (M20/08). Four sentences over several minutes said
@@ -825,7 +993,13 @@ function RunSection({ run, onRetry }: { run: UpdateRun; onRetry?: () => void }) 
         </details>
       )}
 
-      {onRetry !== undefined && (run.state === "rolled-back" || run.state === "interrupted") && (
+      {failedEdge && (
+        <p className="mt-2 text-sm text-muted-foreground">
+          {t("settings.updateCard.edgeRejected", { version: (run.to ?? "").replace(/^v/, "") })}
+        </p>
+      )}
+
+      {onRetry !== undefined && !rollback && !failedEdge && (run.state === "rolled-back" || run.state === "interrupted") && (
         <Button variant="outline" size="sm" className="mt-3" onClick={onRetry}>
           <RotateCcw className="size-4" />
           {t("settings.updateCard.retry")}
@@ -834,6 +1008,9 @@ function RunSection({ run, onRetry }: { run: UpdateRun; onRetry?: () => void }) 
     </div>
   );
 }
+
+/** An Edge build's version: `1.23.0-edge.2` (ADR 0110). */
+const EDGE_BUILD = /-edge\.\d+$/;
 
 /** `m:ss`, ticking. Monospaced digits at the call site, so the row does not jitter every second. */
 function clockOf(ms: number): string {
@@ -867,6 +1044,20 @@ function stateLine(run: UpdateRun, version: string, still: string, restartOver =
       return t("settings.updateCard.state.interrupted");
     case "idle":
       return "";
+  }
+}
+
+/** A rollback run's sentence (M60 spec 01): its own where an update's would be wrong, else the update's. */
+function rollbackLine(run: UpdateRun, version: string, still: string, restartOver: boolean): string {
+  switch (run.state) {
+    case "staging":
+      return t("settings.updateCard.state.rollbackStaging", { version });
+    case "done":
+      return t("settings.updateCard.state.rollbackDone", { version });
+    case "rolled-back":
+      return t("settings.updateCard.state.rollbackRolledBack", { version: still });
+    default:
+      return stateLine(run, version, still, restartOver);
   }
 }
 

@@ -1,6 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+
+import { server } from "@/test/setup";
 
 import { PreviewPanel } from "./preview-panel";
 
@@ -20,7 +23,7 @@ describe("PreviewPanel", () => {
   it("frames the page from Collie's own origin, sandboxed with nothing granted", async () => {
     render(<PreviewPanel open onClose={vi.fn()} paneId={PANE} path={PATH} />);
     const frame = await screen.findByTitle("report.html");
-    expect(frame.getAttribute("src")).toContain(
+    expect(frame.getAttribute("data-src")).toContain(
       `/api/preview/file?pane=${encodeURIComponent(PANE)}&path=${encodeURIComponent(PATH)}`,
     );
     // Exactly `""` — not "some tokens", not "no allow-scripts". Any token at all is a decision that
@@ -39,10 +42,14 @@ describe("PreviewPanel", () => {
 
   it("Reload re-fetches by remounting the frame — the only lever a parent has on an opaque origin", async () => {
     const user = userEvent.setup();
+    let reads = 0;
+    server.use(http.get("/api/preview/file", () => (reads++, new HttpResponse("<p>page</p>", { headers: { "content-type": "text/html" } }))));
     render(<PreviewPanel open onClose={vi.fn()} paneId={PANE} path={PATH} />);
-    const before = (await screen.findByTitle("report.html")).getAttribute("src");
+    await waitFor(() => expect(screen.getByTitle("report.html")).toHaveAttribute("data-phase", "ready"));
+    const settled = reads;
+    expect(settled).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Reload" }));
-    expect(screen.getByTitle("report.html").getAttribute("src")).not.toBe(before);
+    await waitFor(() => expect(reads).toBe(settled + 1));
   });
 
   it("the width toggle sets the FRAME's width, because that is what a media query reads", async () => {
@@ -65,7 +72,8 @@ describe("PreviewPanel", () => {
     vi.stubGlobal("open", open);
     render(<PreviewPanel open onClose={vi.fn()} paneId={PANE} path={PATH} />);
     await user.click(screen.getByRole("button", { name: "Open in browser" }));
-    expect(open).toHaveBeenCalledWith(expect.stringContaining("/api/preview/file?pane="), "_blank", "noopener,noreferrer");
+    // FORK: the tab opens inside the tap and is pointed at the page once the token-carrying read lands.
+    expect(open).toHaveBeenCalledWith("", "_blank");
     vi.unstubAllGlobals();
   });
 

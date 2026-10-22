@@ -34,13 +34,16 @@
 // asked about for {@link WINDOW_IDLE_MS} is dropped whole. That is the rule `use-polling.ts` already
 // follows on the other side of the wire, restated on this one.
 
+import { createHash, randomBytes } from "node:crypto";
+
 import type { Cursor } from "./cursor.ts";
 import { NO_CURSOR } from "./cursor.ts";
 import type { RowReducer } from "./reduce.ts";
 import type { TranscriptStore } from "./store.ts";
 import type { AgentSessionRef, JournalAdapter, TranscriptEntry } from "./types.ts";
+import { LIVE_TURNS, MAX_PAGE_ROWS, pageStart } from "./turns.ts";
 import { redactText } from "../redact.ts";
-import { redactEntry } from "./text.ts";
+import { clamp, redactEntry } from "./text.ts";
 
 /**
  * How many bytes of composed turns one window holds. Roughly, and deliberately so — the weight of an
@@ -87,11 +90,26 @@ export const WINDOW_IDLE_MS = 120_000;
  */
 export const MAX_WINDOWS = 8;
 
-/** Turns in a first answer, when the client holds no cursor. */
+/**
+ * The fewest rows in a first answer, when the client holds no cursor. A page reaches back over the
+ * last {@link LIVE_TURNS} prompts, and never holds fewer rows than this.
+ */
 export const DEFAULT_CHAT_LIMIT = 40;
+
+// A page is counted in turns, with `DEFAULT_CHAT_LIMIT` as its floor in rows (journal/turns.ts).
+export { LIVE_TURNS, MAX_PAGE_ROWS };
 
 /** Ceiling for `?limit=`. Past this a first paint is not a first paint, it is a History page. */
 export const MAX_CHAT_LIMIT = 200;
+
+/**
+ * How much of the operator's newest prompt {@link ChatWindowBody.lastPrompt} carries.
+ *
+ * The phone shows two lines of it pinned above the thread. A pasted log can be a prompt of a hundred
+ * kilobytes, and every answer carries this field whole, so the cap is what keeps one paste from
+ * riding every poll.
+ */
+export const LAST_PROMPT_MAX_CHARS = 1000;
 
 /**
  * Where `seq` numbering starts.
@@ -119,6 +137,14 @@ export interface ChatWindowBody {
   page: "live";
   /** Which numbering. A different one from the one you hold means replace, never merge. */
   gen: number;
+  /**
+   * Which SESSION, as an opaque tag ({@link sessionTag}). It changes when the pane's agent starts
+   * another session (pi's `/new`, a Claude log handed over), and a client holding another one drops
+   * what it holds for the pane, older pages included (#526). `gen` alone cannot say this: it also
+   * moves when one session's window rebuilds. Never the path itself: the browser is not handed
+   * filesystem layout (`PaneWire` in bridge/types.ts).
+   */
+  session: string;
   /** When. Send it back as `?after=<gen>:<rev>` and the next answer is what moved since. */
   rev: number;
   /** The newest `seq` held. Below `oldest` when the window is empty, which is the honest reading. */
@@ -162,6 +188,58 @@ export interface ChatWindowBody {
    * (`chatBodyForMux` in server.ts): tmux and zellij send `ctrl+Enter` as a plain Enter.
    */
   sendQueuedNow?: string[];
+  /**
+   * The operator's newest prompt the window knows, so the phone can say which question the reply on
+   * screen answers even when that question sits above the screenful a first paint sends. A long run
+   * of tool calls fills `limit`, so the prompt that started it is routinely outside it.
+   *
+   * STATE, like {@link queued}, and WHOLE on every answer: it moves when a prompt lands, is rewound
+   * away, or a lookup behind the front finishes; otherwise a poll serialises to the same bytes and
+   * stays a 304. A field rather than a widened first
+   * page because ADR 0073 sized a first paint at a screenful, and walking back to the prompt would make
+   * every first paint a History page.
+   *
+   * Only `user` turns count. A `note` is a prompt the agent sent itself (a `/loop` wake-up, another
+   * session's message), and drawing it as the operator's question is the thing #306 kept out of
+   * History. ABSENT when the window holds no such turn, and from a bridge one release behind; the
+   * phone reads both as "not known" and offers to load older turns instead.
+   */
+  lastPrompt?: ChatPrompt;
+}
+
+/** The operator's newest prompt, as {@link ChatWindowBody.lastPrompt} carries it. */
+export interface ChatPrompt {
+  /** The turn's own uuid, so a client can tell whether it already holds the full turn. */
+  uuid: string;
+  ts: string;
+  /** Its text parts joined, capped at {@link LAST_PROMPT_MAX_CHARS}. */
+  text: string;
+  truncated?: boolean;
+}
+
+/**
+ * This turn as a prompt, or null when it is not one the operator wrote.
+ *
+ * A turn the agent rewound past is not part of the conversation, and a `user` turn with no text is
+ * not a prompt: Claude files a tool result under `user`, and a window that opens mid-run starts with
+ * exactly such orphans. A picture alone has nothing to pin either.
+ */
+function promptOf(entry: TranscriptEntry): ChatPrompt | null {
+  if (entry.role !== "user" || entry.abandoned === true) return null;
+  const said = entry.parts
+    .flatMap((part) => (part.kind === "text" && part.text.trim() !== "" ? [part.text.trim()] : []))
+    .join("\n\n");
+  if (said === "") return null;
+  return { uuid: entry.uuid, ts: entry.ts, ...clamp(said, LAST_PROMPT_MAX_CHARS) };
+}
+
+/** The newest prompt among these turns, walking from the tail, so the common case ends in a few. */
+function newestPrompt<T>(items: readonly T[], entryOf: (item: T) => TranscriptEntry): ChatPrompt | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const prompt = promptOf(entryOf(items[i]!));
+    if (prompt !== null) return prompt;
+  }
+  return null;
 }
 
 /**
@@ -175,6 +253,8 @@ export interface ChatWindowBody {
 export interface ChatOlderBody {
   page: "older";
   gen: number;
+  /** The session the page was read from, as {@link ChatWindowBody.session} names it. */
+  session: string;
   /** Oldest first, the turns immediately before the one asked about. */
   upserts: ChatEntry[];
   /** Turns exist before `upserts[0]` too. */
@@ -192,7 +272,11 @@ export type ChatBody = ChatWindowBody | ChatOlderBody;
 export function redactChatBody(body: ChatBody): ChatBody {
   const upserts = body.upserts.map(redactEntry);
   if (body.page === "older") return { ...body, upserts };
-  return { ...body, upserts, queued: body.queued.map(redactText) };
+  const masked: ChatWindowBody = { ...body, upserts, queued: body.queued.map(redactText) };
+  if (body.lastPrompt !== undefined) {
+    masked.lastPrompt = { ...body.lastPrompt, text: redactText(body.lastPrompt.text) };
+  }
+  return masked;
 }
 
 /** `?after=<gen>:<rev>`, read off the query. */
@@ -288,6 +372,20 @@ function nextGen(): number {
   return lastGen;
 }
 
+/** Salt for {@link sessionTag}: fresh per process, so a tag is no stable hash of a path. */
+const SESSION_SALT = randomBytes(16);
+
+/**
+ * The opaque name of one session as the wire carries it: a salted hash of the window's key.
+ *
+ * The key is a path for every file harness, and the browser is never handed a path. A hash keeps the
+ * one thing the phone needs, "is this the session I hold", and nothing else. The salt changes with
+ * the process, which costs nothing: a restart changes every `gen` anyway, so the phone replaces.
+ */
+export function sessionTag(key: string): string {
+  return createHash("sha256").update(SESSION_SALT).update(key).digest("base64url").slice(0, 16);
+}
+
 /** One turn held live. Mutable, because a tool result edits the turn its call went out in. */
 interface LiveRow {
   readonly seq: number;
@@ -349,18 +447,28 @@ class LiveWindow {
   private fromStart = false;
   /** This generation has thrown a turn off its front. Once true it stays true. */
   private trimmed = false;
+  /**
+   * The newest prompt behind the window's front, looked up once per generation when the window holds
+   * none (see {@link LiveWindows.window}). `prompt` is null while the lookup runs and when it found
+   * nothing. Older turns do not change, so one answer holds for the whole generation.
+   */
+  private behind: { gen: number; prompt: ChatPrompt | null } | null = null;
   /** Whether a read has ever run. The floor below has nothing to measure against until it has. */
   private ticked = false;
   private lastTickAt = 0;
   private lastSeen: { size: number; mtimeMs: number } | null = null;
   /** When a reader last asked. The idle rule's whole input. */
   askedAt: number;
+  /** This window's session on the wire ({@link sessionTag}). Fixed: one window is one key. */
+  readonly session: string;
 
   constructor(
     private readonly adapter: JournalAdapter,
     private readonly now: () => number,
+    key: string,
   ) {
     this.askedAt = now();
+    this.session = sessionTag(key);
   }
 
   /**
@@ -376,6 +484,14 @@ class LiveWindow {
     this.ticked = true;
     this.lastTickAt = now;
     const seen = await this.adapter.source.stat(key);
+    // No log at this key yet, and nothing read from it: a session the harness named before writing
+    // its first row (pi after `/new`, #526, reached through `TranscriptSource.pending`). It is an
+    // empty session from its start, so nothing is older. When the file appears, the cursor is still
+    // the empty one, so that read resets into a generation of its own and the rows flow.
+    if (seen === null && this.cursor === NO_CURSOR) {
+      this.fromStart = true;
+      return;
+    }
     if (
       seen !== null &&
       this.lastSeen !== null &&
@@ -409,6 +525,7 @@ class LiveWindow {
     this.trimmed = false;
     this.fromStart = fromStart;
     this.reducer = null;
+    this.behind = null;
   }
 
   /**
@@ -489,17 +606,19 @@ class LiveWindow {
    * from what it holds, which is the wrong end. The window is already bounded, so there is nothing
    * left for a second cap to protect.
    *
-   * A reader holding nothing, or another generation, gets the newest `limit` turns instead. That is a
-   * first paint, and a first paint is a screenful.
+   * A reader holding nothing, or another generation, gets the last {@link LIVE_TURNS} prompts and
+   * everything after each instead, held to `limit` rows at least and {@link MAX_PAGE_ROWS} at most
+   * (`journal/turns.ts`). That is a first paint.
    */
   body(after: ChatAfter | null, limit: number): ChatWindowBody {
     const rows =
       after !== null && after.gen === this.gen
         ? this.rows.filter((row) => row.rev > after.rev)
-        : this.rows.slice(-limit);
+        : this.rows.slice(pageStart(this.rows.length, limit, (i) => this.rows[i]!.entry));
     const body: ChatWindowBody = {
       page: "live",
       gen: this.gen,
+      session: this.session,
       rev: this.rev,
       // `nextSeq - 1` rather than the last row's seq, so an empty window answers `head < oldest`
       // instead of claiming a position it does not hold.
@@ -513,12 +632,35 @@ class LiveWindow {
     };
     // Added only when declared, so every other harness's body is byte-identical to before.
     if (this.adapter.sendQueuedNow !== undefined) body.sendQueuedNow = [...this.adapter.sendQueuedNow];
+    // Over every row the window holds, not the `limit` sent: the point is the prompt the first paint
+    // left out. A window that opened mid-run holds none, and then the one looked up behind its front
+    // stands in, until a prompt the window does hold replaces it.
+    const prompt = newestPrompt(this.rows, (row) => row.entry) ?? this.behind?.prompt ?? null;
+    if (prompt !== null) body.lastPrompt = prompt;
     return body;
   }
 
   /** This generation, for a `?before=` page that must land in the same numbering. */
   generation(): number {
     return this.gen;
+  }
+
+  /**
+   * Whether the newest prompt has to be looked up behind the window's front: the window holds none,
+   * older turns exist, and this generation has not asked yet. Asking marks it, so a session costs
+   * at most one lookup per generation however many readers poll it.
+   */
+  claimLookup(): number | null {
+    if (this.behind?.gen === this.gen) return null;
+    if (!(this.trimmed || !this.fromStart)) return null;
+    if (newestPrompt(this.rows, (row) => row.entry) !== null) return null;
+    this.behind = { gen: this.gen, prompt: null };
+    return this.gen;
+  }
+
+  /** The lookup's answer, kept only if the generation it was asked for is still this one. */
+  settleLookup(gen: number, prompt: ChatPrompt | null): void {
+    if (gen === this.gen) this.behind = { gen, prompt };
   }
 }
 
@@ -544,16 +686,33 @@ export class LiveWindows {
    * Null for every reason a client may not distinguish, exactly as `TranscriptStore.page` answers:
    * the ref names nothing, the adapter refused its shape, or the path failed containment. Those stay
    * indistinguishable on purpose — a containment failure must not be probeable.
+   *
+   * One exception, and it is not "no log": a ref whose log the harness has not written YET, at a
+   * place the adapter can confine now (`TranscriptSource.pending`, pi only). That window answers an
+   * empty session from its start under the new session's tag, and the same window starts reading
+   * when the file appears, because `resolve` then answers the same key (#526).
    */
   async window(
     adapter: JournalAdapter,
     ref: AgentSessionRef,
     params: ChatParams,
   ): Promise<ChatWindowBody | null> {
-    const key = await adapter.source.resolve(ref);
+    const key = (await adapter.source.resolve(ref)) ?? (await adapter.source.pending?.(ref)) ?? null;
     if (key === null) return null;
     const window = this.reach(key, adapter);
     await window.tick(key);
+    // The window opened mid-run (its first read is a 2 MB tail, and a long tool run fills that with
+    // no prompt in it): look the prompt up in the History read, once per generation and WITHOUT
+    // holding this answer for it. The next poll carries what it found. That read is the one a
+    // "load older" tap or the History page already makes, and it is paid only by a window that
+    // holds no prompt at all, never by an ordinary poll.
+    const gen = window.claimLookup();
+    if (gen !== null) {
+      void this.store.cached(adapter, ref).then(
+        (found) => window.settleLookup(gen, found === null ? null : newestPrompt(found.entries, (e) => e)),
+        () => window.settleLookup(gen, null),
+      );
+    }
     return window.body(params.after ?? null, params.limit);
   }
 
@@ -578,7 +737,7 @@ export class LiveWindows {
     const key = await adapter.source.resolve(ref);
     if (key === null) return null;
     const window = this.reach(key, adapter);
-    const page = await this.store.page(adapter, ref, { limit, before: before.uuid });
+    const page = await this.store.page(adapter, ref, { limit, before: before.uuid, turns: true });
     if (page === null) return null;
     // Numbered from the END of the page backwards, so the newest turn in it sits immediately before
     // the one the client named. A short page (the log's own start) therefore begins higher, which is
@@ -587,6 +746,7 @@ export class LiveWindows {
     return {
       page: "older",
       gen: window.generation(),
+      session: window.session,
       upserts: page.entries.map((entry, i) => chatEntry(entry, first + i)),
       hasOlder: page.hasMore,
     };
@@ -617,7 +777,7 @@ export class LiveWindows {
       this.windows.set(key, found);
       return found;
     }
-    const made = new LiveWindow(adapter, this.now);
+    const made = new LiveWindow(adapter, this.now, key);
     this.windows.set(key, made);
     while (this.windows.size > MAX_WINDOWS) {
       const oldest = this.windows.keys().next().value;

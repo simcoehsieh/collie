@@ -51,6 +51,11 @@ export interface PaneViewControl {
   onChange: (view: PaneView) => void;
   /** Why THIS pane keeps the terminal, when it must. Set means Chat cannot be chosen here. */
   note?: string;
+  /**
+   * False on a pane with no screen: Chat is its only view, so the View switch is not drawn at all
+   * (ADR 0099 point 9). Absent reads as true, a pane with a terminal to switch to.
+   */
+  terminalOffered?: boolean;
   /** Whether the stream draws the agent's tool calls. Settings → Appearance writes the same value. */
   showToolCalls: boolean;
   setShowToolCalls: (on: boolean) => void;
@@ -75,6 +80,7 @@ interface DisplayPrefsContentProps {
    *  override rather than pinning it, so a later change to that answer is still followed. */
   setMirrorNative: (native: boolean) => void;
   setExpandClippedReply: (expandClippedReply: boolean) => void;
+  setStretchText: (stretchText: boolean) => void;
   /** The body switch and the Chat rows. Absent while the experiment is off. */
   paneView?: PaneViewControl;
 }
@@ -210,15 +216,33 @@ export function DisplayPrefsContent({
   mirrorNative,
   setMirrorNative,
   setExpandClippedReply,
+  setStretchText,
   paneView,
 }: DisplayPrefsContentProps) {
   useLocale();
   // What is on screen, not what was chosen: a pane with no journal holds `chat` and draws the
   // terminal, and the rows must answer for the terminal it is actually drawing.
   const chat = paneView?.showing === "chat";
+  // Both bodies draw agent replies (the Chat stream, and the Full reply card over the mirror), so
+  // this one row answers for either.
+  const stretchTextRow = (
+    <Row
+      label={t("settings.display.stretchText.label")}
+      hint={t("settings.display.stretchText.hint")}
+      htmlFor="pref-stretch-text"
+      control={
+        <Switch
+          id="pref-stretch-text"
+          checked={prefs.stretchText}
+          onCheckedChange={setStretchText}
+          aria-label={t("settings.display.stretchText.label")}
+        />
+      }
+    />
+  );
   return (
-    <div className="divide-y divide-border">
-      {paneView && <ViewRow view={paneView} />}
+    <div data-slot="list-group">
+      {paneView && paneView.terminalOffered !== false && <ViewRow view={paneView} />}
       {chat && paneView ? (
         <>
           <TextSizeRow
@@ -253,6 +277,7 @@ export function DisplayPrefsContent({
               />
             }
           />
+          {stretchTextRow}
         </>
       ) : (
         <>
@@ -296,6 +321,7 @@ export function DisplayPrefsContent({
               />
             }
           />
+          {stretchTextRow}
           <Row
             label={t("settings.display.rawTerminal.label")}
             hint={t("settings.display.rawTerminal.hint")}

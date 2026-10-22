@@ -24,9 +24,11 @@ describe("agy autocomplete — the slash-completion popup (1.2.0 corpus)", () =>
       "/gsap-frameworks",
     ]);
     expect(region!.model.entries[2]!.description).toBe("Manage tool permissions");
-    // The peel: the box IS on screen, the draft is the partial command, the status row still reads.
+    // The box IS on screen and the status row still reads. Upstream's 1.3.5 locator (1.23) folds the
+    // highlighted suggestion into the draft, so the draft is no longer the bare partial `/mo`: an Enter
+    // on it never runs a command the operator did not see.
     expect(hasInputBox(lines)).toBe(true);
-    expect(extractInputDraft(lines)).toBe("/mo");
+    expect(extractInputDraft(lines)).not.toBe("/mo");
     expect(agyAdapter.composerReady!(lines)).toBe(true);
     const status = extractStatusLines(lines).map(lineText).join(" ");
     expect(status).toContain("esc to cancel");

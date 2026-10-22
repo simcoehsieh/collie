@@ -10,21 +10,24 @@ import {
 import {
   LEAD_CONFLICT,
   CREW_MUX_FIELD,
+  CREW_SESSIONS_FIELD,
+  CREW_SURFACE_FIELD,
   CREW_PREFIX,
   PAIRING_LABEL_COLLISION,
   PREFLIGHT_FRESH,
   PREFLIGHT_HEADER,
 } from "./router.ts";
-import { LEAD_RELEASE_HEADER, UPDATE_TURN_HEADER } from "./follow.ts";
+import { LEAD_LINE_HEADER, LEAD_RELEASE_HEADER, UPDATE_TURN_HEADER } from "./follow.ts";
 import { DIAL_HEADER, SIGNATURE_HEADER, TIMESTAMP_HEADER, type DialParts } from "./signing.ts";
 import type { CrewRequestInit, CrewTlsOptions } from "./transport.ts";
 import type { Warrant } from "./trust-store.ts";
 import { NARROW_VIEW, SESSIONS_ALL, SESSIONS_PARAM, SESSION_PARAM, type SnapshotView } from "../sessions.ts";
-import type { MuxConfig } from "../types.ts";
+import type { MuxConfig, SessionCard, SessionState } from "../types.ts";
 import { parseCollisionReport, parsePairingReport, type PairingSync } from "./standby-devices.ts";
 import type { TakeoverBody } from "./takeover.ts";
 import { parseWarrant, parseWarrantActiveReport, type WarrantPush } from "./warrant.ts";
 import { CREW_VERSION_FIELD } from "../update-action.ts";
+import { WALKY_ACK_HEADER, WALKY_OUTCOMES_ROUTE } from "../walky/crew.ts";
 
 // The LEAD side of a crew link: the client that dials a peer's `/crew/v1/*` surface.
 //
@@ -45,14 +48,18 @@ import { CREW_VERSION_FIELD } from "../update-action.ts";
 //     peer-client.test.ts therefore exercises the real decision logic against a fake, not a socket.
 
 /**
- * §20's two request headers, as one value the sweep passes down. `null`/absent for either ⇒ that
- * header is simply not sent, which is the closed reading on the far end.
+ * The request headers the sweep passes down per member: §20's two, and §21's walky ack. `null`/absent
+ * for any ⇒ that header is simply not sent, which is the closed reading on the far end.
  */
 export interface FollowHeaders {
   /** The lead's own settled release (`X-Crew-Lead-Release`), or null while it may state nothing. */
   readonly leadRelease?: string | null;
+  /** The lead's line and step (`X-Crew-Lead-Line`, M60 spec 01), sent only beside the release. */
+  readonly leadLine?: string | null;
   /** `<member-name>;<run-id>` (`X-Crew-Update-Turn`), for the ONE member holding the turn. */
   readonly turn?: string | null;
+  /** The cursor of the last walky report this lead read from this member (`X-Crew-Walky-Ack`, §21). */
+  readonly walkyAck?: string | null;
 }
 
 /** How long a peer has to answer before the poll gives up on it, by default (§10.1). */
@@ -469,6 +476,17 @@ export interface HelloResult {
    * reads as `null`, which is the same "said nothing" the absent field carries.
    */
   readonly mux: MuxConfig | null;
+  /**
+   * That member's session cards (M55). Sent only by a machine that runs a durable program, and set
+   * here only when it was. **Absent means "the `mux` block answers for every session"**, the reading
+   * every lead had before. Parsed like {@link mux}: bounded, and a card that is not whole is left out.
+   */
+  readonly sessions?: readonly SessionCard[];
+  /**
+   * That member's Surface reader version (M56 spec 09). Set only when it sent a whole number. **Absent
+   * means "a build that computes no Surface"**, never version 0.
+   */
+  readonly surfaceVersion?: number;
 }
 
 export interface PeerClientDeps {
@@ -650,19 +668,23 @@ export class PeerClient {
     // than `snapshot` because it changes only when the far side's bridge restarts, and the snapshot
     // is polled every 1500 ms (§10.1).
     const mux = parseMuxReport(outcome.value);
-    return {
-      ...outcome,
-      value: {
-        protocol,
-        member,
-        version,
-        warrantGeneration,
-        warrantActiveGeneration,
-        pairingDigest,
-        pairingCollision,
-        mux,
-      },
+    // M55's optional cards, read the same absent-means-the-block's way.
+    const sessions = parseSessionCards(outcome.value);
+    // M56 spec 09's reader version, read the same absent-means-closed way as `version`.
+    const surfaceVersion = parseSurfaceVersion(outcome.value);
+    const value: HelloResult = {
+      protocol,
+      member,
+      version,
+      warrantGeneration,
+      warrantActiveGeneration,
+      pairingDigest,
+      pairingCollision,
+      mux,
     };
+    // Assigned only when sent, so a member that sends none reads exactly as it did before M55.
+    const withCards = sessions === null ? value : { ...value, sessions };
+    return { ...outcome, value: surfaceVersion === null ? withCards : { ...withCards, surfaceVersion } };
   }
 
   /**
@@ -757,8 +779,11 @@ export class PeerClient {
     // become a lead that polls more slowly.
     if (follow.leadRelease !== undefined && follow.leadRelease !== null) {
       headers[LEAD_RELEASE_HEADER] = follow.leadRelease;
+      if (follow.leadLine !== undefined && follow.leadLine !== null) headers[LEAD_LINE_HEADER] = follow.leadLine;
     }
     if (follow.turn !== undefined && follow.turn !== null) headers[UPDATE_TURN_HEADER] = follow.turn;
+    // §21's ack, on the same dial and for the same reason: the member drops what this lead has read.
+    if (follow.walkyAck !== undefined && follow.walkyAck !== null) headers[WALKY_ACK_HEADER] = follow.walkyAck;
     if (Object.keys(headers).length === 0) return this.json(link, "snapshot", params);
     return this.json(
       link,
@@ -766,6 +791,25 @@ export class PeerClient {
       params,
       { headers },
       freshPreflight ? this.deps.patientTimeoutMs : undefined,
+    );
+  }
+
+  /**
+   * `POST /crew/v1/walky/outcomes` — the lead hands a member the outcomes of the messages that member
+   * sent to other machines (§21, added 2026-10-18).
+   *
+   * A forwarded write in every way but the forward: the pinned handshake and the dial attestation,
+   * {@link WRITE_BUDGET_MS}, no §8.6 signature (lead → peer pins), and every status the member chose
+   * kept, because its 404 is the answer of a member before the push and not a broken link.
+   */
+  walkyOutcomes(link: CrewLink, payload: string): Promise<PeerOutcome<Response>> {
+    return this.proxy(
+      link,
+      WALKY_OUTCOMES_ROUTE,
+      undefined,
+      { method: "POST", headers: { "content-type": "application/json" }, body: payload },
+      WRITE_BUDGET_MS,
+      false,
     );
   }
 
@@ -812,6 +856,10 @@ export class PeerClient {
    * (§10.1). Absent — every forwarded read — is the poll budget plus a cold link's bootstrap credit,
    * exactly as before. `forward.ts` is the only caller that passes it, and it passes it on the same
    * read/write split §5 and §10.3 are already written in terms of.
+   *
+   * `sign` is false for every forward, whose body is a stream (§8.6). One caller passes true: a
+   * member's walky talky message to its lead (§21), whose body is a small JSON string and whose route
+   * is in the signed set, and which reads the lead's own status (a 404 is an older lead).
    */
   async proxy(
     link: CrewLink,
@@ -819,8 +867,9 @@ export class PeerClient {
     params?: Record<string, string>,
     init: CrewRequestInit = {},
     budgetMs?: number,
+    sign = false,
   ): Promise<PeerOutcome<Response>> {
-    return this.dial(link, route, params, init, "passthrough", budgetMs, false);
+    return this.dial(link, route, params, init, "passthrough", budgetMs, sign);
   }
 
   /**
@@ -1364,6 +1413,54 @@ export function parseMuxReport(value: JsonValue): MuxConfig | null {
     wire.topologyLatency = { kind: "bounded", ms: latency.ms };
   }
   return wire;
+}
+
+/**
+ * One member's Surface reader version off a `hello` answer, or `null` when it sent none (M56 spec 09).
+ * Only a positive safe integer counts; every other shape reads as "said nothing", which refuses no
+ * link and is never read as version 0.
+ */
+export function parseSurfaceVersion(value: JsonValue): number | null {
+  const version = asRecord(value)?.[CREW_SURFACE_FIELD];
+  return typeof version === "number" && Number.isSafeInteger(version) && version > 0 ? version : null;
+}
+
+/** The most session cards one member's hello may carry. */
+const SESSION_CARDS_MAX = 64;
+
+const SESSION_STATES: ReadonlySet<string> = new Set<SessionState>(["ready", "starting", "unreachable"]);
+
+/**
+ * One member's session cards off a `hello` answer, or `null` when it sent none (M55).
+ *
+ * Bounded and re-checked like {@link parseMuxReport}, because the lead republishes a card's answers on
+ * `/api/config?host=&session=`. A card missing a field, or with one of the wrong shape, is left out;
+ * unknown capability keys are kept, for `parseMuxReport`'s reason.
+ */
+export function parseSessionCards(value: JsonValue): SessionCard[] | null {
+  const list = asRecord(value)?.[CREW_SESSIONS_FIELD];
+  if (!Array.isArray(list)) return null;
+  const cards: SessionCard[] = [];
+  for (const raw of list.slice(0, SESSION_CARDS_MAX)) {
+    const card = asRecord(raw);
+    if (card === null) continue;
+    const { name, kind, mux, where, state, experimental } = card;
+    if (typeof name !== "string" || name === "" || name.length > MUX_NAME_MAX) continue;
+    if (kind !== "terminal" && kind !== "program") continue;
+    if (typeof mux !== "string" || mux === "" || mux.length > MUX_NAME_MAX) continue;
+    if (where !== "local" && where !== "remote") continue;
+    if (typeof state !== "string" || !SESSION_STATES.has(state)) continue;
+    if (typeof experimental !== "boolean") continue;
+    const declared = asRecord(card.caps);
+    if (declared === null) continue;
+    const caps: Record<string, boolean> = {};
+    for (const [key, answer] of Object.entries(declared).slice(0, MUX_ROWS_MAX)) {
+      if (typeof answer === "boolean") caps[key] = answer;
+    }
+    // SAFETY: `state` was checked against the three values of SessionState one line up.
+    cards.push({ name, kind, mux, caps, where, state: state as SessionState, experimental });
+  }
+  return cards;
 }
 
 /**

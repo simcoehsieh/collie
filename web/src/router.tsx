@@ -83,7 +83,11 @@ function settingsSection(
   return lazyRoute(() => import("@/routes/settings-sections").then((m) => ({ default: pick(m) })), <SettingsSkeleton />);
 }
 const settingsAppearanceRoute = settingsSection((m) => m.SettingsAppearanceRoute);
+const settingsHarnessesRoute = settingsSection((m) => m.SettingsHarnessesRoute);
 const settingsDeviceRoute = settingsSection((m) => m.SettingsDeviceRoute);
+const settingsVoiceRoute = settingsSection((m) => m.SettingsVoiceRoute);
+const settingsVoiceHostRoute = settingsSection((m) => m.SettingsVoiceHostRoute);
+const settingsVoiceModelRoute = settingsSection((m) => m.SettingsVoiceModelRoute);
 const settingsAlertsRoute = settingsSection((m) => m.SettingsAlertsRoute);
 const settingsExperimentsRoute = settingsSection((m) => m.SettingsExperimentsRoute);
 const settingsSystemRoute = settingsSection((m) => m.SettingsSystemRoute);
@@ -115,6 +119,16 @@ const artifactsRoute = lazyRoute(
 );
 const artifactRoute = lazyRoute(
   () => import("@/routes/artifact").then((m) => ({ default: m.ArtifactRoute })),
+  <HistorySkeleton />,
+);
+// FORK: upstream's durable conversation list and one conversation (1.23, M53 spec 11), on demand like
+// History: a list of things to read under a takeover header, so they borrow its skeleton.
+const conversationsRoute = lazyRoute(
+  () => import("@/routes/conversations").then((m) => ({ default: m.ConversationsRoute })),
+  <HistorySkeleton />,
+);
+const conversationRoute = lazyRoute(
+  () => import("@/routes/conversations").then((m) => ({ default: m.ConversationRoute })),
   <HistorySkeleton />,
 );
 const historyRoute = lazyRoute(
@@ -191,7 +205,12 @@ export const router = createBrowserRouter([
         element: settingsRoute,
       },
       { path: "settings/appearance", element: settingsAppearanceRoute },
+      { path: "settings/harnesses", element: settingsHarnessesRoute },
       { path: "settings/device", element: settingsDeviceRoute },
+      { path: "settings/voice", element: settingsVoiceRoute },
+      // Two pages below Voice: the host's option for every device, and the Whistle model's copies.
+      { path: "settings/voice/host", element: settingsVoiceHostRoute },
+      { path: "settings/voice/model", element: settingsVoiceModelRoute },
       { path: "settings/alerts", element: settingsAlertsRoute },
       // The fifth section. It is routable whether or not the index offers a row for it — a page
       // reachable only by URL is the ordinary case for a section that comes and goes, and it is
@@ -239,6 +258,11 @@ export const router = createBrowserRouter([
         // navigation; the view pages back through it with direct api calls.
         shouldRevalidate: () => false,
       },
+      // A durable program's own history (M53 spec 11): its list of conversations, and one of them read
+      // only. Neither has a loader. Each reads on open and on its Load more tap, so the poll loop's
+      // revalidate() fetches nothing for them; `shouldRevalidate` states the same opt-out as History's.
+      { path: "conversations", element: conversationsRoute, shouldRevalidate: () => false },
+      { path: "conversations/:id", element: conversationRoute, shouldRevalidate: () => false },
       {
         // The Changes view (ADR 0065). No loader: the view reads the list and an open file's diff
         // itself, on open, on its own 5 s beat while visible and on its refresh button, so the poll

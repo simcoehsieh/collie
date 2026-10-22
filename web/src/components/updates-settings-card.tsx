@@ -52,6 +52,9 @@ export function UpdatesSettingsCard() {
     return () => ac.abort();
   }, []);
 
+  // No root answer yet, or the last one failed: whatever `update` still names is a stale
+  // snapshot's, and rendering it would state a release (or "up to date") as current fact (#512).
+  const unknown = data === undefined || data.error;
   const update = data?.update;
   const runState = update?.run?.state;
   const running =
@@ -71,7 +74,7 @@ export function UpdatesSettingsCard() {
         <ArrowUpCircle className="size-5 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="font-medium">{t("updates.entry.title")}</div>
-          <p className="text-sm text-muted-foreground">{updatesStatusLine({ update, running, behind })}</p>
+          <p className="text-sm text-muted-foreground">{updatesStatusLine({ update, running, behind, unknown })}</p>
         </div>
         <ChevronRight aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
       </button>
@@ -80,7 +83,8 @@ export function UpdatesSettingsCard() {
 }
 
 /**
- * The row's status line, in the stated precedence.
+ * The row's status line, in the stated precedence. `unknown` outranks them all: a snapshot
+ * that never arrived, or a stale copy after a failed load, states no update fact at all (#512).
  *
  * The first two rows are this row's own: a run in flight, then a peer left behind. Past those the
  * precedence is {@link updateNotice}'s — the same pure function the footer chip used — so the row
@@ -95,7 +99,10 @@ export function updatesStatusLine(a: {
   update: UpdateInfo | undefined;
   running: boolean;
   behind: number;
+  /** The snapshot is absent or a failed load's stale copy: no fact below may be stated (#512). */
+  unknown?: boolean;
 }): string {
+  if (a.unknown) return t("updates.entry.status.unknown");
   if (a.running) return t("updates.entry.status.updating");
   if (MAINTAINER_MANAGED_UPDATES) {
     if (a.update?.run?.state === "rolled-back" || a.update?.run?.state === "stuck" || a.update?.run?.state === "interrupted") {

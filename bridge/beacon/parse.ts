@@ -20,11 +20,13 @@ import type { JsonObject, JsonValue } from "../json.ts";
 import type { AgentSessionRef } from "../journal/types.ts";
 import {
   BEACON_SCHEMA_VERSION,
+  EDGE_SCHEMA_VERSION,
   STATUS_LINE_MAX_CHARS,
   STATUS_LINE_SCHEMA_VERSION,
   type BeaconMarker,
   type BeaconRecord,
   type BeaconStatus,
+  type EdgeRecord,
   type StatusLineRecord,
 } from "./types.ts";
 
@@ -110,7 +112,7 @@ function readMarker(entry: JsonValue): BeaconMarker | null {
  * nest" bug this list exists to prevent. A record with no readable marker at all names no pane and is
  * rejected by the caller.
  */
-function readMarkers(value: JsonValue | undefined): BeaconMarker[] {
+export function readMarkers(value: JsonValue | undefined): BeaconMarker[] {
   if (!Array.isArray(value)) return [];
   const markers: BeaconMarker[] = [];
   for (const entry of value.slice(0, MAX_MARKERS)) {
@@ -211,4 +213,57 @@ export function parseStatusLine(text: string): StatusLineRecord | null {
   const writtenMs = readNumber(row, "writtenMs");
   if (writtenMs === null) return null;
   return { schemaVersion: STATUS_LINE_SCHEMA_VERSION, session, line, writtenMs };
+}
+
+/** A hook event name: letters, and inner dashes for a notify event (`agent-turn-complete`), short. */
+const EDGE_EVENT = /^[A-Za-z](?:[A-Za-z-]{0,62}[A-Za-z])?$/u;
+/** One detail of an event (a notification type): lower case and underscores, short. */
+const EDGE_DETAIL = /^[a-z_]{1,64}$/u;
+/** A harness name shaped like a registry key. */
+const EDGE_HARNESS = /^[a-z0-9][a-z0-9._-]{0,31}$/u;
+/** A SHA-256 in hex. */
+const PROMPT_HASH = /^[0-9a-f]{64}$/u;
+
+/**
+ * One edge file's text as a record, or null when it is not an edge this build can read (M56 spec 11).
+ * Total over garbage, like {@link parseBeacon}.
+ */
+export function parseEdge(text: string): EdgeRecord | null {
+  let decoded: JsonValue;
+  try {
+    decoded = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const row = readObject(decoded);
+  if (row === null) return null;
+  if (readInteger(row, "schemaVersion") !== EDGE_SCHEMA_VERSION) return null;
+  const harness = readText(row, "harness");
+  const event = readText(row, "event");
+  const detail = row.detail === null || row.detail === undefined ? null : readText(row, "detail");
+  const pid = readInteger(row, "pid");
+  const pidStartTime = readNumber(row, "pidStartTime");
+  const at = readNumber(row, "at");
+  const promptHash = row.promptHash === null || row.promptHash === undefined ? null : readText(row, "promptHash");
+  const markers = readMarkers(row.markers);
+  if (harness === null || !EDGE_HARNESS.test(harness) || event === null || !EDGE_EVENT.test(event)) return null;
+  if (detail !== null && !EDGE_DETAIL.test(detail)) return null;
+  if (row.detail !== null && row.detail !== undefined && detail === null) return null;
+  if (promptHash !== null && !PROMPT_HASH.test(promptHash)) return null;
+  if (row.promptHash !== null && row.promptHash !== undefined && promptHash === null) return null;
+  if (pid === null || pid === 0 || pidStartTime === null || at === null || markers.length === 0) return null;
+  const base: EdgeRecord = { schemaVersion: EDGE_SCHEMA_VERSION, harness, event, detail, pid, pidStartTime, markers, at, promptHash };
+  // The three fields of M56 spec 12, each optional: a field that is present but malformed drops it.
+  const holds = row.holds === true;
+  const tool = row.tool === undefined ? null : readText(row, "tool");
+  const agent = row.agent === undefined ? null : readText(row, "agent");
+  const shortText = /^[\x20-\x7e]{1,128}$/u;
+  // The three spec 12 fields stay absent when unset, so an older edge file reads as it did.
+  let record: EdgeRecord = base;
+  if (holds) record = { ...record, holds: true };
+  if (tool !== null && shortText.test(tool)) record = { ...record, tool };
+  if (agent !== null && shortText.test(agent)) record = { ...record, agent };
+  const inputHash = row.inputHash === undefined ? null : readText(row, "inputHash");
+  if (inputHash !== null && /^[0-9a-f]{1,64}$/u.test(inputHash)) record = { ...record, inputHash };
+  return record;
 }

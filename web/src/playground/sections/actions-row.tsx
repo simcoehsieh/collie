@@ -13,11 +13,15 @@
 //
 // DEV-ONLY, unreachable from the app entry.
 
-import { useEffect } from "react";
+import { Settings2 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { ActionsRow } from "@/components/actions-row";
 import { HarnessBarControl } from "@/components/harness-bar-control";
+import { HarnessPrefsControl } from "@/components/harness-prefs-control";
+import { DURABLE_BAR } from "@/lib/harness-bar";
 import { __resetHarnessBar } from "@/lib/harness-bar-pref";
+import { __resetHarnessPrefs } from "@/lib/harness-prefs";
 
 import { Card, Group, Section, type SectionDef } from "../layout";
 import { took, useRoomyActions } from "./shared";
@@ -34,12 +38,53 @@ function Roomy({ agent }: { agent: string | null }) {
   return <ActionsRow general={general} agent={agent} onRun={took} />;
 }
 
+/**
+ * A durable pane's belt: the real `ActionsRow` with the program's section, in a fixed state. The caps
+ * are not read here (they come from the bridge's `/api/config`); the rows are the table's own, which is
+ * what a program that declares `caps.steer` and `caps.abort` draws.
+ */
+function Durable({ working }: { working: boolean }) {
+  // A durable belt keeps what is not about a screen: the Display button, and nothing that types.
+  const [display, setDisplay] = useState(false);
+  const [steer, setSteer] = useState(false);
+  return (
+    <ActionsRow
+      general={[
+        {
+          id: "display",
+          icon: Settings2,
+          label: "Display settings",
+          word: "Display",
+          on: display,
+          expanded: display,
+          onSelect: () => setDisplay((was) => !was),
+        },
+      ]}
+      agent={undefined}
+      onRun={took}
+      durable={{
+        items: DURABLE_BAR,
+        state: {
+          steer: { pressed: steer, offered: working, onPressedChange: setSteer },
+          stop: { offered: working, busy: false, onStop: () => undefined },
+        },
+      }}
+    />
+  );
+}
+
 export function ActionsRowSection() {
   // The harness switch is ONE module store, so it cannot hold two values on one page: flipping it
   // off in the last card empties the harness section in every card above it too, which is exactly
   // what it does on a real phone. Reset on the way out so leaving this tab does not leave the rest
   // of the playground switched off.
-  useEffect(() => () => __resetHarnessBar(), []);
+  useEffect(
+    () => () => {
+      __resetHarnessBar();
+      __resetHarnessPrefs();
+    },
+    [],
+  );
 
   return (
     <Section def={DEF}>
@@ -95,6 +140,28 @@ export function ActionsRowSection() {
         </Card>
       </Group>
 
+      <Group title="A pane with no screen">
+        <Card
+          state="durable-idle"
+          label="durable, idle: Steer and Stop are in the belt, dimmed"
+          reach="open a conversation of a durable agent that declares caps.steer and caps.abort, with no turn running."
+          note="The durable agent's own section opens with its mark and holds Steer, then Stop, under the thumb edge. Nothing is running, so both are dimmed in place and refuse the tap. They do not leave: the composer under the belt is the same height in every state."
+          span={2}
+        >
+          <Durable working={false} />
+        </Card>
+
+        <Card
+          state="durable-working"
+          label="durable, working: the same two buttons, live"
+          reach="the same conversation while a turn runs."
+          note="Steer is a switch that is off after every send, and Stop posts the abort. Only their state changed from the card above: same buttons, same places, same height."
+          span={2}
+        >
+          <Durable working />
+        </Card>
+      </Group>
+
       <Group title="The switch and the scroll">
         <Card
           state="hidden-by-toggle"
@@ -107,6 +174,16 @@ export function ActionsRowSection() {
             <HarnessBarControl />
             <Roomy agent="claude" />
           </div>
+        </Card>
+
+        <Card
+          state="harness-status-line-switches"
+          label="Harness configurations: one status line switch per harness, Claude Code first"
+          reach="Settings → Harness configurations. Per device, one row for every harness the app has an adapter for."
+          note="The real card over the real store; the rows come from the adapter registry, so a new adapter adds one. Flip a switch off and that harness's pane draws no status line under Chat, and no background-agents block for Claude Code. The model label returns above the belt instead. The Terminal view is unchanged. Every harness starts on."
+          span={2}
+        >
+          <HarnessPrefsControl />
         </Card>
 
         <Card

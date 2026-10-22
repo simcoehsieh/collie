@@ -11,6 +11,33 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.23.1
+
+Merged upstream v1.23.1 (2026-10-20, with v1.20.0 through v1.23.0 under it): 16 releases, 1,260
+commits, 102 conflicted files. Infra taken whole: the Send Protocol (held sends, receipts, Type here,
+Submit/Discard, the confirm after five manual sends), Codex sending with Tab, one key gate for every
+key, Claude Code 2.1.296–2.1.302 dialog fixes (the session rating, Heads up, the long Bash permission,
+a question ending in a fullwidth ？), CJK columns in the terminal and composing-keyboard fixes, agy
+1.3.5, walky talky (engine, Chat cards, the Messages sheet), durable agents (inert here), Sent, hook
+edges, `collie doctor`'s surface lines. UI taken in the fork's design (operator, 2026-10-22): status
+marks as shapes (▲ needs you, ◐ working) in the fork's colours, Messages in the grouped pane menu,
+Recent sends on Pane settings, Settings → Voice and Harness configurations, the `/` command strip on a
+touch keyboard.
+
+- **Dropped, upstream supersedes it: the fork's `/config` inner-box skip in `claude/region-top.ts`**
+  (1.13.2 merge). Upstream's 2.1.296 reader (closing-rule.ts) reads the panel its own way and the
+  fork's skip turned eleven of its tests red. Operator's call.
+- **Kept the fork's, by default:** no Tasks pill, Screen pill or subagents mark on the belt; no theme
+  picker (the fork's skin stays the look); no Stable/Edge release line; no viewport line under the
+  build stamp; no effort in a corner model tag (the header's second line already says it); the New
+  page's folder browser and the tab strip's starters door stay off with the New page.
+- **Merged into one:** the fork's saved-sends queue rides on upstream's `sendText` (a lost answer keeps
+  its request id; a 401 still goes to the fork's queue); the fork's Codex model switch sends its keys
+  through the key gate; upstream's recorder takes over dictation (the fork had not redesigned the
+  strip) and the fork's Read aloud row moved into Voice's hands-free card.
+- **Tests:** the fork's 13 pane captures got Surface labels; the theme tests assert the fork's page
+  colours and system face; five Collie-theme-equals-index.css tests skip with a FORK note.
+
 ## On top of 1.19.2
 
 Merged upstream v1.19.2 (2026-10-11, with v1.18.0, v1.18.1, v1.19.0 and v1.19.1 under it) — 162

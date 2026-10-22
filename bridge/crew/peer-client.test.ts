@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import type { JsonValue } from "../json.ts";
+import type { JsonObject, JsonValue } from "../json.ts";
+import type { SessionCard } from "../types.ts";
 import { NARROW_VIEW } from "../sessions.ts";
 
 import { PROTOCOL_HEADER, MEMBER_HEADER, DEVICE_HEADER } from "./admission.ts";
@@ -23,6 +24,8 @@ import {
   crewTimeoutClampWarning,
   crewUrl,
   parseMuxReport,
+  parseSessionCards,
+  parseSurfaceVersion,
   parsePeerVersion,
   sweepPeers,
   takeDataBudget,
@@ -283,6 +286,15 @@ describe("PeerClient — the request the lead sends (§6)", () => {
     expect(new Headers(calls[1]!.init.headers).get(PROTOCOL_HEADER)).toBe("2");
   });
 
+  test("X-Crew-Lead-Line rides beside the release, and never without it (M60 spec 01)", async () => {
+    const { fetch, calls } = replying({});
+    const c = client(fetch);
+    await c.snapshot(laptop, NARROW_VIEW, false, { leadRelease: "1.23.0-edge.1", leadLine: "edge" });
+    expect(new Headers(calls[0]!.init.headers).get("X-Crew-Lead-Line")).toBe("edge");
+    await c.snapshot(laptop, NARROW_VIEW, false, { leadRelease: null, leadLine: "edge" });
+    expect(new Headers(calls[1]!.init.headers).get("X-Crew-Lead-Line")).toBeNull();
+  });
+
   test("a lead mid-run states nothing: a null release sends no header at all", async () => {
     const { fetch, calls } = replying({});
     await client(fetch).snapshot(laptop, NARROW_VIEW, false, { leadRelease: null, turn: null });
@@ -304,6 +316,27 @@ describe("PeerClient — the request the lead sends (§6)", () => {
     expect(first).not.toContain("refs/");
     // The second member of the same sweep gets the release and no turn.
     expect(new Headers(calls[1]!.init.headers).get("X-Crew-Update-Turn")).toBeNull();
+  });
+
+  test("X-Crew-Walky-Ack rides the sweep only when the lead owes that member an ack (§21)", async () => {
+    const { fetch, calls } = replying({});
+    const c = client(fetch);
+    await c.snapshot(laptop, NARROW_VIEW, false, { walkyAck: "0a1b2c3d.3" });
+    await c.snapshot(laptop, NARROW_VIEW, false, { walkyAck: null });
+    expect(new Headers(calls[0]!.init.headers).get("X-Crew-Walky-Ack")).toBe("0a1b2c3d.3");
+    expect(new Headers(calls[1]!.init.headers).get("X-Crew-Walky-Ack")).toBeNull();
+  });
+
+  test("the walky outcomes push is a POST to /crew/v1/walky/outcomes on the write budget, and a 404 is an answer", async () => {
+    const { fetch, calls } = replying({ error: "not found" }, { status: 404 });
+    const outcome = await client(fetch, { sign: () => "signed", dialSign: () => "attested" }).walkyOutcomes(laptop, JSON.stringify({ receipts: [] }));
+    expect(calls[0]!.url).toEndWith("/crew/v1/walky/outcomes");
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(calls[0]!.init.body).toBe('{"receipts":[]}');
+    // Lead → peer: no §8.6 signature, the pinned handshake and the dial attestation are the factors.
+    expect(new Headers(calls[0]!.init.headers).get("x-crew-signature")).toBeNull();
+    expect(new Headers(calls[0]!.init.headers).get("x-crew-dial")).toBe("attested");
+    expect(outcome).toMatchObject({ ok: true, status: 404 });
   });
 
   test("the follow headers do not buy the patient budget — only §19's fresh does", async () => {
@@ -661,6 +694,24 @@ describe("PeerClient — the verdict matrix (§7, §10.2)", () => {
     }
   });
 
+  test("`hello` reads a member's Surface reader version, and an absent or unusable one is absent, never a failure (M56 spec 09)", async () => {
+    const read = async (extra: JsonObject) => {
+      const { fetch } = replying({ protocol: 2, member: "laptop", ...extra });
+      return client(fetch).hello(laptop);
+    };
+    const named = await read({ surfaceVersion: 3 });
+    expect(named.ok && named.value.surfaceVersion).toBe(3);
+    for (const bad of [0, -1, 1.5, "3", null, true, [3], { v: 3 }]) {
+      const outcome = await read({ surfaceVersion: bad });
+      expect(outcome.ok).toBe(true);
+      expect(outcome.ok && Object.hasOwn(outcome.value, "surfaceVersion")).toBe(false);
+    }
+    const none = await read({});
+    expect(none.ok && Object.hasOwn(none.value, "surfaceVersion")).toBe(false);
+    expect(parseSurfaceVersion({ surfaceVersion: 2 })).toBe(2);
+    expect(parseSurfaceVersion({})).toBeNull();
+  });
+
   test("an old parser ignores a new sibling — this amendment's compatibility claim (§7.1)", async () => {
     // The claim §7.1 makes for every addition inside protocol 1: it is additive-optional, so a NEWER
     // member's reply is read by an OLDER one without incident. `hello` reads `protocol` and `member`
@@ -703,6 +754,30 @@ describe("PeerClient — the verdict matrix (§7, §10.2)", () => {
     expect({ ...decorated.value, mux: null }).toEqual({ ...plain.value, mux: null });
     expect(decorated.value.mux?.name).toBe("tmux");
     expect(plain.value.mux).toBeNull();
+  });
+
+  test("the session cards (M55) are read when sent, and an older reading of the same hello is unchanged", async () => {
+    const bare = { protocol: 2, member: "laptop", version: "9.9.9" };
+    const card: SessionCard = { name: "desk", kind: "program", mux: "Support desk", caps: { steerTurn: true, typeText: false }, where: "remote", state: "ready", experimental: true };
+    const withCards = { ...bare, sessions: [card, { name: "broken", kind: "program" }, "not a card"] };
+    const [plain, decorated] = await Promise.all([client(replying(bare).fetch).hello(laptop), client(replying(withCards).fetch).hello(laptop)]);
+    if (!plain.ok || !decorated.ok) throw new Error("both hellos answer 200; the assertions below need their values");
+    // This build reads the cards and drops the ones that are not whole.
+    expect(decorated.value.sessions).toEqual([card]);
+    // A member that sends none leaves no key, so every older reading of `hello` is the same object.
+    expect(Object.hasOwn(plain.value, "sessions")).toBe(false);
+    const { sessions: _cards, ...older } = decorated.value;
+    expect(older).toEqual(plain.value);
+  });
+
+  test("an old lead ignores the session cards: its reader sees only the fields it knows (M55)", () => {
+    // The old-lead fixture: a 1.21 lead reads `protocol`, `member`, `version` and `mux` by name and
+    // nothing else. The cards ride beside them and change none of those readings.
+    const hello: JsonObject = { protocol: 2, member: "desk", version: "1.22.0", sessions: [{ name: "desk", kind: "program" }] };
+    const oldLeadReads = (body: JsonObject) => ({ protocol: body.protocol, member: body.member, version: body.version, mux: parseMuxReport(body) });
+    const { sessions: _ignored, ...without } = hello;
+    expect(oldLeadReads(hello)).toEqual(oldLeadReads(without));
+    expect(parseSessionCards(without)).toBeNull();
   });
 
   test("an unusable stored address fails as unreachable without dialling anything", async () => {

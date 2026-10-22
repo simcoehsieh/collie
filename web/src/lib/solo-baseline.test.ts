@@ -61,6 +61,9 @@ const SNAPSHOT_KEYS = {
   ts: true,
   // Present on the type since M5/02, absent from every solo body — see the section header.
   servers: true,
+  // Not a crew dimension: present only while the mux is down for a refused durable token (M50 spec
+  // 14), so a healthy solo body carries no such key and no golden byte moved.
+  muxFault: true,
 } satisfies Record<keyof SnapshotResponse, true>;
 
 const SESSION_SUMMARY_KEYS = {
@@ -71,6 +74,15 @@ const SESSION_SUMMARY_KEYS = {
   working: true,
   blocked: true,
   host: true,
+  // The session card (M55): optional on the type, absent from a solo body with no program session.
+  kind: true,
+  mux: true,
+  caps: true,
+  where: true,
+  state: true,
+  experimental: true,
+  // Rides only on a program card refused for its wire version (M55 spec 14), so no solo byte moved.
+  notice: true,
 } satisfies Record<keyof SessionSummary, true>;
 
 const AGENT_VIEW_KEYS = {
@@ -120,6 +132,12 @@ const AGENT_VIEW_KEYS = {
   // Also not a crew dimension: the pane's prompt-cache reading (M28/02), computed on the machine the
   // pane lives on and absent until its agent has taken one turn. A 1.8.x peer omits it.
   cache: true,
+  // Not a crew dimension: the pane's active todo list (bridge/todos.ts), absent when there are no
+  // todos or on an older bridge.
+  todos: true,
+  // Not a crew dimension: the pane's running subagents (bridge/subagents.ts), absent when none is
+  // running or on an older bridge.
+  subagents: true,
   // Not crew dimensions: the operator's name for this pane's one-pane tab, and the pane's position in
   // its tab. Computed on the machine the pane lives on; an older peer omits both.
   soleTabName: true,
@@ -127,6 +145,30 @@ const AGENT_VIEW_KEYS = {
   // Not a crew dimension: what the checkout holding the pane's folder is on, read off the disk of
   // the machine the pane lives on. An older bridge or peer omits it.
   gitHead: true,
+  // Not crew dimensions: a durable program's open asks and newest turn (ADR 0100, ADR 0101), present
+  // only on a pane with no screen and absent from an older bridge or peer.
+  asks: true,
+  turnId: true,
+  // Not crew dimensions: a durable program's line under the title and its small mark (WIRE.md 7.11),
+  // present only on a pane with no screen and absent from an older bridge or peer.
+  subtitle: true,
+  badge: true,
+  progress: true,
+  // Not a crew dimension either: the belt buttons a durable program lists for a pane (M53 spec 07), present only on a pane that has some.
+  actions: true,
+  // Not a crew dimension: the pane's input surface (M56 spec 04), present only while the bridge runs Surface shadow mode.
+  surface: true,
+  // Not a crew dimension: the pane's hook-held permission (M56 spec 12), with `surface` only.
+  hold: true,
+  // Not a crew dimension: the pane's hook source, live or none (M56 spec 11), present only with `surface`.
+  hooks: true,
+  // Not a crew dimension: the Send Protocol's mark (M56 spec 05). Only COLLIE_SEND_PROTOCOL=1 fills it,
+  // and it is off by default, so it is absent on every pane here and no golden byte moved.
+  sendProtocol: true,
+  // Not a crew dimension: the pane's held sends (M56 spec 15), present only while a send waits for the turn to end.
+  held: true,
+  // Not a crew dimension: the pane's session instance (walky talky), four characters naming the session that holds the pane id now. Absent on a machine that predates it.
+  instance: true,
 } satisfies Record<keyof AgentView, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -161,6 +203,9 @@ const UPDATE_INFO_KEYS = {
   // band is read next. Optional here: a bridge older than the fields sends neither.
   dismissedVersion: true,
   dismissedCrewVersion: true,
+  // When the crew notice was closed (1.21.1). Optional, and absent until a crew close is made, so a
+  // solo payload carries no such key.
+  dismissedCrewAt: true,
   // The peer legs of a run this machine has no record of, and that run's settle stamp (M20/09,
   // M20/01). Both optional and both ABSENT on a solo install: a machine with no crew has no legs,
   // so the solo payload is byte-identical to what it was.
@@ -175,6 +220,10 @@ const UPDATE_INFO_KEYS = {
   // The newest urgent release in the delta (ADR 0046). Optional, and absent on every ordinary
   // release, so a solo payload is byte-identical to what it was.
   urgent: true,
+  // The release line and the way back to Stable (M60 spec 01). Optional: an older bridge sends
+  // neither, and that reads as Stable with no way back to offer.
+  line: true,
+  back: true,
 } satisfies Record<keyof UpdateInfo, true>;
 
 describe("solo zero-tax — the client's mirror types carry no crew dimension", () => {
@@ -183,6 +232,7 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
       "agents",
       "bridge",
       "device",
+      "muxFault",
       "notifications",
       "servers",
       "sessions",
@@ -215,7 +265,10 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
     // the golden object above pins — and this list is the tripwire against a quiet third.
     expect(AGENT_VIEW_KEYS.session).toBe(true);
     expect(Object.keys(AGENT_VIEW_KEYS).toSorted()).toEqual([
+      "actions",
       "agent",
+      "asks",
+      "badge",
       "cache",
       "cwd",
       // FORK: which model and effort the agent is on — read off its log, never turned on by a
@@ -224,15 +277,21 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
       "focused",
       "gitHead",
       "hasSession",
+      "held",
       "hint",
+      "hold",
+      "hooks",
       "host",
+      "instance",
       "kind",
       "lastActiveAt",
       "lastSeenAt",
       "model",
       "paneId",
       "paneLabel",
+      "progress",
       "readableLines",
+      "sendProtocol",
       "session",
       "sessionName",
       "soleTabName",
@@ -242,27 +301,37 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
       // one — so the claim this case makes about the two address dimensions is untouched.
       "statusLine",
       "statusLineAt",
+      "subagents",
+      "subtitle",
+      "surface",
       "tabId",
       "tabLabel",
       "tabPosition",
       "terminalTitle",
       "terminalTitleStale",
+      "todos",
+      "turnId",
       "workspaceId",
       "workspaceLabel",
       "workspaceNumber",
     ]);
     expect(Object.keys(DEVICE_AUTH_KEYS).toSorted()).toEqual(["authorized", "device", "enforced"]);
     expect(Object.keys(UPDATE_INFO_KEYS).toSorted()).toEqual([
+      // The way back to Stable (M60 spec 01) — optional, sent only in that one case.
+      "back",
       "bridgeStale",
       "checkedAt",
       "current",
       // The two bands the operator can close (M17/08) — optional here, because a bridge older than
       // the fields sends neither.
+      "dismissedCrewAt",
       "dismissedCrewVersion",
       "dismissedVersion",
       "installKind",
       "latest",
       "latestUrl",
+      // The release line (M60 spec 01) — optional; absent reads as Stable.
+      "line",
       // Whether the release ahead changes the crew wire (M27/06) — optional, and absent on a solo
       // install.
       "linkChange",

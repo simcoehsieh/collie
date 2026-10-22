@@ -9,6 +9,7 @@ import {
   markSaved,
   mergeChat,
   savedChatWindow,
+  sessionChanged,
   type ChatAnswer,
   type ChatWindow,
 } from "@/lib/chat-window";
@@ -77,8 +78,9 @@ import { REWRITE_AFTER_MS } from "@/lib/store";
 // pane text the loaders already keep (lib/last-seen.ts).
 
 /** How many older turns one "load older" tap asks for. The live first page takes the bridge's own
- *  default (40), which is what ADR 0073 sized a first paint at. */
-const OLDER_PAGE = 40;
+ *  default (40), which is what ADR 0073 sized a first paint at; a tap is a request to read back, so it
+ *  asks for more, still under the bridge's ceiling of 200 (#364). */
+const OLDER_PAGE = 100;
 
 export interface ChatFeed {
   /** What this pane's session is, as the last answer left it. */
@@ -175,10 +177,18 @@ export function useChatWindow({
     };
   }, []);
 
+  // A window also belongs to the SESSION it was read from (#526). When the pane's agent starts
+  // another one (pi's `/new`), the answer carries another `session` tag and `mergeChat` replaces the
+  // thread and every older page with the new session's turns, which may be none. A "load older" tap
+  // still in flight belonged to the old session: its page is thrown away on arrival, and its
+  // spinner goes now, so the new thread does not stand under a load it never asked for.
   const apply = useCallback((answer: ChatAnswer) => {
-    const next = mergeChat(window.current, answer);
+    const previous = window.current;
+    const next = mergeChat(previous, answer);
     window.current = next;
-    if (alive.current) setHeld(next);
+    if (!alive.current) return;
+    setHeld(next);
+    if (sessionChanged(previous, next)) setLoadingOlder(false);
   }, []);
 
   /** Write the held window through to the store (see the header). Live windows with turns only. */

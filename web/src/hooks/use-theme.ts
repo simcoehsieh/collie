@@ -35,8 +35,36 @@ const DEFAULT: Theme = "system";
  *
  *  Re-measure these if --background moves, and move them TOGETHER with the two `theme-color` metas
  *  in index.html (which is where the unpinned case is decided) and the manifest colours in
- *  vite.config.ts. All three name each other. */
-const META_COLOR = { light: "#f1f4f7", dark: "#0d0f15" } satisfies Record<ResolvedTheme, string>;
+ *  vite.config.ts. All three name each other.
+ *
+ *  These are the colours of the default theme `collie` under the fork's skin. Another theme brings
+ *  its own: lib/theme/store.ts hands the two hexes of its `background` to {@link setMetaColours} each
+ *  time a theme is applied, and hands `undefined` back for `collie`, so the default theme reads
+ *  exactly these two literals. (FORK: the picker that would choose another theme is off,
+ *  lib/fork-shape.ts FORK_THEMES_ON.) */
+const DEFAULT_META_COLOR: MetaColours = { light: "#f1f4f7", dark: "#0d0f15" };
+
+/** The two browser-chrome colours: one `#rrggbb` per resolved appearance. */
+export interface MetaColours {
+  light: string;
+  dark: string;
+}
+
+let metaColor = DEFAULT_META_COLOR;
+
+/** The colours the two theme-color metas carry right now, a function of the active colour theme. */
+export function metaColours(): MetaColours {
+  return metaColor;
+}
+
+/**
+ * Set the browser-chrome colours for the active colour theme, or `undefined` for the default
+ * theme's own two. Called by lib/theme/store.ts only; the metas are rewritten at once.
+ */
+export function setMetaColours(colours: MetaColours | undefined): void {
+  metaColor = colours ?? DEFAULT_META_COLOR;
+  apply(state.theme, state.resolved);
+}
 
 /** Read the pin. BARE string, not JSON — public/theme-init.js does the same strict compare before
  *  first paint, and JSON.stringify would write `"dark"` with the quotes and silently break it. */
@@ -82,7 +110,7 @@ function apply(theme: Theme, resolved: ResolvedTheme): void {
     // getAttribute, not `.media` — that reflected property is not implemented everywhere (jsdom
     // among them), and reading it blind throws on the undefined.
     const own: ResolvedTheme = meta.getAttribute("media")?.includes("dark") ? "dark" : "light";
-    meta.content = META_COLOR[pinned ? resolved : own];
+    meta.content = metaColor[pinned ? resolved : own];
   });
 }
 

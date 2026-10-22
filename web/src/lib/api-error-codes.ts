@@ -21,7 +21,7 @@
 // `{name}` convention `t()` uses, so a translated string can consume them directly
 // (e.g. `upload.too_large` + `{ maxBytes: 10485760 }`).
 
-import { asJsonNumber, asJsonObject, asJsonString, parseJsonObject, type JsonValue } from "./json";
+import { asJsonNumber, asJsonObject, asJsonString, parseJsonObject, type JsonObject, type JsonValue } from "./json";
 
 /** The values a bridge sentence was built from, for a translated one to reuse. */
 export type ApiErrorDetail = Readonly<Record<string, string | number>>;
@@ -51,6 +51,7 @@ export const API_ERROR_CODES = [
   "tab.create_failed",
   "tab.rename_failed",
   "tab.close_failed",
+  "space.rename_failed",
   "tab.workspace_required",
   "workspace.create_failed",
 
@@ -80,11 +81,9 @@ export const API_ERROR_CODES = [
   "folders.unknown",
   "folders.favourites_full",
 
-  // Worktrees — /api/workspace/:id/worktree[s|/open|/remove] (ADR 0032)
-  "worktree.list_failed",
+  // Worktrees — /api/worktree and its plan (ADR 0032, ADR 0093)
   "worktree.create_failed",
   "worktree.created_not_opened",
-  "worktree.open_failed",
   "worktree.busy",
   "worktree.ambiguous_branch",
   "worktree.branch_required",
@@ -113,6 +112,24 @@ export const API_ERROR_CODES = [
   "stt.unreadable",
   "stt.empty",
   "stt.provider_failed",
+  "stt.wav_required",
+
+  // The Whistle model and the host engine — /api/stt/whistle, /api/stt/model/:sha256 (ADR 0096)
+  "stt.model_busy",
+  "stt.model_unknown",
+  "stt.whistle_not_ready",
+  "stt.whistle_download_failed",
+
+  // The host's speech provider: PUT /api/stt/host (ADR 0097)
+  "stt.consent_required",
+  "stt.host_busy",
+  "stt.host_provider_locked",
+  "stt.host_changed",
+  "stt.codex_missing",
+  "stt.codex_signed_out",
+  "stt.codex_other_login",
+  "stt.codex_unknown",
+  "stt.codex_probe_failed",
 
   // The prompt-cache watch list — /api/notifications/cache-watch (ADR 0042)
   "cache.pane_unknown",
@@ -146,6 +163,13 @@ export const API_ERROR_CODES = [
   "update.packaged",
   "update.maintainer_managed",
   "update.start_failed",
+  "update.request_id_required",
+  "update.rollback_unavailable",
+  "update.back_unavailable",
+  "update.line_invalid",
+
+  // Reopening a durable program's closed conversation, POST /api/durable/conversation/:id/reopen
+  "durable.reopen_failed",
 ] as const;
 
 /** Every code the bridge can send. Derived from the list, so there is exactly one place to edit. */
@@ -185,7 +209,14 @@ export interface ApiErrorFields {
  */
 export function parseApiErrorFields(body: string): ApiErrorFields | undefined {
   const parsed = parseJsonObject(body);
-  if (parsed === undefined) return undefined;
+  return parsed === undefined ? undefined : apiErrorFieldsOf(parsed);
+}
+
+/**
+ * The same read over a body that already parsed: a 200 that answered `{ ok: false, … }` where the
+ * caller expected another shape (a reply route's refusal with no `send` beside it).
+ */
+export function apiErrorFieldsOf(parsed: JsonObject): ApiErrorFields | undefined {
   const error = asJsonString(parsed.error);
   const code = asJsonString(parsed.code);
   // Neither half present ⇒ not an error body at all. A 200-shaped document that happens to be JSON

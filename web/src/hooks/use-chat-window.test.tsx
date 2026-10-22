@@ -141,7 +141,7 @@ describe("useChatWindow", () => {
 
     result.current.loadOlder();
     await waitFor(() => expect(result.current.window.entries).toHaveLength(2));
-    expect(seen[1]).toBe(`?limit=40&before=${BASE}%3Aa`);
+    expect(seen[1]).toBe(`?limit=100&before=${BASE}%3Aa`);
     expect(result.current.window.entries[0]!.uuid).toBe("z");
     expect(result.current.window.hasOlder).toBe(false);
   });
@@ -153,6 +153,56 @@ describe("useChatWindow", () => {
     result.current.loadOlder();
     await waitFor(() => expect(result.current.loadingOlder).toBe(false));
     expect(seen).toEqual([""]);
+  });
+
+  // pi's `/new` keeps the pane and starts another session, which the bridge names with a new `session`
+  // tag (#526). The phone drops the old thread and every older page it loaded, and draws the new,
+  // empty session at once instead of the old one until the pane is reopened.
+  it("drops the old thread and its older pages when the pane's session changes", async () => {
+    const seen = recordChat([
+      { ...firstPage, session: "old", hasOlder: true },
+      {
+        paneId: "w1:p1",
+        available: true,
+        page: "older",
+        gen: GEN,
+        session: "old",
+        hasOlder: true,
+        upserts: [entry("z", BASE - 1, "earlier")],
+      },
+      { ...firstPage, gen: GEN + 1, session: "new", rev: 0, head: BASE - 1, oldest: BASE, upserts: [] },
+      {
+        ...firstPage,
+        gen: GEN + 2,
+        session: "new",
+        rev: 1,
+        head: BASE,
+        oldest: BASE,
+        upserts: [entry("n", BASE, "a new answer")],
+      },
+    ]);
+    const { result, rerender } = renderHook(() => useChatWindow({ paneId: "w1:p1", enabled: true }));
+    await waitFor(() => expect(result.current.window.hasOlder).toBe(true));
+    result.current.loadOlder();
+    await waitFor(() => expect(result.current.window.entries).toHaveLength(2));
+
+    // `/new` in the terminal: the next poll names another session, with no turns yet.
+    rr.state = "loading";
+    rerender();
+    rr.state = "idle";
+    rerender();
+    await waitFor(() => expect(result.current.window.session).toBe("new"));
+    expect(result.current.window.entries).toEqual([]);
+    expect(result.current.window.hasOlder).toBe(false);
+    expect(result.current.window.status.kind).toBe("live");
+
+    // The first reply lands in the new session and is followed live, with no reopen.
+    rr.state = "loading";
+    rerender();
+    rr.state = "idle";
+    rerender();
+    await waitFor(() => expect(result.current.window.entries.map((e) => e.uuid)).toEqual(["n"]));
+    expect(seen[3]).toBe(`?after=${GEN + 1}%3A0`);
   });
 
   // A window belongs to the pane it was read from: `w1:p1` is a different terminal on every machine

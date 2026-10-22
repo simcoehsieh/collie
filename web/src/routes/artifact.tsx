@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Pin, PinOff, Trash2, BookOpen, StickyNote } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
 
+import { openAuthedTab } from "@/components/authed-frame";
 import { RouteHeader } from "@/components/app-header";
 import { ArtifactKindIcon, artifactWhen } from "@/components/artifact-card";
 import { ArtifactViewer } from "@/components/artifact-viewer";
@@ -188,7 +189,7 @@ export function ArtifactRoute() {
                 type="button"
                 className="flex shrink-0 items-center gap-1 text-primary underline-offset-2 active:underline"
                 aria-label={t("artifacts.viewer.inKb")}
-                onClick={() => window.open(`/api/doc/${encodeURIComponent(artifact.kbSlug ?? "")}`, "_blank", "noopener,noreferrer")}
+                onClick={() => openAuthedTab(`/api/doc/${encodeURIComponent(artifact.kbSlug ?? "")}`, artifact.title)}
               >
                 <BookOpen className="size-3" aria-hidden />
                 {/* FORK: the archive's name, a proper noun like the "kb" it replaced (2026-09-26). */}

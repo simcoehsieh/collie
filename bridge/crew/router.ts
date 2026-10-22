@@ -20,7 +20,7 @@ import {
 } from "../update-action.ts";
 import { CREW_MACHINE_FIELD } from "../machine-stats.ts";
 import type { MachineSample } from "../types.ts";
-import { LEAD_RELEASE_HEADER, UPDATE_TURN_HEADER } from "./follow.ts";
+import { LEAD_LINE_HEADER, LEAD_RELEASE_HEADER, UPDATE_TURN_HEADER } from "./follow.ts";
 import { apiPathFor } from "./forward.ts";
 import { HOST_PARAM } from "./registry.ts";
 import {
@@ -64,7 +64,9 @@ import type { TrustedMember, TrustStore, TrustStoreData, Warrant } from "./trust
 import { checkWarrantPush, currentWarrant, parseWarrant, storeWarrant, warrantReportOf, type WarrantRefusal } from "./warrant.ts";
 import { deposedStateFrom, isDepositionProof, selfHeal, type DeposedState } from "./deposed.ts";
 import { selectView, type SnapshotView } from "../sessions.ts";
-import type { MuxConfig, SnapshotResponse } from "../types.ts";
+import type { MuxConfig, SessionCard, SnapshotResponse } from "../types.ts";
+import { WALKY_ACK_HEADER, WALKY_REPORT_FIELD, type CrewAnswer } from "../walky/crew.ts";
+import type { WalkyReportBody } from "../walky/parse.ts";
 
 // The `/crew/v1/*` surface. This module exists **so that `bridge/server.ts` contains no crew route
 // literal at all**: a solo instance's route table is asserted, by reading server.ts's source, to be
@@ -98,6 +100,21 @@ export const CREW_SNAPSHOT_PATH = "/crew/v1/snapshot";
  * reading the phone gives it today, which is the lead's own block applied to every pane.
  */
 export const CREW_MUX_FIELD = "mux";
+
+/**
+ * The OPTIONAL field a `hello` answer carries this machine's session cards on (M55, §5's amendment of
+ * 2026-10-13): one card per session, so a lead can answer `/api/config?host=&session=` for a program
+ * session. Sent only by a machine that runs a durable program. **Absent means "use the member's `mux`
+ * block for every session"**, which is what every lead read before the field existed.
+ */
+export const CREW_SESSIONS_FIELD = "sessions";
+
+/**
+ * The OPTIONAL field a `hello` answer carries its Surface reader version on (M56 spec 09): one small
+ * integer (`SURFACE_VERSION`), so a lead can show which reader judged a member's panes. **Absent means
+ * "a build that computes no Surface"**, never version 0, and it refuses nothing.
+ */
+export const CREW_SURFACE_FIELD = "surfaceVersion";
 
 /**
  * The lead's REQUEST for a fresh preflight on the snapshot it is about to read (§19).
@@ -153,6 +170,17 @@ export const CREW_TAKEOVER_PATH = "/crew/v1/takeover";
  * front door for its own operator (RFC §16, decision 5; pairing is always on, ADR 0086).
  */
 export const CREW_PAIRING_PATH = "/crew/v1/pairing";
+/**
+ * `POST` — a member hands its lead one walky talky message to deliver and route (§21). Signed per
+ * §8.6, because it travels peer → lead, and answered only by a collie that leads.
+ */
+export const CREW_WALKY_PATH = "/crew/v1/walky";
+/**
+ * `POST` — the lead hands a member the outcomes of the messages that member sent to other machines
+ * (§21, added 2026-10-18). Lead → peer, so it rides the pinned handshake and the dial attestation like
+ * every such call, and it is answered only by a collie that has a lead, to that lead.
+ */
+export const CREW_WALKY_OUTCOMES_PATH = "/crew/v1/walky/outcomes";
 
 /**
  * The machine-readable `code` on §14.3's refusal of an unapproved leadership claim.
@@ -215,6 +243,11 @@ const SIGNABLE_PATHS: ReadonlySet<string> = new Set([
   // construction — a doubled deposition lands the same store — which is what makes it safe beside
   // `leave` and `lead` in `MEMBERSHIP_PATHS`.
   CREW_TAKEOVER_PATH,
+  // §21's walky talky message, member → lead (added 2026-10-17). It travels the one direction where
+  // the transport cannot pin, so the signature is what names the member that sent it. It is NOT in
+  // `MEMBERSHIP_PATHS`: it changes no roster, the message id is its replay key, and a replay returns
+  // the stored receipts and types nothing, so it never advances the monotonic floor.
+  CREW_WALKY_PATH,
 ]);
 
 /** The subset of {@link SIGNABLE_PATHS} that CHANGES STATE, and therefore advances the replay floor. */
@@ -279,12 +312,19 @@ export type ApiDispatch = (req: Request, url: URL, from: string) => Promise<Resp
  */
 export type MuxSource = () => MuxConfig | null;
 
+/** This collie's session cards, for `hello` (M55), or `null` on a machine that runs no program. */
+export type SessionCardSource = () => SessionCard[] | null;
+
 /** What this collie exposes to an admitted lead. Absent ⇒ that half of §5's table simply 404s. */
 export interface CrewSurface {
   readonly snapshot?: SnapshotSource;
   readonly dispatch?: ApiDispatch;
   /** This collie's own capability declaration, for `hello`. See {@link MuxSource}. */
   readonly mux?: MuxSource;
+  /** This collie's session cards, for `hello`. See {@link SessionCardSource}. */
+  readonly sessions?: SessionCardSource;
+  /** This collie's Surface reader version, for `hello` (M56 spec 09). Absent on a build that computes no Surface. */
+  readonly surfaceVersion?: number | undefined;
 }
 
 /**
@@ -328,6 +368,10 @@ export interface CrewRouterDeps {
   readonly dispatch?: ApiDispatch;
   /** Absent ⇒ `hello` carries no capability block, which reads as "use the lead's" (M22/03). */
   readonly mux?: MuxSource;
+  /** Absent, or answering null ⇒ `hello` carries no session cards (M55). */
+  readonly sessions?: SessionCardSource;
+  /** Absent ⇒ `hello` carries no `surfaceVersion` (M56 spec 09). */
+  readonly surfaceVersion?: number | undefined;
   /**
    * Whether the listener this handler is mounted on was built pin-enforcing
    * (`bridge/crew/transport.ts`). **Defaults to `false`, which admits nothing but a signed request.**
@@ -473,7 +517,24 @@ export interface CrewRouterDeps {
    * `onFollow` simply ignores both headers — which is a correct peer. Nothing here awaits it, so a
    * follow decision can never cost this snapshot its answer.
    */
-  readonly onFollow?: (a: { readonly leadRelease: string | null; readonly turn: string | null }) => void;
+  readonly onFollow?: (a: {
+    readonly leadRelease: string | null;
+    readonly turn: string | null;
+    readonly leadLine?: string | null;
+  }) => void;
+  /**
+   * Walky talky across the crew (§21). `fromMember` answers `POST /crew/v1/walky` on a LEAD, for the
+   * member §8.6's signature named. `report` is a MEMBER's outcome report for the `walky` sibling of
+   * each snapshot answer, handed the lead's `X-Crew-Walky-Ack` first (null when absent), so what the
+   * lead already read is gone before the report is built. `outcomes` answers the lead's
+   * `POST /crew/v1/walky/outcomes` on a MEMBER. Absent ⇒ the route 404s and the snapshot carries no
+   * report, which is what a build before §21 does.
+   */
+  readonly walky?: {
+    readonly fromMember?: (body: JsonValue | undefined, member: TrustedMember) => Promise<CrewAnswer>;
+    readonly report?: (ack: string | null) => WalkyReportBody | null;
+    readonly outcomes?: (body: JsonValue | undefined, from: string) => CrewAnswer;
+  };
   readonly now?: () => number;
   readonly random?: RandomSource;
 }
@@ -567,6 +628,10 @@ type HelloBody = {
   pairingCollision?: string[];
   /** This peer's own capability declaration (§7.1's amendment of 2026-09-08). See {@link CREW_MUX_FIELD}. */
   mux?: MuxConfig;
+  /** This peer's session cards (M55, 2026-10-13). See {@link CREW_SESSIONS_FIELD}. */
+  sessions?: SessionCard[];
+  /** This peer's Surface reader version (M56 spec 09). See {@link CREW_SURFACE_FIELD}. */
+  surfaceVersion?: number;
 };
 
 /**
@@ -949,6 +1014,14 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
       // the header already renders as text alone.
       const declared = deps.mux?.() ?? null;
       if (declared !== null) hello.mux = portableMuxBlock(declared);
+      // M55: one card per session, only from a machine that runs a durable program, so a terminal-only
+      // peer's `hello` is byte for byte what it was. A card carries no path and no secret: a name, a
+      // kind, a multiplexer name, the capability answers and two states.
+      const cards = deps.sessions?.() ?? null;
+      if (cards !== null && cards.length > 0) hello.sessions = cards;
+      // M56 spec 09: the reader version, one integer, so a lead can show a member's. Absent on a build
+      // that computes no Surface; a number names no secret and is admissible for `version`'s reason.
+      if (deps.surfaceVersion !== undefined) hello.surfaceVersion = deps.surfaceVersion;
       return new Response(JSON.stringify(hello), {
         status: 200,
         headers: crewResponseHeaders(verdict.self),
@@ -975,6 +1048,30 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
     }
     if (pathname === CREW_LEAD_PATH && req.method === "POST") {
       return newLead(req, signedBody, verdict.member, verdict.self);
+    }
+    if (pathname === CREW_WALKY_PATH && req.method === "POST" && deps.walky?.fromMember !== undefined && data !== null && isLeading(data)) {
+      // §21: only a collie that leads routes a message, and only a SIGNED caller reaches it — the
+      // signature named the member, and the message must name that member as sender and signer.
+      // Every verification failure is the uniform 401, audited with its route like any refusal.
+      if (signed.member === null) return refuse(pathname, "certificate");
+      const answer = await deps.walky.fromMember(await readJson(req, signedBody), verdict.member);
+      if (answer.status === 401) return refuse(pathname, "certificate");
+      return new Response(JSON.stringify(answer.body), { status: answer.status, headers: crewResponseHeaders(verdict.self) });
+    }
+    if (
+      pathname === CREW_WALKY_OUTCOMES_PATH &&
+      req.method === "POST" &&
+      deps.walky?.outcomes !== undefined &&
+      data !== null &&
+      data.lead !== null &&
+      data.lead.status === "enrolled"
+    ) {
+      // §21 (added 2026-10-18): only a collie that HAS a lead takes the push, and only from that lead.
+      // The caller rode the pinned handshake and the dial attestation; anyone else is the uniform 401.
+      if (verdict.member.memberId !== data.lead.memberId) return refuse(pathname, "certificate");
+      const answer = deps.walky.outcomes(await readJson(req, signedBody), verdict.member.memberId);
+      if (answer.status === 401) return refuse(pathname, "certificate");
+      return new Response(JSON.stringify(answer.body), { status: answer.status, headers: crewResponseHeaders(verdict.self) });
     }
     if (pathname === CREW_LEAVE_PATH && req.method === "POST") {
       // The caller drops ITSELF, and can drop nothing else — the member id is the admitted one, never
@@ -1061,15 +1158,22 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
       // one, which the lead reads as "not reported", never as an idle machine (§7.1).
       const load = deps.machineStats?.() ?? null;
       const withLoad = load === null ? withVersion : { ...withVersion, [CREW_MACHINE_FIELD]: load };
+      // §21: the receipts this member wrote for messages from elsewhere that its lead has not acked,
+      // in that same seat, with the cursor of the newest. The lead's ack (a REQUEST header, lower-case
+      // lookup) is applied first, so what it already read is gone. Omitted when nothing is held, which
+      // the lead reads as "nothing to report" (§7.1). A report on the exchange, never a stored state.
+      const walkyReport = deps.walky?.report?.(headerValue(req, WALKY_ACK_HEADER.toLowerCase())) ?? null;
+      const withWalky = walkyReport === null ? withLoad : { ...withLoad, [WALKY_REPORT_FIELD]: walkyReport };
       // §20's two REQUEST headers, read LAST and answered with nothing. They are additive-optional
       // and absent-means-closed: a build with no `onFollow` ignores both, which is a correct peer,
       // and a peer that reads them still decides for itself. Handed over synchronously and never
       // awaited — the snapshot this request came for is not the follow's to delay.
       deps.onFollow?.({
         leadRelease: headerValue(req, LEAD_RELEASE_HEADER),
+        leadLine: headerValue(req, LEAD_LINE_HEADER),
         turn: headerValue(req, UPDATE_TURN_HEADER),
       });
-      return new Response(JSON.stringify(withLoad), {
+      return new Response(JSON.stringify(withWalky), {
         status: 200,
         headers: crewResponseHeaders(verdict.self),
       });

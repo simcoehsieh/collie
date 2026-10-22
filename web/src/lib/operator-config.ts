@@ -4,6 +4,7 @@ import { fetchConfig, __resetConfigMemo } from "@/lib/api";
 import { acceptOperatorFonts, applyOperatorFonts, type OperatorFontFace } from "@/lib/operator-fonts";
 import { designPrefs, subscribeDesign } from "@/lib/design";
 import { getDeviceToken, subscribePairing } from "@/lib/pairing";
+import { normalizeScope, scopeKey, type Scope } from "@/lib/scope";
 import type {
   MuxConfig,
   OperatorCommand,
@@ -11,6 +12,7 @@ import type {
   OperatorQuickReplyRow,
   SttCapability,
   UploadCapability,
+  WhistleStatus,
 } from "@/lib/types";
 
 // The startup-resolved half of /api/config, read ONCE and held in module state: the operator's own
@@ -73,8 +75,20 @@ let currentQuota = false;
  * the two are the same value on purpose, because both mean "no button for this here".
  */
 let currentShot = false;
+// `null` until a read succeeds, on a bridge older than the field, and on a crew member's own answer.
+// All three mean "this collie offers no Whistle setup", which Settings answers by drawing nothing.
+// Unlike the rest of this store it moves at runtime: the setup tap starts a download and the poll
+// reports it, so `noteWhistleStatus` (below) writes the newest answer back.
+let currentWhistle: WhistleStatus | null = null;
 let inflight: Promise<void> | null = null;
+// Bumped by the test reset. A read that started before a reset and answers after it must not write
+// into the fresh state: its answer is the previous case's `/api/config`, and it would land on top of
+// the next case's own read whenever that one answered first.
+let generation = 0;
 let loaded = false;
+// True once any read has succeeded, and unlike `loaded` it stays true through `refreshOperatorConfig`,
+// so a page that must tell "not asked yet" from "asked, and nothing was offered" does not flicker.
+let everLoaded = false;
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -92,9 +106,11 @@ subscribePairing(() => {
 export function loadOperatorCommands(): Promise<void> {
   if (loaded) return Promise.resolve();
   if (inflight) return inflight;
+  const startedIn = generation;
   inflight = (async () => {
     try {
       const cfg = await fetchConfig();
+      if (startedIn !== generation) return;
       current = cfg.operatorCommands ?? [];
       currentKeys = cfg.operatorKeys ?? [];
       currentReplies = cfg.operatorQuickReplies ?? [];
@@ -110,15 +126,27 @@ export function loadOperatorCommands(): Promise<void> {
       currentDocHosts = cfg.docHosts ?? [];
       currentQuota = cfg.quota === true;
       currentShot = cfg.shot === true;
+      currentWhistle = cfg.whistle ?? null;
       loaded = true;
+      everLoaded = true;
       emit();
     } catch {
       // Additive feature — see the header. Leave the list empty and allow a later retry.
     } finally {
-      inflight = null;
+      if (startedIn === generation) inflight = null;
     }
   })();
   return inflight;
+}
+
+/**
+ * Read the config again, once, now. For the few facts a person's own tap changes on the host: the
+ * Whistle switch turns the `stt` provider on and off, and the composer's microphone follows it.
+ * Everything else here is startup config and is not asked twice.
+ */
+export function refreshOperatorConfig(): Promise<void> {
+  loaded = false;
+  return loadOperatorCommands();
 }
 
 export function getOperatorCommands(): readonly OperatorCommand[] {
@@ -181,8 +209,8 @@ export function loadHostMuxConfig(host: string): Promise<void> {
   if (running) return running;
   const started = (async () => {
     try {
-      // The HOST alone. No session rides along: `/api/config` is not session-scoped, and sending a
-      // session name would put a parameter on the wire that the route does not read.
+      // The HOST alone. A session's own block is a separate read (`loadSessionMuxConfig` below), so a
+      // member's machine-wide answer is never filed under one of its sessions.
       const cfg = await fetchConfig({ host });
       hostMux.set(host, cfg.mux ?? null);
       emit();
@@ -203,6 +231,50 @@ export function loadHostMuxConfig(host: string): Promise<void> {
  */
 export function getHostMuxConfig(host: string): MuxConfig | null {
   return hostMux.get(host) ?? null;
+}
+
+// ── ONE SESSION's OWN BLOCK (M55) ───────────────────────────────────────────────────────────────
+//
+// Since M55 one collie can carry a terminal multiplexer and one or more durable programs, each its own
+// session, so "can you do this?" has an answer per (host, session). The snapshot's session card
+// normally carries that answer (lib/session-cards.ts), and then nothing is fetched. This map is the
+// fallback for a card with no `caps`: `/api/config?session=<name>`, on the same terms as the member
+// map above.
+//
+//  • **Cached per (host, session), for the life of the page.**
+//  • **Issued ONLY for a named, non-primary session whose card carries no capability set.** The
+//    primary session keeps today's one read, so a solo install with one session never reaches this.
+//  • **A miss is `null`, and `null` means "use the machine's block".** A bridge older than the
+//    `session` parameter answers with the primary's block, which is the answer the phone gave before.
+//  • **A failed read is not cached**, so a later mount asks again.
+
+const sessionMux = new Map<string, MuxConfig | null>();
+const sessionMuxInflight = new Map<string, Promise<void>>();
+
+/** Read one session's own mux block, once per (host, session) per page load. */
+export function loadSessionMuxConfig(scope: Scope): Promise<void> {
+  const key = scopeKey(scope);
+  if (sessionMux.has(key)) return Promise.resolve();
+  const running = sessionMuxInflight.get(key);
+  if (running) return running;
+  const started = (async () => {
+    try {
+      const cfg = await fetchConfig(normalizeScope(scope));
+      sessionMux.set(key, cfg.mux ?? null);
+      emit();
+    } catch {
+      // Additive feature, as above. Nothing is cached, so a later mount asks again.
+    } finally {
+      sessionMuxInflight.delete(key);
+    }
+  })();
+  sessionMuxInflight.set(key, started);
+  return started;
+}
+
+/** One session's own mux block, or `null` when nothing has said otherwise. */
+export function getSessionMuxConfig(scope: Scope): MuxConfig | null {
+  return sessionMux.get(scopeKey(scope)) ?? null;
 }
 
 /**
@@ -353,17 +425,38 @@ export function __resetOperatorCommands(): void {
   __resetConfigMemo();
   hostMux.clear();
   hostMuxInflight.clear();
+  sessionMux.clear();
+  sessionMuxInflight.clear();
   current = [];
   currentKeys = [];
   currentReplies = [];
   currentFonts = [];
   currentMux = null;
   currentStt = null;
+  currentWhistle = null;
   currentUpload = null;
   currentDocHosts = [];
   currentQuota = false;
   currentShot = false;
   inflight = null;
+  generation++;
   loaded = false;
+  everLoaded = false;
   listeners.clear();
+}
+
+/** Whether a read of the config has ever succeeded in this page session. */
+export function operatorConfigRead(): boolean {
+  return everLoaded;
+}
+
+/** The host's Whistle model status, or `null` when this collie offers none. Read through lib/stt.ts. */
+export function getWhistleStatus(): WhistleStatus | null {
+  return currentWhistle;
+}
+
+/** Record a newer Whistle status, from the setup tap, a poll or a switch, and tell every reader. */
+export function noteWhistleStatus(status: WhistleStatus): void {
+  currentWhistle = status;
+  emit();
 }

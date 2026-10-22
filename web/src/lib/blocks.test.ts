@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { parseAnsi, type AnsiSegment } from "./ansi";
-import { dropLeadingLines, lineText, splitLines, type StyledLine } from "./blocks";
+import { dropLeadingLines, hasQuestionMark, lineText, splitLines, type StyledLine } from "./blocks";
 import { buildBlocks } from "./harness";
 import { isBoxBorder, isHorizontalRule } from "./harness/claude/markers";
 
@@ -169,7 +169,7 @@ describe("splitLines — labelled terminal rules", () => {
   const labelled = (lead: string, label: string, tail: string, outer = "") =>
     `${outer}${lead} ${label} ${tail}${outer}`;
 
-  it("keeps the reconstructed Pi editor byte-faithful and refines only its rule runs under the raw fallback", () => {
+  it("keeps the reconstructed Pi editor byte-faithful and refines only its rule runs", () => {
     const raw = readFileSync(join(PANES_DIR, PI_WORKING_EDITOR), "utf8");
     const lines = fixtureLines(PI_WORKING_EDITOR);
 
@@ -184,11 +184,14 @@ describe("splitLines — labelled terminal rules", () => {
     expect(lines[0]!.segments.map((segment) => segment.muted)).toEqual([true, false, false, true]);
     expect(lines[1]!.segments[0]!.muted).toBe(false); // editor padding remains untouched
 
+    // These three rows are a pi editor with no status row under it. Since PR 450 (issue 445) the
+    // reader finds that editor, so the composer owns the rows and the raw block is empty. Before it,
+    // those rows stayed in the thread as the raw block.
     const blocks = buildBlocks(lines, { agent: "pi" });
     expect(blocks).toHaveLength(1);
     expect(blocks[0]!.kind).toBe("raw");
-    if (blocks[0]!.kind !== "raw") throw new Error("expected raw Pi fallback");
-    expect(blocks[0]!.lines).toBe(lines);
+    if (blocks[0]!.kind !== "raw") throw new Error("expected a raw block");
+    expect(blocks[0]!.lines).toEqual([]);
   });
 
   it("refines live-shaped ANSI boundaries without changing the coloured spinner or label", () => {
@@ -465,5 +468,26 @@ describe("dropLeadingLines", () => {
   it("is the identity for a count of zero, reference and all", () => {
     const blocks = [raw("a", "b")];
     expect(dropLeadingLines(blocks, 0)).toBe(blocks);
+  });
+});
+
+describe("hasQuestionMark", () => {
+  it.each([
+    ["ASCII", "Which theme?"],
+    ["fullwidth (U+FF1F), as Japanese and Chinese end a question", "どこを中心にレビューしますか？"],
+    ["Arabic (U+061F)", "هل تريد المتابعة؟"],
+    ["in the middle of a row", "Really? Yes."],
+  ])("finds the %s question mark", (_label, text) => {
+    expect(hasQuestionMark(text)).toBe(true);
+  });
+
+  it.each([
+    ["a plain statement", "Pick a theme."],
+    ["an empty row", ""],
+    ["the Greek question mark, which is the semicolon of ordinary prose", "τι κάνεις;"],
+    ["an ASCII semicolon", "a; b"],
+    ["a fullwidth exclamation mark", "どうぞ！"],
+  ])("does not find one in %s", (_label, text) => {
+    expect(hasQuestionMark(text)).toBe(false);
   });
 });

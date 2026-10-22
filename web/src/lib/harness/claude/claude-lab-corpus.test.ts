@@ -147,8 +147,8 @@ describe("the table and the fixture directory stay in lockstep", () => {
   });
 
   it("the corpus is not vacuous", () => {
-    expect(ENTRIES.length).toBe(95);
-    expect(new Set(ENTRIES.map((e) => e.cols))).toEqual(new Set([40, 41, 60, 82, 83, 120, 132, 200]));
+    expect(ENTRIES.length).toBe(120);
+    expect(new Set(ENTRIES.map((e) => e.cols))).toEqual(new Set([40, 41, 60, 82, 83, 119, 120, 132, 200]));
     expect(new Set(ENTRIES.map((e) => e.state)).size).toBeGreaterThan(25);
   });
 });
@@ -231,6 +231,10 @@ describe("the pipeline lifts the kind the screen shows", () => {
     // the model's own. The ban is on a GENERIC MENU synthesising one the screen never named.
     for (const entry of ENTRIES) {
       if (entry.expected.blockKind !== "menu") continue;
+      // A notice over a live box (ADR 0109, the rating survey since 2026-10-19) sends the digits its own
+      // key row prints, which is what .adr/0009 allows: no generic menu synthesised them.
+      const block = lifted(load(entry.fixture));
+      if (block?.kind === "menu" && block.menu.liveBox !== undefined) continue;
       for (const key of entry.expected.keys ?? []) {
         expect(/\d/.test(key), `${entry.fixture}: ${key}`).toBe(false);
       }

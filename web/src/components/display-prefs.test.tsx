@@ -20,6 +20,7 @@ const PREFS: DisplayPrefs = {
   // per-pane view). Neither is drawn by this sheet.
   controlsOpen: false,
   paneView: {},
+  stretchText: false,
 };
 
 function draw(paneView?: Partial<PaneViewControl>) {
@@ -37,6 +38,7 @@ function draw(paneView?: Partial<PaneViewControl>) {
       mirrorNative={false}
       setMirrorNative={vi.fn()}
       setExpandClippedReply={vi.fn()}
+      setStretchText={vi.fn()}
       paneView={
         paneView && {
           chosen: "terminal",
@@ -83,6 +85,16 @@ describe("DisplayPrefsContent", () => {
     expect(screen.getByLabelText("Tool calls")).toBeInTheDocument();
     expect(screen.queryByLabelText("Wrap lines")).toBeNull();
     expect(screen.queryByLabelText("Raw terminal")).toBeNull();
+  });
+
+  it("offers the stretchtext switch over both bodies, since Chat draws replies too", () => {
+    draw({ chosen: "chat", showing: "chat" });
+    expect(screen.getByLabelText("Stretchtext replies")).toBeInTheDocument();
+  });
+
+  it("offers the stretchtext switch over the mirror, where the Full reply card draws a reply", () => {
+    draw({ chosen: "terminal", showing: "terminal" });
+    expect(screen.getByLabelText("Stretchtext replies")).toBeInTheDocument();
   });
 
   it("the stream's text size is its own number, not the mirror's", async () => {

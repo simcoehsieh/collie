@@ -75,6 +75,27 @@ export function useAutoScroll<T extends HTMLElement = HTMLDivElement>(
     onAtBottomChange?.(true);
   }, [onAtBottomChange]);
 
+  /** Move to a child for reading and stop following; arrived content never overrides backscroll. */
+  const scrollToChild = useCallback(
+    (child: HTMLElement | null, force = false): boolean => {
+      const el = scrollRef.current;
+      if (!el || !child) return false;
+      if (!autoScroll.current && !force) return false;
+      // To the padding edge, not the border edge: a band inset pads the top, and a child placed
+      // under it would sit behind the band.
+      const pad = Number.parseFloat(getComputedStyle(el).paddingTop) || 0;
+      el.scrollTo({
+        top: el.scrollTop + child.getBoundingClientRect().top - el.getBoundingClientRect().top - pad,
+        behavior: "auto",
+      });
+      autoScroll.current = false;
+      setIsAtBottom(false);
+      onAtBottomChange?.(false);
+      return true;
+    },
+    [onAtBottomChange],
+  );
+
   const readScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -184,5 +205,5 @@ export function useAutoScroll<T extends HTMLElement = HTMLDivElement>(
     [],
   );
 
-  return { scrollRef, isAtBottom, scrollToBottom, onScroll };
+  return { scrollRef, isAtBottom, scrollToBottom, scrollToChild, onScroll };
 }

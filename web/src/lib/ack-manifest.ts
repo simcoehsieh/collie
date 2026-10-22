@@ -60,6 +60,26 @@ export const ACK_MANIFEST = {
     channel: "echo",
     why: "The composer empties and the sent text appears in the mirror; the Send button holds its busy tone until the bridge has verified the reply landed (lib/reply-action.ts).",
   },
+  postSend: {
+    channel: "echo",
+    why: "The Send Protocol's request (M56 spec 05): the Send button holds its busy tone until the bridge answers with a receipt; a sent text empties the composer and appears in the mirror, any other outcome lands as a status line and, where it has one, an offer strip at the thumb.",
+  },
+  postProgramSend: {
+    channel: "echo",
+    why: "The Send Protocol's request for a program on this machine (M56 spec 14): the field holds Sending until the bridge answers; a sent text moves to the thread as a pending line the program's own line replaces, and any other outcome lands at the thumb as the terminal composer's notice.",
+  },
+  postWalky: {
+    channel: "inline",
+    why: "An operator message (M62): the receipt's state, in words, stands beside the composer box (or in the Crew sheet's receipt rows) until it is dismissed, because a message that was kept in the inbox or refused is something the operator must read and act on, and a status line would be gone by then.",
+  },
+  cancelHeldSend: {
+    channel: "silent",
+    why: "Cancel or Dismiss on a held send's queued row (M56 spec 15): the row leaving the composer IS the receipt, so a success says nothing more; a Cancel that came too late, and a failed call, land as a status line.",
+  },
+  postAskAnswer: {
+    channel: "echo",
+    why: "A tap on a dialog card as one Answer to the bridge's ask (M56 spec 08): a sent answer reads as Sent and the mirror shows the dialog moving on; a changed or gone dialog lands as a status line and the card redraws from the next read.",
+  },
   sendKeys: {
     channel: "echo",
     // TWO paths reach this one export, and the second is the reason `"silent"` is a real value in
@@ -99,6 +119,14 @@ export const ACK_MANIFEST = {
   renameTab: {
     channel: "status",
     why: "Same as renamePane, one dimension up: the sheet is gone and the tab strip has not re-rendered yet.",
+  },
+  renameSpace: {
+    channel: "status",
+    why: "Same as renameTab, one dimension up again: the sheet is gone and the space strip has not re-rendered yet.",
+  },
+  reopenDurableConversation: {
+    channel: "silent",
+    why: "Success moves the screen: the person lands on the reopened pane, or back on the list, which is the acknowledgement. A refusal says why on the status line, and the Reopen button stays pressable for another try.",
   },
   closeTab: {
     channel: "echo",
@@ -153,6 +181,14 @@ export const ACK_MANIFEST = {
     channel: "silent",
     why: "The history empties on the page the person is looking at once the bridge answers; a refusal publishes an error status through lib/mutate.ts and the history is read again (ADR 0095).",
   },
+  removeSent: {
+    channel: "inline",
+    why: "The row leaves the Sent sheet under the thumb once the machine answers. A refusal or a lost answer must stay readable while the person decides what to do, so the sheet says it in its own notice and keeps the row (M61).",
+  },
+  clearSent: {
+    channel: "inline",
+    why: "The Sent sheet empties and reads the list again once the machine answers. A refusal or a lost answer is said in the sheet's own notice, beside the button that asked, and the lines stay (M61).",
+  },
   addLauncher: {
     channel: "inline",
     why: "The added row appears in the list the person is looking at, so the list is the acceptance. A refusal names a field (a character the bridge refuses, a line too long) or a switch the operator turned off, and the person must still read it while they fix the line, so it sits in the add form itself and not on the status line (M48, ADR 0094).",
@@ -205,6 +241,18 @@ export const ACK_MANIFEST = {
     channel: "inline",
     why: "The answer is the run itself — a progress state that persists in the card for the length of a restart, or a refusal (a red preflight, a run already going) the operator has to read and act on. Neither survives a floating toast, and both belong beside the button that asked for them (components/update-card.tsx).",
   },
+  startRollback: {
+    channel: "inline",
+    why: "The answer is the rollback run itself, followed in update mode through the same steps as an update (M60 spec 01), or a refusal (no previous build, a run already going) the operator reads on the confirm screen that asked. Neither survives a floating toast.",
+  },
+  setReleaseLine: {
+    channel: "inline",
+    why: "The answer is the line this machine is on now, and what that means for it (an Edge build ahead of Stable, a Stable offer above): a standing fact the Release line card states beside the two buttons, and a refusal the operator reads there too (components/release-line-card.tsx).",
+  },
+  startGoBack: {
+    channel: "inline",
+    why: "Like startRollback: the answer is the run itself, followed in update mode, or a refusal (no Stable to go back to, a run already going) read on the confirm screen that asked (M60 spec 01).",
+  },
   snoozeUpdate: {
     channel: "silent",
     why: "\"Remind me next digest\" is answered by the card's own line changing to say so, in the same tap. A second acknowledgement of a dismissal is noise about noise.",
@@ -255,6 +303,22 @@ export const ACK_MANIFEST = {
   requestProbe: {
     channel: "inline",
     why: "Same surface, same reason, and the wait is the load-bearing part: a probe is one to two seconds of headless Chrome, so the sheet holds a spinner on the line that asked and lands the numbered pin in place — an echo elsewhere would be an answer to a question whose surface is not on screen.",
+  },
+  startWhistleSetup: {
+    channel: "inline",
+    why: "The Whistle card swaps the button for the host's own progress bar, and a refusal is written inside that card, where the person is still looking at the button they tapped.",
+  },
+  removeWhistleModel: {
+    channel: "inline",
+    why: "The two-tap confirm sits in the Whistle card and its outcome is the card itself going back to the setup button; a refusal is written under it.",
+  },
+  setSttHost: {
+    channel: "inline",
+    why: "The Host speech provider card is the acknowledgement: the chosen row turns selected and the status line names the provider the host answered with. A refusal (another provider set up in a terminal, no model, Codex not signed in, the probe refused) is written inside that card, or inside the consent sheet while it is open, because the reason is about that one choice.",
+  },
+  answerAsk: {
+    channel: "inline",
+    why: "The ask card is the acknowledgement: a taken answer closes it, and already answered, changed, may-not-have-arrived (Try again) and refused are written in the card itself, because each is about that one question and must outlast the next tap.",
   },
 // `satisfies`, not an annotation: the KEYS stay known to the compiler (so a typo'd name is a type
 // error at any reader, rather than a silent `undefined`), while every entry is still checked against

@@ -120,6 +120,11 @@ interface AgentListProps {
   hiddenMachines?: readonly string[];
   /** The machine the dashboard addresses, the scope's `?h=`: undefined is the lead. It always shows. */
   addressedHost?: string | undefined;
+  /**
+   * The address the dashboard shows, machine and session: the empty list's capability answer is asked
+   * of it (M55). Omit and the lead's primary session is asked, as before.
+   */
+  scope?: Scope;
   /** Pick a hidden machine's "Show <machine>'s panes" option: show that machine again. */
   onShowMachine?: (host: string) => void;
   /**
@@ -185,10 +190,10 @@ const NO_KEYS: readonly string[] = [];
 const NO_PINS: readonly Pin[] = [];
 const NO_MACHINES: readonly string[] = [];
 
-/** The heading's dot, in the worst URGENT status inside the group; none when quiet. */
-function urgentDot(g: WorkspaceGroup): string | undefined {
+/** The heading's mark, for the worst URGENT status inside the group; none when quiet. */
+function urgentMark(g: WorkspaceGroup): "blocked" | undefined {
   const worst = worstTriage(g.panes);
-  if (worst === "needs") return "bg-status-blocked";
+  if (worst === "needs") return "blocked";
   return undefined;
 }
 
@@ -283,6 +288,7 @@ export const AgentList = memo(function AgentList({
   onToggleHidden,
   hiddenMachines = NO_MACHINES,
   addressedHost,
+  scope: viewScope,
   onShowMachine,
   needsYouOnly = false,
   onNeedsYouOnlyChange,
@@ -301,7 +307,7 @@ export const AgentList = memo(function AgentList({
   const { ranks, reread } = useFrozenRanks(order, [...agents, ...shellPanes], { rereadOnVisible: true });
   // Whether the multiplexer can say which agent a pane holds. Read unconditionally — a hook cannot
   // sit behind the early return below, and the answer is only consulted in the empty branch.
-  const agentDetection = useMuxCapability("agentDetection");
+  const agentDetection = useMuxCapability("agentDetection", viewScope);
   // Whether this device retired the pin hint (lib/pin-hint.ts). Read here for the same
   // reason: above the early return.
   const pinHintRetired = usePinHintRetired();
@@ -674,7 +680,7 @@ export const AgentList = memo(function AgentList({
       {renderBody?.(shown)}
 
       {/* By workspace. The heading IS the landmark: full ink, its own case, and it lights up with a
-          dot and a count when a pane inside needs you. Flat rows in ONE bordered group. Under Needs
+          mark and a count when a pane inside needs you. Flat rows in ONE bordered group. Under Needs
           you with nothing urgent, no group is left, and the summary line's all-clear above is the
           whole answer (with the Pinned group under it, when pins exist): no empty list, no second
           message.
@@ -706,7 +712,7 @@ export const AgentList = memo(function AgentList({
           <SectionHeader
             label={g.label}
             tone="strong"
-            dot={urgentDot(g)}
+            mark={urgentMark(g)}
             // FORK: the room is kept only where a "+" can stand; this install passes no `newTab`
             // (lib/dash-tabs.ts), so no heading has one and every heading keeps its old height.
             className={newTab === undefined ? undefined : "min-h-7"}

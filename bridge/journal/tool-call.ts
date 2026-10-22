@@ -62,8 +62,8 @@ export type ToolCall =
   | { kind: "fetch"; url: string }
   /** A file was removed or renamed. `to` is the destination of a move. */
   | { kind: "delete" | "move"; path: string; to?: string }
-  /** A subagent ran. */
-  | { kind: "task"; agent: string; summary: string }
+  /** A subagent ran. `agentId` names the subagent's own log when the harness records one. */
+  | { kind: "task"; agent?: string; summary: string; agentId?: string }
   /**
    * The agent asked the operator to choose. One entry per question the call carried. `answers[i]` is
    * the list of chosen labels for question `i`, present only once the call completed with answers.
@@ -174,6 +174,28 @@ function text(v: JsonValue | undefined, max: number): string | undefined {
   return typeof v === "string" && v.trim() !== "" ? clamp(v.trim(), max).text : undefined;
 }
 
+/** A question's text exactly as {@link readQuestions} keeps it, so an answer keyed by the raw text can
+ *  be matched to its question. */
+export function questionKey(v: JsonValue | undefined): string | undefined {
+  return text(v, MAX_QUESTION_CHARS);
+}
+
+/**
+ * Chosen labels from a harness's answer value: one label, a list of them, or `{ answers }`. Clamped
+ * and bounded as option labels are, so a picked option's label equals the one on the card.
+ */
+export function answerLabels(v: JsonValue | undefined): string[] {
+  if (Array.isArray(v)) {
+    return v.slice(0, MAX_OPTIONS).flatMap((label) => {
+      const picked = text(label, MAX_LABEL_CHARS);
+      return picked === undefined ? [] : [picked];
+    });
+  }
+  if (isRecord(v)) return Array.isArray(v.answers) ? answerLabels(v.answers) : [];
+  const picked = text(v, MAX_LABEL_CHARS);
+  return picked === undefined ? [] : [picked];
+}
+
 /**
  * Read an input's `questions` list, or `undefined` when it holds nothing a person could answer.
  *
@@ -268,12 +290,15 @@ export function classifyToolCall(name: string, input: JsonValue | undefined, sum
       if (to !== undefined) call.to = to;
       return call;
     }
-    case "task":
-      return {
-        kind: "task",
-        agent: str(o, "subagent_type", "agent", "agent_type") ?? "agent",
-        summary: str(o, "description", "task") ?? summary,
-      };
+    case "task": {
+      // NO WORD STANDS IN FOR A MISSING NAME. A Claude Code Agent call that names no subagent type
+      // carries its `model` ("opus", "sonnet") instead, and that says more than the word "agent" did.
+      // With neither, the field is absent and the card draws plain "Agent".
+      const call: ToolCall = { kind: "task", summary: str(o, "description", "task") ?? summary };
+      const agent = str(o, "subagent_type", "agent", "agent_type") ?? str(o, "model");
+      if (agent !== undefined) call.agent = agent;
+      return call;
+    }
     default:
       return { kind: "other", name, summary };
   }

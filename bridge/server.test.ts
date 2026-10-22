@@ -6,6 +6,9 @@ import { encodeStyledRegion, styledRegionLines } from "../web/src/lib/styled-reg
 import {
   afterPaneInput,
   isPaneInput,
+  isTopologyWrite,
+  freeSpaceName,
+  paneGateLevel,
   blobRoute,
   BLOB_MAX_BYTES,
   sniffBlobType,
@@ -13,6 +16,8 @@ import {
   muxConfigBody,
   kbDocumentResponse,
   muxLogoResponse,
+  sessionConfigMux,
+  sessionMuxWire,
   BUILD_HEADER,
   cacheControlFor,
   checkAccess,
@@ -29,6 +34,10 @@ import {
   guard,
   type PairingGate,
   historyParams,
+  discoverProcesses,
+  discoveryHints,
+  journalRefOf,
+  paneScreen,
   isHostAllowed,
   isLoopbackPeer,
   isReservedAuthPath,
@@ -37,6 +46,10 @@ import {
   cacheRulesRoute,
   launchersRoute,
   normalizeTabLabel,
+  renameSpace,
+  durableConversations,
+  durableConversationItems,
+  reopenConversation,
   hasSplitUrl,
   paneReadResponse,
   paneWaitMs,
@@ -45,6 +58,8 @@ import {
   MAX_WATCHED_PANES,
   isCompressibleAsset,
   paneReadPayload,
+  paneChat,
+  paneHistory,
   parsePairRequest,
   parseSnoozeRequest,
   parseNotifyPrefsPatch,
@@ -52,11 +67,17 @@ import {
   parseCacheWatchForget,
   cacheWatchable,
   replyPane,
+  REPLY_OFF_TEXT,
+  REPLY_OLD_PHONE_TEXT,
   requestBodyCap,
+  pairedLabel,
   requestDevice,
   resolveStaticPath,
   sendReplySteps,
+  typeIntoFreshShell,
   serveStatic,
+  STT_WORKER_CSP,
+  isSttWorkerScript,
   startupWarnings,
   healthBody,
   withBuildHeader,
@@ -74,7 +95,7 @@ import {
   PAIR_WINDOW_MS,
 } from "./pair-limit.ts";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, truncate, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, truncate, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { brotliDecompressSync } from "node:zlib";
 import { join } from "node:path";
@@ -82,6 +103,11 @@ import { join } from "node:path";
 import { ArtifactStore } from "./artifacts.ts";
 import { AuditLog, type AuditEntry } from "./audit.ts";
 import type { HandoffResponse } from "./handoff.ts";
+import { answerPane, memoryAnswerReceipts, NO_ANSWERS } from "./durable/answer.ts";
+import { withOpenAsks, withTurn } from "./durable/pane-asks.ts";
+import { controlPane, memoryControlReceipts, NO_CONTROLS, NO_RAW_INPUT, rawInputRefusal } from "./durable/control.ts";
+import { DurableMux } from "./mux/durable/adapter.ts";
+import { DurableSocketClient } from "./mux/durable/client.ts";
 import { PairingStore, sha256Hex, type PairingIo } from "./pairing.ts";
 import { FolderStore, MAX_FAVOURITES, MAX_FOLDER_CHARS } from "./folders.ts";
 import type { SessionRuntime } from "./sessions.ts";
@@ -95,18 +121,25 @@ import { tmuxMuxFactory } from "./mux/tmux/adapter.ts";
 import type { HerdrClient, PaneRead } from "./mux/herdr/client.ts";
 import {
   muxAck,
+  muxGone,
   muxOk,
   muxRefused,
+  muxUnreachable,
+  type MuxConversationItems,
+  type MuxConversationPage,
+  type MuxHistoryPage,
+  type MuxReopened,
   type MuxAck,
   type MuxAdapter,
   type MuxCreatedPane,
   type MuxGrid,
+  type MuxGridRequest,
   type MuxOutcome,
   type MuxSpaceRequest,
   type MuxTabRequest,
 } from "./mux/types.ts";
 import { muxCaps, neverProxy } from "./crew/fixtures.ts";
-import { forwardHeaders } from "./crew/forward.ts";
+import { crewRouteFor, forwardHeaders } from "./crew/forward.ts";
 import { crewDeviceOf, crewGate } from "./crew/peer-gate.ts";
 import { CrewLead } from "./crew/lead.ts";
 import { NARROW_PLAN, snapshotPlan } from "./crew/merge.ts";
@@ -115,6 +148,11 @@ import { selectView } from "./sessions.ts";
 import { DEFAULT_MAX_UPLOAD_BYTES } from "./uploads.ts";
 import { MAX_STT_AUDIO_BYTES } from "./stt/http.ts";
 import { computeEtag } from "./http-cache.ts";
+import { grokJournal } from "./journal/grok.ts";
+import { museJournal } from "./journal/muse.ts";
+import { TranscriptStore } from "./journal/store.ts";
+import { LiveWindows } from "./journal/live.ts";
+import type { JournalAdapter } from "./journal/types.ts";
 import {
   MUX_LOGO_PATH,
   type AgentView,
@@ -124,6 +162,7 @@ import {
   type LaunchersResponse,
   type MuxConfig,
   type PaneReadResponse,
+  type PaneWire,
   type SnapshotResponse,
 } from "./types.ts";
 import type { StateEngine } from "./state-engine.ts";
@@ -186,6 +225,7 @@ function cfg(overrides: Partial<Config> = {}): Config {
       grok: ["/nope/grok"],
       hermes: ["/nope/hermes"],
       muse: ["/nope/muse"],
+      openclaw: ["/nope/openclaw"],
     },
     submitKeys: ["Enter"],
     commandsFile: "/nope/commands.toml",
@@ -202,6 +242,7 @@ function cfg(overrides: Partial<Config> = {}): Config {
     accessAud: [],
     auditContent: "preview",
     redact: true,
+    sent: "on",
     deviceHeader: "",
     deviceAllowlist: [],
     allowedOrigins: [],
@@ -216,6 +257,9 @@ function cfg(overrides: Partial<Config> = {}): Config {
     vapidSubject: "mailto:admin@example.com",
     stateDir: "/tmp/state",
     multiSession: true,
+    surfaceShadow: false,
+    sendProtocol: false,
+    walky: true,
     skipServe: false,
     basePath: "/",
     maxUploadBytes: DEFAULT_MAX_UPLOAD_BYTES,
@@ -522,24 +566,22 @@ describe("sendReplySteps — two-step send & partial-failure clarity", () => {
       this.calls.push("text");
       return this.failOn === "text" ? Promise.reject(new Error("text rejected")) : Promise.resolve(muxAck());
     }
-    sendKeys(_paneId: string, _keys: readonly string[]): Promise<MuxAck> {
+    writeKeys(_paneId: string, _keys: readonly string[]): Promise<MuxAck> {
       this.calls.push("keys");
       return this.failOn === "keys" ? Promise.reject(new Error("keys rejected")) : Promise.resolve(muxAck());
     }
   }
 
-  const noSleep = async () => {};
-
-  test("types then submits on the happy path", async () => {
+  test("types then submits on the happy path, with no wait between the two (the blind 350 ms is gone, M56 spec 06)", async () => {
     const client = new FakeClient();
-    const out = await sendReplySteps(client, "p1", "hello", true, ["Enter"], noSleep);
+    const out = await sendReplySteps(client, "p1", "hello", true, ["Enter"]);
     expect(out).toEqual({ ok: true, textDelivered: true });
     expect(client.calls).toEqual(["text", "keys"]);
   });
 
   test("text lands but submit fails → distinguishable error + textDelivered:true (don't resend)", async () => {
     const client = new FakeClient("keys");
-    const out = await sendReplySteps(client, "p1", "hello", true, ["Enter"], noSleep);
+    const out = await sendReplySteps(client, "p1", "hello", true, ["Enter"]);
     expect(out).toEqual({
       ok: false,
       textDelivered: true,
@@ -551,7 +593,7 @@ describe("sendReplySteps — two-step send & partial-failure clarity", () => {
 
   test("text step fails → nothing delivered, surfaces Herdr's message (safe to resend)", async () => {
     const client = new FakeClient("text");
-    const out = await sendReplySteps(client, "p1", "hello", true, ["Enter"], noSleep);
+    const out = await sendReplySteps(client, "p1", "hello", true, ["Enter"]);
     // The English is byte-for-byte the multiplexer's own words, as it always was; `code` and
     // `detail.reason` are the machine half the phone translates against (bridge/error-codes.ts).
     expect(out).toEqual({
@@ -566,7 +608,7 @@ describe("sendReplySteps — two-step send & partial-failure clarity", () => {
 
   test("submit-only (empty text) failure is a plain failure, not the partial-delivery message", async () => {
     const client = new FakeClient("keys");
-    const out = await sendReplySteps(client, "p1", "", true, ["Enter"], noSleep);
+    const out = await sendReplySteps(client, "p1", "", true, ["Enter"]);
     expect(out).toEqual({
       ok: false,
       textDelivered: false,
@@ -579,9 +621,41 @@ describe("sendReplySteps — two-step send & partial-failure clarity", () => {
 
   test("no-submit reply just types the text", async () => {
     const client = new FakeClient();
-    const out = await sendReplySteps(client, "p1", "hello", false, ["Enter"], noSleep);
+    const out = await sendReplySteps(client, "p1", "hello", false, ["Enter"]);
     expect(out).toEqual({ ok: true, textDelivered: true });
     expect(client.calls).toEqual(["text"]);
+  });
+});
+
+describe("typeIntoFreshShell: the order of the writes", () => {
+  test("writes the text first and the Enter second, with no wait between them", async () => {
+    const events: string[] = [];
+    let clock = 0;
+    const client = {
+      readGrid: (paneId: string): Promise<MuxOutcome<MuxGrid>> => {
+        events.push("read");
+        return Promise.resolve(muxOk({ paneId, text: "user@host:~$ ", truncated: false, revision: 1 }));
+      },
+      typeText: (_paneId: string, text: string): Promise<MuxAck> => {
+        events.push(`text:${text}`);
+        return Promise.resolve(muxAck());
+      },
+      writeKeys: (_paneId: string, keys: readonly string[]): Promise<MuxAck> => {
+        events.push(`keys:${keys.join("+")}`);
+        return Promise.resolve(muxAck());
+      },
+    };
+    const sleep = (ms: number): Promise<void> => {
+      events.push("sleep");
+      clock += ms;
+      return Promise.resolve();
+    };
+    const out = await typeIntoFreshShell(client, "p1", "ls -la", { sleep, now: () => clock }, "launch");
+    expect(out).toEqual({ ok: true, textDelivered: true });
+    const writes = events.filter((e) => e.startsWith("text:") || e.startsWith("keys:"));
+    expect(writes).toEqual(["text:ls -la", "keys:Enter"]);
+    // Nothing sits between the two writes: the blind settle of the old route is gone (M56 spec 06).
+    expect(events.slice(events.indexOf("text:ls -la"))).toEqual(["text:ls -la", "keys:Enter"]);
   });
 });
 
@@ -641,8 +715,11 @@ describe("pane write prompt binding", () => {
     keys?: string[];
     text?: string;
     submit?: boolean;
+    id?: string;
     expected_prompt?: string | number | null;
     expected_styled?: string | number | null;
+    expected_columns?: { start: number; end: number } | number[] | string | null;
+    expected_tail_lines?: number | string | null;
   }
 
   function request(body: PaneActionBody): Request {
@@ -683,6 +760,18 @@ describe("pane write prompt binding", () => {
     expect(res.status).toBe(200);
     expect(client.reads).toEqual([]);
     expect(client.keys).toEqual([["w1:p1", ["1"]]]);
+  });
+
+  test("Send now while the turn runs: the queue's declared keys pass with no read of the screen", async () => {
+    // The screen of a running Claude Code 2.1.301 turn with a message queued (`ctrl+enter to send now`).
+    // The keys door never asks the Surface: a running turn is never a refusal here, like the Stop key.
+    const client = new FakePaneClient();
+    client.text = readFileSync(join(import.meta.dir, "../web/src/fixtures/panes/claude--v2301-working-queued-message--w100.txt"), "utf8");
+    const { audit } = auditEntries();
+    const res = await keysPane(asMux(client), cfg(), "w1:p1", request({ keys: ["ctrl+Enter"] }), audit, "phone", "default");
+    expect(res.status).toBe(200);
+    expect(client.reads).toEqual([]);
+    expect(client.keys).toEqual([["w1:p1", ["ctrl+Enter"]]]);
   });
 
   test("reply without expected_prompt writes without an extra pane read", async () => {
@@ -824,6 +913,69 @@ describe("pane write prompt binding", () => {
     });
   });
 
+  test("a reply that submits text never types blind: with no protocol it is refused 409 and nothing reaches the pane (M56 spec 06)", async () => {
+    const client = new FakePaneClient();
+    const { audit } = auditEntries();
+    const res = await replyPane(asMux(client), cfg(), "w1:p1", request({ text: "hello", submit: true, id: "phone-req-0001" }), audit, null, "default");
+    expect(res.status).toBe(409);
+    expect(await res.text()).toBe(REPLY_OFF_TEXT);
+    expect(client.texts).toEqual([]);
+    expect(client.keys).toEqual([]);
+  });
+
+  test("a text submit with no request id is an old phone: refused at once, before any read or key (M56 compat)", async () => {
+    const client = new FakePaneClient();
+    const { audit, entries } = auditEntries();
+    const bodies = [
+      { text: "hello", submit: true },
+      { text: "hello" },
+      { text: "hello", submit: true, expected_prompt: "Approve this command?\n1. Yes\n2. No" },
+    ];
+    for (const body of bodies) {
+      const res = await replyPane(asMux(client), cfg(), "w1:p1", request(body), audit, null, "default");
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        ok: false,
+        textDelivered: false,
+        error: REPLY_OLD_PHONE_TEXT,
+        code: "reply.send_failed",
+        detail: { reason: REPLY_OLD_PHONE_TEXT },
+      });
+    }
+    expect(client.reads).toEqual([]);
+    expect(client.texts).toEqual([]);
+    expect(client.keys).toEqual([]);
+    expect(entries[0]?.detail).toMatchObject({ submitted: false, textDelivered: false, reason: "old_phone" });
+  });
+
+  test("an old phone's keys and its raw text with submit false still work (M56 compat)", async () => {
+    const client = new FakePaneClient();
+    const { audit } = auditEntries();
+    const typed = await replyPane(asMux(client), cfg(), "w1:p1", request({ text: "hello", submit: false }), audit, null, "default");
+    expect(typed.status).toBe(200);
+    expect(await typed.json()).toEqual({ ok: true });
+    expect(client.texts).toEqual([["w1:p1", "hello"]]);
+    const keyed = await keysPane(asMux(client), cfg(), "w1:p1", request({ keys: ["1"] }), audit, null, "default");
+    expect(keyed.status).toBe(200);
+    expect(client.keys).toEqual([["w1:p1", ["1"]]]);
+  });
+
+  test("a text submit that names an id runs the Send Protocol as before, so the old-phone rule does not widen (M56 compat)", async () => {
+    const client = new FakePaneClient();
+    const { audit } = auditEntries();
+    const res = await replyPane(asMux(client), cfg(), "w1:p1", request({ text: "hello", submit: true, id: "phone-req-0001" }), audit, null, "default");
+    expect(res.status).toBe(409);
+    expect(await res.text()).toBe(REPLY_OFF_TEXT);
+  });
+
+  test("a submit with no text and no binding is refused: an unbound Enter is the blind path (M56 spec 06)", async () => {
+    const client = new FakePaneClient();
+    const { audit } = auditEntries();
+    const res = await replyPane(asMux(client), cfg(), "w1:p1", request({ text: "", submit: true }), audit, null, "default");
+    expect(res.status).toBe(400);
+    expect(client.keys).toEqual([]);
+  });
+
   test("stale expected_prompt returns prompt_changed and sends no reply text or keys", async () => {
     const client = new FakePaneClient();
     client.text = "Command finished";
@@ -835,6 +987,7 @@ describe("pane write prompt binding", () => {
       request({
         text: "hello",
         submit: true,
+        id: "phone-req-0001",
         expected_prompt: "Approve this command?\n1. Yes\n2. No",
       }),
       audit,
@@ -994,7 +1147,7 @@ describe("pane write prompt binding", () => {
         asMux(client),
         cfg(),
         "w1:p1",
-        request({ text: "hello", expected_prompt: TEXT_REGION, expected_styled: styledOf(chips(0)) }),
+        request({ text: "hello", id: "phone-req-0001", expected_prompt: TEXT_REGION, expected_styled: styledOf(chips(0)) }),
         audit,
         null,
         "default",
@@ -1183,6 +1336,176 @@ describe("pane write prompt binding", () => {
       );
       expect(entries[0]?.detail).toMatchObject({ promptBinding: { styled: "checked" } });
       expect(entries[1]?.detail).not.toHaveProperty("promptBinding.styled");
+    });
+  });
+
+  // M56 spec 03, shadow mode: an input box under the bound region is recorded in the audit line and
+  // never refuses (bridge/prompt-binding.ts composerBelowShadow says why: Muse draws a live question
+  // above its own box).
+  describe("an input box under the region (shadow)", () => {
+    const RULE = "─".repeat(40);
+    const REGION = ["Do you want to proceed?", "❯ 1. Yes", "  2. No"].join("\n");
+
+    test("the keys go, and the audit records shadow composer_below", async () => {
+      const client = new FakePaneClient();
+      client.text = [REGION, "", RULE, "❯ ", RULE, "  ? for shortcuts"].join("\n");
+      const { audit, entries } = auditEntries();
+      const res = await keysPane(asMux(client), cfg(), "w1:p1", request({ keys: ["1"], expected_prompt: REGION }), audit, null, "default");
+      expect(res.status).toBe(200);
+      expect(client.keys).toEqual([["w1:p1", ["1"]]]);
+      expect(entries[0]?.detail).toMatchObject({ promptBinding: { checked: true, passed: true, shadow: "composer_below" } });
+    });
+
+    test("no box under the region leaves no shadow key", async () => {
+      const client = new FakePaneClient();
+      client.text = [RULE, "❯ an old prompt", RULE, REGION].join("\n");
+      const { audit, entries } = auditEntries();
+      const res = await keysPane(asMux(client), cfg(), "w1:p1", request({ keys: ["1"], expected_prompt: REGION }), audit, null, "default");
+      expect(res.status).toBe(200);
+      expect(entries[0]?.detail).not.toHaveProperty("promptBinding.shadow");
+    });
+  });
+
+  // `expected_columns` (web/src/lib/column-range.ts): the columns of each row the phone read its
+  // region from, for a dialog beside something that moves on its own (Oh My Pi's side panel). The
+  // fresh read is cut to those columns before it is compared. Same single read.
+  describe("expected_columns", () => {
+    const RULE = "─".repeat(12);
+    const screen = (panel: string, question = "Pick a color?") =>
+      [`${RULE}SESSION`, ` ${question}`.padEnd(12) + panel, " → 1. Red".padEnd(12) + "TOOLS 1", RULE, "status"].join("\n");
+    const REGION = [RULE, " Pick a color?".slice(0, 12), " → 1. Red", RULE].join("\n");
+    const COLUMNS = { start: 0, end: 12 };
+
+    test("a change beside the range passes; the keys go after ONE read, and the audit records the range", async () => {
+      const client = new FakePaneClient();
+      client.text = screen("elapsed 1m22");
+      const { audit, entries } = auditEntries();
+      const body = { keys: ["1"], expected_prompt: REGION, expected_columns: COLUMNS };
+      const res = await keysPane(asMux(client), cfg(), "w1:p1", request(body), audit, "phone", "default");
+      expect(res.status).toBe(200);
+      expect(client.reads).toHaveLength(1);
+      expect(client.keys).toEqual([["w1:p1", ["1"]]]);
+      expect(entries[0]?.detail).toMatchObject({ promptBinding: { checked: true, passed: true, columns: COLUMNS } });
+    });
+
+    test("a change inside the range is refused: 409 and no keys", async () => {
+      const client = new FakePaneClient();
+      client.text = screen("elapsed 1m22", "Pick a size?");
+      const { audit, entries } = auditEntries();
+      const body = { keys: ["1"], expected_prompt: REGION, expected_columns: COLUMNS };
+      const res = await keysPane(asMux(client), cfg(), "w1:p1", request(body), audit, null, "default");
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ code: "prompt_changed", reason: "not_found" });
+      expect(client.keys).toEqual([]);
+      expect(entries[0]?.detail).toMatchObject({ promptBinding: { passed: false, columns: COLUMNS } });
+    });
+
+    test("without the range the same region is compared as whole rows, and refused (an older phone fails closed)", async () => {
+      const client = new FakePaneClient();
+      client.text = screen("elapsed 1m22");
+      const { audit, entries } = auditEntries();
+      const res = await keysPane(asMux(client), cfg(), "w1:p1", request({ keys: ["1"], expected_prompt: REGION }), audit, null, "default");
+      expect(res.status).toBe(409);
+      expect(client.keys).toEqual([]);
+      expect(entries[0]?.detail).not.toHaveProperty("promptBinding.columns");
+    });
+
+    test("expected_columns without expected_prompt, or not a range, is a 400 before any read or write", async () => {
+      const bad: PaneActionBody["expected_columns"][] = [
+        { start: 5, end: 5 },
+        { start: -1, end: 4 },
+        { start: 0, end: 4097 },
+        { start: 0.5, end: 4 },
+        [0, 12],
+        "0-12",
+        null,
+      ];
+      for (const route of ["keys", "reply"] as const) {
+        for (const expected_columns of [...bad, COLUMNS]) {
+          const client = new FakePaneClient();
+          const { audit } = auditEntries();
+          const alone = expected_columns === COLUMNS;
+          const body = alone
+            ? { keys: ["1"], text: "hello", expected_columns }
+            : { keys: ["1"], text: "hello", expected_prompt: REGION, expected_columns };
+          const res =
+            route === "keys"
+              ? await keysPane(asMux(client), cfg(), "w1:p1", request(body), audit, null, "default")
+              : await replyPane(asMux(client), cfg(), "w1:p1", request(body), audit, null, "default");
+          expect(res.status).toBe(400);
+          expect(await res.text()).toBe("bad expected_columns");
+          expect(client.reads).toEqual([]);
+          expect(client.keys).toEqual([]);
+          expect(client.texts).toEqual([]);
+        }
+      }
+    });
+  });
+
+  // `expected_tail_lines` (web/src/lib/tail-lines.ts): how many of the read's last non-blank rows the
+  // region may end in, for a harness that paints its own live chrome under a dialog (Hermes's
+  // spinner, countdown hint, status bar and input row). Same single read; the bridge only counts.
+  describe("expected_tail_lines", () => {
+    const PANEL = ["╭─ needs your input ─╮", "│ ❯ 1. Red          │", "╰────────────────────╯"];
+    const CHROME = ["  spinner (12.0s)", "  hint (3540s)", " status ⏱ 12s", "────", "? ❯", "────"];
+    const REGION = PANEL.join("\n");
+
+    test("a region seven rows up passes with a window of 8; the keys go after ONE read, and the audit records it", async () => {
+      const client = new FakePaneClient();
+      client.text = [...PANEL, ...CHROME, "ticked"].join("\n");
+      const { audit, entries } = auditEntries();
+      const body = { keys: ["1"], expected_prompt: REGION, expected_tail_lines: 8 };
+      const res = await keysPane(asMux(client), cfg(), "w1:p1", request(body), audit, "phone", "default");
+      expect(res.status).toBe(200);
+      expect(client.reads).toHaveLength(1);
+      expect(client.keys).toEqual([["w1:p1", ["1"]]]);
+      expect(entries[0]?.detail).toMatchObject({ promptBinding: { checked: true, passed: true, tailLines: 8 } });
+    });
+
+    test("the same region without the field is refused as not_in_tail (an older phone fails closed)", async () => {
+      const client = new FakePaneClient();
+      client.text = [...PANEL, ...CHROME].join("\n");
+      const { audit, entries } = auditEntries();
+      const res = await keysPane(asMux(client), cfg(), "w1:p1", request({ keys: ["1"], expected_prompt: REGION }), audit, null, "default");
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ code: "prompt_changed", reason: "not_in_tail" });
+      expect(client.keys).toEqual([]);
+      expect(entries[0]?.detail).not.toHaveProperty("promptBinding.tailLines");
+    });
+
+    test("a region further up than the declared window is still refused", async () => {
+      const client = new FakePaneClient();
+      client.text = [...PANEL, ...CHROME, "a", "b"].join("\n");
+      const { audit, entries } = auditEntries();
+      const body = { keys: ["1"], expected_prompt: REGION, expected_tail_lines: 8 };
+      const res = await keysPane(asMux(client), cfg(), "w1:p1", request(body), audit, null, "default");
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ code: "prompt_changed", reason: "not_in_tail" });
+      expect(client.keys).toEqual([]);
+      expect(entries[0]?.detail).toMatchObject({ promptBinding: { passed: false, tailLines: 8 } });
+    });
+
+    test("expected_tail_lines without expected_prompt, or not a window from 6 to 12, is a 400 before any read or write", async () => {
+      const bad: PaneActionBody["expected_tail_lines"][] = [5, 13, 0, -8, 7.5, "8", null];
+      for (const route of ["keys", "reply"] as const) {
+        for (const expected_tail_lines of [...bad, 8]) {
+          const client = new FakePaneClient();
+          const { audit } = auditEntries();
+          const alone = expected_tail_lines === 8;
+          const body = alone
+            ? { keys: ["1"], text: "hello", expected_tail_lines }
+            : { keys: ["1"], text: "hello", expected_prompt: REGION, expected_tail_lines };
+          const res =
+            route === "keys"
+              ? await keysPane(asMux(client), cfg(), "w1:p1", request(body), audit, null, "default")
+              : await replyPane(asMux(client), cfg(), "w1:p1", request(body), audit, null, "default");
+          expect(res.status).toBe(400);
+          expect(await res.text()).toBe("bad expected_tail_lines");
+          expect(client.reads).toEqual([]);
+          expect(client.keys).toEqual([]);
+          expect(client.texts).toEqual([]);
+        }
+      }
     });
   });
 });
@@ -1693,6 +2016,33 @@ describe("requestDevice — attribution across both gates", () => {
   });
 });
 
+describe("pairedLabel — the name Settings credits a change to", () => {
+  const gate = {
+    enforced: () => true,
+    resolve: (token: string | null) => (token === "tok-phone" ? { label: "Pixel 8" } : null),
+    local: (token: string | null) => token === "tok-local",
+  };
+
+  test("the pairing label of the token, and nothing else", () => {
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-phone" }), gate)).toBe("Pixel 8");
+    // A header name is for the gate, not for a screen.
+    expect(pairedLabel(req({ host: "h", "x-device-id": "desk" }), gate)).toBeNull();
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-unknown" }), gate)).toBeNull();
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-local" }), gate)).toBeNull();
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-phone" }))).toBeNull();
+  });
+
+  test("a registry that cannot be read names nobody", () => {
+    const broken = {
+      enforced: () => true,
+      resolve: (): { label: string } | null => {
+        throw new Error("unreadable");
+      },
+    };
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-phone" }), broken)).toBeNull();
+  });
+});
+
 // ── Open routes (M46 specs 03 and 06, ADR 0086) ─────────────────────────────────────────────
 // Reads need the pairing token, and pairing is always on. The open-route list is short and named:
 // `/api/health` and `/api/pair`. The crew surface (`/crew/v1/*`) and the standby door have their own
@@ -2036,6 +2386,161 @@ describe("normalizeTabLabel", () => {
   });
 });
 
+// A space is renamed through `POST /api/space/:id/rename` (M53 spec 05), on an adapter that has `renameSpace`.
+describe("renameSpace", () => {
+  const request = (body: string) => new Request("http://x/api/space/triage/rename", { method: "POST", body });
+  const rig = (rename?: (spaceId: string, label: string) => Promise<MuxAck>) => {
+    const calls: string[] = [];
+    const audit: AuditEntry[] = [];
+    const adapter: Pick<MuxAdapter, "renameSpace" | "refresh"> = {
+      refresh: async () => {
+        calls.push("refresh");
+      },
+    };
+    if (rename !== undefined) adapter.renameSpace = rename;
+    const engine = { pokeNow: () => void calls.push("poke") };
+    const run = (body: string) => renameSpace(adapter, engine, "triage", request(body), { record: (entry: AuditEntry) => void audit.push(entry) }, "pixel", "default");
+    return { calls, audit, run };
+  };
+
+  test("it passes the trimmed label to the adapter, looks again, and writes an audit line", async () => {
+    const seen: string[] = [];
+    const { run, calls, audit } = rig(async (id, label) => (seen.push(`${id}|${label}`), muxAck()));
+    const res = await run(JSON.stringify({ label: "  Support  " }));
+    expect([res.status, await res.json()]).toEqual([200, { ok: true }]);
+    expect(seen).toEqual(["triage|Support"]);
+    expect(calls).toEqual(["refresh", "poke"]);
+    expect(audit).toEqual([{ action: "space.rename", session: "default", device: "pixel", detail: { spaceId: "triage", label: "Support" } }]);
+  });
+
+  test("a blank label, a label that is not a string and a body that is not JSON are 400, and the adapter is not asked", async () => {
+    const seen: string[] = [];
+    const { run } = rig(async (id, label) => (seen.push(`${id}|${label}`), muxAck()));
+    for (const body of [JSON.stringify({ label: "   " }), JSON.stringify({ label: 4 }), JSON.stringify({}), "not json"]) {
+      expect((await run(body)).status).toBe(400);
+    }
+    expect(seen).toEqual([]);
+  });
+
+  test("the program's refusal rides the space.rename_failed code with its words, and nothing is audited", async () => {
+    const { run, audit } = rig(async () => muxRefused("The durable agent did not accept this name."));
+    const res = await run(JSON.stringify({ label: "Taken" }));
+    expect(await res.json()).toMatchObject({ ok: false, code: "space.rename_failed", detail: { reason: "The durable agent did not accept this name." } });
+    expect(audit).toEqual([]);
+  });
+
+  test("an adapter with no renameSpace answers unsupported in the same shape", async () => {
+    const { run } = rig();
+    const res = await run(JSON.stringify({ label: "x" }));
+    expect(await res.json()).toMatchObject({ ok: false, code: "space.rename_failed", detail: { reason: expect.stringContaining("does not take a new name for a space") } });
+  });
+
+  test("the route is a write behind the device gate, ahead of the pane routes, and crosses a crew link", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    expect(src).toContain("const SPACE_ACTION_ROUTE = /^\\/api\\/space\\/([^/]+)\\/rename$/;");
+    const at = src.indexOf("const spaceMatch = pathname.match(SPACE_ACTION_ROUTE);");
+    expect(at).toBeGreaterThan(0);
+    expect(src.slice(at, at + 400)).toContain('caller.gate("write")');
+    expect(at).toBeLessThan(src.indexOf("const paneMatch = pathname.match(PANE_ROUTE);"));
+    expect(crewRouteFor("/api/space/triage/rename")).toBe("space/triage/rename");
+  });
+});
+
+// A durable program's own history (M53 spec 11): the list, the items of one, and a reopen.
+describe("durable history routes", () => {
+  const get = (path: string) => new Request(`http://x${path}`);
+  // A placeholder key, as bridge/redact.test.ts writes one: the mask must hide it, and it is no secret.
+  const KEY = `sk-ant-api03-your-key-here-${"0".repeat(30)}`;
+  const ROW = { id: "conv-1", title: `Ticket ${KEY}`, subtitle: "open", startedAt: "2026-10-13T09:00:00.000Z", state: "open" as const, items: 2, paneId: "conv-1" };
+
+  test("history: conversations passes the page through, keeps next, and masks the program's titles", async () => {
+    const pages: MuxHistoryPage[] = [];
+    const adapter: Pick<MuxAdapter, "listConversations"> = {
+      listConversations: async (page) => (pages.push(page), muxOk<MuxConversationPage>({ items: [ROW], next: "c1" })),
+    };
+    const url = new URL("http://x/api/durable/conversations?after=c0&limit=20");
+    const res = await durableConversations(adapter, url, get(url.pathname + url.search), true);
+    const body = await res.json();
+    expect(pages).toEqual([{ after: "c0", limit: 20 }]);
+    expect(body).toMatchObject({ available: true, next: "c1", items: [{ id: "conv-1", state: "open", paneId: "conv-1", items: 2 }] });
+    expect(body.items[0].title).not.toContain(KEY);
+    // A limit that is not a whole number is not passed on: the program's own default stands.
+    await durableConversations(adapter, new URL("http://x/api/durable/conversations?limit=x"), get("/"), true);
+    expect(pages.at(-1)).toEqual({});
+  });
+
+  test("history: conversations on an adapter without the read, or a refusal, is an ordinary answer", async () => {
+    const none = await durableConversations({}, new URL("http://x/api/durable/conversations"), get("/"), true);
+    expect(await none.json()).toEqual({ available: false, reason: "unsupported" });
+    const down: Pick<MuxAdapter, "listConversations"> = { listConversations: async () => muxUnreachable("program starting") };
+    const res = await durableConversations(down, new URL("http://x/api/durable/conversations"), get("/"), true);
+    expect(await res.json()).toEqual({ available: false, reason: "unreachable", detail: "program starting" });
+  });
+
+  test("history: items become History entries through the durable journal, with more and next", async () => {
+    // The wire's items carry more than the mux names (`text`), so they are built first and passed as they are.
+    const items = [
+      { id: "u1", kind: "user", text: "hello", ts: "2026-10-13T09:00:00.000Z" },
+      { id: "r1", kind: "reply", text: "hi there", ts: "2026-10-13T09:00:01.000Z" },
+    ];
+    const adapter: Pick<MuxAdapter, "conversationItems"> = {
+      conversationItems: async (id) =>
+        id === "conv-1" ? muxOk<MuxConversationItems>({ items, next: "i2", more: true }) : muxGone("The durable agent does not know this conversation."),
+    };
+    const res = await durableConversationItems(adapter, "conv-1", new URL("http://x/api/durable/conversation/conv-1/items"), get("/"), true);
+    const body = await res.json();
+    expect(body).toMatchObject({ available: true, id: "conv-1", next: "i2", more: true });
+    expect(body.entries.map((entry: { uuid: string; role: string }) => [entry.uuid, entry.role])).toEqual([
+      ["u1", "user"],
+      ["r1", "assistant"],
+    ]);
+    const gone = await durableConversationItems(adapter, "nobody", new URL("http://x/"), get("/"), true);
+    expect(await gone.json()).toEqual({ available: false, reason: "gone", detail: "The durable agent does not know this conversation." });
+    expect(await (await durableConversationItems({}, "conv-1", new URL("http://x/"), get("/"), true)).json()).toEqual({ available: false, reason: "unsupported" });
+  });
+
+  test("reopen: one call to the adapter, an audit line, a fresh look, and the pane in the answer", async () => {
+    const calls: string[] = [];
+    const audit: AuditEntry[] = [];
+    const adapter: Pick<MuxAdapter, "reopenConversation" | "refresh"> = {
+      reopenConversation: async (id) => (calls.push(`reopen ${id}`), muxOk<MuxReopened>({ paneId: id })),
+      refresh: async () => void calls.push("refresh"),
+    };
+    const engine = { pokeNow: () => void calls.push("poke") };
+    const run = () => reopenConversation(adapter, engine, "conv-1", new Request("http://x/", { method: "POST" }), { record: (entry: AuditEntry) => void audit.push(entry) }, "pixel", "default");
+    expect(await (await run()).json()).toEqual({ ok: true, paneId: "conv-1" });
+    expect(calls).toEqual(["reopen conv-1", "refresh", "poke"]);
+    expect(audit).toEqual([{ action: "durable.reopen", session: "default", device: "pixel", detail: { id: "conv-1" } }]);
+  });
+
+  test("reopen: a refusal rides durable.reopen_failed with its words, nothing is audited, and no adapter is unsupported", async () => {
+    const audit: AuditEntry[] = [];
+    const record = { record: (entry: AuditEntry) => void audit.push(entry) };
+    const engine = { pokeNow: () => {} };
+    const refused: Pick<MuxAdapter, "reopenConversation" | "refresh"> = { reopenConversation: async () => muxRefused("The durable agent did not bring this conversation back."), refresh: async () => {} };
+    const res = await reopenConversation(refused, engine, "conv-1", new Request("http://x/", { method: "POST" }), record, "pixel", "default");
+    expect(await res.json()).toMatchObject({ ok: false, code: "durable.reopen_failed", detail: { reason: "The durable agent did not bring this conversation back." } });
+    const bare: Pick<MuxAdapter, "reopenConversation" | "refresh"> = { refresh: async () => {} };
+    const none = await reopenConversation(bare, engine, "conv-1", new Request("http://x/", { method: "POST" }), record, "pixel", "default");
+    expect(await none.json()).toMatchObject({ ok: false, code: "durable.reopen_failed" });
+    expect(audit).toEqual([]);
+  });
+
+  test("history: the list and the items are reads, a reopen is a write, all ahead of the pane routes, and all cross a crew link", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const list = src.indexOf("if (DURABLE_CONVERSATIONS_ROUTE.test(pathname)) {");
+    const one = src.indexOf("const conversationMatch = pathname.match(DURABLE_CONVERSATION_ROUTE);");
+    expect(list).toBeGreaterThan(0);
+    expect(src.slice(list, list + 200)).toContain('caller.gate("read")');
+    expect(src.slice(one, one + 300)).toContain('caller.gate(reopen ? "write" : "read")');
+    expect(one).toBeLessThan(src.indexOf("const paneMatch = pathname.match(PANE_ROUTE);"));
+    expect(crewRouteFor("/api/durable/conversations")).toBe("durable/conversations");
+    expect(crewRouteFor("/api/durable/conversation/conv-1/items")).toBe("durable/conversation/conv-1/items");
+    expect(crewRouteFor("/api/durable/conversation/conv-1/reopen")).toBe("durable/conversation/conv-1/reopen");
+    expect(crewRouteFor("/api/durable/conversation/conv-1")).toBeNull();
+  });
+});
+
 // The X-Collie-Build response header is what a no-service-worker client polls to notice a live
 // rebuild (web/src/lib/server-build.ts). withBuildHeader is the pure attach helper; the handlers
 // that call it (snapshot/pane) stay untested by convention (they need Bun.serve + the socket).
@@ -2052,6 +2557,18 @@ describe("GET /api/health", () => {
     // `deposed` is always false here because a deposed collie never reaches this route — its one
     // page answers every path first. The field states the rule the prober applies.
     expect(healthBody("1.2.3", "lead").deposed).toBe(false);
+  });
+
+  test("carries the Surface counters' totals when it has them, and no key at all when it has none (M56 spec 09)", () => {
+    expect(healthBody("1.2.3", "solo", { free: 120, unknown: 7, manual: 2 })).toEqual({
+      ok: true,
+      version: "1.2.3",
+      deposed: false,
+      mode: "solo",
+      surface: { free: 120, unknown: 7, manual: 2 },
+    });
+    expect("surface" in healthBody("1.2.3", "solo", null)).toBe(false);
+    expect("surface" in healthBody("1.2.3", "solo")).toBe(false);
   });
 });
 
@@ -2235,6 +2752,91 @@ describe("serveStatic — a text file ships compressed", () => {
     expect(await read("/collie/")).toContain('src="/collie/assets/app.js"');
 
     await rm(dir, { recursive: true, force: true });
+  });
+});
+
+// ADR 0096 Decision 8: the speech worker and the engine glue run under a policy of their own, and
+// that policy is the only one that lets wasm compile. The document's never does.
+describe("serveStatic — the speech worker's own policy", () => {
+  async function sttTree(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "collie-static-stt-"));
+    await mkdir(join(dir, "assets"), { recursive: true });
+    await mkdir(join(dir, "stt", "needle-3-test"), { recursive: true });
+    await writeFile(join(dir, "index.html"), "<!doctype html><p>shell</p>");
+    await writeFile(join(dir, "assets", "index-abc.js"), "export {};");
+    await writeFile(join(dir, "stt", "worker-abc123.js"), "self.onmessage = () => {};");
+    await writeFile(join(dir, "stt", "needle-3-test", "needle.js"), "var createNeedle = 1;");
+    await Bun.write(join(dir, "stt", "needle-3-test", "needle.wasm"), new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+    return dir;
+  }
+
+  test("the policy is exactly the ADR's", () => {
+    expect(STT_WORKER_CSP).toBe("default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'");
+  });
+
+  test("every .js under stt/ carries it, at the root and under a mount", async () => {
+    const dir = await sttTree();
+    for (const base of ["/", "/collie/"]) {
+      for (const path of ["/stt/worker-abc123.js", "/stt/needle-3-test/needle.js"]) {
+        const res = await serveStatic(path, null, null, dir, base);
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-security-policy")).toBe(STT_WORKER_CSP);
+        expect(res.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      }
+    }
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("an app bundle and the shell do not, and the shell's policy never grants wasm", async () => {
+    const dir = await sttTree();
+    const asset = await serveStatic("/assets/index-abc.js", null, null, dir);
+    expect(asset.headers.get("content-security-policy")).toBeNull();
+    for (const base of ["/", "/collie/"]) {
+      const shell = await serveStatic("/", null, null, dir, base);
+      const policy = shell.headers.get("content-security-policy") ?? "";
+      expect(policy).toContain("script-src 'self'");
+      expect(policy).not.toContain("wasm-unsafe-eval");
+      expect(policy).not.toBe(STT_WORKER_CSP);
+    }
+    // The SPA fallback under stt/ is the shell, with the shell's policy: an extension-less path.
+    const fallback = await serveStatic("/stt/nothing", null, null, dir);
+    expect(fallback.headers.get("content-security-policy")).not.toContain("wasm-unsafe-eval");
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("the wasm is application/wasm with nosniff, revalidated, and gzipped when asked", async () => {
+    const dir = await sttTree();
+    const raw = await serveStatic("/stt/needle-3-test/needle.wasm", null, null, dir);
+    expect(raw.headers.get("content-type")).toBe("application/wasm");
+    expect(raw.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(raw.headers.get("cache-control")).toBe("no-cache");
+    expect(raw.headers.get("content-security-policy")).toBeNull();
+    // Past the gzip floor, so the compressed path is the one taken.
+    await Bun.write(join(dir, "stt", "needle-3-test", "needle.wasm"), new Uint8Array(4096));
+    const gz = await serveStatic("/stt/needle-3-test/needle.wasm", "gzip", null, dir);
+    expect(gz.headers.get("content-encoding")).toBe("gzip");
+    expect(Bun.gunzipSync(new Uint8Array(await gz.arrayBuffer())).byteLength).toBe(4096);
+    // FORK: the fork's static path prefers brotli, but never for the wasm — brotli at the static dial
+    // spends ~1.5 s on the real 929 KB file, synchronously. A phone that offers both gets gzip.
+    const both = await serveStatic("/stt/needle-3-test/needle.wasm", "gzip, deflate, br", null, dir);
+    expect(both.headers.get("content-encoding")).toBe("gzip");
+    expect(Bun.gunzipSync(new Uint8Array(await both.arrayBuffer())).byteLength).toBe(4096);
+    const brOnly = await serveStatic("/stt/needle-3-test/needle.wasm", "br", null, dir);
+    expect(brOnly.headers.get("content-encoding")).toBeNull();
+    // The engine glue beside it is text and does take brotli.
+    const glue = await serveStatic("/stt/needle-3-test/needle.js", "br", null, dir);
+    expect(glue.headers.get("content-encoding")).toBe("br");
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("isSttWorkerScript reads the mount-stripped relative path", () => {
+    expect(isSttWorkerScript("stt/worker-a.js")).toBe(true);
+    expect(isSttWorkerScript("stt/needle-3-x/needle.js")).toBe(true);
+    expect(isSttWorkerScript("stt/needle-3-x/needle.wasm")).toBe(false);
+    expect(isSttWorkerScript("assets/stt/worker.js")).toBe(false);
+    expect(isSttWorkerScript("sttx/worker.js")).toBe(false);
+    expect(isSttWorkerScript("index.html")).toBe(false);
   });
 });
 
@@ -2430,6 +3032,124 @@ describe("bridgeConfigBody — the masking switch is reported, and omitted when 
   });
 });
 
+// M55: `/api/config?session=<name>` answers that session's capabilities. No `session` is the primary's
+// body, byte for byte as before; an unknown name is the route's 404.
+describe("/api/config?session= answers that session's capabilities (M55)", () => {
+  const herdr = { mux: "herdr", capabilities: declareCapabilities({ supports: ["typeText", "sendKeys"], topologyLatency: { kind: "push" } }), logo: "<svg/>" };
+  const program = { mux: "durable", capabilities: declareCapabilities({ supports: ["steerTurn"], topologyLatency: { kind: "bounded", ms: 10_000 } }), logo: "<svg/>" };
+
+  test("no session, or the primary named: the route builds the body it always built", () => {
+    expect(sessionConfigMux({ name: "default", isPrimary: true, herdr }, undefined)).toBeUndefined();
+    expect(sessionConfigMux({ name: "default", isPrimary: true, herdr }, "default")).toBeUndefined();
+  });
+
+  test("a program session answers its own declaration, with its mark under its own name", () => {
+    const wire = sessionConfigMux({ name: "desk", isPrimary: false, herdr: program }, "desk");
+    expect(wire).toEqual({ ...muxConfigBody(program), logoUrl: `${MUX_LOGO_PATH}?session=desk` });
+    if (wire === undefined || wire === "unknown") throw new Error("expected a block");
+    expect(wire.capabilities.steerTurn).toBe(true);
+    expect(wire.capabilities.typeText).toBe(false);
+    expect(wire.name).toBe("durable");
+  });
+
+  test("an unknown named session is the route's 404; no session and no runtime is the primary's absence", () => {
+    expect(sessionConfigMux(undefined, "nope")).toBe("unknown");
+    expect(sessionConfigMux(undefined, undefined)).toBeUndefined();
+  });
+
+  test("a session with no mark publishes no logoUrl, and a name is encoded into the query", () => {
+    expect("logoUrl" in sessionMuxWire({ name: "desk", herdr: { ...program, logo: undefined } })).toBe(false);
+    expect(sessionMuxWire({ name: "a-b", herdr: program }).logoUrl).toBe(`${MUX_LOGO_PATH}?session=a-b`);
+  });
+
+  test("the route asks the helper, and the logo route reads the same `?session=`", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    expect(src).toContain("const localMux = host.kind === \"local\" ? sessionConfigMux(activeMux, sessionName) : null;");
+    expect(src).toContain('const logo = registry.get(url.searchParams.get("session") ?? undefined)?.herdr.logo;');
+  });
+});
+
+// ADR 0096: the Whistle block rides `/api/config` right after `stt`, and is absent on a peer's own
+// answer. The routes are lead-local and gated like `/api/stt`; the handler lives inside Bun.serve, so
+// the gate levels and the crew wiring are asserted on the source and through the pure pieces.
+describe("the Whistle routes and the /api/config block", () => {
+  const base = { push: true, vapidPublicKey: "BKey", build: "abc123", mode: "solo" } as const;
+  const whistle = { state: "absent", bytes: 16919407, hostEngine: false, hostTaken: false } as const;
+  const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+  const block = (start: string): string => {
+    const at = src.indexOf(start);
+    expect(at).toBeGreaterThan(0);
+    return src.slice(at, src.indexOf("\n      }\n", at));
+  };
+
+  test("the block is carried right after stt, and absent means no key", () => {
+    const stt = { provider: "whistle", available: true, input: "wav-16k", maxDurationMs: 240000 } as const;
+    expect(Object.keys(bridgeConfigBody({ ...base, stt, whistle, redact: true }))).toEqual([
+      "push",
+      "vapidPublicKey",
+      "build",
+      "stt",
+      "whistle",
+      "redact",
+    ]);
+    expect(bridgeConfigBody({ ...base, whistle }).whistle).toEqual(whistle);
+    expect("whistle" in bridgeConfigBody({ ...base })).toBe(false);
+  });
+
+  test("the config handler leaves it out on a peer's own answer, and carries the lead's under ?host=", () => {
+    const handler = block('if (pathname === "/api/config") {');
+    // FORK: the body is `configBody`, one expression shared with the `/api/boot` bundle; the route
+    // hands it the member's or the named session's block and the session it resolved.
+    expect(handler).toContain("await configBody(memberMux ?? sessionWire, redact, activeMux)");
+    const at = src.indexOf("const configBody = async (");
+    expect(at).toBeGreaterThan(0);
+    const body = src.slice(at, src.indexOf("\n  };\n", at));
+    expect(body).toContain('const whistleWire = crew.mode === "peer" ? undefined : await whistleStatus(whistleDeps);');
+    expect(body).toContain("whistle: whistleWire,");
+  });
+
+  test("reads need the pairing token, writes take the /api/stt write gate", () => {
+    const status = block('if (pathname === "/api/stt/whistle") {');
+    expect(status).toContain('const denied = guard(req, cfg, "read", pairingGate);');
+    expect(status).toContain('const denied = guard(req, cfg, "write", pairingGate);');
+    // The read answers before the write gate is reached, and nothing but GET is let through it.
+    expect(status.indexOf('if (req.method === "GET")')).toBeLessThan(status.indexOf('"write"'));
+    const host = block('if (pathname === "/api/stt/host") {');
+    expect(host).toContain('const denied = guard(req, cfg, "read", pairingGate);');
+    expect(host).toContain('const denied = guard(req, cfg, "write", pairingGate);');
+    expect(host.indexOf('if (req.method === "GET")')).toBeLessThan(host.indexOf('"write"'));
+    expect(host).toContain('if (req.method !== "PUT") return text("method not allowed", 405);');
+    expect(block("const sttModelMatch = pathname.match(STT_MODEL_ROUTE);")).toContain('guard(req, cfg, "read", pairingGate)');
+    expect(block('if (pathname === "/api/stt" && req.method === "POST")')).toContain('guard(req, cfg, "write", pairingGate)');
+  });
+
+  test("a change to the host's option is credited to the paired label, never to whois", () => {
+    expect(block('if (pathname === "/api/stt/host") {')).toContain("sttHostPut(sttHostDeps, body, pairedLabel(req, pairingGate))");
+    expect(block('if (pathname === "/api/stt/whistle") {')).toContain("whistleRemove(whistleDeps, pairedLabel(req, pairingGate))");
+  });
+
+  test("a model copy is handed the request's signal, so a client that leaves frees its place", () => {
+    expect(block("const sttModelMatch = pathname.match(STT_MODEL_ROUTE);")).toContain("modelResponse(whistleDeps, sttModelMatch[1]!, req.signal)");
+  });
+
+  test("every write and every model copy is audited; the status poll is not", () => {
+    for (const action of ["stt.whistle.download", "stt.whistle.remove", "stt.host", "stt.model.read"]) {
+      expect(src).toContain(action);
+    }
+  });
+
+  test("none of them is forwarded to a crew member, and none reads ?host=", () => {
+    for (const path of ["/api/stt/whistle", "/api/stt/host", `/api/stt/model/${"a".repeat(64)}`, "/api/stt"]) {
+      expect(crewRouteFor(path)).toBeNull();
+    }
+    for (const start of ['if (pathname === "/api/stt/whistle") {', 'if (pathname === "/api/stt/host") {', "const sttModelMatch = pathname.match(STT_MODEL_ROUTE);"]) {
+      const handler = block(start);
+      expect(handler).not.toContain("target(");
+      expect(handler).not.toMatch(/\bhost\b(?!["/ ])|crewLead|searchParams/);
+    }
+  });
+});
+
 // The mux block (M10/06) — how the phone learns what the multiplexer underneath can do, without
 // ever learning to branch on which one it is. Same reason as above: the handler is inside Bun.serve,
 // so the shape is asserted through the pure builder it calls.
@@ -2437,6 +3157,7 @@ describe("chatBodyForMux — Send now is offered only where the multiplexer can 
   const body = {
     page: "live" as const,
     gen: 1,
+    session: "s1",
     rev: 3,
     head: 3,
     oldest: 1,
@@ -2530,7 +3251,9 @@ describe("muxConfigBody — the capability declaration, as the phone reads it", 
 
   test("the real Herdr adapter publishes every capability — nothing changes for its operators", () => {
     const wire = muxConfigBody(herdrMuxFactory.create({ endpoint: "/tmp/none.sock", timeoutMs: 100, options: {} }));
-    for (const cap of MUX_CAPABILITIES) expect(wire.capabilities[cap]).toBe(true);
+    // The controls of a durable program (M51 spec 08, M53 spec 05) are the program's to declare, never Herdr's.
+    const program = new Set(["steerTurn", "abortTurn", "starters", "renameSpace", "programActions", "programHistory", "reopenConversation"]);
+    for (const cap of MUX_CAPABILITIES) expect(wire.capabilities[cap]).toBe(!program.has(cap));
     expect(wire.notes).toEqual({});
   });
 
@@ -2920,14 +3643,17 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
     // All session-scoped route handlers reach their runtime through the caller's resolver and nothing
-    // else. Upstream's TWENTY-ONE (tab create, workspace create, launch, this host's launcher
-    // rows, this host's folder list and a star on it, one journal blob, a workspace's Changes list,
+    // else. Upstream's TWENTY-SEVEN (tab create, workspace create, launch, this host's launcher
+    // rows, this host's folder list and a star on it, one journal blob, a Claude subagent transcript, a workspace's Changes list,
     // a workspace's Files view, the Files existence check by pane or workspace, the Files image read
-    // by pane or workspace (ADR 0090), tab action, the pane family, "look now", the worktree listing,
-    // the worktree actions, the New sheet's branch plan and create from a folder (ADR 0093), and the
+    // by pane or workspace (ADR 0090), the Claude commands a pane would load, tab action, the space rename (M53 spec 05), the pane family, "look now", the New sheet's
+    // branch plan and create from a folder (ADR 0093), and the
     // three writes on a phone's own launcher rows, served by one function (ADR 0094), and the two
     // writes on this machine's one-off command history, served by one function (ADR 0095), and the
-    // read that checks a typed line before it runs (ADR 0095, amendment)), plus the fork's:
+    // read that checks a typed line before it runs (ADR 0095, amendment), and a durable program's
+    // conversation list and the items or reopen of one (M53 spec 11), and Sent's read and its two
+    // writes, served by one function with one resolve for the read and one for the writes (ADR 0107),
+    // and the New page's folder browser (#467)), plus the fork's:
     //
     // `/api/dirs` resolves for its FORWARD rather than for the runtime's value: a `?h=laptop` browse
     // must list the LAPTOP's disk, and resolution is what sends it there. A route that answered
@@ -2949,8 +3675,8 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // bridge/artifacts.ts), each resolving through the same gate so a `?host=` call is answered by
     // the runtime whose agents carry the sessions the records name.
     //
-    // 21 upstream + dirs + preview + 5 artifacts = 28.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(28);
+    // 27 upstream + dirs + preview + 5 artifacts = 34.
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(34);
     // Exactly eight (upstream; nine on this fork, see below) `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
@@ -2978,9 +3704,11 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // engine because the sweep that brings the member's answer back rides its tick (CREW_PROTOCOL.md
     // §10.1). It runs after the forward has answered and writes nothing. A TENTH would be a route
     // reaching past the gate — see the count above.
-    // The mux read is a read of the LOCAL primary — never `?host=`, because a peer's capabilities
-    // are its own business and reach the lead over the crew API, never out of this registry.
-    expect(src).toContain("const activeMux = registry.get();");
+    // The mux read is a read of a LOCAL session (the primary unless `?session=` names one, M55), never
+    // `?host=`, because a peer's capabilities are its own business and reach the lead over the crew
+    // API, never out of this registry. FORK: the `/api/boot` bundle reads the primary's config and the
+    // viewed session's starters through `localRuntime`, so it adds no registry read of its own.
+    expect(src).toContain("const activeMux = registry.get(sessionName);");
     // An unknown or ill-formed host is a 404, mirroring unknownSession() (§4)… The words now come
     // from the error catalogue (bridge/error-codes.ts), so what this pins is the SELECTION — that
     // both host shapes still name themselves in the refusal, and both still land on `host.unknown`.
@@ -3081,6 +3809,53 @@ describe("the update write gate — POST api/update rides the pane path's own ga
     expect(handler).toContain("const started = action.start({ major: verdict.major, runId });");
     expect(handler).not.toContain("await action.start");
     expect(handler).toContain("202,");
+  });
+
+  test("api/update/rollback is a POST through the same write gate, answers 202 and never awaits the runner (M60 spec 01)", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const routes = [...src.matchAll(/pathname === "\/api\/update\/rollback"[^)]*\)/g)].map((m) => m[0]);
+    expect(routes).toEqual(['pathname === "/api/update/rollback" && req.method === "POST")']);
+    const at = src.indexOf('if (pathname === "/api/update/rollback" && req.method === "POST")');
+    const handler = src.slice(at, src.indexOf("\n      }\n", at));
+    expect(handler).toContain('const denied = browserGate("write");');
+    expect(handler).not.toContain("guard(req");
+    // Forced preflight, the pure verdict, and a plain call into the spawn.
+    expect(handler).toContain("await action.preflight(true)");
+    expect(handler).toContain("rollbackVerdict(parsed, {");
+    expect(handler).toContain("const started = action.rollback({ runId: verdict.runId });");
+    expect(handler).not.toContain("await action.rollback");
+    // No crew run: a rollback levels nobody.
+    expect(handler).not.toContain("beginCrewRun");
+    expect(handler).toContain("202,");
+  });
+
+  test("api/update/back is the rollback route's shape: write gate, forced preflight, 202, no crew run (M60 spec 01)", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const at = src.indexOf('if (pathname === "/api/update/back" && req.method === "POST")');
+    expect(at).toBeGreaterThan(0);
+    const handler = src.slice(at, src.indexOf("\n      }\n", at));
+    expect(handler).toContain('const denied = browserGate("write");');
+    expect(handler).toContain("await action.preflight(true)");
+    expect(handler).toContain("backVerdict(parsed, {");
+    expect(handler).toContain("const started = action.back({ runId: verdict.runId, to: verdict.to });");
+    expect(handler).not.toContain("await action.back");
+    expect(handler).not.toContain("beginCrewRun");
+    expect(handler).toContain("202,");
+  });
+
+  test("api/update/line: a read-gated GET, a write-gated POST with a receipt, and the switch installs nothing (M60 spec 01)", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const at = src.indexOf('if (pathname === "/api/update/line" && (req.method === "GET" || req.method === "POST"))');
+    expect(at).toBeGreaterThan(0);
+    const handler = src.slice(at, src.indexOf("\n      }\n", at));
+    expect(handler).toContain('guard(req, cfg, "read", pairingGate)');
+    expect(handler).toContain('const denied = browserGate("write");');
+    expect(handler).toContain("parseLineRequest(body)");
+    expect(handler).toContain("requestId: parsed.requestId");
+    expect(handler).toContain("updateMonitor.lineChanged();");
+    // A switch changes what is offered; it never starts the updater.
+    expect(handler).not.toContain("action.start");
+    expect(handler).not.toContain("updateAction");
   });
 
   test("update check GET: an unknown latest triggers a bounded on-demand poll before answering", () => {
@@ -3192,6 +3967,27 @@ describe("the update write gate — POST api/update rides the pane path's own ga
     expect(src).toContain("...updateStatusWithPeers(), preflight: report");
     expect(src).not.toContain('"/api/update/status"');
   });
+
+  test("GET /api/pane/:id/claude-commands: device-read-gated, local-only, and scans only for a Claude agent pane", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const at = src.indexOf("const claudeCommandsMatch = pathname.match(PANE_CLAUDE_COMMANDS_ROUTE);");
+    expect(at).toBeGreaterThan(0);
+    const handler = src.slice(at, src.indexOf("\n    }\n", at));
+    // A read of this machine's disk, so the Files level, and before any runtime is resolved.
+    expect(handler).toContain('caller.gate("device-read")');
+    expect(handler).not.toContain('caller.gate("read")');
+    expect(handler.indexOf('caller.gate("device-read")')).toBeLessThan(handler.indexOf("await caller.resolve();"));
+    expect(handler).toContain('if (req.method !== "GET") return text("method not allowed", 405);');
+    expect(handler).toContain("await caller.resolve();");
+    // Fail closed: a throw in the scan answers an empty list.
+    expect(handler).toContain("catch (err)");
+    expect(handler).toContain("rt.engine.current().agents.find");
+    expect(handler).toContain('canonicalAgent(pane.agent?.toLowerCase().trim() ?? "") !== "claude"');
+    expect(handler).toContain("discoverClaudeCommands(");
+    const forwardableAt = src.indexOf("const FORWARDABLE");
+    const forwardableBlock = src.slice(forwardableAt, forwardableAt + 1200);
+    expect(forwardableBlock).not.toContain("claude-commands");
+  });
 });
 
 // POST /api/launch — the launcher rows' one-tap: a Space whose cwd and label come from the row,
@@ -3248,6 +4044,12 @@ describe("launch — an allowlisted space create, then the command and Enter", (
     readonly texts: Array<[string, string]> = [];
     readonly keys: Array<[string, readonly string[]]> = [];
     readonly closes: string[] = [];
+    readonly tabRenames: Array<[string, string]> = [];
+    // A new space is followed by a tab rename, which `launch` asks the declaration about first.
+    readonly capabilities = declareCapabilities({
+      supports: ["createSpace", "createTab", "renameTab"],
+      topologyLatency: { kind: "push" },
+    });
     failOn: "create" | "text" | "keys" | null = null;
     closeThrows = false;
     /** Successive screens the new pane shows; the last one repeats for every further read. */
@@ -3271,6 +4073,10 @@ describe("launch — an allowlisted space create, then the command and Enter", (
         muxOk({ paneId: "w2:p9", spaceId: request_.spaceId, spaceLabel: "MySpace", tabId: "w2:t9", cwd: request_.cwd ?? "/home/op" }),
       );
     }
+    renameTab(tabId: string, label: string): Promise<MuxAck> {
+      this.tabRenames.push([tabId, label]);
+      return Promise.resolve(muxAck());
+    }
     readGrid(paneId: string): Promise<MuxOutcome<MuxGrid>> {
       // SAFETY: `screens` is never empty in this suite and the index is clamped to its last entry.
       const text = this.screens[Math.min(this.grids, this.screens.length - 1)] as string;
@@ -3282,7 +4088,7 @@ describe("launch — an allowlisted space create, then the command and Enter", (
       this.texts.push([paneId, text]);
       return this.failOn === "text" ? Promise.resolve(muxRefused("text failed")) : Promise.resolve(muxAck());
     }
-    sendKeys(paneId: string, keys: readonly string[]): Promise<MuxAck> {
+    writeKeys(paneId: string, keys: readonly string[]): Promise<MuxAck> {
       this.keys.push([paneId, keys]);
       return this.failOn === "keys" ? Promise.resolve(muxRefused("keys failed")) : Promise.resolve(muxAck());
     }
@@ -3298,13 +4104,17 @@ describe("launch — an allowlisted space create, then the command and Enter", (
 
   // `Partial<T>` on both stubs keeps the compiler checking every member they DO supply against the
   // real contract, exactly as `asMux` above does for a HerdrClient fake.
-  const engineStub: Partial<StateEngine> = { pokeNow: () => {} };
-  // SAFETY: after a create, `launch` asks the engine for exactly one thing — `pokeNow()` — and the
-  // adapter for exactly the five calls FakeLaunchMux implements. No other member of either is
+  const engineStub: Partial<StateEngine> = {
+    pokeNow: () => {},
+    current: () => ({ agents: [], shellPanes: [], workspaces: [], tabs: [], bridge: "connected" }),
+  };
+  // SAFETY: `launch` asks the engine for two things — `current()` (the names already taken, before a
+  // new space is named after its folder) and `pokeNow()` after the create — and the
+  // adapter for exactly the calls FakeLaunchMux implements (and its `capabilities` declaration). No other member of either is
   // reachable from this code path, which is the only step these two casts assert.
   const engine = engineStub as StateEngine;
   function asLaunchMux(fake: Partial<MuxAdapter>): MuxAdapter {
-    // SAFETY: as above — only the five calls the fake implements are reachable from `launch`.
+    // SAFETY: as above — only the calls the fake implements are reachable from `launch`.
     return fake as MuxAdapter;
   }
   const rowsOf = (rows: Launcher[]) => () => Promise.resolve(rows);
@@ -3360,7 +4170,7 @@ describe("launch — an allowlisted space create, then the command and Enter", (
     expect(entries).toHaveLength(0);
   });
 
-  test("a listed row creates a space with that row's label AND cwd, then types the command + Enter", async () => {
+  test("a listed row creates a space named after its folder, the tab takes the row's label, then types the command + Enter", async () => {
     const clock = fakeClock();
     const mux = new FakeLaunchMux(clock.now);
     const { audit, entries } = launchAudit();
@@ -3376,8 +4186,10 @@ describe("launch — an allowlisted space create, then the command and Enter", (
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true });
-    // The row's own cwd and label, never the client's — the request carried neither.
-    expect(mux.createArgs).toEqual({ cwd: "/home/op/project", label: "Runs & quota" });
+    // The row's own cwd, never the client's — the request carried none. The space takes the folder's
+    // name (`basename` of that cwd) and the row's label goes on the tab.
+    expect(mux.createArgs).toEqual({ cwd: "/home/op/project", label: "project" });
+    expect(mux.tabRenames).toEqual([["w1:t1", "Runs & quota"]]);
     expect(mux.texts).toEqual([["w1:p1", "rumen-peek"]]);
     // A bare Enter, NOT cfg.submitKeys: this is a shell prompt, not an agent's composer.
     expect(mux.keys).toEqual([["w1:p1", ["Enter"]]]);
@@ -3521,6 +4333,7 @@ describe("launch — an allowlisted space create, then the command and Enter", (
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ ok: true, pane: { workspaceId: "w3" } });
       expect(mux.createArgs).toBeNull(); // never createSpace
+      expect(mux.tabRenames).toEqual([]); // the tab already carries the row's label
       expect(mux.createTabArgs).toEqual({ spaceId: "w3", label: "Runs & quota", cwd: "/home/op/project" });
       expect(mux.texts).toEqual([["w2:p9", "rumen-peek"]]);
       expect(entries[0]?.action).toBe("tab.launch");
@@ -3610,7 +4423,8 @@ describe("launch — an allowlisted space create, then the command and Enter", (
         clock,
       );
       expect(res.status).toBe(200);
-      expect(mux.createArgs).toEqual({ cwd: "/home/op/project", label: "Runs & quota" });
+      expect(mux.createArgs).toEqual({ cwd: "/home/op/project", label: "project" });
+      expect(mux.tabRenames).toEqual([["w1:t1", "Runs & quota"]]);
       expect(mux.createTabArgs).toBeNull();
       expect(entries[0]?.action).toBe("workspace.launch");
     });
@@ -4075,7 +4889,7 @@ describe("the folder routes — GET /api/folders and POST /api/folders/star", ()
   test("the session dispatch reaches the folder routes through this one function", () => {
     const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
     // Wired once, inside serveSessionRoute, so a crew peer's dispatch reaches it too (§5).
-    expect([...src.matchAll(/await serveFolderRoute\(req, pathname, caller, folders\)/g)]).toHaveLength(1);
+    expect([...src.matchAll(/await serveFolderRoute\(req, pathname, caller, folders, folderBrowse\)/g)]).toHaveLength(1);
     // And the create is handed the same store, so a peer records into its OWN list.
     // FORK: the roots argument (bridge/dirs.ts) sits before the folder store.
     expect(src).toContain("return createWorkspace(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name, cfg.dirRoots, folders);");
@@ -4502,6 +5316,20 @@ describe("an input written to a pane makes its engine hot", () => {
     expect(isPaneInput("/api/tab/w1%3At1/close", "POST")).toBe(false);
   });
 
+  // A pane launched on minibuch stayed a shell on the phone for up to 12 s (2026-10-14): the lead's
+  // sweep of the member rode a cold engine, and only inputs warmed it.
+  test("isTopologyWrite names the launch, create, close and rename routes, as POSTs, and nothing else", () => {
+    for (const path of ["/api/launch", "/api/workspace", "/api/tab", "/api/tab/w1%3At1/close", "/api/tab/w1%3At1/rename"]) {
+      expect(isTopologyWrite(path, "POST")).toBe(true);
+    }
+    expect(isTopologyWrite("/api/pane/w1%3Ap1/close", "POST")).toBe(true);
+    expect(isTopologyWrite("/api/pane/w1%3Ap1/rename", "POST")).toBe(true);
+    expect(isTopologyWrite("/api/launch", "GET")).toBe(false);
+    for (const path of ["/api/launch/recent/clear", "/api/launch/check", "/api/launchers", "/api/folders/star", "/api/pane/w1%3Ap1/reply", "/api/pane/w1%3Ap1/focus", "/api/pane/w1%3Ap1/upload"]) {
+      expect(isTopologyWrite(path, "POST")).toBe(false);
+    }
+  });
+
   test("afterPaneInput tells the engine only when the write landed, and hands the response back", () => {
     let noted = 0;
     const engine = { noteInput: () => void noted++ };
@@ -4518,7 +5346,7 @@ describe("an input written to a pane makes its engine hot", () => {
     expect(src).toContain("return afterPaneInput(rt.engine, await replyPane(");
     expect(src).toContain("return afterPaneInput(rt.engine, await keysPane(");
     // On the lead: the forward's answer, so the lead's sweep follows the member it typed into.
-    expect(src).toContain("const input = isPaneInput(pathname, req.method);");
+    expect(src).toContain("const input = isPaneInput(pathname, req.method) || isTopologyWrite(pathname, req.method);");
     expect(src).toContain("return input && own !== undefined ? afterPaneInput(own, forwarded) : forwarded;");
     expect([...src.matchAll(/afterPaneInput\(/g)]).toHaveLength(4); // the definition and three calls
   });
@@ -4633,5 +5461,643 @@ describe("pair source key (forwarded header trust)", () => {
   test("a loopback peer with no forwarded header shares one local key", () => {
     expect(pairSourceKey("127.0.0.1", true, null)).toBe("loopback");
     expect(pairSourceKey(undefined, true, "")).toBe("loopback");
+  });
+});
+
+describe("paneScreen: the screen journal discovery may read", () => {
+  test("one viewport read with styling kept, escapes dropped, memoised per route call", async () => {
+    const asked: MuxGridRequest[] = [];
+    const esc = String.fromCharCode(27);
+    const mux = {
+      readGrid: async (paneId: string, request: MuxGridRequest) => {
+        asked.push(request);
+        return muxOk({ paneId, text: `${esc}[2m agent main (main) | session work${esc}[0m`, truncated: false, revision: 1 });
+      },
+    };
+    const screen = paneScreen(mux, "w1:p1");
+    expect(asked).toEqual([]);
+    expect(await screen()).toBe(" agent main (main) | session work");
+    expect(await screen()).toBe(" agent main (main) | session work");
+    expect(asked).toEqual([{ scope: "viewport", lines: 200, styling: "preserve" }]);
+  });
+
+  test("a refused or failed read is null, never a throw", async () => {
+    expect(await paneScreen({ readGrid: async () => muxGone("no pane") }, "w1:p1")()).toBeNull();
+    expect(await paneScreen({ readGrid: async () => Promise.reject(new Error("socket")) }, "w1:p1")()).toBeNull();
+  });
+});
+
+describe("journalRefOf — which session the history and chat routes read", () => {
+  const reported = { kind: "id" as const, value: "00000000-0000-7000-8000-00000000a001" };
+  const resumed = { kind: "id" as const, value: "00000000-0000-7000-8000-00000000b002" };
+  const pane = (overrides: Partial<AgentView>): AgentView => ({
+    paneId: "w1:p1",
+    workspaceId: "w1",
+    workspaceLabel: "Main",
+    workspaceNumber: 1,
+    tabId: "w1:t1",
+    agent: "grok",
+    status: "idle",
+    cwd: "/home/op/proj",
+    focused: false,
+    ...overrides,
+  });
+  // journalRefOf reads only agent, discover and reconcile; the rest never runs here.
+  const adapter = (extra: Partial<JournalAdapter>): JournalAdapter => ({
+    ...grokJournal([]),
+    discover: undefined,
+    reconcile: undefined,
+    ...extra,
+  });
+
+  test("a live grok pane reads the session the adapter reconciles to", async () => {
+    const seen: string[] = [];
+    const a = adapter({
+      reconcile: async (ref, cwd) => {
+        seen.push(`${ref.value}@${cwd}`);
+        return resumed;
+      },
+    });
+    expect(await journalRefOf(a, pane({ agentSession: reported }), [])).toEqual(resumed);
+    expect(seen).toEqual([`${reported.value}@/home/op/proj`]);
+  });
+
+  test("a pane whose grok exited keeps the reported ref: nothing live to move to", async () => {
+    const a = adapter({ reconcile: async () => resumed });
+    expect(await journalRefOf(a, pane({ agent: "shell", agentSession: reported }), [])).toEqual(reported);
+  });
+
+  test("a pane with no reported ref still falls back to discovery", async () => {
+    const a = adapter({ reconcile: async () => resumed, discover: async () => resumed });
+    expect(await journalRefOf(a, pane({}), [])).toEqual(resumed);
+  });
+
+  test("the foreground hint rides through to discover", async () => {
+    const seen: unknown[] = [];
+    const processes = [{ argv: ["muse", "resume", resumed.value] }];
+    const a = adapter({
+      discover: async (cwd, hint) => {
+        seen.push([cwd, hint]);
+        return resumed;
+      },
+    });
+    expect(await journalRefOf(a, pane({}), [], { processes })).toEqual(resumed);
+    expect(seen).toEqual([["/home/op/proj", { processes }]]);
+  });
+
+  test("no hint reads as undefined, never as an empty group", async () => {
+    const seen: unknown[] = [];
+    const a = adapter({
+      discover: async (_cwd, hint) => {
+        seen.push(hint);
+        return null;
+      },
+    });
+    await journalRefOf(a, pane({}), []);
+    expect(seen).toEqual([undefined]);
+  });
+
+  describe("another pane in the folder", () => {
+    const calls: string[] = [];
+    const a = adapter({
+      reconcile: async (ref) => {
+        calls.push(ref.value);
+        return resumed;
+      },
+    });
+    const mine = pane({ agentSession: reported });
+
+    test("another grok pane in the same cwd blocks the correction", async () => {
+      calls.length = 0;
+      const other = pane({ paneId: "w1:p2", agentSession: resumed });
+      expect(await journalRefOf(a, mine, [mine, other])).toEqual(reported);
+      expect(calls).toEqual([]);
+    });
+
+    test("another grok pane in a different cwd leaves the correction on", async () => {
+      calls.length = 0;
+      const other = pane({ paneId: "w1:p2", cwd: "/home/op/elsewhere" });
+      expect(await journalRefOf(a, mine, [mine, other])).toEqual(resumed);
+      expect(calls).toEqual([reported.value]);
+    });
+
+    test("a non-grok pane in the same cwd does not block the correction", async () => {
+      calls.length = 0;
+      const other = pane({ paneId: "w1:p2", agent: "shell" });
+      expect(await journalRefOf(a, mine, [mine, other])).toEqual(resumed);
+      expect(calls).toEqual([reported.value]);
+    });
+  });
+
+  // #508: a folder walk cannot tell two same-harness panes in one folder apart, so discovery is told.
+  describe("discovery hears about a same-harness neighbour in the folder", () => {
+    const seen: unknown[] = [];
+    const a = adapter({
+      discover: async (_cwd, hint) => {
+        seen.push(hint);
+        return null;
+      },
+    });
+    const mine = pane({});
+    const processes = [{ argv: ["muse"] }];
+
+    test("a neighbour adds shared: true beside the foreground hint", async () => {
+      seen.length = 0;
+      await journalRefOf(a, mine, [mine, pane({ paneId: "w1:p2" })], { processes });
+      expect(seen).toEqual([{ processes, shared: true }]);
+    });
+
+    test("a neighbour with no other hint still says shared", async () => {
+      seen.length = 0;
+      await journalRefOf(a, mine, [mine, pane({ paneId: "w1:p2" })]);
+      expect(seen).toEqual([{ shared: true }]);
+    });
+
+    test("a pane in another folder or another harness is no neighbour", async () => {
+      seen.length = 0;
+      const elsewhere = pane({ paneId: "w1:p2", cwd: "/home/op/elsewhere" });
+      const shell = pane({ paneId: "w1:p3", agent: "shell" });
+      await journalRefOf(a, mine, [mine, elsewhere, shell], { processes });
+      expect(seen).toEqual([{ processes }]);
+    });
+  });
+
+  // The screen is a thunk the route hands over untouched: discovery decides whether to read it.
+  test("discovery receives the pane's screen beside its folder, and only reads it when it asks", async () => {
+    let reads = 0;
+    const screen = async () => {
+      reads += 1;
+      return " agent main (main) | session work | m | deliver:off";
+    };
+    const byFolder = adapter({ discover: async (cwd) => ({ kind: "id", value: cwd }) });
+    expect(await journalRefOf(byFolder, pane({}), [], { screen })).toEqual({ kind: "id", value: "/home/op/proj" });
+    expect(reads).toBe(0);
+    const byScreen = adapter({
+      discover: async (_cwd, hints) => {
+        const text = (await hints?.screen?.()) ?? "";
+        return text.includes("session work") ? resumed : null;
+      },
+    });
+    expect(await journalRefOf(byScreen, pane({}), [], { screen })).toEqual(resumed);
+    expect(reads).toBe(1);
+    // A reported ref never reaches discovery, so the screen is not read for it either.
+    expect(await journalRefOf(byScreen, pane({ agentSession: reported }), [], { screen })).toEqual(reported);
+    expect(reads).toBe(1);
+  });
+
+  test("an adapter without reconcile reads the reported ref as before", async () => {
+    expect(await journalRefOf(adapter({}), pane({ agentSession: reported }), [])).toEqual(reported);
+  });
+  // The cases above stub reconcile; this one keeps the real grok adapter, so dropping its reconcile
+  // binding leaves the stale id in place and fails here.
+  test("the real grok adapter moves a stale id to the one live session grok lists", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-grok-wire-")));
+    try {
+      await mkdir(join(base, "sessions"), { recursive: true });
+      const row = { session_id: resumed.value, pid: process.pid, cwd: "/home/op/proj" };
+      await writeFile(join(base, "active_sessions.json"), JSON.stringify([row]));
+      const real = grokJournal([join(base, "sessions")]);
+      expect(await journalRefOf(real, pane({ agentSession: reported }), [])).toEqual(resumed);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  // The cases above prove journalRefOf; this one proves the routes use it. Put a route back on the
+  // reported ref and every case above still passes while the resumed session goes unread again.
+  test("every journal route reads the ref journalRefOf settles on, never the reported one", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    // history, chat and the subagent transcript read, each handing discovery the hints built for the
+    // pane (screen and argv). FORK: and the handoff (`handoffPane`), which reads the same journal.
+    expect([...src.matchAll(/journalRefOf\(adapter, pane, panes, await discoveryHints\(/g)]).toHaveLength(4);
+    expect(src).not.toMatch(/pane\.agentSession \?\?/);
+  });
+});
+
+// ── Asks as data, and the answer route (ADR 0100) ────────────────────────────
+describe("asks on the pane wire", () => {
+  const wire: PaneWire = {
+    paneId: "w1:p1",
+    workspaceId: "w1",
+    workspaceLabel: "collie",
+    workspaceNumber: 1,
+    tabId: "w1:t1",
+    agent: "claude",
+    status: "blocked",
+    cwd: "/home/you",
+    focused: false,
+    kind: "agent",
+  };
+
+  test("asks: no existing pane gains one; a Herdr pane comes back as the same object", () => {
+    const herdr = withAgentHints(asMux({}), { hooksInstalled: () => false });
+    expect("openAsks" in herdr).toBe(false);
+    expect(withOpenAsks(wire, herdr)).toBe(wire);
+    expect("asks" in withOpenAsks(wire, herdr)).toBe(false);
+  });
+
+  test("asks: the durable adapter's two ask methods survive the decorator the bridge wraps every adapter in", () => {
+    const durable = withAgentHints(new DurableMux(new DurableSocketClient(undefined)), { hooksInstalled: () => false });
+    expect(durable.openAsks).toBeInstanceOf(Function);
+    expect(durable.answerAsk).toBeInstanceOf(Function);
+    // Nothing read yet: the pane carries no field until the program has been read.
+    expect(withOpenAsks(wire, durable)).toBe(wire);
+  });
+});
+
+describe("the answer route", () => {
+  test("answer: rides the pane grammar as a write that needs a device, is not typed input, and crosses a crew link", () => {
+    expect(paneGateLevel("answer")).toBe("write");
+    expect(isPaneInput("/api/pane/conv-02/answer", "POST")).toBe(false);
+    expect(crewRouteFor("/api/pane/conv-02/answer")).toBe("pane/conv-02/answer");
+  });
+
+  test("answer: a Herdr pane, whose adapter takes no answers, gets the unsupported refusal and nothing is recorded", async () => {
+    const receipts = memoryAnswerReceipts();
+    const audit: AuditEntry[] = [];
+    const reply = await answerPane(
+      "w1:p1",
+      { requestId: "0b9e6a1c-3f2d-4c5e-8a7b-1d2e3f4a5b6c", askId: "a", revision: 1, optionId: "allow" },
+      { adapter: asMux({}), receipts, audit: { record: (entry) => audit.push(entry) }, device: "pixel", session: "default" },
+    );
+    expect(reply).toEqual({ status: 409, body: { ok: false, outcome: "refused", reason: "unsupported", detail: NO_ANSWERS } });
+    expect(receipts.get("0b9e6a1c-3f2d-4c5e-8a7b-1d2e3f4a5b6c")).toBeUndefined();
+    expect(audit).toEqual([]);
+  });
+});
+
+// ── Send and abort name the turn they saw (ADR 0101) ─────────────────────────
+describe("the send and abort routes", () => {
+  const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+  const REQUEST_ID = "0b9e6a1c-3f2d-4c5e-8a7b-1d2e3f4a5b6c";
+
+  test("send and abort: ride the pane grammar as writes that need a device, are not typed input, and cross a crew link", () => {
+    for (const action of ["send", "abort"]) {
+      expect(paneGateLevel(action)).toBe("write");
+      expect(isPaneInput(`/api/pane/conv-02/${action}`, "POST")).toBe(false);
+      expect(crewRouteFor(`/api/pane/conv-02/${action}`)).toBe(`pane/conv-02/${action}`);
+    }
+  });
+
+  test("send and abort: a Herdr pane, whose adapter takes no controls, gets the unsupported refusal and nothing is recorded", async () => {
+    const receipts = memoryControlReceipts();
+    const audit: AuditEntry[] = [];
+    const deps = { adapter: asMux({}), receipts, audit: { record: (entry: AuditEntry) => audit.push(entry) }, device: "pixel", session: "default" };
+    const sent = await controlPane("send", "w1:p1", { requestId: REQUEST_ID, text: "go", turnId: "t1" }, deps);
+    const stopped = await controlPane("abort", "w1:p1", { requestId: REQUEST_ID, turnId: "t1" }, deps);
+    for (const reply of [sent, stopped]) {
+      expect(reply).toEqual({ status: 409, body: { ok: false, outcome: "refused", reason: "unsupported", detail: NO_CONTROLS } });
+    }
+    expect(receipts.get(REQUEST_ID)).toBeUndefined();
+    expect(audit).toEqual([]);
+  });
+
+  test("reply and keys: a durable pane refuses both with `unsupported`, a Herdr pane keeps both as they are", () => {
+    const durable = withAgentHints(new DurableMux(new DurableSocketClient(undefined)), { hooksInstalled: () => false });
+    expect(durable.paneTurn).toBeInstanceOf(Function);
+    expect(durable.controlTurn).toBeInstanceOf(Function);
+    expect(rawInputRefusal(durable)).toEqual({ status: 409, body: { ok: false, outcome: "refused", reason: "unsupported", detail: NO_RAW_INPUT } });
+    const herdr = withAgentHints(asMux({}), { hooksInstalled: () => false });
+    expect("controlTurn" in herdr).toBe(false);
+    expect(rawInputRefusal(herdr)).toBeNull();
+    // The refusal sits in front of both raw routes, so neither handler is reached for such a pane.
+    const refusal = src.indexOf("const refusal = rawInputRefusal(herdr);");
+    expect(refusal).toBeGreaterThan(0);
+    expect(refusal).toBeLessThan(src.indexOf("await replyPane(herdr, cfg, paneId, req, audit_, device, session, replySendOf(rt))"));
+    expect(refusal).toBeLessThan(src.indexOf("await keysPane(herdr, cfg, paneId, req, audit_, device, session)"));
+  });
+
+  test("turnId: no existing pane gains one; the durable adapter names none before the program was read", () => {
+    const wire: PaneWire = {
+      paneId: "w1:p1",
+      workspaceId: "w1",
+      workspaceLabel: "collie",
+      workspaceNumber: 1,
+      tabId: "w1:t1",
+      agent: "claude",
+      status: "idle",
+      cwd: "/home/you",
+      focused: false,
+      kind: "agent",
+    };
+    const herdr = withAgentHints(asMux({}), { hooksInstalled: () => false });
+    expect(withTurn(wire, herdr)).toBe(wire);
+    const durable = withAgentHints(new DurableMux(new DurableSocketClient(undefined)), { hooksInstalled: () => false });
+    expect(withTurn(wire, durable)).toBe(wire);
+    // The snapshot puts it beside the asks, through the same serialise-time call.
+    expect(src).toContain("withTurn(withOpenAsks(toPaneWire(");
+  });
+});
+
+describe("discoverProcesses — the foreground hint for session discovery", () => {
+  const procs = [{ argv: ["muse", "resume", "x"] }];
+
+  test("a multiplexer without the call yields no hint", async () => {
+    await expect(discoverProcesses({}, "w1:p1")).resolves.toBeUndefined();
+  });
+
+  test("an ok answer passes through", async () => {
+    const mux = { foregroundProcesses: async () => muxOk(procs) };
+    await expect(discoverProcesses(mux, "w1:p1")).resolves.toEqual(procs);
+  });
+
+  test("a refusal reads as no hint, not an error", async () => {
+    const mux = { foregroundProcesses: async () => muxRefused("pane gone") };
+    await expect(discoverProcesses(mux, "w1:p1")).resolves.toBeUndefined();
+  });
+
+  test("a throw reads as no hint, not an error", async () => {
+    const mux = {
+      foregroundProcesses: async (): Promise<never> => {
+        throw new Error("socket died");
+      },
+    };
+    await expect(discoverProcesses(mux, "w1:p1")).resolves.toBeUndefined();
+  });
+});
+
+describe("discoveryHints — what a pane's journal discovery gets", () => {
+  const view = (agentSession?: { kind: "id"; value: string }): AgentView => {
+    const base: AgentView = {
+      paneId: "w1:p1",
+      workspaceId: "w1",
+      workspaceLabel: "Main",
+      workspaceNumber: 1,
+      tabId: "w1:t1",
+      agent: "muse",
+      status: "idle",
+      cwd: "/home/op/proj",
+      focused: false,
+    };
+    if (agentSession !== undefined) base.agentSession = agentSession;
+    return base;
+  };
+  const discovering = { ...grokJournal([]), discover: async () => null };
+  let fetched = 0;
+  const mux = {
+    readGrid: async () => muxGone("no screen"),
+    foregroundProcesses: async () => {
+      fetched += 1;
+      return muxOk([{ argv: ["muse", "resume", "x"] }]);
+    },
+  };
+
+  test("a discovering adapter on a pane with no session gets the screen and the argv", async () => {
+    fetched = 0;
+    const hints = await discoveryHints(discovering, view(), mux, "w1:p1");
+    expect(hints?.processes).toEqual([{ argv: ["muse", "resume", "x"] }]);
+    expect(await hints?.screen?.()).toBeNull();
+    expect(fetched).toBe(1);
+  });
+
+  test("a pane that already reports its session, or an adapter that never discovers, costs no fetch", async () => {
+    fetched = 0;
+    const reported = { kind: "id" as const, value: "00000000-0000-7000-8000-00000000a001" };
+    expect(await discoveryHints(discovering, view(reported), mux, "w1:p1")).toBeUndefined();
+    expect(await discoveryHints({ ...grokJournal([]), discover: undefined }, view(), mux, "w1:p1")).toBeUndefined();
+    expect(fetched).toBe(0);
+  });
+});
+
+describe("paneHistory — two muse tabs in one workspace read their own transcripts", () => {
+  const UUID_A = "00000000-0000-4000-8000-00000000a001";
+  const UUID_B = "00000000-0000-4000-8000-00000000b002";
+
+  /** The two muse payload shapes this fixture writes: a chat acceptance and a root record. */
+  type MuseFixturePayload =
+    | {
+        surface: string;
+        semantic_kind: { kind: string };
+        model_messages: { role: string; content: { kind: string; text: string }[] }[];
+      }
+    | { record: { kind: string; workspace_root: string } };
+
+  function logRow(payloadType: string, payload: MuseFixturePayload): string {
+    return JSON.stringify({
+      schema_version: 1,
+      id: "row-1",
+      stream: { kind: "session", id: UUID_A },
+      sequence: 1,
+      recorded_at: 1790904354495081,
+      record_type: "event",
+      durability: "durable",
+      causation_id: null,
+      payload_type: payloadType,
+      payload_schema_version: 1,
+      payload,
+    });
+  }
+
+  function accepted(text: string): string {
+    return logRow("runtime.user_intent.accepted", {
+      surface: "main",
+      semantic_kind: { kind: "chat" },
+      model_messages: [{ role: "user", content: [{ kind: "text", text }] }],
+    });
+  }
+
+  function metadata(root: string): string {
+    return logRow("runtime.session.metadata", {
+      record: { kind: "metadata", workspace_root: root },
+    });
+  }
+
+  async function sessionLog(root: string, uuid: string, lines: string[]): Promise<void> {
+    const dir = join(root, "2026", "10", "02", uuid);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "session.jsonl"), `${lines.join("\n")}\n`);
+  }
+
+  const view = (paneId: string): AgentView => ({
+    paneId,
+    workspaceId: "w1",
+    workspaceLabel: "Main",
+    workspaceNumber: 1,
+    tabId: "w1:t1",
+    agent: "muse",
+    status: "idle",
+    cwd: "/same",
+    focused: false,
+  });
+
+  test("each pane's foreground argv resolves its own session", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-muse-route-")));
+    try {
+      await sessionLog(base, UUID_A, [metadata("/same"), accepted("alpha from session A")]);
+      await sessionLog(base, UUID_B, [metadata("/same"), accepted("beta from session B")]);
+      const journals = { muse: museJournal([base]) };
+      const transcripts = new TranscriptStore();
+      const stub: Partial<StateEngine> = {
+        current: () => ({
+          agents: [view("w1:p1"), view("w1:p2")],
+          shellPanes: [],
+          workspaces: [],
+          tabs: [],
+          bridge: "connected",
+        }),
+      };
+      // SAFETY: paneHistory reaches only `current()` (for the pane lookup) — the one member
+      // present above, mirroring the engine stubs elsewhere in this suite.
+      const engine = stub as StateEngine;
+      const argvFor = (uuid: string) => [{ argv: ["muse", "resume", uuid] }];
+      const mux = {
+        readGrid: async () => muxGone("no screen"),
+        foregroundProcesses: async (paneId: string) =>
+          muxOk(argvFor(paneId === "w1:p1" ? UUID_A : UUID_B)),
+      };
+      const read = async (paneId: string) => {
+        const url = new URL(`http://x/api/pane/${paneId}/history`);
+        const res = await paneHistory(
+          cfg(),
+          journals,
+          transcripts,
+          engine,
+          mux,
+          paneId,
+          url,
+          new Request(url),
+        );
+        // SAFETY: the bridge's own JSON, served by the call above.
+        return (await res.json()) as { available: boolean; entries?: unknown[] };
+      };
+      const a = await read("w1:p1");
+      const b = await read("w1:p2");
+      expect(a.available).toBe(true);
+      expect(b.available).toBe(true);
+      expect(JSON.stringify(a.entries)).toContain("alpha from session A");
+      expect(JSON.stringify(a.entries)).not.toContain("beta from session B");
+      expect(JSON.stringify(b.entries)).toContain("beta from session B");
+      expect(JSON.stringify(b.entries)).not.toContain("alpha from session A");
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  // #508: two fresh `muse` panes name no session in argv, and the folder walk would hand both the
+  // newest log. Neither may read a conversation that could be the other's.
+  test("two panes whose argv names no session read no session, not the newest log", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-muse-route-")));
+    try {
+      await sessionLog(base, UUID_A, [metadata("/same"), accepted("alpha from session A")]);
+      await sessionLog(base, UUID_B, [metadata("/same"), accepted("beta from session B")]);
+      const journals = { muse: museJournal([base]) };
+      const transcripts = new TranscriptStore();
+      const stub: Partial<StateEngine> = {
+        current: () => ({
+          agents: [view("w1:p1"), view("w1:p2")],
+          shellPanes: [],
+          workspaces: [],
+          tabs: [],
+          bridge: "connected",
+        }),
+      };
+      // SAFETY: paneHistory reaches only `current()` (for the pane lookup) — the one member
+      // present above, mirroring the engine stubs elsewhere in this suite.
+      const engine = stub as StateEngine;
+      const mux = {
+        readGrid: async () => muxGone("no screen"),
+        foregroundProcesses: async () => muxOk([{ argv: ["muse"] }]),
+      };
+      for (const paneId of ["w1:p1", "w1:p2"]) {
+        const url = new URL(`http://x/api/pane/${paneId}/history`);
+        const res = await paneHistory(cfg(), journals, transcripts, engine, mux, paneId, url, new Request(url));
+        // SAFETY: the bridge's own JSON, served by the call above.
+        const body = (await res.json()) as { available: boolean; reason?: string };
+        expect(body).toMatchObject({ available: false, reason: "no-session" });
+      }
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  // #508: the chat route says WHY there is no session, so the phone can name the remedy.
+  test("the chat route names a shared folder, and only for the pane that shares one", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-muse-route-")));
+    try {
+      await sessionLog(base, UUID_A, [metadata("/same"), accepted("alpha from session A")]);
+      const journals = { muse: museJournal([base]) };
+      const live = new LiveWindows(new TranscriptStore());
+      let agents: AgentView[] = [view("w1:p1"), view("w1:p2")];
+      const stub: Partial<StateEngine> = {
+        current: () => ({ agents, shellPanes: [], workspaces: [], tabs: [], bridge: "connected" }),
+      };
+      // SAFETY: paneChat reaches only `current()` (for the pane lookup) on the paths read here.
+      const engine = stub as StateEngine;
+      const mux = {
+        capabilities: declareCapabilities({ supports: ["paneGrid"], topologyLatency: { kind: "push" } }),
+        readGrid: async () => muxGone("no screen"),
+        foregroundProcesses: async () => muxOk([{ argv: ["muse"] }]),
+      };
+      const read = async () => {
+        const url = new URL("http://x/api/pane/w1:p1/chat");
+        const res = await paneChat(cfg(), journals, live, engine, mux, "w1:p1", url, new Request(url));
+        // SAFETY: the bridge's own JSON, served by the call above.
+        return (await res.json()) as { paneId: string; available: boolean; reason?: string; detail?: string };
+      };
+      expect(await read()).toEqual({ paneId: "w1:p1", available: false, reason: "no-session", detail: "shared-folder" });
+      // Alone in the folder, the same pane reads the folder's log: no reason to give.
+      agents = [view("w1:p1")];
+      expect(await read()).toMatchObject({ available: true });
+      // A neighbour in ANOTHER folder is no reason either: no log there means the plain no-session.
+      agents = [{ ...view("w1:p1"), cwd: "/empty" }, view("w1:p2")];
+      expect(await read()).toEqual({ paneId: "w1:p1", available: false, reason: "no-session" });
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("a multiplexer without the call keeps the newest-wins fallback", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-muse-route-")));
+    try {
+      await sessionLog(base, UUID_A, [metadata("/same"), accepted("alpha from session A")]);
+      await sessionLog(base, UUID_B, [metadata("/same"), accepted("beta from session B")]);
+      // Pinned mtimes order the newest-first walk; two writes in the same millisecond could tie.
+      const at = (uuid: string) => join(base, "2026", "10", "02", uuid, "session.jsonl");
+      await utimes(at(UUID_A), new Date("2026-10-02T00:00:00Z"), new Date("2026-10-02T00:00:00Z"));
+      await utimes(at(UUID_B), new Date("2026-10-02T01:00:00Z"), new Date("2026-10-02T01:00:00Z"));
+      const journals = { muse: museJournal([base]) };
+      const transcripts = new TranscriptStore();
+      const stub: Partial<StateEngine> = {
+        current: () => ({
+          agents: [view("w1:p1")],
+          shellPanes: [],
+          workspaces: [],
+          tabs: [],
+          bridge: "connected",
+        }),
+      };
+      // SAFETY: paneHistory reaches only `current()` (for the pane lookup) — the one member
+      // present above, mirroring the engine stubs elsewhere in this suite.
+      const engine = stub as StateEngine;
+      const url = new URL("http://x/api/pane/w1:p1/history");
+      const res = await paneHistory(
+        cfg(),
+        journals,
+        transcripts,
+        engine,
+        { readGrid: async () => muxGone("no screen") },
+        "w1:p1",
+        url,
+        new Request(url),
+      );
+      // SAFETY: the bridge's own JSON, served by the call above.
+      const body = (await res.json()) as { available: boolean; entries?: unknown[] };
+      expect(body.available).toBe(true);
+      expect(JSON.stringify(body.entries)).toContain("beta from session B");
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+});
+
+// A launcher row in a new space takes its folder's name (2026-10-14). tmux refuses a second session
+// of one name, so a second launch from the same folder must not ask for a taken one.
+describe("freeSpaceName — a folder-named space never takes a name already in use", () => {
+  test("the folder's own name when it is free, then -2, -3 in order", () => {
+    expect(freeSpaceName("app", [])).toBe("app");
+    expect(freeSpaceName("app", [{ label: "other" }])).toBe("app");
+    expect(freeSpaceName("app", [{ label: "app" }])).toBe("app-2");
+    expect(freeSpaceName("app", [{ label: "app" }, { label: "app-2" }])).toBe("app-3");
+    expect(freeSpaceName("app", [{ label: "app-2" }])).toBe("app");
   });
 });
