@@ -136,7 +136,10 @@ strip in `components/workspace-chips.tsx`, `FORK_DASH_SELECT_ON` in `lib/dash-ta
 (upstream 1.19's launcher for an agent, a command or a worktree: no route door, no dashboard "+" FAB, no
 first-start card button, no "Branch off" in the pane menu; `FORK_NEW_PAGE_ON` in `lib/fork-shape.ts` and
 `FORK_DASH_NEW_FAB_ON`), **no branch label, model tag or lost badge** (on the row, the pane header and the
-home mark; `FORK_BRANCH_LABEL_ON`, `FORK_MODEL_TAG_ON`, `FORK_MARK_LOST_BADGE_ON`), **the
+home mark; `FORK_BRANCH_LABEL_ON`, `FORK_MODEL_TAG_ON`, `FORK_MARK_LOST_BADGE_ON`), **no Tasks pill, Screen
+pill or theme picker, no release line, no dev viewport line** (1.23; `FORK_BELT_TASKS_ON`,
+`FORK_BELT_SCREEN_ON`, `FORK_THEMES_ON`, `FORK_VIEWPORT_STAMP_ON`, the release line under
+`MAINTAINER_MANAGED_UPDATES`; the subagents mark sits under `FORK_BELT_PINS_ON`), **the
 first-run screen's standing shape** (it never opens; a `TOUR_VERSION` bump must stay silent and
 Settings has no row for it) and **the composer's standing shape on a physical keyboard** (an empty box
 sends its keys to the pane, a box with text is a message Enter sends, a `/` over an empty box
@@ -355,7 +358,8 @@ cd web && bun run vitest run src/lib/push-decision.test.ts src/lib/  # the areas
 `CLAUDE.md` is explicit that the root typecheck does not cover `web/`'s test files and that the gap
 has shipped a broken tip once.
 
-**The suite is GREEN on this fork — 449 files, 21786 tests at 1.19.2 (406 / 19929 at 1.17.2), zero failures.** It was not: jsdom 29
+**The suite is GREEN on this fork — 574 files, 39957 tests at 1.23.1 (449 / 21786 at 1.19.2), zero failures. Under
+full load `agent-chat.test.tsx` can time out; rerun with `--maxWorkers=6` before calling it a finding.** It was not: jsdom 29
 never wires up `globalThis.localStorage`, and 133 tests across 18 files failed on it, which meant a
 persistence regression was untestable here and a real new failure had to be found inside a wall of
 expected ones. `web/src/test/setup.ts` now installs a Map-backed Storage (see its own header for the
@@ -370,6 +374,33 @@ reads it twice. Give it a `__reset…()` and call it from the existing reset ups
 (`__resetOperatorCommands` calls `__resetConfigMemo`), rather than editing each new test.
 
 In zsh, a `$T` holding several test paths is ONE argument; write `${=T}` to split it.
+
+**Every fork frame or picture of an `/api` path must load with the token.** From 1.18 an `<iframe src>`,
+`<img src>` or `window.open` of `/api/…` is refused ("device not paired"): the element's own request
+carries no header. The fork's artifact viewer, doc panel and preview panel shipped broken that way at
+1.19.2 and nobody noticed for ten days, because the checks proved `collie artifact add` wrote the file,
+not that the page showed it. Use `components/authed-frame.tsx` (srcdoc, still `sandbox=""`) or
+`lib/authed-url.ts` (object URL), and grep the merged tree for `src={…/api` and `window.open(` on an
+`/api` path.
+
+**Fork pane captures need Surface rows (1.22+).** Every file under `web/src/fixtures/panes/` needs a row
+in `web/src/fixtures/surface-labels.json`, and every `claude--*` one a row in `input-frame-regions.json`;
+a fork-only capture without them fails a dozen surface suites at once. Label what the screen shows.
+
+**Bridge/CLI files run one at a time, then compare with the upstream tree.** Loop over
+`git ls-files 'bridge/**/*.test.ts' 'cli/**/*.test.ts'` with `bun test <file>`, then rerun only the
+failing files in the `upstream` worktree. At 1.23.1, 28 files failed identically there (durable
+sockets refuse macOS's `/var` symlink; Bun 1.3.11 under the 1.4.0 floor); only a file that fails in
+`after` and not in `upstream` is the merge's.
+
+**A big release: resolve with parallel subagents on disjoint file lists.** 1.23.1 brought 102
+conflicted files; five agents (bridge/cli, composer/send, pane/chat, dashboard/settings/i18n, web
+lib/harness) each took one list from a shared brief (policy, standing shapes, the new gates already
+added to `fork-shape.ts`, "never write the git index", "report needs from others"). Add the gates
+yourself before they start, stage everything yourself after, and take their cross-file needs.
+
+**If `main` moves during the sync (a hotfix), merge `main` into the `after` worktree after the merge
+commit**, then fast-forward: `--ff-only` refuses otherwise.
 
 **A release that adds an auth gate needs the phone paired BEFORE the restart.** 1.18 made pairing
 always on (ADR 0086): every `/api` path except `/api/health` is 403 without a device token, so the
