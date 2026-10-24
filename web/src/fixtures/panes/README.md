@@ -265,6 +265,56 @@ trailing padding are as read. No user, host or path is in either file.
 | `pi--v130-custom-footer-idle.txt` | Empty editor, the cursor cell, the extension's footer | composer, empty |
 | `pi--v130-custom-footer-draft.txt` | `hello from the probe` typed, not sent | composer, draft read back |
 
+## pi 1.3.0 under pi-powerline-footer's editor (issue 544, reported 2026-10-20, Herdr 0.9.5)
+
+**Sanitized**, from the reporter's own capture attached to issue 544 (`herdr pane read --source recent
+--lines 200 --format ansi`, 254 columns, LF line ends, no trailing newline). pi 1.3.0 with several
+extensions. One of them, pi-powerline-footer, replaces pi's editor (`ctx.ui.setEditorComponent`) with
+a wrapper whose `editor.render` draws both rules ` ─…` and the prompt ` > ` one column in, two cells
+short of the screen, and continuation rows three spaces in. Its `powerline-last-prompt` widget
+(`setWidget`, below the editor) puts ` ↳ ` and the last prompt straight under the bottom rule. Its
+`powerline-status` widget above the editor is the ` GPT-6.1 Sol | think:low | …` row. Under the widget
+stand five footer rows: three match pi's own cwd, stats and joined `setStatus` rows (ponytail's `🐴`
+status is in the last), and two more sit between them, so an extension footer (`setFooter`) draws
+them; which extension is not known. The turn is running, so pi embeds `⠸ Working` in
+the top rule. Cut to the last 23 rows of the read, from the blank row over the last agent turn. The pane
+id, the reporter's German reply and the session name were replaced by strings of the same width;
+`litellm/[REDACTED]` is the reporter's own redaction.
+
+| Fixture | State | Reads as |
+| --- | --- | --- |
+| `pi--v130-powerline-editor-running--w254.txt` | Empty inset editor, a running turn, widget row and five-row footer | running, modal none, composer empty (the profile's `frameAlternates`); the pi reader's `inset` layout, unbound (the tail is past the six-row window) |
+
+**Reporter's idle and draft captures**, the same setup, two captures taken 2026-10-20 and 2026-10-21 (`herdr pane read --source recent
+--lines 200 --format ansi`, 254 columns, CRLF in the read, here LF, no trailing newline). The turn is
+done, so the top rule has no `Working` label and the box stands over the widget row and the five-row
+footer. Cut to the tail (the last agent turn's final rows, then the status row, the box, the widget
+and the footer). Replaced by text of the same width, SGR bytes unchanged: the German reply and the
+German prompts in the widget row and in the cwd row (the widget's second line wraps onto the cwd row,
+105 columns), the Windows share path (`\\wsl.localhost\<user>\tmp\<folder>\...`, user and folder
+names), and the `auth:` profile name (`demo-profile`). The typed draft in the second file is the
+reporter's own test text.
+
+| Fixture | State | Reads as |
+| --- | --- | --- |
+| `pi--v130-powerline-editor-idle-footer--w254.txt` | Empty inset box over a long widget row (cut by an ellipsis) and the five-row footer | free (idle, modal none, empty) |
+| `pi--v130-powerline-editor-two-row-draft-footer--w254.txt` | Two typed rows, `Collie test draft line one` and `... two`, over the widget row and footer | draft read back as the two rows joined, modal none, not free |
+
+**Live**, from the lab run of 2026-10-20: pi 1.3.0 with pi-powerline-footer 0.20.2 alone, 120 columns
+and 40 rows, LF line ends, no trailing newline. pi ran under tmux, so its extended-keys warning stands
+at the top. With no other extension's footer the inset box ends the screen, or its ` ↳ ` widget row
+does; the powerline status row stands over the top rule. Nothing personal was on screen. One file is
+**derived**: the walky talky draft is the two-row draft with its two rows replaced by a walky talky
+header row and a body row, as the bridge types a message (a newline between them).
+
+| Fixture | State | Reads as |
+| --- | --- | --- |
+| `pi--v130-powerline-editor-idle-widget--w120.txt` | Empty inset box after a turn, the ` ↳ ` row under it | free (idle, modal none, empty); the pi reader's `inset` layout with no status row |
+| `pi--v130-powerline-editor-two-row-draft--w120.txt` | A typed prompt that wraps to a second row, three spaces in | draft, modal none, the two rows read as one text (the alternate's `rows` and `ownPrompt`) |
+| `pi--v130-powerline-editor-walky-draft--w120.txt` | Derived: a walky talky header row and its body row | draft, modal none, header and body as one text |
+| `pi--v130-powerline-editor-slash-model--w120.txt` | `/model` typed, pi's command list under the box | draft `/model`, modal none, the list is the command's own (the profile's `commandList`) |
+| `pi--v130-powerline-model-selector--w120.txt` | pi's `/model` selector, which takes the editor's place in column zero | modal unreadable, never free; the pi reader's modal |
+
 ## pi's permission gate on pi 0.87.1 (captured 2026-10-17, Herdr 0.9.4)
 
 Stock pi 0.87.1 with the example pi ships, `examples/extensions/permission-gate.ts` (`pi -e <path>`), in
@@ -2425,6 +2475,18 @@ captured.
 |---|---|
 | `claude--v2302-notice-over-agents-panel--w69.txt` | A running turn (`✶ Hashing… · tool use (4s · thinking with high effort)`) at 69 columns with the `✦ You should know · ` notice above the box, its three wrapped rows and the key row `1: Learn more   2: Knew this already   0: Dismiss`, then the box, two status rows, and the agents panel (`● main`, three `◯ general-purpose` rows) under them. The notice and the agents panel are vanilla Claude Code; the spinner's ` · tool use` suffix, the `[-]` row over the notice and the reply boxes come from a theme plugin (ui-themes). The panel is the footer run the Claude profile names (`frame.volatile.named`), so it is not counted against the six-row tail and the notice lifts its card (ADR 0109). Labelled `running` |
 
+## Heads up follow-ups, 2.1.304, derived
+
+**Derived** from `herdr pane read --ansi` captures of a plain `claude` 2.1.304 session, not kept byte for byte: every letter of the transcript above the notice (the welcome banner included) and of the statusline was replaced by neutral words of the same width, every escape sequence, glyph, digit, space and row kept. The notice rows, the `[-]` row over them, the box and the mode row are as captured. The notices, the `[-]` row and the box are vanilla Claude Code. Each is the follow-up the `you-should-know` plugin draws after a key on its `✦ Heads up · ` notice. Its keys act on a box holding one digit, as the first notice's do, so the Surface reads `modal: "none"` and the notice lifts as a menu card that leaves the box live (ADR 0109). The turn is over in each: labelled `idle`.
+
+| Fixture | State / what's in it |
+|---|---|
+| `claude--v2304-heads-up-dismissed--w135.txt` | After **Dismiss**: one row, `✦ Dismissed.   1: That was helpful   2: Not relevant   3: Couldn’t understand   4: Turn off suggestions   0: Dismiss`, the head and its keys on the same row, a blank row, then the empty box |
+| `claude--v2304-heads-up-dismissed--w65.txt` | The same at 65 columns, wrapped onto three rows: `✦ Dismissed.   1: That was helpful   2: Not relevant`, `  3: Couldn’t understand   4: Turn off suggestions`, `  0: Dismiss`. The last row holds one key |
+| `claude--v2304-heads-up-dismissed-after-explain--w65.txt` | After **Learn more**, then **Dismiss**, at 65 columns: `✦ Dismissed.   1: That was helpful   2: Didn’t understand`, then `  0: Dismiss`. The box holds Claude Code's dim prompt suggestion |
+| `claude--v2304-heads-up-explained--w135.txt` | After **Learn more**: the `✦ Heads up · ` head and one continuation row, a blank row, the explanation (a title row and `  - ` bullets, a wrapped bullet indented by four), a blank row, the key row `  1: Understood   2: Chat in main session   0: Dismiss`, a blank row, then the empty box |
+| `claude--v2304-heads-up-explained--w65.txt` | The same at 65 columns: the head and three continuation rows, a blank row, sixteen rows of explanation, a blank row and the key row. The box holds Claude Code's dim prompt suggestion |
+
 ## Cursor CLI input box (captured 2026-10-17, Cursor CLI 2026.10.14 and 2026.10.16, Herdr)
 
 Read through `GET /api/pane/:id` with `scripts/capture-fixture.sh` from a throwaway pane in
@@ -2559,6 +2621,31 @@ and the update row a notice gap, so the screen now reads free and lifts the surv
 | `claude--v2303-titled-edge-idle--w160.txt` | **Derived**: the spinner row replaced by the field screen's own `✻ Brewed for 4m 14s · done 6:51 AM · 1 shell still running`. Reads idle and free. Labelled `idle` |
 | `claude--v2303-titled-edge-draft--w160.txt` | **Derived** from the idle file: the box holds `ok merge the five, running the crew update now`. Reads the draft without the name. Labelled `draft` |
 | `claude--v2303-titled-edge-survey--w160.txt` | **Derived** from the idle file to the layout of the field read (the masked rows in the lane's refusal example): a blank row, `● How is Claude doing this session? (optional)` and `  1: Bad    2: Fine   3: Good   0: Dismiss` right on the update row. The field receipt read `idle`, `unreadable`, `empty`; since the ADR 0109 addendum it reads `idle`, `none`, `empty`, the same with a plain edge or a blank row under the keys, and lifts a card with Bad, Fine, Good and Dismiss. Labelled `idle` |
+
+## An AskUserQuestion whose question has no question mark, 2.1.304 (captured 2026-10-20, 135 columns)
+
+Inherent to vanilla Claude Code: the model writes AskUserQuestion's question text and Claude Code prints it as written, so a question may carry no `?`. The prompt-select grammar took a question only from a row with a `?`, so neither screen lifted a card and the phone showed the unread-dialog card. A `select` whose first row under the dialog's rule is the single-question chip now takes its question by position, every non-blank row between the chip and the first option, the way the wizard grammar does (`findQuestion` in `harness/claude/prompt-select.ts`). Every other dialog still needs its `?`.
+
+| Fixture | State / what's in it |
+|---|---|
+| `claude--v2304-ask-no-question-mark--w135.txt` | **Derived** from the field report's `display` (an unread-dialog report from a `cui` session), escapes kept, line endings LF. Hardening against a user theme (ui-themes): the coloured strip and blank column left of the dialog, the rules wrapped into a `──` stub above the chip and above `Chat about this`. The chip ` ☐ Green #29`, a five-row question in the `│` gutter ending in `.`, two options with two-row descriptions, `3. Type something.`, `4. Chat about this`, the footer, then a task checklist. Every letter of the transcript, the chip label, the question, the option labels and descriptions and the checklist items was replaced by neutral words of the same width; every escape, glyph, digit, space, `│` and rule is kept, and no `?` was added. `Type something.`, `Chat about this`, the footer and the checklist's count rows are as captured. Lifts a `select` card. Labelled `dialog` |
+| `claude--v2304-ask-no-question-mark-plain--w135.txt` | **Derived** from a plain `claude` 2.1.304 capture (lab, 135 columns, escapes kept, line endings LF): the transcript above the dialog's rule, the lab prompts included, replaced by neutral words of the same width. The dialog is as captured: ` ☐ Ship it`, `The release branch has passed every check. Pick how to proceed with the merge.`, `Merge now (Recommended)`, `Hold the merge`, `3. Type something.`, `4. Chat about this` and the footer. Lifts a `select` card. Labelled `dialog` |
+
+## The survey's transcript question, 2.1.306 (captured 2026-10-21, 153 columns, Herdr)
+
+After a key on the rating survey (`● How is Claude doing this session? (optional)`) Claude Code 2.1.306
+asks a second question over the same live box: `● Can Anthropic look at your session transcript to help
+us improve Claude Code?`, a `Learn more:` row with the docs link, and the keys `y: Yes    n: No     d:
+Don't ask again`. The 2.1.306 bundle reads them through the same hook as the rating survey's digits: a
+key acts only when the box's whole value is that letter, lowercased first. Read with `herdr pane read
+<pane> --source visible --format ansi` from a live session, CRLF line ends and escapes kept, cut to the
+last 16 rows. The git branch in the statusline is replaced by `fix/transcript-survey-probe-01*` of the
+same width; every other row is as captured. The field case: every phone send to the pane was refused
+`unconfirmed` (`modal: "unreadable"`) until the question was answered by hand.
+
+| Fixture | State / what's in it |
+|---|---|
+| `claude--v2306-transcript-survey--w153.txt` | The transcript question over an empty box, a blank row between; under the box the statusline, `✔ Update installed · Restart to apply` and `new task? /clear to save 289.5k tokens`. Reads `idle`, `none`, `empty` and lifts a card with Yes, No and Don't ask again (`letters` head in claude.json). Labelled `idle` |
 
 ## The slash list under pi's and omp's box (captured 2026-10-17, pi 1.3.0, pi 0.87.1, omp 18.6.1, isolated Herdr)
 

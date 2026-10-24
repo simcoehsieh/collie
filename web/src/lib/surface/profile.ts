@@ -89,6 +89,16 @@ export interface FrameAnchor {
 export interface NoticeHead {
   /** A regular expression source, matched on the notice's first row with its trailing spaces cut: it must not need a trailing space. */
   readonly head: string;
+  /**
+   * True for a head that may stand over a body: after its continuation rows and a blank row, rows
+   * indented by two spaces or more, down to the key block. Optional.
+   */
+  readonly body?: true;
+  /**
+   * True for a head whose key block prints single letters (`y: Yes   n: No`) instead of digits: the
+   * reader takes lettered keys under this head and no other, and digits under it no more. Optional.
+   */
+  readonly letters?: true;
 }
 
 /** A named row under the box (`idle.volatile.below.footerRows`). */
@@ -244,7 +254,15 @@ export interface FrameLayout {
    * list and a dialog's title too, and those stand apart by a blank row or run past the bound. Optional.
    */
   readonly underPainted?: boolean;
-
+  /**
+   * The interior walk only, with `rows`. True when the text in front of the draft hole on the prompt
+   * row is the box's own prompt glyph, never a dialog's pointer. On a harness that draws its dialogs in
+   * the box's place (`idle.dialogsInBox`) the modal cues read the rows from the top edge down, and there
+   * this glyph reads as blank. Without it a draft that wraps reads as a pointer on a listed row (the
+   * glyph's row, and a wrapped row in the hole's column) between two rules, which is an overlay. `rows`
+   * must name every row the box may hold, so a box with any other row inside is no box. Optional.
+   */
+  readonly ownPrompt?: boolean;
 }
 
 /** The ghost text after the cursor ({@link Profile.idle.inlineHint}). */
@@ -763,7 +781,7 @@ function volatileBelow(node: JsonObject): Profile["idle"]["volatile"]["below"] {
   const withScreens = node.otherScreens === undefined ? withFooter : { ...withFooter, otherScreens: otherScreens(node.otherScreens) };
   return node.commandList === undefined ? withScreens : { ...withScreens, commandList: commandList(node.commandList) };
 }
-/** `idle.notices`: each an object whose head pattern compiles and cannot match a blank row. */
+/** `idle.notices`: each an object whose head pattern compiles and cannot match a blank row, and whose `body` and `letters`, when named, are true. */
 function parseNotices(value: JsonValue | undefined): NoticeHead[] {
   const path = "idle.notices";
   return list(value, path).map((item, i) => {
@@ -771,6 +789,11 @@ function parseNotices(value: JsonValue | undefined): NoticeHead[] {
     const node = object(item, at);
     const head = pattern(field(node, "head", at), `${at}.head`);
     if (head.test("") || head.test(" ")) fail(`${at}.head`, "must not match a blank row");
+    if (node.body !== undefined && node.body !== true) fail(`${at}.body`, "must be true when named");
+    if (node.letters !== undefined && node.letters !== true) fail(`${at}.letters`, "must be true when named");
+    if (node.body === true && node.letters === true) return { head: head.source, body: true, letters: true };
+    if (node.body === true) return { head: head.source, body: true };
+    if (node.letters === true) return { head: head.source, letters: true };
     return { head: head.source };
   });
 }
@@ -839,7 +862,7 @@ function parseFrame(frameNode: JsonObject): FrameLayout {
     maxTailRows: whole(field(frameNode, "maxTailRows", "idle.frame"), "idle.frame.maxTailRows", 0),
   };
   if (walk === "edges") {
-    for (const key of ["rows", "trailer", "continuation"] as const) {
+    for (const key of ["rows", "trailer", "continuation", "ownPrompt"] as const) {
       if (frameNode[key] !== undefined) fail(`idle.frame.${key}`, "belongs to the interior walk");
     }
     const edgeBottom = anchor(field(frameNode, "bottom", "idle.frame"), "idle.frame.bottom", null, true);
@@ -855,10 +878,13 @@ function parseFrame(frameNode: JsonObject): FrameLayout {
   }
   if (frameNode.underPainted === true && frameNode.under === undefined) fail("idle.frame.underPainted", "needs an under pattern");
   const withPainted = frameNode.underPainted === true ? { ...withUnder, underPainted: true } : withUnder;
-  if (frameNode.continuation === undefined) return withPainted;
+  if (frameNode.ownPrompt !== undefined && frameNode.ownPrompt !== true && frameNode.ownPrompt !== false) fail("idle.frame.ownPrompt", "must be true or false");
+  if (frameNode.ownPrompt === true && frameNode.rows === undefined) fail("idle.frame.ownPrompt", "needs a rows pattern");
+  const withOwnPrompt = frameNode.ownPrompt === true ? { ...withPainted, ownPrompt: true } : withPainted;
+  if (frameNode.continuation === undefined) return withOwnPrompt;
   const continuation = pattern(frameNode.continuation, "idle.frame.continuation");
   if (!continuation.source.includes("(?<text>")) fail("idle.frame.continuation", "must hold the named group text");
-  return { ...withPainted, continuation: continuation.source };
+  return { ...withOwnPrompt, continuation: continuation.source };
 }
 
 export function parseProfile(raw: JsonValue): Profile {

@@ -11,7 +11,7 @@
 // A TAP AND ITS RECEIPT. Every POST the page makes to /api/ask, /api/send or /api/pane/*/keys|reply
 // is recorded with the bridge's answer. A tap's receipts are the answers that came in between the
 // tap and the end of its settle window. A tap WORKED when every answer accepted it.
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { expect, test as base, type Browser, type BrowserContext, type Locator, type Page, type Response as PageResponse } from "@playwright/test";
@@ -22,6 +22,7 @@ import { TOKEN_STORAGE_KEY } from "../../src/lib/pairing";
 import { readSendReceipts, readSurface } from "../../src/lib/send-protocol";
 import { askOf, isFree, type Surface } from "../../src/lib/surface/surface";
 import { TOUR_STORAGE_KEY, TOUR_VERSION } from "../../src/lib/tour";
+import { BIN } from "./bins";
 import { SETUPS, harnessDirs, prepareHarness, type HarnessId } from "./harnesses";
 import type { ScenarioId } from "./scenarios";
 import { MEMBER_ID, P, STATE_ROOT, memGuard, newWorkspacePane, paneRun, readRun, readToken, sleep, type Machine } from "./rig-lib";
@@ -256,9 +257,11 @@ export const askOn = (pane: RigPane | null) => (pane?.surface === null || pane?.
  * reads its box free (a member's pane through the lead's merged snapshot). Throws NotReached when it
  * never comes up.
  */
-export async function startHarness(rig: Rig, id: HarnessId, machine: Machine = "lead"): Promise<string> {
+export async function startHarness(rig: Rig, id: HarnessId, machine: Machine = "lead"): Promise<{ paneId: string; notes: readonly string[] }> {
   memGuard(`harness ${id}`);
-  const { line } = prepareHarness(id, machine);
+  // A binary that is not there would only show as the 90 s timeout below: say what is missing instead.
+  if (!existsSync(BIN[id])) throw new NotReached(`${id} binary not found at ${BIN[id]}; set COLLIE_RIG_${id.toUpperCase()}_BIN`);
+  const { line, notes } = prepareHarness(id, machine);
   const host = hostOf(machine);
   const paneId = newWorkspacePane(harnessDirs(id, machine).project, `leg-${id}`, machine);
   await sleep(800); // the shell's prompt first
@@ -268,7 +271,7 @@ export async function startHarness(rig: Rig, id: HarnessId, machine: Machine = "
     const last = await rig.pane(paneId, host).catch(() => null);
     throw new NotReached(`${id} did not come up idle on the ${machine} in 90 s (agent ${last?.agent ?? "?"}, status ${last?.status ?? "?"})`);
   }
-  return paneId;
+  return { paneId, notes };
 }
 
 // ── the phone ────────────────────────────────────────────────────────────────────────────────────
@@ -569,7 +572,8 @@ export async function openSession(id: HarnessId, machine: Machine = "lead"): Pro
   }
   let session: Session;
   try {
-    session = withHost({ paneId: await startHarness(rig, id, machine), startNote: "" }, host);
+    const started = await startHarness(rig, id, machine);
+    session = withHost({ paneId: started.paneId, startNote: started.notes.join("; ") }, host);
   } catch (err) {
     session = { paneId: null, startNote: err instanceof Error ? err.message : String(err) };
   }
@@ -597,6 +601,8 @@ export async function runScenario(harness: HarnessId, id: ScenarioId, session: S
   const trail: Trail = { log: [], notes: [], captures: [] };
   let row: ScenarioResult;
   try {
+    // A gap the start went ahead without (pi's example extensions) shows in the row of a case that stops.
+    if (session.startNote !== "") trail.notes.push(session.startNote);
     const reset = await resetBox(new Rig(), session.paneId, session.host);
     if (reset !== null) trail.notes.push(reset);
     row = await body(session.paneId, trail);

@@ -12,7 +12,7 @@ import { muxAck, muxOk, muxRefused, muxUnreachable, type MuxAck, type MuxGrid, t
 import { forPlatform, loadProfiles, profileFor, resetProfileLog, type Profile, type ProfileForOptions, type ProfileStatus, type VersionRange } from "../../web/src/lib/surface/profile.ts";
 import type { HeldCancelAnswer, SendAnswer } from "../../web/src/lib/surface/send.ts";
 import { parseAnsi } from "../../web/src/lib/ansi.ts";
-import { splitLines } from "../../web/src/lib/blocks.ts";
+import { lineText, splitLines } from "../../web/src/lib/blocks.ts";
 import { findInputFrame } from "../../web/src/lib/surface/frame.ts";
 import { KeyGate } from "./key-gate.ts";
 import { boxMatches, commandBoxMatches, GENERIC_PROBE, LOCK_BOUND_MS, locateText, neverHeldEntry, probeLanding, RowRing, SendProtocol, SessionLocks, steadyRow, type SendDeps, type SendRequest } from "./protocol.ts";
@@ -2596,6 +2596,33 @@ describe("the offers as new requests", () => {
     neverEscape(pane);
   });
 
+  test("replace with a slash command (the belt's Model onto a draft): Replace and Cancel only, then the box is emptied and the command sent", async () => {
+    const { pane, send } = rig();
+    pane.box = "old draft";
+    pane.afterInput = (p, what) => {
+      if (what.startsWith("paste:/")) p.popup = ["  /model       Set the AI model for Claude Code", "  /mcp         Manage MCP servers"];
+      if (what.endsWith("Enter")) p.popup = null;
+    };
+    const refused = await send("/model", { mode: "command" });
+    expect(refused.receipt).toMatchObject({ outcome: "refused", reason: "draft_present", keys: [] });
+    // Add would send "old draft /model", a message nobody means: a command is offered Replace and Cancel only.
+    expect(refused.offers).toEqual(["replace", "cancel"]);
+    // The same request id again is a replay of the stored receipt, with the same two offers.
+    const replayed = await send("/model", { id: refused.receipt!.requestId, mode: "command" });
+    expect(replayed).toMatchObject({ replayed: true, receipt: { reason: "draft_present" }, offers: ["replace", "cancel"] });
+    // A plain message onto the same draft keeps all three, and so does its replay.
+    const plain = await send("a plain thought");
+    expect(plain.offers).toEqual(["append", "replace", "cancel"]);
+    expect((await send("a plain thought", { id: plain.receipt!.requestId })).offers).toEqual(["append", "replace", "cancel"]);
+    const answer = await send("/model", { mode: "replace" });
+    expect(answer.receipt).toMatchObject({ outcome: "sent" });
+    expect(answer.receipt?.keys.at(-1)).toBe("Enter");
+    expect(pane.calls).toEqual(["paste:/model"]);
+    expect(pane.transcript.at(-1)).toBe("> /model");
+    expect(pane.keysSeen.filter((k) => k === "Backspace").length).toBeGreaterThanOrEqual("old draft".length);
+    neverEscape(pane);
+  });
+
   test("replace: the clear is its own step, so S0 keeps its two reads and its own gap", async () => {
     const r = rig();
     r.pane.box = "old draft";
@@ -3087,7 +3114,7 @@ describe("real screens from the fixture corpus", () => {
     expect(digit.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
     expect(digit.cause).toBe("notice_key");
     expect(digit.offers).toEqual(["keys"]);
-    expect(digit.receipt?.detail).toBe("That digit would answer the notice above the box. Answer it on its card, or send the digit once the turn has ended.");
+    expect(digit.receipt?.detail).toBe("That message would answer the notice above the box. Answer it on its card, or send it once the turn has ended.");
     expect(captured.pane.calls).toEqual([]);
   });
 
@@ -3133,7 +3160,7 @@ describe("real screens from the fixture corpus", () => {
     expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
     expect(answer.cause).toBe("notice_key");
     expect(answer.offers).toEqual(["keys"]);
-    expect(answer.detail).toBe("That digit would answer the notice above the box. Answer it on its card, or send the digit once the turn has ended.");
+    expect(answer.detail).toBe("That message would answer the notice above the box. Answer it on its card, or send it once the turn has ended.");
     expect(pane.box).toBe("half a thought");
   });
 
@@ -3181,7 +3208,7 @@ describe("real screens from the fixture corpus", () => {
     expect(first.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
     expect(first.cause).toBe("notice_key");
     expect(first.offers).toEqual(["commit", "keys"]);
-    expect(first.receipt?.detail).toBe("That digit would answer the notice above the box. Check the pane, then tap Type here.");
+    expect(first.receipt?.detail).toBe("That message would answer the notice above the box. Check the pane, then tap Type here.");
     pane.afterInput = answersDigit;
     const commit = await send("1", { rowsHash: first.rowsHash! });
     expect(commit.receipt).toMatchObject({ outcome: "sent" });
@@ -3189,6 +3216,45 @@ describe("real screens from the fixture corpus", () => {
     expect(pane.transcript.at(-1)).not.toBe("> 1");
     expect(pane.keysSeen).toEqual([]);
   });
+
+  // Claude Code 2.1.304's follow-ups to the notice (ADR 0109, addendum 2026-10-20): after Dismiss a
+  // `✦ Dismissed.` row with its keys on the head's own row, after Learn more an explanation between the
+  // head and its keys. Both stand over a live box, so a sentence and a number go on one tap, and one of
+  // the printed digits takes the notice path.
+  const DISMISSED = "claude--v2304-heads-up-dismissed--w135.txt";
+  const EXPLAINED = "claude--v2304-heads-up-explained--w135.txt";
+
+  /** A fixture's notice as plain rows, from its head row down to the row over the box's top edge. */
+  function noticeRowsOf(name: string): string[] {
+    const rows = splitLines(parseAnsi(fixture(name))).map((line) => lineText(line).trimEnd());
+    const head = rows.findIndex((row) => row.startsWith("✦ "));
+    const top = rows.findIndex((row, i) => i > head && /^─{8,}$/u.test(row));
+    return rows.slice(head, top);
+  }
+
+  for (const name of [DISMISSED, EXPLAINED]) {
+    test(`on the follow-up in ${name}: hello and 10 go on one tap`, async () => {
+      for (const text of ["hello", "10"]) {
+        const { pane, send } = rig();
+        pane.over = noticeRowsOf(name);
+        const answer = await send(text);
+        expect(answer.receipt, text).toMatchObject({ outcome: "sent" });
+        expect(answer.cause, text).toBeUndefined();
+        expect(pane.transcript.at(-1)).toBe(`> ${text}`);
+      }
+    });
+  }
+
+  for (const [name, digit] of [[DISMISSED, "0"], [EXPLAINED, "1"]] as const) {
+    test(`on the follow-up in ${name}: ${digit} is refused with the notice cause`, async () => {
+      const captured = rig({ pane: still(fixture(name)) });
+      const answer = await captured.send(digit);
+      expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+      expect(answer.cause).toBe("notice_key");
+      expect(answer.offers).toEqual(["commit", "keys"]);
+      expect(captured.pane.calls).toEqual([]);
+    });
+  }
 
   // Seen live on 2026-10-17: Claude Code's usage row in the blank row between the key row and the box
   // for about ten seconds after a turn. The profile names it (`idle.noticeGaps`), so the box stays free.
@@ -3255,6 +3321,171 @@ describe("real screens from the fixture corpus", () => {
     expect(captured.pane.calls).toEqual([]);
   });
 
+  // 2026-10-21, Claude Code 2.1.306: after a key on the rating survey it asks whether Anthropic may read
+  // the transcript, keys `y`, `n`, `d`, read like the survey's digits (the box's whole value, lowercased).
+  // Every send was refused `unconfirmed` (modal unreadable) until it was answered by hand.
+  const TRANSCRIPT_ROWS = [
+    "● Can Anthropic look at your session transcript to help us improve Claude Code?",
+    "  Learn more: https://code.claude.com/docs/en/data-usage#session-quality-surveys",
+    "  y: Yes    n: No     d: Don't ask again",
+  ];
+
+  test("on the transcript question: a sentence goes on one tap", async () => {
+    const { pane, send } = rig();
+    pane.over = [...TRANSCRIPT_ROWS, ""];
+    const answer = await send("done reviewing, ship FIX-2 to the frontend dev");
+    expect(answer.receipt).toMatchObject({ outcome: "sent" });
+    expect(answer.cause).toBeUndefined();
+    expect(pane.transcript.at(-1)).toBe("> done reviewing, ship FIX-2 to the frontend dev");
+  });
+
+  test("on the transcript question: a printed letter, in either case, takes the notice path", async () => {
+    for (const letter of ["y", "n", "d", "Y", "N", "D"]) {
+      const { pane, send } = rig();
+      pane.over = [...TRANSCRIPT_ROWS, ""];
+      const first = await send(letter);
+      expect(first.receipt, letter).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+      expect(first.cause, letter).toBe("notice_key");
+      expect(pane.calls, letter).toEqual([]);
+    }
+    // A letter the question does not print is an ordinary message.
+    const { pane, send } = rig();
+    pane.over = [...TRANSCRIPT_ROWS, ""];
+    expect((await send("x")).receipt).toMatchObject({ outcome: "sent" });
+    expect(pane.transcript.at(-1)).toBe("> x");
+  });
+
+  test("on the transcript question: Y in a running turn, Replace and Append is refused to the key pad", async () => {
+    const running = rig();
+    running.pane.over = ["✻ Thinking… (2s · esc to interrupt)", "", ...TRANSCRIPT_ROWS];
+    const turn = await running.send("Y");
+    expect(turn.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+    expect(turn.cause).toBe("notice_key");
+    expect(running.pane.calls).toEqual([]);
+
+    const replacing = rig();
+    replacing.pane.over = TRANSCRIPT_ROWS;
+    replacing.pane.box = "half a thought";
+    const replace = await replacing.send("Y", { mode: "replace" });
+    expect(replace.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+    expect(replace.cause).toBe("notice_key");
+    expect(replacing.pane.box).toBe("half a thought");
+
+    const appending = rig();
+    appending.pane.over = TRANSCRIPT_ROWS;
+    const append = await appending.send("Y", { mode: "append" });
+    expect(append.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+    expect(append.cause).toBe("notice_key");
+    expect(appending.pane.calls).toEqual([]);
+  });
+
+  test("the transcript question's capture reads free, and a printed letter is refused to the notice path", async () => {
+    const captured = rig({ pane: still(fixture("claude--v2306-transcript-survey--w153.txt")) });
+    const prepared = await captured.protocol.handle({ id: "fixture-transcript-1", text: "", mode: "prepare" }, { session: "main", paneId: "%1", harness: "claude" });
+    expect(prepared.surface).toMatchObject({ turn: "idle", modal: "none", composer: "empty" });
+    const letter = await captured.send("n");
+    expect(letter.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+    expect(letter.cause).toBe("notice_key");
+    expect(captured.pane.calls).toEqual([]);
+  });
+
+  // The review of #559: the lines of a send are written one at a time, so a first line that is one of the
+  // notice's keys stands alone in the box until the newline key follows it, and the notice may take it
+  // (`y` shares the transcript, `d` turns the question off for good). Such a send takes the notice rule
+  // too, letters and digits alike; a first line that only starts with a key is an ordinary message.
+  test("on the transcript question: a send whose first line is a printed letter takes the notice path", async () => {
+    for (const text of ["y\nship it", "Y\nship it", "  n  \nand the rest", "d\n\nlater"]) {
+      const { pane, send } = rig();
+      pane.over = [...TRANSCRIPT_ROWS, ""];
+      const first = await send(text);
+      expect(first.receipt, text).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+      expect(first.cause, text).toBe("notice_key");
+      expect(first.offers, text).toEqual(["commit", "keys"]);
+      expect(pane.calls, text).toEqual([]);
+    }
+  });
+
+  test("on a heads-up notice: a send whose first line is a printed digit takes the notice path", async () => {
+    const { pane, send } = rig();
+    pane.over = NOTICE_ROWS;
+    const first = await send("1\nship it");
+    expect(first.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+    expect(first.cause).toBe("notice_key");
+    expect(first.offers).toEqual(["commit", "keys"]);
+    expect(pane.calls).toEqual([]);
+
+    const running = rig();
+    running.pane.over = ["✻ Thinking… (2s · esc to interrupt)", "", ...NOTICE_ROWS];
+    const turn = await running.send("0\nship it");
+    expect(turn.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+    expect(turn.cause).toBe("notice_key");
+    expect(turn.offers).toEqual(["keys"]);
+    expect(running.pane.calls).toEqual([]);
+  });
+
+  test("on the transcript question: Replace and Append whose first line is a printed letter are refused to the key pad", async () => {
+    const replacing = rig();
+    replacing.pane.over = TRANSCRIPT_ROWS;
+    replacing.pane.box = "half a thought";
+    const replace = await replacing.send("y\nship it", { mode: "replace" });
+    expect(replace.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+    expect(replace.cause).toBe("notice_key");
+    expect(replacing.pane.box).toBe("half a thought");
+
+    const appending = rig();
+    appending.pane.over = TRANSCRIPT_ROWS;
+    const append = await appending.send("n\nship it", { mode: "append" });
+    expect(append.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+    expect(append.cause).toBe("notice_key");
+    expect(appending.pane.calls).toEqual([]);
+  });
+
+  test("a first line that only starts with a printed key goes on one tap", async () => {
+    for (const text of ["yes\nship it", "y.\nship it", "n o\nship it"]) {
+      const { pane, send } = rig();
+      pane.over = [...TRANSCRIPT_ROWS, ""];
+      const answer = await send(text);
+      expect(answer.receipt, text).toMatchObject({ outcome: "sent" });
+      expect(answer.cause, text).toBeUndefined();
+    }
+    const { pane, send } = rig();
+    pane.over = NOTICE_ROWS;
+    const answer = await send("10\nship it");
+    expect(answer.receipt).toMatchObject({ outcome: "sent" });
+    expect(answer.cause).toBeUndefined();
+    expect(pane.transcript.at(-1)).toBe("> 10 ship it");
+  });
+
+  /** The transcript question's hook: a box holding one of its letters alone answers it. */
+  function answersLetter(pane: FakePane): void {
+    if (pane.over.length > 0 && ["y", "n", "d"].includes(pane.box.trim().toLowerCase())) {
+      pane.over = [];
+      pane.box = "";
+    }
+  }
+
+  test("a confirmed send whose first line is a printed letter is typed in full, and no Enter follows when the question took the letter", async () => {
+    const { pane, send } = rig();
+    pane.over = [...TRANSCRIPT_ROWS, ""];
+    const first = await send("y\nship it");
+    expect(first.cause).toBe("notice_key");
+    pane.afterInput = answersLetter;
+    const commit = await send("y\nship it", { rowsHash: first.rowsHash! });
+    expect(commit.receipt?.outcome).toBe("typed_not_submitted");
+    expect(pane.keysSeen.filter((key) => key === "Enter" || key === "ctrl+enter")).toEqual([]);
+    expect(pane.transcript.at(-1)).not.toBe("> y ship it");
+  });
+
+  test("a confirmed send whose first line is a printed letter goes in whole when the question leaves the letter", async () => {
+    const { pane, send } = rig();
+    pane.over = [...TRANSCRIPT_ROWS, ""];
+    const first = await send("y\nship it");
+    const commit = await send("y\nship it", { rowsHash: first.rowsHash! });
+    expect(commit.receipt).toMatchObject({ outcome: "sent" });
+    expect(commit.cause).toBeUndefined();
+    expect(pane.transcript.at(-1)).toBe("> y ship it");
+  });
+
   /** The notice's plugin: a box holding one of its digits alone answers it, clearing the box and the notice. */
   function answersDigit(pane: FakePane, what: string): void {
     if (/^(?:type|paste):\d$/u.test(what) && pane.over.length > 0) {
@@ -3295,7 +3526,7 @@ describe("real screens from the fixture corpus", () => {
     const answer = await commit();
     expect(answer.receipt).toMatchObject({ outcome: "typed_not_submitted", keys: [] });
     expect(answer.offers).toEqual(["keys"]);
-    expect(answer.detail).toBe("The number is still in the box: the notice did not take it. Check the pane.");
+    expect(answer.detail).toBe("The key is still in the box: the notice did not take it. Check the pane.");
     expect(pane.box).toBe("1");
     expect(pane.keysSeen).toEqual([]);
   });
@@ -4776,7 +5007,7 @@ describe("a send at a box that is not free is held, not refused (2026-10-17 fiel
     r.pane.box = "half a thought";
     r.pane.dialog = DIALOG;
     const answer = await r.send("/compact", { id: "box-0000008", mode: "replace" });
-    expect(answer.receipt?.outcome).toBe("refused");
+    expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "not_free" });
     expect(r.holds.list()).toEqual([]);
     // The same Replace with a plain text is held.
     const plain = await r.send("a plain thought", { id: "box-0000009", mode: "replace" });
@@ -5842,4 +6073,106 @@ describe("S1 reads the turn again before the commit key (PR 491): a turn starts 
     const answer = await send("/model", { mode: "command" });
     expect({ steered: pane.steered, outcome: answer.receipt?.outcome }).toEqual({ steered: [], outcome: "typed_not_submitted" });
   });
+});
+
+describe("pi under pi-powerline-footer's inset editor (issue 544, live 2026-10-20)", () => {
+  // eslint-disable-next-line no-control-regex
+  const plain = (row: string): string => row.replace(/\u001b\[[0-9;:]*m/gu, "");
+  const capture = (name: string): string[] => readFileSync(join(import.meta.dir, `../../web/src/fixtures/panes/${name}`), "utf8").split("\n");
+  const GLYPH = " \u001b[38;2;200;200;200m>\u001b[39m";
+  const WIDGET = " \u001b[38;5;244m↳\u001b[39m \u001b[38;5;244mReply with exactly DONE-1 and nothing else.\u001b[39m";
+  const INSET_WRAP = 112;
+
+  /** The extension's box holding `box`: ` > ` and the first row, later rows and wrapped rows three spaces in, the cursor last. */
+  const insetRows = (box: string): string[] => {
+    const rows: string[] = [];
+    for (const line of box.split("\n")) {
+      for (let at = 0; at === 0 || at < line.length; at += INSET_WRAP) rows.push(line.slice(at, at + INSET_WRAP));
+    }
+    return rows.map((row, i) => `${i === 0 ? `${GLYPH} ` : "   "}${row}${i === rows.length - 1 ? "\u001b[7m \u001b[0m" : ""}`);
+  };
+
+  /**
+   * The live screen around the box (`two-row-draft` capture): the rows over the box, the box redrawn
+   * from the pane's text, the bottom rule and what stands under it. pi pads the screen with blank rows
+   * at the top, so a taller box takes them and the rows under stay at the bottom. Submit (alt+Enter)
+   * takes the text and leaves the box empty.
+   */
+  const live = (pane: FakePane, under: string[] = []): void => {
+    const rows = capture("pi--v130-powerline-editor-two-row-draft--w120.txt");
+    const prompt = rows.findIndex((row) => plain(row).startsWith(" > "));
+    const bottom = rows.findIndex((row, i) => i > prompt && /^ ─{20,}$/u.test(plain(row)));
+    pane.collapseOver = 100_000;
+    pane.afterInput = (p, what) => {
+      if (what.startsWith("keys:") && what.includes("alt+Enter")) p.box = "";
+    };
+    pane.beforeRead = (p) => {
+      const box = insetRows(p.box);
+      const drawn = [...rows.slice(0, prompt), ...box, ...rows.slice(bottom, bottom + 1), ...under];
+      const pad = rows.length - drawn.length;
+      p.fixed = [...drawn.slice(0, 3), ...Array<string>(Math.max(0, pad)).fill(""), ...drawn.slice(3)].join("\r\n");
+    };
+  };
+
+  const LONG = 'Use the question tool exactly once: ask "Which fruit do you like?" with the options Apple, Banana, Cherry. Do nothing else.';
+  const WALKY = "[walky-talky wt_0a1b2c3d4e5f] from operator (Phone)\nReply with exactly WALKY-1 and nothing else.";
+
+  for (const [name, text] of [["a message that wraps to a second row", LONG], ["a walky talky header and body", WALKY]] as const) {
+    for (const under of [[], [WIDGET]]) {
+      test(`${name}${under.length > 0 ? ", the widget row under the box" : ""}: sent with one submit`, async () => {
+        const pane = new FakePane("claude");
+        const { send } = rig({ pane, harness: "pi", version: "1.3.0" });
+        live(pane, under);
+        const answer = await send(text);
+        expect(answer.receipt).toMatchObject({ outcome: "sent" });
+        expect(answer.receipt?.keys.at(-1)).toBe("alt+Enter");
+        expect(pane.box).toBe("");
+        neverEscape(pane);
+      });
+    }
+  }
+
+  test("a dialog's key hints drawn in the box after the text went in: left typed, never submitted", async () => {
+    const pane = new FakePane("claude");
+    const { send } = rig({ pane, harness: "pi", version: "1.3.0" });
+    live(pane);
+    const draw = pane.beforeRead!;
+    pane.beforeRead = (p, n) => {
+      void draw(p, n);
+      // The box's second row (the only row three spaces in) turns into a dialog's hint row.
+      if (p.box === LONG) p.fixed = p.fixed!.replace(/\r\n {3}[^\r\n]*/u, "\r\n   ↑↓ navigate • Enter to select • Esc to cancel");
+    };
+    const answer = await send(LONG);
+    expect(answer.receipt?.outcome).not.toBe("sent");
+    expect(pane.keysSeen).not.toContain("alt+Enter");
+    neverEscape(pane);
+  });
+
+  // The slash list opens under the box (the editor draws it), and the widget row stands under the list.
+  for (const under of [[], [WIDGET]]) {
+    test(`/model over its own list${under.length > 0 ? " and the widget row" : ""}: one Enter, and the selector it opens counts as sent`, async () => {
+      const listed = capture("pi--v130-powerline-editor-slash-model--w120.txt");
+      const opened = capture("pi--v130-powerline-model-selector--w120.txt").join("\r\n");
+      const boxRow = listed.findIndex((row) => plain(row).startsWith(" > /model"));
+      const list = listed.slice(boxRow + 2);
+      const head = listed.slice(0, boxRow + 2);
+      const pane = new FakePane("claude");
+      const { send } = rig({ pane, harness: "pi", version: "1.3.0" });
+      pane.beforeRead = (p) => {
+        if (p.box === "" && p.keysSeen.includes("Enter")) {
+          p.fixed = opened;
+          return;
+        }
+        const rows = [...head];
+        rows[boxRow] = `${GLYPH} ${p.box}\u001b[7m \u001b[0m`;
+        const below = p.box.startsWith("/") ? [...list, ...under] : under;
+        const pad = Array<string>(list.length + under.length - below.length).fill("");
+        p.fixed = [rows[0]!, ...pad, ...rows.slice(1), ...below].join("\r\n");
+      };
+      const answer = await send("/model", { mode: "command" });
+      expect(answer.receipt).toMatchObject({ outcome: "sent" });
+      expect(answer.receipt?.keys.at(-1)).toBe("Enter");
+      neverEscape(pane);
+    });
+  }
 });

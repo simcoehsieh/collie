@@ -23,6 +23,37 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 ## [Unreleased]
 
+## [1.23.4] - 2026-10-23
+
+### Fixed
+
+- **Replace sends a slash command onto a draft.** When the agent's input box held a draft, a slash command from the phone, such as the Model button on the belt or a typed `/model`, offered Replace, but the Replace was refused with "A slash command is sent as a command". Collie now empties the box and sends the command, as a Replace of a message does. A slash command onto a draft now offers Replace and Cancel, not Add, since Add would send the draft with the command at its end. ([ab3adc2](https://github.com/AltanS/collie/commit/ab3adc2)) ([861bfcd](https://github.com/AltanS/collie/commit/861bfcd)) ([85924fe](https://github.com/AltanS/collie/commit/85924fe)) ([90b5e6f](https://github.com/AltanS/collie/commit/90b5e6f))
+
+## [1.23.3] - 2026-10-22
+
+### Packaging
+
+- **Every build embeds Bun 1.4.4, which rejects certificates issued under the compromised eMudhra intermediates.** Bun 1.4.1 accepted them, so `collie update` on a hostile network could have taken a forged release (#568, oven-sh/bun#46300). The compiled binary, the Nix package and the Windows zip all take the new Bun. A checkout install builds with the operator's own Bun: upgrade it to 1.4.4 and run `collie update` again, the preflight now says so when it is older. ([7049ab8](https://github.com/AltanS/collie/commit/7049ab8))
+
+## [1.23.2] - 2026-10-21
+
+### Fixed
+
+- **A Claude question without a question mark gets its card.** An AskUserQuestion written as statements showed the "cannot read this dialog" card until you answered it in the terminal. Collie now reads the question from the rows under the dialog's chip. Thanks @leftos (#548). ([a9234f6](https://github.com/AltanS/collie/commit/a9234f6))
+- **A pi pane with an extension's own input box takes sends again.** An extension such as pi-powerline-footer can replace pi's input box with one that draws its borders and a `>` prompt one column in, shows your last prompt under the box and may add a taller footer. Collie found no input box there, so every send was refused with "Collie cannot tell if this was sent". Collie now reads that box, also when a message wraps to more rows or is a walky talky message, and a slash command typed there goes out with one tap while pi's command list shows. Collie reads the box only when both borders and the prompt sit in the same column and every row inside is the prompt row or a row three spaces in. pi's own questions and pickers still never read as the input box. Thanks @npo-mmenke (#544). ([bf90d38](https://github.com/AltanS/collie/commit/bf90d38)) ([60696b8](https://github.com/AltanS/collie/commit/60696b8))
+- **The Heads up notice's follow-ups show as cards.** After Dismiss or Learn more on Claude Code's Heads up notice, the phone showed no buttons. It now draws the follow-up's choices and the explanation as a card. Thanks @leftos (#550). ([56f6675](https://github.com/AltanS/collie/commit/56f6675)) ([ab85563](https://github.com/AltanS/collie/commit/ab85563))
+- **A Claude survey question above the prompt no longer blocks phone sends, and a stale typed card gets Dismiss.** Claude Code's survey asks to share the session transcript and takes letter keys. Collie read the screen as an unreadable dialog and refused every send until you answered by hand. It now reads that question as a notice with its letter keys, and a held typed card offers Dismiss as well. Thanks @eseninik (#559). ([fc13f77](https://github.com/AltanS/collie/commit/fc13f77)) ([1e79f2c](https://github.com/AltanS/collie/commit/1e79f2c))
+- **A send whose first line is a notice's key asks first.** Collie types a message one line at a time, so a first line of only `y`, `n`, `d` or a printed digit stood alone in the input box for a moment, and the Claude Code notice above the box could take it as its answer. Such a send now takes the manual Send, as the key alone does, and a running turn, a Replace or an Add to it on an empty box refuses it to the key pad. Thanks @eseninik (#559). ([122c8ac](https://github.com/AltanS/collie/commit/122c8ac))
+- **A Grok or opencode draft that names the interrupt hint is no longer read as a running turn.** The running-row patterns of both profiles now stand where the real row puts them, Grok's `Esc:cancel` in the hint row under the box and opencode's `esc interrupt` in the status row after its spinner. A draft such as `press Esc:cancel to stop` stays a draft and the send goes through, where it was refused as `turn_running`. Tests from @aahung (#460). ([83c2c99](https://github.com/AltanS/collie/commit/83c2c99))
+
+### Packaging
+
+- **This build still embeds Bun 1.4.1, so the TLS fix for issue #568 is not in it.** Bun's fix for the compromised eMudhra intermediates (oven-sh/bun#46300) is merged but not in a Bun release yet. Collie ships it as a patch on the day Bun releases it. Until then, run `collie update` only on a network you trust.
+
+### Docs
+
+- **The Hermes page says which Hermes Collie reads.** The profile reads the classic CLI; the Ink TUI (`hermes --tui`) is not read yet, so tap Type here to send there. Thanks @MigueMercedes (#549). ([53a3035](https://github.com/AltanS/collie/commit/53a3035))
+
 ## [1.23.1] - 2026-10-20
 
 ### Fixed
