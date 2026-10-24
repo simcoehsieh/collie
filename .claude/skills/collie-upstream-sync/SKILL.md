@@ -429,6 +429,10 @@ ps -axo pid,command | grep '_exec-bridge' | grep -v grep
 curl -s http://127.0.0.1:4318/sw.js | grep -c push.apple.com   # 1 = the iOS push patch survived
 # 1 = the redesign's skin.css is in the shipped stylesheet (FORK.md → "The redesign")
 curl -s http://127.0.0.1:4318/ | grep -o 'assets/[^"]*\.css' | head -1 | xargs -I{} curl -s http://127.0.0.1:4318/{} | grep -c 'data-slot=mirror'
+# 200 200 = the fork's own /api routes answer a PAIRED caller (the local secret is accepted on loopback).
+# An unpaired 403 proves nothing here: from 1.19.2 to 2026-10-25 upstream's default-closed 404 sat above
+# /api/quota and /api/docs, and every unpaired check stayed green (api-front-gate.test.ts now pins the order)
+T=$(cat ~/.local/state/collie/local-secret); for p in /api/quota /api/docs; do curl -s -o /dev/null -w '%{http_code} ' -H "Authorization: Bearer $T" http://127.0.0.1:4318$p; done; echo
 ```
 
 `restart` printing "falling back to an unsupervised bridge", or `collie status` saying "unsupervised —
