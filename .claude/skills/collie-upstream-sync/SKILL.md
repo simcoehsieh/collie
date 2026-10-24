@@ -71,8 +71,8 @@ never ask for it without the before/after report (3b) in front of them.
 python3 ~/git/collie/.claude/skills/collie-upstream-sync/scripts/survey.py
 ```
 
-Fetches `upstream --tags` (read-only w.r.t. the working tree) and prints: the fork base, how far
-behind, every upstream release newer than the base, the fork-local commits a merge must not lose,
+Fetches `upstream --tags` (read-only w.r.t. the working tree) and prints: the installed release
+(the newest tag HEAD holds), how far behind, every upstream release newer than the base, the fork-local commits a merge must not lose,
 the files **both sides** touched, and upstream's own changelog entries for the new releases.
 
 `--json` for the same facts machine-readably, `--no-fetch` when offline, `--repo` for another
@@ -296,6 +296,10 @@ inside a merge confirmation.
 ### 4. Merge
 
 Merge the **release tag**, never `upstream/main` — the tip may be unreleased work in progress.
+**Patch releases come from a release branch.** From 1.23.2 upstream cuts patches on `release-1.23`,
+not on `main`; the survey offers a newer tag on any `upstream/*` branch (until 2026-10-24 it looked
+only at `main` and said "nothing to merge" over three patches). Merge the tag the same way; the next
+minor from `main` then brings the same fixes again, which git usually merges as identical.
 
 **Land the tree the operator saw.** The 3b `after` worktree already holds the merge, held open with
 the verdicts applied, and it is what the pictures show. Finish it THERE: apply any scope change the
@@ -358,7 +362,7 @@ cd web && bun run vitest run src/lib/push-decision.test.ts src/lib/  # the areas
 `CLAUDE.md` is explicit that the root typecheck does not cover `web/`'s test files and that the gap
 has shipped a broken tip once.
 
-**The suite is GREEN on this fork — 574 files, 39957 tests at 1.23.1 (449 / 21786 at 1.19.2), zero failures. Under
+**The suite is GREEN on this fork — 575 files, 40505 tests at 1.23.4 (574 / 39957 at 1.23.1, 449 / 21786 at 1.19.2), zero failures. Under
 full load `agent-chat.test.tsx` can time out; rerun with `--maxWorkers=6` before calling it a finding.** It was not: jsdom 29
 never wires up `globalThis.localStorage`, and 133 tests across 18 files failed on it, which meant a
 persistence regression was untestable here and a real new failure had to be found inside a wall of

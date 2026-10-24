@@ -11,6 +11,19 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.23.4
+
+Merged upstream v1.23.4 (2026-10-23, with v1.23.2 and v1.23.3 under it): three patch releases cut on
+upstream's `release-1.23` branch, 28 commits, no conflicted file. All infra: Replace sends a slash
+command onto a draft; Claude's question without a question mark, the Heads up follow-ups and the
+transcript survey read as cards; a send whose first line is a notice key asks first; Bun 1.4.4 is the
+floor (#568). No UI change on the fork's screens (dashboard and pane shots identical).
+
+- **Sync tooling:** the survey found releases only on `upstream/main`, so it reported "nothing to
+  merge" over v1.23.2–v1.23.4. It now takes the installed release as the newest tag HEAD holds and
+  offers any newer tag on any `upstream/*` branch.
+- **Tests:** the maintainer preflight fixture names bun 1.4.4.
+
 ## On top of 1.23.1
 
 Merged upstream v1.23.1 (2026-10-20, with v1.20.0 through v1.23.0 under it): 16 releases, 1,260

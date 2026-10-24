@@ -179,25 +179,33 @@ def survey(repo: Path, upstream: str, do_fetch: bool) -> dict:
     branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     head = git(repo, "rev-parse", "HEAD")
     upstream_ref = f"{upstream}/main"
-    base = git(repo, "merge-base", "HEAD", upstream_ref)
-    base_tag = git(repo, "describe", "--tags", "--abbrev=0", "--match", "v*", base, check=False) or None
+
+    # The INSTALLED release is the newest tag this checkout already holds, by version, not the tag on
+    # the merge-base with upstream/main. Upstream cuts patch releases on a release branch
+    # (`release-1.23` carries v1.23.2 … v1.23.4, none of them on main), so after merging one of them
+    # the merge-base with main still sits on v1.23.1, and `git describe` from there names the wrong
+    # release. Until 2026-10-24 this tool also only looked at tags merged into upstream/main, and so
+    # reported "nothing to merge" over three published patch releases.
+    held = [t for t in git(repo, "tag", "--list", "v*", "--merged", "HEAD").splitlines() if VERSION_TAG.match(t)]
+    base_tag = max(held, key=version_key) if held else None
 
     behind_ahead = git(repo, "rev-list", "--left-right", "--count", f"{upstream_ref}...HEAD")
     behind, ahead = (int(x) for x in behind_ahead.split())
 
-    # Releases upstream cut after the point this fork branched from. `--contains base` is the exact
-    # question: a tag whose commit has base as an ancestor is a release that came after it.
+    # Releases upstream cut after the installed one, from ANY upstream branch: a tag this checkout
+    # does not hold yet, newer by version, whose commit some `upstream/*` branch carries (so a stray
+    # local tag is never offered as a release).
+    installed_key = version_key(base_tag) if base_tag else (0, 0, 0, 0, [])
     tags = [
         t
-        for t in git(repo, "tag", "--list", "v*", "--contains", base, "--merged", upstream_ref).splitlines()
+        for t in git(repo, "tag", "--list", "v*", "--no-merged", "HEAD").splitlines()
         if VERSION_TAG.match(t)
+        and version_key(t) > installed_key
+        and git(repo, "branch", "-r", "--list", f"{upstream}/*", "--contains", t)
     ]
-    # Exclude by COMMIT, not by tag name. `git describe` reports one tag for the base, so a second
-    # tag on that same commit (an annotated/lightweight pair, an alias) would otherwise be announced
-    # as a release waiting to be merged when it is the version already installed.
-    candidates = sorted(
-        {t for t in tags if git(repo, "rev-parse", f"{t}^{{commit}}") != base}, key=version_key
-    )
+    # `--no-merged HEAD` works on COMMITS, so a second tag on a commit HEAD already holds (an alias,
+    # an annotated/lightweight pair) is not announced as a release waiting to be merged.
+    candidates = sorted(set(tags), key=version_key)
 
     # CHANNEL FILTER — a stable install never sees a prerelease. This is upstream's own rule, not a
     # preference: ADR 0020's amendment says of a strict install "Nothing can pull it onto a
@@ -217,6 +225,7 @@ def survey(repo: Path, upstream: str, do_fetch: bool) -> dict:
     ]
 
     target = new_tags[-1] if new_tags else None
+    base = git(repo, "merge-base", "HEAD", target or upstream_ref)
     upstream_range = f"{base}..{target or upstream_ref}"
 
     fork_commits = commits(repo, f"{base}..HEAD")

@@ -7,7 +7,7 @@ export const MAINTAINER_PREFLIGHT = {
   checks: [
     { id: "doctor", verdict: "green", reason: "collie doctor is clean" },
     { id: "disk", verdict: "green", reason: "47.7 GB free at /opt/collie" },
-    { id: "bun", verdict: "green", reason: "bun 1.4.0" },
+    { id: "bun", verdict: "green", reason: "bun 1.4.4" },
     { id: "tree", verdict: "green", reason: "the checkout has no tracked-file changes (untracked files are ignored)" },
     { id: "upstream", verdict: "green", reason: "github.com/simcoehsieh/collie — maintainer-managed merges from github.com/AltanS/collie" },
     { id: "service", verdict: "green", reason: "the LaunchAgent at /home/pat/Library/LaunchAgents/herdr.collie.plist is in place — the update can restart it" },
