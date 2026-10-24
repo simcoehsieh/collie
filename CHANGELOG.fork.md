@@ -23,6 +23,10 @@ floor (#568). No UI change on the fork's screens (dashboard and pane shots ident
   merge" over v1.23.2–v1.23.4. It now takes the installed release as the newest tag HEAD holds and
   offers any newer tag on any `upstream/*` branch.
 - **Tests:** the maintainer preflight fixture names bun 1.4.4.
+- **A pane no longer sticks in the keyboard-up layout with no keyboard on screen.** On the iPhone one
+  pane could keep its status line folded away and its composer pressed against the home indicator,
+  because iOS left the measured height short after the keyboard closed (or a taller reading raised
+  the baseline). The keyboard now counts as up only while a field that types has focus as well.
 
 ## On top of 1.23.1
 
