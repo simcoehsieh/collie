@@ -27,6 +27,11 @@ floor (#568). No UI change on the fork's screens (dashboard and pane shots ident
   pane could keep its status line folded away and its composer pressed against the home indicator,
   because iOS left the measured height short after the keyboard closed (or a taller reading raised
   the baseline). The keyboard now counts as up only while a field that types has focus as well.
+- **The usage card's refresh, the document browser and the document panel answer again.** Upstream
+  1.18's default-closed branch (an `/api/` path no route claimed answers 404) sat above the fork's
+  `/api/quota`, `/api/docs` and `/api/doc/<slug>`, so from the 1.19.2 merge on a paired phone got
+  "404 not found" from all three; the card still drew because the boot bundle carries the first
+  reading. The branch now comes last, and a source-order test pins it there.
 
 ## On top of 1.23.1
 

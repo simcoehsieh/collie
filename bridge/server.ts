@@ -4350,16 +4350,6 @@ export function startServer(opts: {
         return json(after, req.headers.get("accept-encoding"));
       }
 
-      // ── Default closed: an `/api/*` path no route above claimed ─────────
-      // It used to fall through to the SPA fallback and answer 200 with the app shell. An unpaired
-      // caller never gets here now (`apiFrontGate` refused it before routing, ADR 0086); the read
-      // gate stays so this branch is closed on its own too, and a paired caller gets an honest 404.
-      if (pathname.startsWith("/api/")) {
-        const denied = guard(req, cfg, "read", pairingGate);
-        if (denied) return denied;
-        return text("not found", 404);
-      }
-
       // ── One knowledge-base document, on Collie's own origin ──────────────
       // The panel behind a knowledge-base link an agent printed in the mirror. It is a PROXY rather
       // than an iframe of the real page because every measured target refuses framing, and the
@@ -4427,6 +4417,18 @@ export function startServer(opts: {
             : text("the document store is not answering", 503);
         }
         return kbDocumentResponse(doc.unchanged ? null : doc.html, doc.metadata.etag);
+      }
+
+      // ── Default closed: an `/api/*` path no route above claimed ─────────
+      // FORK: kept LAST among the `/api/` routes. The fork's quota and document routes once sat below
+      // it and answered this 404 to a paired phone (api-front-gate.test.ts pins the order).
+      // It used to fall through to the SPA fallback and answer 200 with the app shell. An unpaired
+      // caller never gets here now (`apiFrontGate` refused it before routing, ADR 0086); the read
+      // gate stays so this branch is closed on its own too, and a paired caller gets an honest 404.
+      if (pathname.startsWith("/api/")) {
+        const denied = guard(req, cfg, "read", pairingGate);
+        if (denied) return denied;
+        return text("not found", 404);
       }
 
       // ── Reserved for a fronting proxy's sign-in page ─────────────────────

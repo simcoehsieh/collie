@@ -657,3 +657,34 @@ describe("isSameHostPeer: loopback, or this host's own addresses on a concrete b
     }
   });
 });
+
+// FORK. THE DEFAULT-CLOSED 404 IS THE LAST `/api/` BRANCH (2026-10-25).
+// Upstream 1.18 ended the dispatcher's `/api/` routes with a branch that answers any path no route
+// above it claimed with a 404. The fork's three routes that sat below that spot — the usage card's
+// `/api/quota`, the document browser's `/api/docs` and one document's `/api/doc/<slug>` — were
+// therefore dead from the 1.19.2 merge on: a paired phone got "404 not found" from the usage card's
+// refresh, and nothing went red, because each route's own tests call its handler, not the dispatcher.
+describe("the default-closed 404 comes after every /api/ route", () => {
+  const CATCH_ALL = 'if (pathname.startsWith("/api/")) {\n        const denied = guard(req, cfg, "read", pairingGate);\n        if (denied) return denied;\n        return text("not found", 404);';
+  const NEXT = "if (isReservedAuthPath(pathname))";
+
+  test("the branch is where this test looks for it", () => {
+    expect(SERVER_CODE.split(CATCH_ALL).length).toBe(2);
+    expect(SERVER_CODE.indexOf(NEXT)).toBeGreaterThan(SERVER_CODE.indexOf(CATCH_ALL));
+  });
+
+  test("no route between it and the static app names an /api/ path", () => {
+    const start = SERVER_CODE.indexOf(CATCH_ALL) + CATCH_ALL.length;
+    const below = SERVER_CODE.slice(start, SERVER_CODE.indexOf(NEXT, start));
+    expect(below.match(/"\/api\/[^"]*"/g) ?? []).toEqual([]);
+  });
+
+  test("the fork's own routes are among those above it", () => {
+    const at = SERVER_CODE.indexOf(CATCH_ALL);
+    for (const route of ['pathname === "/api/quota"', 'pathname === "/api/docs"', 'pathname.startsWith("/api/doc/")']) {
+      const i = SERVER_CODE.indexOf(route);
+      expect(i, route).toBeGreaterThan(-1);
+      expect(i, route).toBeLessThan(at);
+    }
+  });
+});
