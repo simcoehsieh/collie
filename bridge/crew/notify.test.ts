@@ -137,9 +137,8 @@ describe("PeerNotifier — a peer's alerts on the lead's phone", () => {
       tag: "collie:herd@laptop",
       paneId: "p1",
       renotify: true,
-      host: "laptop",
-      // FORK: the app icon's badge rides every herd push (bridge/notifications.ts `count`).
       badge: 1,
+      host: "laptop",
     });
     // `session` does NOT ride it — a peer's merged pane names no session, and the sweep reads that
     // peer's primary (§5's "absent → primary").

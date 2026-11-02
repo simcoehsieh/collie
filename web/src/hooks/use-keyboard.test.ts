@@ -156,6 +156,12 @@ describe("raisesKeyboard", () => {
     expect(raisesKeyboard(box)).toBe(false);
     expect(raisesKeyboard(locked)).toBe(false);
     expect(raisesKeyboard(document.createElement("button"))).toBe(false);
+    // The app's search fields (ui/search-field.tsx, find-bar.tsx, space-overview.tsx) are inputs of
+    // type search or of no type; a native <select> (settings) shows a picker, not a keyboard.
+    const search = document.createElement("input");
+    search.type = "search";
+    expect(raisesKeyboard(search)).toBe(true);
+    expect(raisesKeyboard(document.createElement("select"))).toBe(false);
     expect(raisesKeyboard(null)).toBe(false);
   });
 });

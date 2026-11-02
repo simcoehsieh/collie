@@ -94,7 +94,7 @@ export const LaunchStrip = memo(function LaunchStrip({ open, onOpenChange, scope
                     item: launcher,
                     machine: scope?.host ?? "",
                     folder: suffix ?? "~",
-                    go: () => void launch(launcher.command),
+                    go: () => void launch(launcher.command, undefined, launcher.kind === "agent" ? launcher.harness : undefined),
                   })
                 }
               >

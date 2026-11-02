@@ -1,5 +1,5 @@
 import { Children, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { ArrowRightLeft, BookOpen, Camera, ChevronDown, Copy, Ellipsis, FileCode2, FileDiff, GitBranchPlus, Maximize2, MessagesSquare, Monitor, Pencil, Pin, PinOff, ScrollText, Search, Settings2, SlidersHorizontal, SquareTerminal, XCircle } from "lucide-react";
+import { ArrowRightLeft, BookOpen, Bug, Camera, ChevronDown, Copy, Ellipsis, FileCode2, FileDiff, GitBranchPlus, Maximize2, MessagesSquare, Monitor, Pencil, Pin, PinOff, ScrollText, Search, Settings2, SlidersHorizontal, SquareTerminal, XCircle, ZoomIn } from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { Collapse } from "@/components/ui/collapse";
@@ -16,6 +16,7 @@ import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { t } from "@/lib/i18n";
 import { useMuxCapability, useMuxName } from "@/lib/mux-capability";
 import { branchOffOffered } from "@/lib/branch-off";
+import { FORK_REPORT_ON } from "@/lib/fork-shape";
 import { setStatus } from "@/lib/status";
 import { stampTopology } from "@/lib/poll-intent";
 import { paneName } from "@/lib/pane-name";
@@ -41,7 +42,8 @@ interface PaneActionsSheetProps {
    * this device's own preference and writes nothing to the machine.
    */
   savedCopy?: boolean;
-  /** Fired after a successful rename so the parent can revalidate (the label lands on the next poll). */
+  /** Fired after a successful rename so the parent can revalidate. The sheet also stamps a topology
+   *  burst (lib/poll-intent.ts), so the label lands within a beat even when that read is early. */
   onRenamed: () => void;
   /** Fired after a successful close, with the closed pane id — the parent navigates Home if it's the
    *  pane currently open, or revalidates so it drops out of the list. */
@@ -87,6 +89,18 @@ interface PaneActionsSheetProps {
    * The dock it opens is the composer's, so the callback crosses through `ComposerHandle`.
    */
   onDisplay?: () => void;
+  /**
+   * Open the Report a problem sheet for this pane (ADR 0123). A read in the sense the others are: it
+   * opens a sheet that sends nothing on its own. The pane view passes it for a pane on this machine only
+   * (a crew member's pane is the next slice); absence is the gate, as for the rows above.
+   */
+  onReport?: () => void;
+  /**
+   * FORK: open this pane's output, zoomed (upstream 1.25.0, `/pane/:paneId/zoom`). Upstream's door is
+   * an icon pill in the belt's pinned block, which this install does not draw (FORK_BELT_PINS_ON),
+   * so the door is a View row here. Absent on a pane with no screen; absence is the gate.
+   */
+  onZoom?: () => void;
   /**
    * Open on the rename view instead of the action list. The pane name in the header opens Pane
    * settings (1.17.0) and its Rename row lands here, so there is one rename flow and not two. Read
@@ -203,6 +217,8 @@ export function PaneActionsSheet({
   onCopyOutput,
   onSettings,
   onDisplay,
+  onReport,
+  onZoom,
   onMessages,
   openInRename = false,
   onZen,
@@ -300,6 +316,10 @@ export function PaneActionsSheet({
       const res = await api.renamePane(pane.paneId, next, scope);
       if (res.ok) {
         setStatus(next ? t("paneActions.status.renamed") : t("paneActions.status.labelCleared"), "success");
+        // The same catch-up as a close. The bridge pokes its own re-read before it answers but does
+        // not wait for it, so the revalidate below can still read the old name; the burst brings
+        // the new one within a beat instead of after a gap timed for an idle screen.
+        stampTopology();
         onRenamed();
         onClose();
       } else {
@@ -415,6 +435,7 @@ export function PaneActionsSheet({
     onMessages,
     onSettings,
     onDisplay,
+    onZoom,
     onZen,
     onDocs,
     onArtifacts,
@@ -537,6 +558,16 @@ export function PaneActionsSheet({
                   onClick={closeThen(onDisplay)}
                 />
               )}
+              {/* FORK: the output, zoomed (upstream 1.25.0). It navigates to `/pane/:id/zoom`, a step
+                  down whose ✕ steps back here; it sits beside Zen because both take the screen over
+                  for reading. Close-then-act, as every row here. */}
+              {onZoom && (
+                <ActionRow
+                  icon={<ZoomIn className="size-4 shrink-0 text-muted-foreground" />}
+                  label={t("zoom.open")}
+                  onClick={closeThen(onZoom)}
+                />
+              )}
               {/* Zen is the one row here that takes the whole screen over, so it is the deliberate
                   tap at the end of the run rather than the first thing under the thumb. */}
               {onZen && (
@@ -615,6 +646,15 @@ export function PaneActionsSheet({
                 }
                 label={pinned ? t("paneActions.unpin.label") : t("paneActions.pin.label")}
                 onClick={togglePin}
+              />
+            )}
+            {/* Report a problem (upstream 1.24.1) trails Pin, so no row the operator knows moves when
+                it appears. FORK: drawn only under FORK_REPORT_ON, off in this install (lib/fork-shape.ts). */}
+            {FORK_REPORT_ON && onReport && pane && (
+              <ActionRow
+                icon={<Bug className="size-4 shrink-0 text-muted-foreground" />}
+                label={t("paneActions.report.label")}
+                onClick={closeThen(onReport)}
               />
             )}
             {readOnly ? (

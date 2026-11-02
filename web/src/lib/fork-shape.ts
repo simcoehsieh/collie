@@ -70,3 +70,26 @@ export const FORK_THEMES_ON: boolean = import.meta.env.MODE === "test";
 // `vp inner/visual/screen` under the stamp on every dev build. This install's live build is always a
 // `-dev` build, so the line would stay on the phone. Off here, components/build-stamp.tsx draws none.
 export const FORK_VIEWPORT_STAMP_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO REPORT A PROBLEM (2026-11-02, at the 1.25 merge). Upstream 1.24.1 adds a sheet that files a
+// GitHub issue on AltanS/collie from the phone, a card that offers it after three failed sends, a door
+// in the pane menu and in Settings, and a Report button on the unreadable-dialog card. This install runs
+// a fork build, so an issue filed from it would land upstream describing code upstream does not ship.
+// Off here, none of the doors, the card or the button are drawn; the bridge still answers
+// `/api/report/context`. Tests run with it.
+export const FORK_REPORT_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: THE LARGE-SCREEN LAYOUT IS ON (2026-11-02, at the 1.25 merge). Upstream 1.24.0 turns the pane
+// screen into a sidebar beside a row of panes on any window at least 600px wide and 480px tall, which
+// here means every desktop browser that opens Meow. The sync report recommended it off, since upstream
+// had not checked it on a real tablet; the operator chose upstream's layout. The gate stays so it can
+// be switched off in one place: false makes the layout mode read "off" whatever the device stored and
+// hides the Settings row (components/wide-layout.fork.test.tsx pins that shape).
+export const FORK_WIDE_LAYOUT_ON: boolean = true;
+
+// FORK: NO TWO-FINGER PANE NAVIGATION (2026-11-02, at the 1.25 merge). Upstream 1.24.0 moves between
+// panes and spaces with a two-finger swipe (or a Joystick handle above the belt), on by default, and
+// says the current build ran only in desktop Chromium with simulated touch, never on a phone. Off here,
+// the method reads "off", no first-use hint shows above the belt and Settings shows no Pane navigation
+// row. The switcher stays the way between panes. Tests run with it.
+export const FORK_PANE_NAV_ON: boolean = import.meta.env.MODE === "test";

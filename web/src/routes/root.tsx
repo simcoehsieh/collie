@@ -16,11 +16,11 @@ import {
 import { TriangleAlert } from "lucide-react";
 
 import { useNavTrail } from "@/hooks/use-nav";
+import { readAgentLaunch } from "@/lib/agent-startup";
 import { usePolling } from "@/hooks/use-polling";
 import { usePollBusy } from "@/hooks/use-poll-busy";
 import { useBusyWhile } from "@/lib/busy";
 import { useAgentTransitions } from "@/hooks/use-transitions";
-import { useAppBadge } from "@/hooks/use-app-badge";
 import { usePushSetup } from "@/hooks/use-push";
 import { useConnectionLost } from "@/hooks/use-connection-lost";
 import { useHotkeys } from "@/hooks/use-hotkeys";
@@ -31,17 +31,22 @@ import { useOptionalUpdateScreen } from "@/components/update-screen-provider";
 import { ConnectionBanner } from "@/components/connection-banner";
 import { AppHeaderHost } from "@/components/app-header";
 import { StripHost } from "@/components/ui/strip-host";
+import { ReportDoor } from "@/components/report-door";
+import { FORK_REPORT_ON } from "@/lib/fork-shape";
 import { CrewProvider } from "@/components/crew-provider";
 import { MeowMark } from "@/components/meow-mark";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { TourHost } from "@/components/tour-sheet";
 import { describeThrownError } from "@/lib/api-error-message";
+import { findPane, isMultiHost, paneRowKey, sessionsOnHost } from "@/lib/hosts";
 import { homePath } from "@/lib/nav";
 import { scopeFromUrl } from "@/lib/session";
 import { noteLeadName, noteSnapshotCrew, noteSnapshotRun } from "@/lib/update-run-store";
 import { PANE_ROUTE_ID, type HomeData, type PaneData } from "@/lib/loaders";
-import { worstTriage, type TriageKey } from "@/lib/triage";
+import { countAlerting, worstTriage, type TriageKey } from "@/lib/triage";
+import { showBadge } from "@/lib/app-badge";
+import { useNotifyPrefs } from "@/hooks/use-notify-prefs";
 import type { MarkState } from "@/components/meow-mark";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
@@ -174,7 +179,9 @@ export function RootLayout() {
 
   // The scope rides along so a "look now" on foreground lands on the machine and session the page is
   // actually showing — a refresh aimed at the lead would leave a peer's herd exactly as stale.
-  const pollMs = usePolling(data, paneId, data.scope);
+  const location = useLocation();
+  const launch = paneId === undefined ? undefined : readAgentLaunch(location.state, paneId, data.scope);
+  const pollMs = usePolling(data, paneId, data.scope, undefined, launch?.id);
   // Surface the busy bar when a navigation or a poll runs slow, each against its own threshold —
   // routine fast polls/navigations stay invisible. Mounted here so the whole app shares one
   // detector inside the router context.
@@ -189,9 +196,27 @@ export function RootLayout() {
   useBusyWhile(useNavigation().state !== "idle");
   // The history the tab has walked, for the Files breadcrumb's pop (lib/nav-trail.ts).
   useNavTrail();
-  useAgentTransitions(data.agents, paneId ?? null);
-  // FORK: the app icon's badge follows what needs you (hooks/use-app-badge.ts).
-  useAppBadge(data.agents);
+  // The open pane as a ROW, so a peer's pane that shares its id is not silenced along with it.
+  const openPane =
+    paneId === undefined
+      ? undefined
+      : findPane(data.agents, paneId, pane?.scope ?? data.scope, data.servers, data.sessions);
+  useAgentTransitions(data.agents, openPane ? paneRowKey(openPane) : null);
+  // THE APP ICON'S COUNT, CORRECTED FROM EVERY SCREEN. FORK (1.25 merge): upstream's worker sums every
+  // slot on each push and its open dashboard writes the count (routes/home.tsx, same rule as here). This
+  // install's only push target is an iPhone, and the bridge sends Apple no retraction (bridge/push.ts
+  // `isApplePushEndpoint`), so the count a read lowers reaches the icon only from an open page; the
+  // fork's own corrector ran here for that reason, and keeps doing it on upstream's terms: the alerts
+  // the bridge has out (`countAlerting` by the notification kinds), written only when this page holds
+  // the whole herd, so it never undercuts the worker's sum across sessions and machines.
+  const { prefs: notifyKinds } = useNotifyPrefs();
+  const alerting = notifyKinds === null ? null : countAlerting(data.agents, notifyKinds);
+  const wholeHerd =
+    data.viewAll ||
+    (!isMultiHost(data.servers) && sessionsOnHost(data.sessions ?? [], data.scope, data.servers).length <= 1);
+  useEffect(() => {
+    if (alerting !== null && wholeHerd) void showBadge(navigator, alerting);
+  }, [alerting, wholeHerd]);
   // FORK: desktop shortcuts, live only with a fine pointer (hooks/use-hotkeys.ts).
   const hotkeys = useHotkeys(data);
   // FORK: the herd in one word, for the mark in the header of every screen (components/meow-mark.tsx
@@ -253,6 +278,10 @@ export function RootLayout() {
           inside it because it is not a strip: it covers the screen, it does not share the top of
           it. */}
       <TourHost home={data} onDecision={setTourDecision} />
+      {/* Report a problem (ADR 0123): the one sheet the composer's card, the pane menu and Settings open
+          through lib/report/store.ts. Renders nothing until the first open, and loads the sheet then.
+          FORK: not mounted while FORK_REPORT_ON is off (lib/fork-shape.ts). */}
+      {FORK_REPORT_ON && <ReportDoor />}
       {/* FORK: `.app-viewport` (index.css) is the column — the 100dvh the skin measures, not a utility. */}
       <div className="app-viewport flex flex-col overflow-hidden">
         {/* THE ONE HEADER, and the first thing on the screen in every state. It survives a

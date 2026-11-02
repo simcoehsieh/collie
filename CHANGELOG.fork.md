@@ -11,6 +11,37 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.25.5
+
+Merged upstream v1.25.5 (2026-11-02, with v1.24.0 through v1.25.4 under it): 10 releases, 920 commits,
+111 conflicted files. Infra taken whole: the probe that waits for late keys, the session rating and
+/permissions fixes for Claude Code 2.1.307–2.1.316, screenshot paths and long pastes into Claude, sends
+on a slow disk, Codex 0.166 and Ultra prompts, agy 1.4.4–1.4.8 cards with agy Chat and History, held
+sends that go as soon as the box is free, `collie doctor`'s sends rows, the terminal symbols font.
+UI taken in the fork's design (operator, 2026-11-02): belt Stop, Steer on hold, Keys Clear, the long
+paste chip, the photo editor before upload, typed AskUserQuestion answers, Back in the box cards,
+Changes line comments, walky cancel, the icon count, and upstream's large-screen layout.
+
+- **Dropped, upstream now has it:** the focus-gated keyboard (upstream took the fork's file as is,
+  #616); the fork's app icon counter (`hooks/use-app-badge.ts`), replaced by upstream's per-session
+  badge store, with the page still correcting the count; the fork's "draw on the picture" chip after
+  an upload, replaced by upstream's editor before the upload.
+- **Off in the shipped app:** Report a problem (`FORK_REPORT_ON`: an issue from a fork build would
+  land upstream), two-finger and Joystick pane navigation (`FORK_PANE_NAV_ON`: never run on a phone
+  upstream), and the model tag's context, limit and cost dots (`FORK_MODEL_TAG_ON`). The bridge's read
+  of the Claude login for those dots is off in this install's `.env` (`COLLIE_ACCOUNT_WINDOWS=0`).
+- **Large-screen layout on:** `FORK_WIDE_LAYOUT_ON` is `true` by the operator's choice; its sidebar
+  names the operator's brand ("Meow") instead of upstream's wordmark.
+- **Zoom has a door in the pane menu** ("Zoom output", View group), because its belt pill sits in the
+  pinned block the fork hides.
+- **One Stop on screen:** the fork's two-tap interrupt in the Send slot shows only where the belt has
+  no Stop.
+- **agy's completion popup stops at the status rows**, so the strip and the card no longer show the
+  same row (upstream's new status-strip test over every capture).
+- **Tests:** `bridge/journal/claude.test.ts` holds a NUL byte, so git merged it as binary and kept the
+  fork's copy at every merge since 1.15.3, dropping about 300 lines of upstream tests; it is merged
+  by hand now. The welcome-sheet tests ask for the sheet first, as the fork's Settings row does.
+
 ## On top of 1.23.4
 
 Merged upstream v1.23.4 (2026-10-23, with v1.23.2 and v1.23.3 under it): three patch releases cut on

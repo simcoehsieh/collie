@@ -40,10 +40,7 @@ export interface PushPayload {
   tag?: string;
   /** Re-alert when replacing the slot (a new agent arrived) vs. update it silently (a retraction). */
   renotify?: boolean;
-  /**
-   * FORK: what the app icon's badge should say — outstanding alerts, 0 on a retraction. Absent on a
-   * push that has no view of the herd, and the worker then leaves the badge as it is.
-   */
+  /** How many alerts this slot holds: its share of the icon's badge (lib/app-badge.ts). */
   badge?: number;
   /**
    * `session` is the registry name the pane lives in — carried so the click deep-links into it.

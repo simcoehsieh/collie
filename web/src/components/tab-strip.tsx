@@ -82,6 +82,8 @@ interface TabStripProps {
    * traded for the pin. Passing nothing leaves the row byte-identical to what it always was.
    */
   trailing?: ReactNode;
+  /** The row's own box, merged last: a large screen's space header seats the row inside its bar. */
+  className?: string;
 }
 
 // The selected space's tabs, drawn as PLAIN CELLS on the composer's chrome ground — not the
@@ -152,6 +154,7 @@ export const TabStrip = memo(function TabStrip({
   onRenamed,
   onClosed,
   trailing,
+  className,
 }: TabStripProps) {
   useLocale();
   const [sheetTab, setSheetTab] = useState<TabView | null>(null);
@@ -215,7 +218,7 @@ export const TabStrip = memo(function TabStrip({
         // horizontal rule of its own, and a header above it keeps whatever rule it already had.
         // `flex items-stretch` only when something is pinned to the trailing end; otherwise a
         // `flow-root` block.
-        className={cn("shrink-0 bg-chrome px-4", trailing ? "flex items-stretch" : "flow-root")}
+        className={cn("shrink-0 bg-chrome px-4", trailing ? "flex items-stretch" : "flow-root", className)}
       >
         <div
           // FORK: the overflow fade's two halves — the slot skin.css draws on, and the observer that

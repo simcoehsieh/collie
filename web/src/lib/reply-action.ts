@@ -18,8 +18,8 @@ import { requestIdFor, type IntentId } from "./durable-control";
 import { t } from "./i18n";
 import { isLive } from "./liveness";
 import type { Scope } from "./scope";
-import { isCommand, readSend, type SendReading, type SendReply } from "./send-protocol";
-import type { SendMode, SendRequestBody } from "./surface/send";
+import { isCommand, noteKey, readSend, type SendReading, type SendReply } from "./send-protocol";
+import type { SendMode, SendRequestBody, SendWhen } from "./surface/send";
 import { mintRequestId } from "./worktree-name";
 import { classifySendFailure, type SendFailure } from "./send-failure";
 
@@ -36,6 +36,8 @@ export interface ReplyArgs {
   readonly capAck?: boolean;
   /** A resend of an ended held row (M56 spec 15): the old request id. The text goes empty; the bridge takes the row's own. */
   readonly resendOf?: string | undefined;
+  /** M69: `steer` takes the text into the running turn. Absent is today's send, queued during a turn. */
+  readonly when?: SendWhen | undefined;
   /** The intent the last tap left without an answer: the same intent keeps its request id. */
   readonly held: IntentId | null;
   /** Test seam for the request id. */
@@ -43,8 +45,12 @@ export interface ReplyArgs {
 }
 
 export type SendTextOutcome =
-  /** The bridge answered. `reading.clear` is true only on `sent` or `effective`. */
-  | { readonly status: "answered"; readonly reply: SendReply; readonly reading: SendReading }
+  /**
+   * The bridge answered. `reading.clear` is true only on `sent` or `effective`. `requestId` is the id the
+   * request went under: a retry that got the stored receipt back carries the same one (ADR 0123 counts
+   * a send once by it).
+   */
+  | { readonly status: "answered"; readonly reply: SendReply; readonly reading: SendReading; readonly requestId: string }
   /**
    * No answer arrived (a dropped link, a timeout, a body the phone cannot read). The intent comes
    * back: the next tap on the same text asks for the same request id, so a lost answer never sends
@@ -84,11 +90,11 @@ export async function sendText(args: ReplyArgs): Promise<SendTextOutcome> {
   const capAck = args.capAck === true;
   // The extra confirm is its own intent: it must not replay the commit the cap refused.
   const resendOf = args.resendOf;
-  const intent = requestIdFor(args.held, `${mode}\u0000${rowsHash ?? ""}\u0000${capAck ? "cap" : ""}\u0000${resendOf ?? ""}\u0000${args.text}`, args.mint ?? mintRequestId);
+  const intent = requestIdFor(args.held, `${mode}\u0000${rowsHash ?? ""}\u0000${capAck ? "cap" : ""}\u0000${resendOf ?? ""}\u0000${args.when ?? ""}\u0000${args.text}`, args.mint ?? mintRequestId);
   const body: SendRequestBody = { id: intent.requestId, pane: args.paneId, text: args.text, mode };
   try {
-    const reply = await postSend({ ...body, rowsHash: rowsHash ?? undefined, capAck: capAck ? true : undefined, resendOf }, args.scope);
-    return { status: "answered", reply, reading: readSend(reply) };
+    const reply = await postSend({ ...body, rowsHash: rowsHash ?? undefined, capAck: capAck ? true : undefined, resendOf, when: args.when }, args.scope);
+    return { status: "answered", reply, reading: readSend(reply), requestId: intent.requestId };
   } catch (e) {
     return { status: "noAnswer", error: describeThrownError(e), intent, transport: classifySendFailure(e) };
   }
@@ -166,6 +172,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
 /** The refusal in words, for a row's hold: the note's sentence, and the bridge's own line after it. */
 function sendReadingSentence(note: SendReading["note"], detail: string | null): string {
   // The cap's sentence carries numbers this row does not hold; its plain reason says the same thing.
-  const sentence = t(`composer.protocol.${note === "capConfirm" ? "unconfirmed" : note}`);
+  // `noteKey`: the steer notes (M69, upstream 1.24) keep their sentences under `composer.steer.*`.
+  const sentence = t(noteKey(note === "capConfirm" ? "unconfirmed" : note));
   return detail === null ? sentence : `${sentence} ${detail}`;
 }

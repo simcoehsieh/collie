@@ -322,12 +322,10 @@ export interface PushMessage {
   /** The keys and binding those buttons send — travels in `data`, beside `agent`. */
   approve?: BinaryPromptPeek;
   /**
-   * FORK: what the app icon's badge should say after this push — the number of alerts outstanding
-   * (0 on a retraction). Top-level on the wire, beside `title`, because it is about the app and not
-   * about the pane a tap opens. iOS badges a web app only when its service worker asks
-   * (`navigator.setAppBadge`), so without this the icon never shows a dot. Absent on a message
-   * that has no view of the herd (a test push, an update alert), and the worker then leaves the
-   * badge alone.
+   * How many alerts a herd slot holds: the phone adds every slot's up for the app icon's badge
+   * (web/src/lib/app-badge.ts). iOS badges a web app only when its service worker asks
+   * (`navigator.setAppBadge`). FORK: a clear carries `badge: 0` as well (the worker reads a clear as
+   * zero either way). Absent on a message that has no view of the herd (a test push, an update alert).
    */
   badge?: number;
 }

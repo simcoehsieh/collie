@@ -127,6 +127,8 @@ export interface HomeData {
   agents: AgentView[];
   shellPanes: AgentView[];
   workspaces: WorkspaceView[];
+  /** Every machine's workspaces from the snapshot (issue #587), so the herd list folds linked worktrees on peers too. */
+  herdWorkspaces?: WorkspaceView[];
   tabs: TabView[];
   /** The bridge's session registry (primary-first); empty on a single-session / older bridge. */
   sessions: SessionSummary[];
@@ -208,6 +210,13 @@ export interface PaneData {
   /** The scrollback window this result was fetched with — lets the UI tell a grown fetch from a
    * stale in-flight poll (a "Load older" tap raises this; see growRequestedLines). */
   requestedLines: number;
+  /**
+   * This result answers a person's Load older (`?purpose=older`, {@link askOlderRows}), not the poll.
+   * The mirror adopts only such a result into its frozen display after a tap. Absent on a poll.
+   */
+  olderRead?: true;
+  /** Why a Load older came back without older rows, in the multiplexer's words (PaneReadResponse). */
+  olderNote?: string;
   /** Herdr's monotonic revision for `text` — the prompt-select race guard checks against it. 0 on
    * the degraded (stale-text) path, where the guard's fresh fetch will reject a mismatch anyway. */
   revision: number;
@@ -432,6 +441,7 @@ function buildHomeData(
     // carries every machine's spaces. A solo body carries no host on any row, so both calls pass
     // everything through by identity and nothing about a solo dashboard changes.
     workspaces: ambientSpaces(snap.workspaces ?? [], scope, snap.servers),
+    herdWorkspaces: snap.workspaces ?? [],
     tabs: ambientSpaces(snap.tabs ?? [], scope, snap.servers),
     sessions: snap.sessions ?? [],
     servers: snap.servers ?? [],
@@ -645,8 +655,28 @@ export function growRequestedLines(paneId: string, scope?: Scope): number {
 
 /** Reset a pane's requested scrollback back to the base window (used by tests). */
 export function resetRequestedLines(paneId?: string, scope?: Scope): void {
-  if (paneId === undefined) requestedLines.clear();
-  else requestedLines.delete(paneKey(paneId, scope));
+  if (paneId === undefined) {
+    requestedLines.clear();
+    olderAsked.clear();
+    return;
+  }
+  requestedLines.delete(paneKey(paneId, scope));
+  olderAsked.delete(paneKey(paneId, scope));
+}
+
+// Panes whose next read is a person's Load older (`?purpose=older`). Every other read is the mirror's
+// poll, which herdr-core answers from the screen alone: a history read there can hold the pane's keys
+// for 25 s, so it reads one only when a person asks (M79 spec 01). The mark stays until a read
+// answers, so a revalidation that a newer one superseded does not lose the tap.
+const olderAsked = new Set<string>();
+
+/** The pane's next read asks for the rows above the screen: a Load older tap. */
+export function askOlderRows(paneId: string, scope?: Scope): void {
+  olderAsked.add(paneKey(paneId, scope));
+  if (olderAsked.size > PANE_TEXT_MAX) {
+    const oldest = olderAsked.values().next().value;
+    if (oldest !== undefined) olderAsked.delete(oldest);
+  }
 }
 
 /**
@@ -888,7 +918,8 @@ export async function paneLoader({
     // (lib/pane-prefetch.ts). That read left the pane's unseen mark alone, so the seen read follows
     // it, once it is in: by then the ETag cache holds its body and the bridge answers a 304. Nothing
     // waits on it. A poll never takes a prefetched read.
-    const prefetched = isNavigation ? takePanePrefetch(paneId, scope, lines) : undefined;
+    const older = olderAsked.has(key);
+    const prefetched = isNavigation && !older ? takePanePrefetch(paneId, scope, lines) : undefined;
     if (prefetched) {
       const markSeen = () => fetchPane(paneId, lines, scope).catch(() => {});
       void prefetched.then(markSeen, markSeen);
@@ -897,9 +928,10 @@ export async function paneLoader({
     // this read answers from what the bridge already holds; without it, the read is asked to WAIT for
     // a change (`?wait=`) so one request stands in for several and a change is answered as it lands.
     // Only while following: a frozen, scrolled-back display has nothing to gain from a faster
-    // answer, and a burst (a send just happened) wants its reads back at once.
-    const wait = !isLiveFeedHealthy() && isFollowing() && isNavigation === false ? PANE_WAIT_MS : 0;
-    const reading = prefetched ?? fetchPane(paneId, lines, scope, request?.signal, { wait });
+    // answer, and a burst (a send just happened) wants its reads back at once. A person's Load older
+    // (`older`, upstream 1.25) is a tap waiting on its rows, so it never waits either.
+    const wait = !older && !isLiveFeedHealthy() && isFollowing() && isNavigation === false ? PANE_WAIT_MS : 0;
+    const reading = prefetched ?? fetchPane(paneId, lines, scope, request?.signal, { wait, older });
     let read: PaneReadResponse;
     if (isNavigation && !answeredLive) {
       // The cold open, as in rootLoader: a pane opened straight from a killed PWA draws its saved
@@ -934,7 +966,7 @@ export async function paneLoader({
     if (holdsNoEchoPrompt(text)) void wipeDevice("password", { scope, paneId });
     else saveLastPaneText(scope, paneId, text);
     rememberAuthError(scope, false);
-    return {
+    const data: PaneData = {
       paneId,
       scope,
       text,
@@ -948,6 +980,12 @@ export async function paneLoader({
       walky: await walkyRead,
       walkyReads: walkyReadCounts.get(key) ?? 0,
     };
+    if (older) {
+      olderAsked.delete(key);
+      data.olderRead = true;
+      if (read.olderNote !== undefined) data.olderNote = read.olderNote;
+    }
+    return data;
   } catch (e) {
     if (isAbortError(e)) throw e; // superseded revalidation — let React Router drop it
     rememberAuthError(scope, isAuthError(e));

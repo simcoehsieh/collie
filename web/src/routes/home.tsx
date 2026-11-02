@@ -26,6 +26,7 @@ import { WorkspaceChangesList, type WorkspaceChangesRow } from "@/components/wor
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
 import { useKeyboardOpen } from "@/hooks/use-keyboard";
 import { useLocale } from "@/hooks/use-locale";
+import { useNotifyPrefs } from "@/hooks/use-notify-prefs";
 import { useWorkspaceChangeCounts } from "@/hooks/use-workspace-change-counts";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { useNav } from "@/hooks/use-nav";
@@ -38,6 +39,7 @@ import {
   FORK_DASH_TABS_ON,
   FORK_HEADING_NEW_TAB_ON,
 } from "@/lib/dash-tabs";
+import { showBadge } from "@/lib/app-badge";
 import { useLaunchers } from "@/lib/launchers";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { useQuotaEnabled } from "@/lib/operator-config";
@@ -51,9 +53,10 @@ import { prefetchFolders } from "@/lib/folders";
 import { glideForward } from "@/lib/glide";
 import { artifactsPath, homePath, newPath, spaceChangesPath, spacePath } from "@/lib/nav";
 import { overviewPath } from "@/lib/overview";
-import type { WorkspaceGroup } from "@/lib/pane-groups";
+import { resolveIsolatedPrefKeys, workspaceGroupKey, type WorkspaceGroup } from "@/lib/pane-groups";
+import { panePlaceParts } from "@/lib/pane-name";
 import { scopeKey, type Scope } from "@/lib/scope";
-import { countBlocked, hasReady } from "@/lib/triage";
+import { countAlerting, countBlocked, hasReady } from "@/lib/triage";
 import { usePairing } from "@/lib/pairing";
 import { usePins } from "@/lib/pins";
 import { programScope, programSessions, programsAbove, waitingPrograms } from "@/lib/session-cards";
@@ -88,11 +91,22 @@ function ChangesTabBody({
   const rows = useMemo<WorkspaceChangesRow[]>(
     () =>
       groups.flatMap((g) => {
-        // A group is never empty (it exists because a pane is in it), and every pane of it shares
-        // one workspace, machine and session, so its first pane addresses the whole workspace.
-        const first = g.panes[0];
-        if (first === undefined) return [];
-        return [{ key: g.key, label: g.label, workspaceId: first.workspaceId, scope: paneScope(scope, first, servers, sessions) }];
+        // A root workspace group also holds the panes of its linked worktrees (issue #587); each
+        // checkout has its own working tree, so each distinct workspace in `g.panes` gets its row.
+        const seen = new Set<string>();
+        const out: WorkspaceChangesRow[] = [];
+        for (const pane of g.panes) {
+          const key = workspaceGroupKey(pane);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({
+            key,
+            label: key === g.key ? g.label : panePlaceParts(pane).space,
+            workspaceId: pane.workspaceId,
+            scope: paneScope(scope, pane, servers, sessions),
+          });
+        }
+        return out;
       }),
     [groups, scope, servers, sessions],
   );
@@ -170,7 +184,7 @@ export function HomeRoute() {
     prefs,
     setSpacesOpen,
     setQuotaOpen,
-    setIsolatedSpace,
+    setIsolatedSpaces,
     toggleHiddenSpace,
     setDashView,
     setNeedsYouOnly,
@@ -207,6 +221,10 @@ export function HomeRoute() {
   // still holds both kinds.
   const blockedCount = countBlocked(data.agents);
   const readyUnseen = blockedCount === 0 && hasReady(data.agents);
+  // The installed app's icon counts what has an alert out instead (lib/app-badge.ts), so it waits for
+  // the bridge's notification kinds rather than guess them.
+  const { prefs: notifyKinds } = useNotifyPrefs();
+  const alerting = notifyKinds === null ? null : countAlerting(data.agents, notifyKinds);
   const lookup = useMemo<ChangesLookup>(
     () => ({ depth: prefs.changesDepth, nested: prefs.changesNested }),
     [prefs.changesDepth, prefs.changesNested],
@@ -232,6 +250,16 @@ export function HomeRoute() {
   const navHost = ambientHost(data.servers, data.scope.host);
   // Sessions are a per-host registry, so the session switcher only ever lists this host's.
   const sessionsHere = sessionsOnHost(data.sessions ?? [], data.scope, data.servers);
+  // WHO SETS THE ICON'S COUNT WHILE THIS PAGE IS OPEN. The service worker sets it on every herd push from
+  // the sum of every slot, and the slots count every session and machine. This page counts only the
+  // panes in the view it shows, so on one session of several it would write a smaller number, and the
+  // next push would replace it with the sum anyway: the last writer wins. The page therefore writes only
+  // when it holds the whole picture (all sessions shown, or the only session on a solo machine), and
+  // otherwise leaves the worker's sum standing.
+  const wholeHerd = data.viewAll || (!multi && sessionsHere.length <= 1);
+  useEffect(() => {
+    if (alerting !== null && wholeHerd) void showBadge(navigator, alerting);
+  }, [alerting, wholeHerd]);
   // …AND THE ADDRESSED HOST IS ALSO SESSION-LOCAL, which is the half the widened view would otherwise break.
   // Workspace ids collide across sessions exactly as they collide across machines, and the space
   // navigator keys by `(host, workspaceId)` with no session in it — so on a widened body another
@@ -243,6 +271,17 @@ export function HomeRoute() {
   const navPanes = useMemo(
     () => ambientPanes(data.agents, data.shellPanes, data.scope, data.servers, data.sessions),
     [data.agents, data.shellPanes, data.scope, data.servers, data.sessions],
+  );
+  const herdWorkspaces = data.herdWorkspaces ?? data.workspaces;
+  const isolatedSpaces = useMemo(
+    () =>
+      resolveIsolatedPrefKeys(prefs.isolatedSpaces, {
+        workspaces: herdWorkspaces,
+        scope: data.scope,
+        servers: data.servers,
+        sessions: data.sessions,
+      }),
+    [prefs.isolatedSpaces, herdWorkspaces, data.scope, data.servers, data.sessions],
   );
   // THE PROGRAMS SECTION (M55 spec 13): every program session in the snapshot, this machine's and each
   // crew member's, in a section of its own, and a tap opens its home, the conversation list, on the
@@ -398,6 +437,7 @@ export function HomeRoute() {
               stale={data.stale === true}
               tabs={data.tabs}
               servers={data.servers}
+              workspaces={herdWorkspaces}
               // Each workspace heading's "+" (M40/03): the list resolves each heading's own machine and
               // session from these, the way a row's tap does, and sends the create there.
               // FORK: no heading "+" in production (lib/dash-tabs.ts).
@@ -411,9 +451,9 @@ export function HomeRoute() {
                     }
                   : undefined
               }
-              isolated={prefs.isolatedSpace}
+              isolated={isolatedSpaces}
               hidden={prefs.hiddenSpaces}
-              onIsolate={setIsolatedSpace}
+              onIsolate={setIsolatedSpaces}
               onToggleHidden={toggleHiddenSpace}
               hiddenMachines={hiddenMachines}
               addressedHost={data.scope.host}
@@ -472,7 +512,7 @@ export function HomeRoute() {
               {/* Above the Spaces while a program has a question that waits on you. */}
               {programsFirst && <ProgramSection programs={programs} servers={data.servers} onOpen={openProgram} />}
               <SpaceOverview
-                workspaces={isolateSpaces(data.workspaces, prefs.isolatedSpace)}
+                workspaces={isolateSpaces(data.workspaces, isolatedSpaces)}
                 agents={navPanes.agents}
                 shellPanes={navPanes.shellPanes}
                 host={navHost}

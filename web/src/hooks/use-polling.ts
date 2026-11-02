@@ -54,6 +54,8 @@ export const BURST_MS = 300;
 /** The gap while the operator follows a pane that has something to show — its agent is working, or
  *  its mirror moved on the last poll. */
 export const HOT_MS = 1000; // FORK: was 1500 — a followed, moving mirror at 1 Hz reads as live
+/** A new agent launch gets a bounded watch for its first screen; the clock changes cadence, never readiness. */
+export const STARTUP_HOT_MS = 20_000;
 /** The home screen while an agent somewhere is working or blocked. Nobody is on a mirror, so there
  *  is nothing to keep smooth; the herd's row still has to reflect a status change without feeling
  *  stuck. */
@@ -131,6 +133,8 @@ export interface PollIntent {
   liveFeed?: boolean;
   /** FORK: Low power is on — the burst and hot gaps stretch (see LOW_POWER_HOT_MS). */
   lowPower?: boolean;
+  /** The current pane is a newly launched agent still awaiting its initial screen. */
+  starting?: boolean;
   /** How many polls in a row got no answer at all (`HomeData.failure` is `network`). 0 (or absent)
    *  when the last one got any answer, a 5xx or a refusal included. */
   failures?: number;
@@ -188,6 +192,10 @@ function cadenceFor(
 
   // 1. A send just happened on the pane you are looking at: watch it land.
   if (intent?.bursting) return burst;
+
+  // A launch can outlast the topology burst while the first snapshot still calls it a shell. FORK:
+  // asked before the live feed (1.25 merge), so a launch keeps upstream's bounded watch either way.
+  if (paneId && intent?.starting) return hot;
 
   // 1b. THE STREAM IS UP. Every rule below this line is a guess about when the herd might have
   // moved; with the feed open the bridge SAYS when it moved, and the timer only has to catch what
@@ -270,8 +278,13 @@ export function usePolling(
   paneId?: string | null,
   scope?: Scope,
   following?: boolean,
+  startupId?: string,
 ): number {
   const revalidator = useRevalidator();
+  const startupWatch = useRef<{ id: string; at: number } | null>(null);
+  if (startupId === undefined) startupWatch.current = null;
+  else if (startupWatch.current?.id !== startupId) startupWatch.current = { id: startupId, at: Date.now() };
+  const starting = startupWatch.current !== null && Date.now() - startupWatch.current.at < STARTUP_HOT_MS;
   // Held in a ref for the same reason the revalidator is: the tick effect must not re-subscribe
   // every time the viewed host or session changes identity.
   const scopeRef = useRef(scope);
@@ -326,6 +339,7 @@ export function usePolling(
     topologyBursting: topoBursting,
     liveFeed,
     lowPower,
+    starting,
   });
 
   // ── The live feed ──────────────────────────────────────────────────────────

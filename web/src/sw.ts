@@ -11,6 +11,8 @@ import {
   type PushPayload,
 } from "./lib/push-decision";
 import { askInApp, openNotificationTarget, type OpenOutcome, type OpenTargetClient } from "./lib/notification-open";
+import { recordSlot, showBadge, slotCount } from "./lib/app-badge";
+import { asJsonString } from "./lib/json";
 import { readPushTitles } from "./lib/push-title-store";
 import { FONT_URLS, navigationNetworkOnlyUnder } from "./lib/sw-routes";
 import {
@@ -344,6 +346,17 @@ async function handlePush(event: PushEvent): Promise<void> {
     payload = { body: event.data?.text() };
   }
 
+  // Before the decision, because a push a visible tab suppresses still moves the icon's count.
+  const count = slotCount(payload);
+  const slotTag = asJsonString(payload.tag);
+  if (count !== undefined && slotTag !== undefined) {
+    try {
+      await showBadge(self.navigator, await recordSlot(self.caches, self.location.origin, MOUNT, slotTag, count));
+    } catch {
+      // Cache Storage refused: the notification below matters more than the count.
+    }
+  }
+
   // Every read in one round trip: WebKit revokes a subscription whose handler fails to post a
   // notification "in a timely manner", so the questions that decide whether and what to post are
   // asked together rather than one after the other (FORK). The title table (lib/push-titles.ts,
@@ -364,7 +377,6 @@ async function handlePush(event: PushEvent): Promise<void> {
     // replacement there instead — showNotification on the same tag closes the stale one for us.
     const stale = await self.registration.getNotifications({ tag: decision.tag });
     for (const n of stale) n.close();
-    await applyBadge(decision.badge);
     return;
   }
   // `renotify` and `actions` aren't in this TS lib's NotificationOptions yet, though both are
@@ -388,22 +400,6 @@ async function handlePush(event: PushEvent): Promise<void> {
   };
   if (decision.actions) options.actions = decision.actions;
   await self.registration.showNotification(decision.title, options);
-  await applyBadge(decision.badge);
-}
-
-// FORK: the app icon's badge. iOS never badges a web app on its own — a push shows a banner and
-// nothing else — so the worker asks for the dot here, with the count the bridge sent. The page
-// clears it when the herd has nothing unseen (hooks/use-app-badge.ts), which is also what handles
-// Apple's endpoints never receiving a retraction. `undefined` leaves the badge alone: a push with no
-// view of the herd (a test push, an update alert) must not erase a dot that is still true.
-async function applyBadge(count: number | undefined): Promise<void> {
-  if (count === undefined || !("setAppBadge" in self.navigator)) return;
-  try {
-    if (count > 0) await self.navigator.setAppBadge(count);
-    else await self.navigator.clearAppBadge();
-  } catch {
-    /* a platform without the API, or one that refused — the notification already showed */
-  }
 }
 
 // ── FORK: answering from the notification ───────────────────────────────────────────────────────

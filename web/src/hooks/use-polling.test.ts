@@ -7,6 +7,7 @@ import {
   BURST_MS,
   HOME_BUSY_MS,
   HOT_MS,
+  STARTUP_HOT_MS,
   IDLE_MS,
   LIVE_FEED_MS,
   LOW_POWER_BURST_MS,
@@ -660,6 +661,12 @@ describe("intervalFor — the live feed", () => {
     expect(intervalFor(hot(), "w1:p1", on({ liveFeed: true, bursting: true }))).toBe(BURST_MS);
     expect(intervalFor(hot(), null, on({ liveFeed: true, topologyBursting: true }))).toBe(BURST_MS);
   });
+  // FORK (1.25 merge): upstream's launch watch outranks the stream, so a new agent's first screen
+  // is read on the hot gap even while the feed is up.
+  it("keeps a launch's startup watch on the hot gap while the stream is up", () => {
+    expect(intervalFor(makeData([]), "new:p1", on({ liveFeed: true, starting: true }))).toBe(HOT_MS);
+    expect(intervalFor(makeData([]), null, on({ liveFeed: true, starting: true }))).toBe(LIVE_FEED_MS);
+  });
 });
 
 describe("usePolling — the live feed", () => {
@@ -792,5 +799,54 @@ describe("usePolling — the live feed", () => {
     vi.advanceTimersByTime(POKE_GAP_MS);
     await settle(() => source.poke('{"kind":"pane","paneId":"w1:p1"}'));
     expect(rr.revalidate).toHaveBeenCalledTimes(2);
+  });
+});
+
+interface StartupPollProps { id: string | undefined }
+
+describe("startup watch uses the existing bounded poller", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    rr.state = "idle";
+    rr.revalidate.mockClear();
+    resetPollIntent();
+    resetIdleLock();
+  });
+  afterEach(() => {
+    resetIdleLock();
+    resetPollIntent();
+    vi.useRealTimers();
+  });
+
+  it("watches a named new pane even before its first snapshot, without changing home cadence", () => {
+    const intent: PollIntent = { bursting: false, following: true, changed: false, starting: true };
+    expect(intervalFor(makeData([]), "new:p1", intent)).toBe(HOT_MS);
+    expect(intervalFor(makeData([]), null, intent)).toBe(IDLE_MS);
+    expect(intervalFor(makeData([]), "new:p1", { ...intent, topologyBursting: true })).toBe(BURST_MS);
+  });
+
+  it("retires the watch with the launch marker; expiry slows polling but never claims readiness", () => {
+    const data = makeData([]);
+    const initial: StartupPollProps = { id: "launch" };
+    const { result, rerender } = renderHook(({ id }: StartupPollProps) => usePolling(data, "new:p1", undefined, true, id), { initialProps: initial });
+    expect(result.current).toBe(HOT_MS);
+    act(() => vi.advanceTimersByTime(HOT_MS));
+    expect(rr.revalidate).toHaveBeenCalledOnce();
+    rerender({ id: undefined });
+    expect(result.current).toBe(IDLE_MS);
+    rerender({ id: "another launch" });
+    expect(result.current).toBe(HOT_MS);
+    act(() => vi.advanceTimersByTime(STARTUP_HOT_MS));
+    rerender({ id: "another launch" });
+    expect(result.current).toBe(IDLE_MS);
+    rerender({ id: "fresh intent" });
+    expect(result.current).toBe(HOT_MS);
+  });
+
+  it("startup polling still pauses behind the idle cover", () => {
+    renderHook(() => usePolling(makeData([]), "new:p1", undefined, true, "launch"));
+    act(() => setLocked(true));
+    act(() => vi.advanceTimersByTime(HOT_MS * 3));
+    expect(rr.revalidate).not.toHaveBeenCalled();
   });
 });

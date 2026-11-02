@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react";
-import { asJsonBoolean, asJsonObject, asJsonString, type JsonValue } from "@/lib/json";
+import { asJsonBoolean, asJsonObject, asJsonString, type JsonObject, type JsonValue } from "@/lib/json";
 
 import type { ChangesLayout } from "@/lib/changes-tree";
 import { coerceDashView, isLegacyDashView, wasFocusView, type DashView } from "@/lib/dash-view";
@@ -59,8 +59,12 @@ export interface DashPrefs {
   lowPower: boolean;
   /** FORK: the dashboard's usage section (components/quota-card.tsx), open unless folded. */
   quotaOpen: boolean;
-  /** The dashboard's workspace filter: the one workspace shown alone, or null for all of them. */
-  isolatedSpace: string | null;
+  /**
+   * The dashboard's workspace filter (issue #527): the workspaces shown, by the key a device remembers
+   * them by, or empty for all of them. An older Collie stored one key as `isolatedSpace`; it reads as
+   * a choice of one (see {@link coerceDashPrefs}).
+   */
+  isolatedSpaces: string[];
   /** Workspaces hidden from the dashboard list (long-press a chip); their chips stay, dimmed. */
   hiddenSpaces: string[];
   /**
@@ -164,7 +168,7 @@ const DEFAULTS: DashPrefs = {
   newTabLauncher: "",
   lowPower: false,
   quotaOpen: true,
-  isolatedSpace: null,
+  isolatedSpaces: [],
   hiddenSpaces: [],
   changesNested: true,
   changesDepth: 2,
@@ -182,6 +186,27 @@ const DEFAULTS: DashPrefs = {
 
 function coerceDepth(raw: JsonValue | undefined): number {
   return CHANGES_DEPTHS.find((d) => d === raw) ?? DEFAULTS.changesDepth;
+}
+
+/** The strings of a stored array, each once, in stored order; anything else is an empty list. */
+function coerceKeys(raw: JsonValue | undefined): string[] {
+  if (!Array.isArray(raw)) return [];
+  const keys = raw.flatMap((k) => {
+    const key = asJsonString(k);
+    return key === undefined ? [] : [key];
+  });
+  return [...new Set(keys)];
+}
+
+/**
+ * The workspace filter as stored. A stored list wins, empty or not. Without one, the single
+ * `isolatedSpace` an older Collie wrote is a choice of one, so an update keeps the filter the device
+ * had; the old key is never written again.
+ */
+function coerceIsolatedSpaces(p: JsonObject): string[] {
+  if (Array.isArray(p.isolatedSpaces)) return coerceKeys(p.isolatedSpaces);
+  const legacy = asJsonString(p.isolatedSpace);
+  return legacy === undefined ? [] : [legacy];
 }
 
 function coerceBeltScale(raw: JsonValue | undefined): BeltScale {
@@ -220,7 +245,7 @@ export function coerceDashPrefs(raw: JsonValue | undefined): DashPrefs {
     newTabLauncher: typeof p.newTabLauncher === "string" ? p.newTabLauncher : DEFAULTS.newTabLauncher,
     lowPower: asJsonBoolean(p.lowPower) ?? DEFAULTS.lowPower,
     quotaOpen: asJsonBoolean(p.quotaOpen) ?? DEFAULTS.quotaOpen,
-    isolatedSpace: asJsonString(p.isolatedSpace) ?? DEFAULTS.isolatedSpace,
+    isolatedSpaces: coerceIsolatedSpaces(p),
     hiddenSpaces: Array.isArray(p.hiddenSpaces)
       ? p.hiddenSpaces.flatMap((k) => {
           const key = asJsonString(k);
@@ -336,7 +361,7 @@ export interface UseDashPrefsReturn {
   setLowPower: (on: boolean) => void;
   /** FORK: fold or open the usage section. */
   setQuotaOpen: (open: boolean) => void;
-  setIsolatedSpace: (key: string | null) => void;
+  setIsolatedSpaces: (keys: readonly string[]) => void;
   toggleHiddenSpace: (key: string) => void;
   setChangesNested: (nested: boolean) => void;
   setChangesDepth: (depth: number) => void;
@@ -382,7 +407,10 @@ export function useDashPrefs(): UseDashPrefsReturn {
   const setPaneOrder = useCallback((paneOrder: PaneOrder) => updateDashPrefs({ paneOrder }), []);
   const setPaneView = useCallback((paneView: PaneView) => updateDashPrefs({ paneView }), []);
 
-  const setIsolatedSpace = useCallback((isolatedSpace: string | null) => updateDashPrefs({ isolatedSpace }), []);
+  const setIsolatedSpaces = useCallback(
+    (keys: readonly string[]) => updateDashPrefs({ isolatedSpaces: [...new Set(keys)] }),
+    [],
+  );
   // Reads the SHARED prefs rather than a render's snapshot: upstream's `setPrefs(p => …)` folded the
   // read into React's updater, which this fork's module store does not have. `prefs` here is the
   // store's own current value, so two chips toggled in one tick cannot lose each other's write.
@@ -402,7 +430,7 @@ export function useDashPrefs(): UseDashPrefsReturn {
     setNewTabLauncher,
     setLowPower,
     setQuotaOpen,
-    setIsolatedSpace,
+    setIsolatedSpaces,
     toggleHiddenSpace,
     setChangesNested,
     setChangesDepth,

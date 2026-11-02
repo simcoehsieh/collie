@@ -36,6 +36,11 @@ interface CollieHomeProps {
    *  strip's "Showing what was saved at <time>" once the operator has dismissed it. The strip under
    *  the header carries the date for sighted readers; the bar itself stays free of it. */
   lastSeenAt?: number;
+  /** The ground the mark stands on, for its knockout: the header's `--band-ground` by default, and
+   *  `--card` where a large screen draws the mark in its sidebar (ADR 0120). */
+  paper?: string;
+  /** How large the drawing is, in px (40, the header's). The 44px box around it does not change. */
+  markSize?: number;
   className?: string;
 }
 
@@ -140,6 +145,8 @@ export function CollieHome({
   state = "idle",
   online = true,
   lastSeenAt,
+  paper = "var(--band-ground)",
+  markSize = 40,
   className,
 }: CollieHomeProps) {
   useLocale();
@@ -371,11 +378,11 @@ export function CollieHome({
           names it instead. */}
       <span data-slot="header-mark" ref={mark} className="relative grid size-11 shrink-0 place-items-center">
         <MeowMark
-          size={40}
+          size={markSize}
           weight="header"
           loading={bloom || ((round || busy) && !lost)}
           state={lost ? "idle" : state}
-          paper="var(--band-ground)"
+          paper={paper}
           className={cn("transition-opacity", lost && "opacity-40 grayscale")}
         />
         {/* THE LOST BADGE. The strip under the header says the connection is gone, and the operator can
