@@ -99,6 +99,40 @@ describe("QuotaCard", () => {
     expect(claude.getByRole("button")).not.toHaveAttribute("aria-expanded");
   });
 
+  it("agy's row draws Gemini's and Argon's week, as the ai-quota mod does; the rest is behind the tap", async () => {
+    // The labels exactly as ai-quota prints them for Antigravity (2026-11-08).
+    const live = body({
+      agents: [
+        ...body().agents.slice(0, 2),
+        {
+          key: "agy",
+          name: "agy",
+          status: "ok",
+          plan: "Google Antigravity",
+          windows: [
+            { kind: "5h", label: "5h Rolling Limit (Gemini)", usedPercent: 0, resetAt: null, resetAfterSeconds: 17999, status: "allowed" },
+            { kind: "weekly", label: "Weekly Limit (Gemini)", usedPercent: 0, resetAt: null, resetAfterSeconds: 604799, status: "allowed" },
+            { kind: "other", label: "Weekly Limit (Claude & GPT)", usedPercent: 0, resetAt: null, resetAfterSeconds: 604799, status: "" },
+            { kind: "other", label: "Weekly Limit (Gemini 4 Argon)", usedPercent: 12.4, resetAt: null, resetAfterSeconds: 579793, status: "" },
+          ],
+        },
+      ],
+    });
+    serve(() => live);
+    const user = userEvent.setup();
+    render(<QuotaCard open onOpenChange={() => {}} />);
+    await screen.findByText("agy");
+    const agy = within(screen.getByTestId("quota-row-agy"));
+    expect(agy.getByRole("progressbar", { name: "Gemini Weekly" })).toHaveAttribute("aria-valuenow", "0");
+    expect(agy.getByRole("progressbar", { name: "Argon Weekly" })).toHaveAttribute("aria-valuenow", "12.4");
+    expect(agy.queryByRole("progressbar", { name: "5h" })).toBeNull();
+    await user.click(agy.getByRole("button"));
+    expect(agy.getByRole("progressbar", { name: "5h Rolling Limit (Gemini)" })).toBeInTheDocument();
+    expect(agy.getByRole("progressbar", { name: "Weekly Limit (Claude & GPT)" })).toBeInTheDocument();
+    // Each window is drawn once: Argon is a headline bar, not also a row behind the tap.
+    expect(agy.queryByRole("progressbar", { name: "Weekly Limit (Gemini 4 Argon)" })).toBeNull();
+  });
+
   it("the refresh glyph asks the bridge to rerun, and the section folds", async () => {
     const seen: string[] = [];
     serve(body, seen);

@@ -6,7 +6,7 @@ import { SectionHeader } from "@/components/section-header";
 import { ListGroup } from "@/components/ui/list-group";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
-import { countdownParts, secondsUntil, usageTone, useQuota, type UsageTone } from "@/lib/quota";
+import { countdownParts, headlineBars, secondsUntil, usageTone, useQuota, type HeadlineBar, type UsageTone } from "@/lib/quota";
 import type { QuotaAgent, QuotaAgentKey, QuotaModel, QuotaWindow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -14,9 +14,9 @@ import { cn } from "@/lib/utils";
 //
 // One row per agent, always the same three in the same order (the bridge guarantees that, so the
 // section never reflows as providers come and go), and on each row the two numbers that decide
-// whether to start something now: the rolling five hours and the week. Everything else a provider
-// reports — agy's four cross-product windows, codex's per-model quotas, a balance — is behind a
-// tap on the row, because it is worth having and not worth the height.
+// whether to start something now: the rolling five hours and the week (for agy, Gemini's week and
+// Argon's week — `headlineBars` in lib/quota.ts). Everything else a provider reports — agy's other
+// windows, codex's per-model quotas, a balance — is behind a tap on the row, because it is worth having and not worth the height.
 //
 // The countdown is computed HERE from `resetAt`, once a minute, rather than read off the body: the
 // bridge serves a body up to a minute old and the phone re-reads every five, and a "3h 43m" that
@@ -94,6 +94,12 @@ function Bar({ label, window, now, compact }: { label: string; window: QuotaWind
   );
 }
 
+/** "5h", "Weekly", or "Argon Weekly" — a model name in front of the locale's word for the window. */
+function barLabel(bar: HeadlineBar): string {
+  const word = t(bar.slot === "5h" ? "quota.window.5h" : "quota.window.weekly");
+  return bar.model === undefined ? word : `${bar.model} ${word}`;
+}
+
 function ModelRow({ model }: { model: QuotaModel }) {
   const tone = usageTone(model.usedPercent);
   return (
@@ -118,9 +124,7 @@ const QuotaRow = memo(function QuotaRow({
   expanded: boolean;
   onToggle: (key: QuotaAgentKey) => void;
 }) {
-  const five = agent.windows.find((w) => w.kind === "5h") ?? null;
-  const weekly = agent.windows.find((w) => w.kind === "weekly") ?? null;
-  const others = agent.windows.filter((w) => w.kind === "other");
+  const { bars, rest: others } = headlineBars(agent);
   const hasMore = others.length > 0 || (agent.models?.length ?? 0) > 0 || agent.credits !== undefined;
   const bodyId = `quota-${agent.key}-more`;
 
@@ -161,8 +165,9 @@ const QuotaRow = memo(function QuotaRow({
           )}
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Bar label={t("quota.window.5h")} window={five} now={now} />
-          <Bar label={t("quota.window.weekly")} window={weekly} now={now} />
+          {bars.map((bar) => (
+            <Bar key={barLabel(bar)} label={barLabel(bar)} window={bar.window} now={now} />
+          ))}
         </div>
       </button>
       {hasMore && expanded && (

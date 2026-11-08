@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 import { fetchQuota } from "@/lib/api";
-import type { QuotaResponse } from "@/lib/types";
+import type { QuotaAgent, QuotaResponse, QuotaWindow } from "@/lib/types";
 
 // FORK: the data half of the dashboard's usage section — what the three agents have left.
 //
@@ -164,4 +164,42 @@ export function countdownParts(seconds: number): Countdown {
   const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   return { days, hours, minutes };
+}
+
+/** One of the two bars on an agent's row: which window it draws, under which label. */
+export interface HeadlineBar {
+  /** "5h" / "weekly" take the locale's word; a model name is prefixed to the weekly word. */
+  slot: "5h" | "weekly";
+  model?: string;
+  window: QuotaWindow | null;
+}
+
+// FORK: agy's row draws the two windows the operator's ai-quota mod draws (agentry
+// plugins/ai-quota, `ONLY.gemini`): Gemini's week and Gemini 4 Argon's week. Antigravity's 5h and
+// weekly "Gemini" windows sit at 0 % while Argon is the one being spent, so the generic 5h + weekly
+// pair read as an unused account. The other windows stay behind the tap, as before. When Antigravity
+// renames both labels the row falls back to the generic pair rather than to two empty slots.
+const AGY_HEADLINE: ReadonlyArray<{ match: RegExp; model: string }> = [
+  { match: /^Weekly Limit \(Gemini\)$/u, model: "Gemini" },
+  { match: /^Weekly Limit \(Gemini 4 Argon\)$/u, model: "Argon" },
+];
+
+/** The row's two bars, and every window that goes behind the tap instead. */
+export function headlineBars(agent: QuotaAgent): { bars: [HeadlineBar, HeadlineBar]; rest: QuotaWindow[] } {
+  if (agent.key === "agy") {
+    const picked = AGY_HEADLINE.map(({ match }) => agent.windows.find((w) => match.test(w.label)) ?? null);
+    if (picked.some((w) => w !== null)) {
+      const bars = AGY_HEADLINE.map(({ model }, i): HeadlineBar => ({ slot: "weekly", model, window: picked[i] ?? null }));
+      return { bars: [bars[0]!, bars[1]!], rest: agent.windows.filter((w) => !picked.includes(w)) };
+    }
+  }
+  const five = agent.windows.find((w) => w.kind === "5h") ?? null;
+  const weekly = agent.windows.find((w) => w.kind === "weekly") ?? null;
+  return {
+    bars: [
+      { slot: "5h", window: five },
+      { slot: "weekly", window: weekly },
+    ],
+    rest: agent.windows.filter((w) => w.kind === "other"),
+  };
 }
