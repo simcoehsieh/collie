@@ -3,11 +3,15 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { parseAnsi } from "../../ansi";
-import { lineText, splitLines } from "../../blocks";
+import { lineText, splitLines, type StyledLine } from "../../blocks";
 import { agyAdapter, antigravityAdapter, normalizeAgyScreenRows } from "./index";
 import { detectPromptSelect } from "./prompt-select";
 import { describeAdapterConformance } from "../conformance";
 import { buildBlocks } from "../index";
+import { findInputFrame } from "../../surface/frame";
+import { requireProfile } from "../../surface/profile";
+import { isFree } from "../../surface/surface";
+import { readScreen } from "../../../test/surface-corpus";
 
 const PANES_DIR = join(import.meta.dirname, "..", "..", "..", "fixtures", "panes");
 const LOCAL_FIXTURES_DIR = join(import.meta.dirname, "fixtures");
@@ -17,7 +21,7 @@ const fixtureFile = (name: string) =>
 /** AGY paints its composer between two full-width rules; 60 columns clears isBoxBorder. */
 const RULE = "────────────────────────────────────────────────────────────";
 
-const load = (name: string) => splitLines(parseAnsi(readFileSync(join(PANES_DIR, name), "utf8")));
+const loadPane = (name: string) => splitLines(parseAnsi(readFileSync(join(PANES_DIR, name), "utf8")));
 
 const allFixtures = readdirSync(PANES_DIR)
   .filter((f) => f.endsWith(".txt"))
@@ -48,6 +52,11 @@ const NEUTRAL = new Set([
   // FORK: upstream keeps agy--ask-multi.txt (a checkbox question) raw because it has no agy
   // multi-select recipe. The fork has one (harness/agy/multi-select.ts, digit toggles, measured on
   // 1.2.0 against the same screen), so that capture lifts as `multi-select` and is an own fixture.
+  // 1.4.12, #655: an idle box over a sub-agent rail and a three-row statusline. Nothing to lift.
+  "agy--v1412-subagent-band-idle.txt",
+  // Derived from agy--permission-bash.txt (not captured): the same rail under a permission dialog. The
+  // option reader does not lift it through the rail, so it stays raw and the card offers Escape.
+  "agy--v1412-subagent-band-permission.txt",
 ]);
 
 // Claude captures agy's grammar still claims, by name. `isAlienBuffer` (markers.ts) keeps agy off a
@@ -63,6 +72,11 @@ const KNOWN_FOREIGN_CLAIMS = new Set([
   // The same shape on 2.1.303: a background agent's Bash permission with a tall command (2026-10-19).
   "claude--v2303-permission-bash-bg-agent-rm--w160.txt",
   "claude--v2303-permission-bash-bg-agent-rm--w80.txt",
+  // Codex 0.167.0's hook-trust prompt (2026-11-07): three numbered rows under a footer, and no Codex name
+  // anywhere on the screen, so `isAlienBuffer` cannot tell it apart. The same reasoning as above.
+  "codex--v0167-hooks-review--w120.txt",
+  "codex--v0167-hooks-review--w80.txt",
+  "codex--v0167-hooks-review-moved--w80.txt",
 ]);
 
 const ownFixtures = allAgyFixtures.filter((f) => !NEUTRAL.has(f));
@@ -331,14 +345,14 @@ describe("agyAdapter unit & footer safety", () => {
     // Probed 2026-09-10 on 1.2.0: `2` on Question 1/2 chose Green AND advanced to Question 2/2; an
     // Enter sent after it chose the second question's pointed default sight unseen.
     for (const name of ["agy--wizard-q1.txt", "agy--wizard-q2.txt", "agy--select-menu.txt"]) {
-      const blocks = agyAdapter.buildBlocks(load(name));
+      const blocks = agyAdapter.buildBlocks(loadPane(name));
       const block = blocks.find((b) => b.kind === "prompt-select");
       expect(block, name).toBeDefined();
       if (!block || block.kind !== "prompt-select") continue;
       for (const option of block.prompt.options) expect(option.keys, name).toEqual([option.keys[0]]);
       expect(block.prompt.options.every((o) => !/write-in/i.test(o.label)), name).toBe(true);
     }
-    const q2 = agyAdapter.buildBlocks(load("agy--wizard-q2.txt")).find((b) => b.kind === "prompt-select");
+    const q2 = agyAdapter.buildBlocks(loadPane("agy--wizard-q2.txt")).find((b) => b.kind === "prompt-select");
     if (q2 && q2.kind === "prompt-select") {
       expect(q2.prompt.question).toBe("Question 2/2: Which size?");
       expect(q2.prompt.options.map((o) => o.label)).toEqual(["Small", "Large"]);
@@ -346,7 +360,7 @@ describe("agyAdapter unit & footer safety", () => {
   });
 
   it("reads a multi-line draft as one space-joined line (agy--draft-multiline.txt)", () => {
-    const lines = load("agy--draft-multiline.txt");
+    const lines = loadPane("agy--draft-multiline.txt");
     expect(agyAdapter.composerReady!(lines)).toBe(true);
     expect(agyAdapter.extractInputDraft!(lines)).toBe("first line of a draft second line here third line");
     expect(agyAdapter.buildBlocks(lines).every((b) => b.kind === "raw")).toBe(true);
@@ -730,6 +744,48 @@ describe("agy: background task rail", () => {
     lines.splice(4, 0, ...splitLines(parseAnsi(extra)));
     expect(agyAdapter.composerReady!(lines)).toBe(false);
     expect(agyAdapter.extractInputDraft!(lines)).toBeNull();
+  });
+});
+
+describe("agy: sub-agent rail (1.4.12, #655)", () => {
+  const rows = () => splitLines(parseAnsi(readFileSync(fixtureFile("agy--v1412-subagent-band-idle.txt"), "utf8")));
+  const agentRow = (lines: StyledLine[]) => lines.findIndex((l) => lineText(l).startsWith("  ● Agent("));
+
+  it.each([agyAdapter, antigravityAdapter])("finds the idle box over the rail for $agent", (adapter) => {
+    const lines = rows();
+    expect(adapter.composerReady!(lines)).toBe(true);
+    expect(adapter.extractInputDraft!(lines)).toBeNull();
+    expect(adapter.extractStatusLines!(lines).map(lineText)).toEqual(lines.slice(-3).map(lineText));
+    const blocks = buildBlocks(lines, { agent: adapter.agent });
+    expect(blocks.map((block) => block.kind)).toEqual(["raw"]);
+    expect(blocks[0]!.lines.map(lineText)).toContain(lineText(lines[agentRow(lines)]!));
+  });
+
+  // A dialog over the rail: agy--permission-bash.txt with the rail and its rules under the dialog,
+  // over the status row (the corpus fixture) or under it. The rail shape must not take the rule over
+  // the dialog's rows for a box's top edge and the dialog for a draft: no frame, no composer, a modal.
+  it.each([
+    ["over the status row", "agy--v1412-subagent-band-permission.txt"],
+    ["under the status row", "agy--permission-bash.txt"],
+  ])("finds no box over a permission dialog with the rail %s", (_where, name) => {
+    let lines = splitLines(parseAnsi(readFileSync(fixtureFile(name), "utf8")));
+    if (name === "agy--permission-bash.txt") {
+      const rule = lines.find((l) => /^─{20,}$/.test(lineText(l).trimEnd()))!;
+      lines = [...lines, rule, ...splitLines(parseAnsi("  ● Agent(research: Mac Gemini App Researcher)  Reading · 12s")), rule];
+    }
+    const idle = requireProfile("agy").idle;
+    expect(findInputFrame(lines, idle)).toBeNull();
+    expect(agyAdapter.composerReady!(lines)).toBe(false);
+    expect(agyAdapter.extractInputDraft!(lines)).toBeNull();
+    const surface = readScreen(lines, "agy", idle).surface;
+    expect(isFree(surface)).toBe(false);
+    expect(surface.modal).not.toBe("none");
+  });
+
+  it("refuses the box when an unknown row stands in the rail", () => {
+    const lines = rows();
+    lines.splice(agentRow(lines) + 1, 0, ...splitLines(parseAnsi("  unexpected rail row")));
+    expect(agyAdapter.composerReady!(lines)).toBe(false);
   });
 });
 

@@ -94,16 +94,27 @@ export interface SubscribeBody {
   keys: { p256dh: string; auth: string };
   /** The endpoint this registration supersedes — absent when there is nothing to supersede. */
   replaces?: string;
+  /**
+   * This page closes its own notification for a pane on every seen read of it and zeroes the pane's
+   * slot in the icon count (lib/pane-notifications.ts), so the bridge may skip that pane's clear here
+   * (bridge/push.ts).
+   */
+  closesOwn: true;
+  /** Whether this browser has the Badging API. Information for the bridge's log; no rule reads it. */
+  badges: boolean;
 }
 
 export function subscribeBody(
   json: PushSubscriptionJSON,
   previous: string | null,
+  badges: boolean,
 ): SubscribeBody {
   const endpoint = json.endpoint ?? "";
-  const body = {
+  const body: SubscribeBody = {
     endpoint,
     keys: { p256dh: json.keys?.p256dh ?? "", auth: json.keys?.auth ?? "" },
+    closesOwn: true,
+    badges,
   };
   if (previous === null || previous === "" || previous === endpoint) return body;
   return { ...body, replaces: previous };
@@ -174,7 +185,9 @@ export async function enablePush(): Promise<EnableResult> {
   // FORK: whether THIS endpoint is the one the bridge last acknowledged — read before the register
   // below moves it, because that is the belief the prune check is about.
   const believedRegistered = rememberedEndpoint() === sub.endpoint;
-  const body = subscribeBody(sub.toJSON(), rememberedEndpoint());
+  // `badges`: whether this page has the Badging API — information for the bridge's log (1.27.1).
+  const badges = "setAppBadge" in navigator;
+  const body = subscribeBody(sub.toJSON(), rememberedEndpoint(), badges);
   const ack = subscribeAck(await registerPushSubscription(body));
   // ── FORK: a subscription the bridge had dropped is dead, not merely forgotten ──
   // The bridge prunes a row only when the push service disowned the endpoint (404/410 on a send).
@@ -186,7 +199,7 @@ export async function enablePush(): Promise<EnableResult> {
     const dead = sub.endpoint;
     await pushOperation(sub.unsubscribe());
     sub = await subscribe();
-    await registerPushSubscription(subscribeBody(sub.toJSON(), dead));
+    await registerPushSubscription(subscribeBody(sub.toJSON(), dead, badges));
   }
   // `registerPushSubscription` throws on any non-2xx reply, so this line runs only after the bridge
   // took the registration; a failed attempt keeps the remembered endpoint that is on the server.

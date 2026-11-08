@@ -25,6 +25,8 @@ import { useLoadingStalled } from "@/hooks/use-loading-stalled";
 import { useLowPower } from "@/hooks/use-dash-prefs";
 import { useOnline } from "@/hooks/use-online";
 import { settingsPath } from "@/lib/nav";
+import { useOptionalRootData } from "@/lib/route-data";
+import { releaseOffered } from "@/lib/update-ribbon";
 import { CollieHome } from "@/components/collie-home";
 import type { MarkState } from "@/components/meow-mark";
 import { AlphaBar } from "@/components/alpha-bar";
@@ -32,6 +34,7 @@ import { Collapse } from "@/components/ui/collapse";
 import { SectionLabel } from "@/components/ui/section-label";
 import type { BridgeStatus } from "@/lib/types";
 import type { Scope } from "@/lib/scope";
+import { MAINTAINER_MANAGED_UPDATES } from "@/lib/fork-shape";
 
 /** What a route claims about the SHAPE of the shared row, as opposed to the content it portals into
  *  it. These are the three things the shell itself has to draw differently, and every one of them is
@@ -325,8 +328,14 @@ export function AppHeaderHost({ bridge, error, herd = "idle", lastSeenAt, childr
            * hand the inset to the band while a strip showed above it (a context flag and a 240ms
            * padding transition kept the two in step); moving the band below the bar on 2026-10-07
            * made that handover, and the jog of the whole page it caused, unnecessary.
+           *
+           * DOCKED, IT IS NOT AT THE TOP EDGE, so it reserves nothing. On the large screen the bar
+           * sits in the focused column, under the space's tab row, and the layout's two top rows
+           * (the sidebar and the tab row, wide-layout.tsx) take the inset instead. Padding here as
+           * well pushed the pane's title down by the inset while those rows sat under the status bar
+           * (a foldable's screen recording, 1.27.1).
            */
-          "[padding-top:env(safe-area-inset-top)]",
+          dockedRow === null && "[padding-top:env(safe-area-inset-top)]",
           // The rule is RECOLOURED, never removed — DESIGN.md §2's own technique, and the width stays
           // reserved in the base string above. While a route has the row hidden (zen) there are no
           // two regions left to cut apart, so the edge goes transparent; nothing moves by a pixel
@@ -677,19 +686,33 @@ export function RouteHeader({
 export function SettingsGear({ scope }: { scope?: Scope }) {
   const nav = useNav();
   useLocale();
+  // The same reading the update band makes of "a release is on offer and not put down", so the dot
+  // and the band cannot disagree. Read off the snapshot, so closing the band on any device drops it.
+  const update = useOptionalRootData()?.update;
+  // FORK: no dot on this install (MAINTAINER_MANAGED_UPDATES): it is updated by maintainer merges,
+  // so a release upstream is nothing to do from this gear. Pinned in routes/settings-1-27.fork.test.tsx.
+  const offered = !MAINTAINER_MANAGED_UPDATES && releaseOffered(update, update?.dismissedVersion);
   return (
     <button
       type="button"
       onClick={() => nav.down(settingsPath(scope))}
-      aria-label={t("nav.settings.aria")}
+      aria-label={t(offered ? "nav.settings.updateAvailable.aria" : "nav.settings.aria")}
       // A real 44px box, NOT padding pulled back by a negative margin. The negative-margin trick
       // keeps icons visually tight but lets adjacent boxes overlap (two -m-3 buttons pull 24px
       // against a 12px gap, so a neighbour steals 12px of this one's hit area) and drags the last
       // one past the header's padding into document overflow. Costs horizontal room, which the
       // breadcrumb absorbs — it already truncates by design.
-      className="grid size-11 shrink-0 place-items-center text-muted-foreground transition-colors hover:text-foreground"
+      className="relative grid size-11 shrink-0 place-items-center text-muted-foreground transition-colors hover:text-foreground"
     >
       <Settings className="size-5" />
+      {offered && (
+        // 6px, in the corner of the icon and inside the 44px box: a fact about the app, not a control.
+        <span
+          aria-hidden="true"
+          data-slot="update-dot"
+          className="absolute right-2.5 top-2.5 size-1.5 rounded-full bg-primary"
+        />
+      )}
     </button>
   );
 }

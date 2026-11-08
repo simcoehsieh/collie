@@ -137,7 +137,7 @@ strip in `components/workspace-chips.tsx`, `FORK_DASH_SELECT_ON` in `lib/dash-ta
 first-start card button, no "Branch off" in the pane menu; `FORK_NEW_PAGE_ON` in `lib/fork-shape.ts` and
 `FORK_DASH_NEW_FAB_ON`), **no branch label, model tag or lost badge** (on the row, the pane header and the
 home mark; `FORK_BRANCH_LABEL_ON`, `FORK_MODEL_TAG_ON`, `FORK_MARK_LOST_BADGE_ON`), **no Tasks pill, Screen
-pill or theme picker, no release line, no dev viewport line, no Report a problem, no two-finger pane navigation, no model-tag dots** (1.23–1.25; `FORK_REPORT_ON`, `FORK_PANE_NAV_ON`; the large-screen layout is ON, `FORK_WIDE_LAYOUT_ON = true`, by the operator's 2026-11-02 choice; `FORK_BELT_TASKS_ON`,
+pill or theme picker, no release line, no dev viewport line, no Report a problem, no two-finger pane navigation, no model-tag dots, no new default look, no Zoom pill row** (1.23–1.27; `FORK_REPORT_ON`, `FORK_PANE_NAV_ON`, `FORK_NEW_LOOK_ON`, `FORK_ZOOM_PILL_CHOICE_ON`; the large-screen layout is ON, `FORK_WIDE_LAYOUT_ON = true`, by the operator's 2026-11-02 choice; `FORK_BELT_TASKS_ON`,
 `FORK_BELT_SCREEN_ON`, `FORK_THEMES_ON`, `FORK_VIEWPORT_STAMP_ON`, the release line under
 `MAINTAINER_MANAGED_UPDATES`; the subagents mark sits under `FORK_BELT_PINS_ON`), **the
 first-run screen's standing shape** (it never opens; a `TOUR_VERSION` bump must stay silent and
@@ -362,7 +362,7 @@ cd web && bun run vitest run src/lib/push-decision.test.ts src/lib/  # the areas
 `CLAUDE.md` is explicit that the root typecheck does not cover `web/`'s test files and that the gap
 has shipped a broken tip once.
 
-**The suite is GREEN on this fork — 651 files, 53192 tests at 1.25.5 (575 / 40505 at 1.23.4, 449 / 21786 at 1.19.2), zero failures. Under
+**The suite is GREEN on this fork — 685 files, about 56070 tests at 1.27.4 (651 / 53192 at 1.25.5, 575 / 40505 at 1.23.4, 449 / 21786 at 1.19.2), zero failures. Under
 full load `agent-chat.test.tsx` can time out; rerun with `--maxWorkers=6` before calling it a finding.** It was not: jsdom 29
 never wires up `globalThis.localStorage`, and 133 tests across 18 files failed on it, which meant a
 persistence regression was untestable here and a real new failure had to be found inside a wall of

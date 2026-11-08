@@ -76,12 +76,14 @@ const allOmpModalFixtures = allOmpFixtures.filter(
 // capture and must lift; a new one that does not fails conformance and gets filed here by a person.
 const DECLINED_SWITCH = [
   "omp--v18-4-switch-clipped.txt",
-  "omp--v18-4-switch-nerd.txt",
   "omp--v18-4-switch-nomatch.txt",
   "omp--v18-4-switch-quick-roles.txt",
   "omp--v18-4-switch-task.txt",
 ];
-const SWITCH_COHORT = allOmpFixtures.filter((name) => name.startsWith("omp--v18-4-switch"));
+// omp 18.17.0's picker captures (`unicode` and `nerd` presets, 2026-11-06) join the 18.4.10 cohort by name.
+const SWITCH_COHORT = allOmpFixtures.filter(
+  (name) => name.startsWith("omp--v18-4-switch") || /^omp--v18-17-0-(?:nerd-)?switch/.test(name),
+);
 const SWITCH_LIFTED = SWITCH_COHORT.filter((name) => !DECLINED_SWITCH.includes(name));
 
 // The screens this adapter lifts. The `/resume` captures that list at least one session, seven of the
@@ -113,6 +115,16 @@ const LIFTED = new Set([
   "omp--v18-12-6-ask-previews--w120.txt",
   // omp 18.12.6 in plan mode: the "Gather task for plan mode" Ask, four options with descriptions and previews.
   "omp--v18-12-6-ask-plan-mode--w120.txt",
+  // omp 18.16.0's Ask, footer ending in the glyph keycap `⌥H hide` (omp/ask.ts).
+  "omp--v18-16-0-ask-single-glyph-hide--w200.txt",
+  "omp--v18-16-0-ask-single-glyph-hide-moved--w200.txt",
+  // omp 18.16.0's plan review, options focused (omp/plan-review.ts): plain, under the Contents sidebar,
+  // and with the model-tier slider.
+  "omp--v18-16-0-plan-review--w80.txt",
+  "omp--v18-16-0-plan-review-contents--w140.txt",
+  "omp--v18-16-0-plan-review-moved--w80.txt",
+  "omp--v18-16-0-plan-review-slider--w140.txt",
+  "omp--v18-16-0-plan-review-slider-moved--w140.txt",
   "omp--v18-10-ask-single.txt",
   "omp--v18-10-ask-batch.txt",
   "omp--v18-10-ask-batch-moved.txt",
@@ -392,6 +404,20 @@ const DECLINED = new Set([
   "omp--answer-editor-typed.txt",
   "omp--answer-editor-wrapped.txt",
   "omp--v18-4-ask-note-editor.txt",
+  "omp--v18-16-0-answer-editor-empty--w200.txt",
+  // omp 18.16.0's `Other` editor, read off herdr-core as plain text (#704): the same prompt-style box.
+  "omp--v18-16-0-custom-answer-empty--w200.txt",
+  "omp--v18-16-0-custom-answer-typed--w200.txt",
+  "omp--v18-16-0-custom-answer-wrapped--w200.txt",
+  "omp--v18-16-0-note-editor-empty--w200.txt",
+  // — omp 18.16.0's plan review in states omp/plan-review.ts declines: focus on the plan body (the
+  //   footer names scroll keys, no `⏎ confirm`), and the slider footer clipped with `…` at 80 columns.
+  //   Neither names a way out, so neither draws the card either.
+  "omp--v18-16-0-plan-review-regions--w80.txt",
+  "omp--v18-16-0-plan-review-slider-clipped--w80.txt",
+  // omp 18.17.0's `/usage` dashboard (2026-11-06): a full-screen modal with a way out (`⎋ close`) and no
+  // list to point at. It stays raw and gets the unread-dialog card with its Escape, like `/settings`.
+  "omp--v18-17-0-usage-dashboard--w120.txt",
   // — The full-screen pickers. No `menu` block for these: `parseKeyHintFooter` (the shared, pinned
   //   key-hint grammar) returns [] for the `/model` and `/resume` footers, and for `/settings` it
   //   yields only {Jump sections, [Tab]} + {Close, [Escape]} because `menuKeyFor` rejects the
@@ -597,6 +623,25 @@ describe("the omp corpus", () => {
     "omp--v18-12-nerd-band-two-lines--w80.txt",
     "omp--v18-12-nerd-band-wrapped--w130.txt",
     "omp--v18-12-nerd-band-wrapped--w80.txt",
+    "omp--v18-16-0-answer-editor-empty--w200.txt",
+    "omp--v18-16-0-ask-single-glyph-hide--w200.txt",
+    "omp--v18-16-0-ask-single-glyph-hide-moved--w200.txt",
+    "omp--v18-16-0-custom-answer-empty--w200.txt",
+    "omp--v18-16-0-custom-answer-typed--w200.txt",
+    "omp--v18-16-0-custom-answer-wrapped--w200.txt",
+    "omp--v18-16-0-note-editor-empty--w200.txt",
+    "omp--v18-16-0-plan-review--w80.txt",
+    "omp--v18-16-0-plan-review-contents--w140.txt",
+    "omp--v18-16-0-plan-review-moved--w80.txt",
+    "omp--v18-16-0-plan-review-regions--w80.txt",
+    "omp--v18-16-0-plan-review-slider--w140.txt",
+    "omp--v18-16-0-plan-review-slider-clipped--w80.txt",
+    "omp--v18-16-0-plan-review-slider-moved--w140.txt",
+    "omp--v18-17-0-nerd-switch--w120.txt",
+    "omp--v18-17-0-nerd-switch-moved--w120.txt",
+    "omp--v18-17-0-nerd-switch-search--w120.txt",
+    "omp--v18-17-0-switch--w120.txt",
+    "omp--v18-17-0-usage-dashboard--w120.txt",
     "omp--v18-4-approval-bash-moved.txt",
     "omp--v18-4-approval-bash.txt",
     "omp--v18-4-approval-write-long.txt",
@@ -791,6 +836,14 @@ const ANSWER_EDITOR_FIXTURES = [
   "omp--answer-editor-wrapped.txt",
   // omp 18.4.10's note editor, opened with `n` on Green: the same prompt-style box.
   "omp--v18-4-ask-note-editor.txt",
+  // omp 18.16.0's `Other` editor: the same prompt-style box, its hint `⏎ or ⌃Q submit  ⎋ cancel`.
+  "omp--v18-16-0-answer-editor-empty--w200.txt",
+  // omp 18.16.0's `Other` editor, plain text off herdr-core, hint `⏎ or Ctrl+Q submit  ⎋ cancel` (#704).
+  "omp--v18-16-0-custom-answer-empty--w200.txt",
+  "omp--v18-16-0-custom-answer-typed--w200.txt",
+  "omp--v18-16-0-custom-answer-wrapped--w200.txt",
+  // The same box opened with `n` on an option: `Note for apple: …`.
+  "omp--v18-16-0-note-editor-empty--w200.txt",
 ];
 const COMPOSER_FIXTURES = [
   "omp--done--tool-result.txt",
@@ -964,6 +1017,8 @@ describe("composerReady — the gate the reply path pre-flights on", () => {
     expect(draft("omp--answer-editor-long.txt")).toBe(
       Array.from({ length: 700 }, (_, i) => `word${String(i).padStart(4, "0")}`).join(" "),
     );
+    expect(draft("omp--v18-16-0-custom-answer-empty--w200.txt")).toBeNull();
+    expect(draft("omp--v18-16-0-custom-answer-typed--w200.txt")).toBe("a ripe mango");
   });
 });
 

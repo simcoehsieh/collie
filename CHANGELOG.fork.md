@@ -11,6 +11,28 @@ Version headings are upstream's — a fork entry records which upstream release 
 not a version of its own (`bin/collie version` reports upstream's number plus the commit, and that
 stays true).
 
+## On top of 1.27.4
+
+Merged upstream v1.27.4 (2026-11-08, with v1.25.6 through v1.27.3 under it): 11 releases, 536 commits,
+52 conflicted files. Infra taken whole: one tap on Send with the iPhone keyboard up, Codex 0.166–0.167
+folder-trust and hook-trust prompts, Claude Code 2.1.317 rating survey, verbose token row and ghost
+suggestion, a long slash command submitted again, Stop's put-back card, agy 1.4.12 sub-agent band,
+Herdr's front folder, Chrome's silent-push budget, a bridge that exits when its port will not open,
+the loopback Origin check, the composer's spellchecker off, and the wide layout's tablet fixes.
+UI taken (operator, 2026-11-08): one notification per agent (on, upstream's default), the sidebar's
+status marks, a printed image in a sheet, the finished-pane ring after a look, `/slot/<n>`.
+
+- **One notification per agent keeps the fork's rules:** a `notify.toml` mute (`dev`) sends nothing in
+  either mode, Apple still gets no retraction, and the pane's own notification carries the fork's line
+  and buttons (`bridge/notifications.test.ts`, "FORK: notify.toml session mute holds…").
+- **Off in the shipped app:** upstream's new default look (`FORK_NEW_LOOK_ON`: folder tab, chat-box
+  composer, Atkinson, grain, warmer greys), the Settings Zoom pill row (`FORK_ZOOM_PILL_CHOICE_ON`), the
+  worktree row's second line and the header's repo name (`FORK_BRANCH_LABEL_ON`), the Jobs mark
+  (`FORK_BELT_PINS_ON`), Updates as the first Settings row and the gear's update dot
+  (`MAINTAINER_MANAGED_UPDATES`). The tab row keeps the fork's dashed "+".
+- **Telemetry:** upstream's daily ping is off on a `-dev` build by upstream's own rule, and this
+  install's `.env` also sets `COLLIE_TELEMETRY=0`.
+
 ## On top of 1.25.5
 
 Merged upstream v1.25.5 (2026-11-02, with v1.24.0 through v1.25.4 under it): 10 releases, 920 commits,

@@ -4076,18 +4076,22 @@ describe("real screens from the fixture corpus", () => {
 
   // Seen live on 2026-10-17: Claude Code's usage row in the blank row between the key row and the box
   // for about ten seconds after a turn. The profile names it (`idle.noticeGaps`), so the box stays free.
-  test("on a heads-up notice with the usage row under its keys: hello goes on one tap", async () => {
-    const { pane, send } = rig();
-    pane.over = [
-      "✦ Heads up · One of the notes says a nightly cleanup task",
-      "  deletes everything on your X: drive at 03:00. All your repos",
-      "  live on that drive.",
-      "  1: Learn more   2: Knew this already   0: Dismiss",
-      "  You've used 87% of your weekly limit · resets Oct 22, 1am (Ameri…",
-    ];
-    const answer = await send("hello");
-    expect(answer.receipt).toMatchObject({ outcome: "sent" });
-    expect(pane.transcript.at(-1)).toBe("> hello");
+  // Seen live on 2026-11-03, Claude Code 2.1.317 with `verbose` on: the session's token count in the
+  // same place, right-aligned, for as long as the notice stays.
+  test("on a heads-up notice with the usage row or the verbose token count under its keys: hello goes on one tap", async () => {
+    for (const gap of ["  You've used 87% of your weekly limit · resets Oct 22, 1am (Ameri…", `${" ".repeat(60)}230267 tokens`]) {
+      const { pane, send } = rig();
+      pane.over = [
+        "✦ Heads up · One of the notes says a nightly cleanup task",
+        "  deletes everything on your X: drive at 03:00. All your repos",
+        "  live on that drive.",
+        "  1: Learn more   2: Knew this already   0: Dismiss",
+        gap,
+      ];
+      const answer = await send("hello");
+      expect(answer.receipt, gap.trim()).toMatchObject({ outcome: "sent" });
+      expect(pane.transcript.at(-1)).toBe("> hello");
+    }
   });
 
   // Lane 8788, 2026-10-19: Claude Code's rating survey stood on the update row right over the box, and
@@ -4136,6 +4140,40 @@ describe("real screens from the fixture corpus", () => {
     expect((await send("4")).receipt).toMatchObject({ outcome: "sent" });
     expect(pane.transcript.at(-1)).toBe("> 4");
   });
+
+  // 2026-11-05, Claude Code 2.1.317 (issue 705): Claude's right-aligned context field, `N% until
+  // auto-compact`, sits on the row under the survey's keys. All ten sends on that box were refused
+  // `unconfirmed` or `stale_surface` (modal unreadable, the single-key cue on the key row).
+  const CONTEXT_ROW = `${" ".repeat(100)}4% until auto-compact`;
+
+  test("on the rating survey over the context row: a sentence goes on one tap, a digit takes the notice path", async () => {
+    for (const between of [[CONTEXT_ROW], ["", CONTEXT_ROW], [`${" ".repeat(100)}27% until auto`]]) {
+      const { pane, send } = rig();
+      pane.over = [...SURVEY_ROWS, ...between];
+      const answer = await send("ok merge the five, running the crew update now");
+      expect(answer.receipt, JSON.stringify(between)).toMatchObject({ outcome: "sent" });
+      expect(answer.cause).toBeUndefined();
+      expect(pane.transcript.at(-1)).toBe("> ok merge the five, running the crew update now");
+    }
+    const { pane, send } = rig();
+    pane.over = [...SURVEY_ROWS, CONTEXT_ROW];
+    const first = await send("2");
+    expect(first.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+    expect(first.cause).toBe("notice_key");
+    expect(first.offers).toEqual(["commit", "keys"]);
+  });
+
+  for (const name of ["claude--v2317-survey-context-row--w160.txt", "claude--v2317-survey-context-row-plain--w160.txt"]) {
+    test(`the capture ${name} reads free with the survey over the context row, and a digit is refused to the notice path`, async () => {
+      const captured = rig({ pane: still(fixture(name)) });
+      const prepared = await captured.protocol.handle({ id: "fixture-survey-ctx", text: "", mode: "prepare" }, { session: "main", paneId: "%1", harness: "claude" });
+      expect(prepared.surface).toMatchObject({ turn: "idle", modal: "none", composer: "empty" });
+      const digit = await captured.send("2");
+      expect(digit.receipt).toMatchObject({ outcome: "refused", reason: "unconfirmed", keys: [] });
+      expect(digit.cause).toBe("notice_key");
+      expect(captured.pane.calls).toEqual([]);
+    });
+  }
 
   test("the field screen's capture reads free with the survey over the titled box, and a digit is refused to the notice path", async () => {
     const captured = rig({ pane: still(fixture("claude--v2303-titled-edge-survey--w160.txt")) });
@@ -5352,7 +5390,7 @@ describe("the held send (M56 spec 15)", () => {
     });
   });
 
-  test("a held send never goes into a box that answers the agent's question (idle.answerPrompt); a person's send still may", async () => {
+  test("a held send never goes into a box that answers the agent's question (idle.answerPrompt); a person's send from the phone still may", async () => {
     const capture = (name: string): string => readFileSync(join(import.meta.dir, `../../web/src/fixtures/panes/${name}`), "utf8");
     const clock = { now: 1_000_000 };
     const holds = new HoldStore(join(dir, "held"), () => clock.now);
@@ -5366,10 +5404,14 @@ describe("the held send (M56 spec 15)", () => {
     expect(released?.receipt).toMatchObject({ requestId: "held-answer-01", outcome: "held" });
     expect(holds.get("held-answer-01")?.state).toBe("held");
     expect(r.pane.calls).toEqual([]);
-    // The person, looking at the question, may answer it from the phone: that send is typed.
+    // A send that is no person's own (a walky talky message, a hook, the CLI) waits too (#704).
     const direct = rig({ harness: "hermes", version: "0.22.2" });
     direct.pane.fixed = capture("hermes--clarify-other.txt");
-    const answer = await direct.send("CockroachDB");
+    const other = await direct.send("CockroachDB");
+    expect(other.receipt).toMatchObject({ outcome: "refused", reason: "not_free" });
+    expect(direct.pane.calls).toEqual([]);
+    // The person, looking at the question, may answer it from the phone: that send is typed.
+    const answer = await direct.send("CockroachDB", { fromPhone: true });
     expect(answer.receipt?.reason).not.toBe("not_free");
     expect(direct.pane.calls.length).toBeGreaterThan(0);
   });
@@ -11106,5 +11148,50 @@ describe("the late-probe window: a probe drawn late on an idle pane (M80 spec 09
     expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "probe_failed", keys: ["probe"], saw: { turn: "idle", modal: "none", composer: "empty" } });
     expect(answer.receipt?.detail).toContain("The omp input box does not take keys yet; it may still be starting.");
     expect(answer.receipt?.gapsMs.probe).toBeGreaterThanOrEqual(LATE_PROBE.ms);
+  });
+});
+
+// #655: agy 1.4.12 lists a running sub-agent in a rail between the box's bottom rule and a closing
+// rule, and that rail row ends in the sub-agent's elapsed time. The profile's rail shape (agy.json,
+// frameAlternates) puts the rail inside the frame, so a draft's two-read compare would see the time
+// tick. An EMPTY box compares by its two edges alone: its top rule and the rail's closing rule. The
+// screen is the report's own (agy--v1412-subagent-band-idle.txt), its elapsed time set per read.
+describe("agy 1.4.12, the empty box over a sub-agent rail, replayed from the report's screen (#655)", () => {
+  const screen = readFileSync(join(import.meta.dir, "../../web/src/fixtures/panes/agy--v1412-subagent-band-idle.txt"), "utf8");
+  const ELAPSED = "· 1h15m35s";
+  const draw = (elapsed: string, box: string): string => screen.replace(ELAPSED, `· ${elapsed}`).replace(/^>$/mu, box === "" ? ">" : `> ${box}`);
+
+  test("the screen holds one Agent row with its elapsed time and one empty `>` row", () => {
+    expect(screen.split("\n").filter((row) => row.startsWith("  ● Agent(") && row.endsWith(ELAPSED))).toHaveLength(1);
+    expect(screen.split("\n").filter((row) => row === ">")).toHaveLength(1);
+    expect(draw("12s", "")).not.toBe(draw("13s", ""));
+  });
+
+  test("12s at the first read, 13s at the second, a second more at every read after: S0 reads the same box and the send goes out", async () => {
+    const pane = new FakePane("claude");
+    const elapsed: string[] = [];
+    pane.beforeRead = (p, n) => {
+      const time = `${String(11 + n)}s`;
+      elapsed.push(time);
+      p.fixed = draw(time, p.box);
+    };
+    const answer = await rig({ pane, harness: "agy", version: "1.4.12" }).send("hello agy");
+    expect(elapsed.slice(0, 2)).toEqual(["12s", "13s"]);
+    expect(answer.detail ?? "").not.toMatch(/moved between two reads/u);
+    expect(answer.receipt?.s0).toMatchObject({ hash: expect.any(String) });
+    expect(pane.calls).toEqual([`type:${PROBE}`, "paste:hello agy"]);
+    expect(answer.receipt).toMatchObject({ outcome: "sent" });
+    expect(pane.keysSeen.at(-1)).toBe("Enter");
+  });
+
+  test("the control: the box's top rule changes between the two reads, and S0 refuses not_free", async () => {
+    const pane = new FakePane("claude");
+    pane.beforeRead = (p, n) => {
+      const drawn = draw(`${String(11 + n)}s`, p.box);
+      p.fixed = n === 2 ? drawn.replace(/^(─+)\n>$/mu, (_all, rule: string) => `${rule.slice(0, -10)}\n>`) : drawn;
+    };
+    const answer = await rig({ pane, harness: "agy", version: "1.4.12" }).send("hello agy");
+    expect(answer.receipt).toMatchObject({ outcome: "refused" });
+    expect(pane.calls).toEqual([]);
   });
 });

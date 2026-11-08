@@ -203,8 +203,8 @@ describe("meta colours (M57)", () => {
 
   it("meta colours follow the theme's backgrounds, and come back for collie", async () => {
     document.head.innerHTML =
-      '<meta name="theme-color" content="#f5f5f5" media="(prefers-color-scheme: light)">' +
-      '<meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)">';
+      '<meta name="theme-color" content="#e4e3e0" media="(prefers-color-scheme: light)">' +
+      '<meta name="theme-color" content="#2a2927" media="(prefers-color-scheme: dark)">';
     await bootstrap(null);
     const mod = await import("./use-theme");
     mod.setMetaColours({ light: "#eeeeee", dark: "#123456" });
@@ -217,12 +217,16 @@ describe("meta colours (M57)", () => {
     expect(contents()).toEqual(["#f1f4f7", "#0d0f15"]);
   });
 
-  it("meta colours of the collie theme file are the same two literals", async () => {
+  it("meta colours of the collie theme file are the same two literals: its band, since it sets chrome band", async () => {
     const { toSrgbHex } = await import("@/lib/theme/schema");
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
+    // FORK: this holds upstream's theme FILE to upstream's band colours. The file is data here: the
+    // default theme writes nothing on the page, and this install's metas are the fork's page colours
+    // above (the 1.27 look is off, lib/fork-shape.ts FORK_NEW_LOOK_ON).
     const file = JSON.parse(readFileSync(resolve(import.meta.dirname, "../themes/collie.json"), "utf8"));
-    expect(toSrgbHex(file.light.background)).toBe("#f5f5f5");
-    expect(toSrgbHex(file.dark.background)).toBe("#0a0a0a");
+    expect(file.surface.chrome).toBe("band");
+    expect(toSrgbHex(file.light.secondary)).toBe("#e4e3e0");
+    expect(toSrgbHex(file.dark.secondary)).toBe("#2a2927");
   });
 });

@@ -140,6 +140,10 @@ const AGENT_VIEW_KEYS = {
   // Not a crew dimension: the pane's running subagents (bridge/subagents.ts), absent when none is
   // running or on an older bridge.
   subagents: true,
+  // Not a crew dimension: the pane's background jobs (bridge/jobs-journal.ts), absent when there are
+  // none or on an older bridge.
+  jobs: true,
+  // (Upstream 1.27 also lists `model` and `effort` here; the fork has carried both since before, above.)
   // Not crew dimensions: the operator's name for this pane's one-pane tab, and the pane's position in
   // its tab. Computed on the machine the pane lives on; an older peer omits both.
   soleTabName: true,
@@ -294,6 +298,7 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
       "hooks",
       "host",
       "instance",
+      "jobs",
       "kind",
       "lastActiveAt",
       "lastSeenAt",

@@ -1,6 +1,18 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { DESIGN_STORAGE_KEY, __resetDesign, designPrefs, parseDesignPrefs, setDesignFont, setDesignTheme } from "./design";
+import { LIBRARY_STORAGE_KEY } from "@/lib/theme/store";
+
+import {
+  DEFAULT_FONT,
+  DESIGN_STORAGE_KEY,
+  RETIRED_THEME_ID,
+  __resetDesign,
+  designPrefs,
+  fontClass,
+  parseDesignPrefs,
+  setDesignFont,
+  setDesignTheme,
+} from "./design";
 
 // The device look is an object so it can grow siblings. These cases hold the newest sibling, the
 // colour theme (M57), to the rule that a field this build knows is never dropped by a write to
@@ -38,6 +50,32 @@ describe("the theme field", () => {
     expect(stored()).toEqual({ font: "system" });  // FORK: the fork's default face (lib/design.ts).
   });
 
+  it("moves a stored collie-new to collie on first read, and writes the blob back", () => {
+    localStorage.setItem(DESIGN_STORAGE_KEY, JSON.stringify({ font: "atkinson", theme: RETIRED_THEME_ID }));
+    __resetDesign();
+    expect(designPrefs()).toEqual({ font: "atkinson" });
+    expect(stored()).toEqual({ font: "atkinson" });
+  });
+
+  it("keeps the operator mirror when it moves collie-new, and leaves other ids alone", () => {
+    const operatorFont = { family: "Mine", basename: "mine.woff2" };
+    localStorage.setItem(DESIGN_STORAGE_KEY, JSON.stringify({ font: "op:mine.woff2", operatorFont, theme: RETIRED_THEME_ID }));
+    __resetDesign();
+    expect(stored()).toEqual({ font: "op:mine.woff2", operatorFont });
+    localStorage.setItem(DESIGN_STORAGE_KEY, JSON.stringify({ font: "aldrich", theme: "nightwatch" }));
+    __resetDesign();
+    expect(stored()).toEqual({ font: "aldrich", theme: "nightwatch" });
+  });
+
+  it("does not move a collie-new that an imported theme in the library owns", () => {
+    expect(LIBRARY_STORAGE_KEY).toBe("collie:themes:v1");
+    localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify({ version: 1, themes: [{ id: RETIRED_THEME_ID }] }));
+    localStorage.setItem(DESIGN_STORAGE_KEY, JSON.stringify({ font: "aldrich", theme: RETIRED_THEME_ID }));
+    __resetDesign();
+    expect(designPrefs().theme).toBe(RETIRED_THEME_ID);
+    expect(stored()).toEqual({ font: "aldrich", theme: RETIRED_THEME_ID });
+  });
+
   it("ignores an id of the wrong shape", () => {
     setDesignTheme("midnight");
     setDesignTheme("Bad Id");
@@ -55,5 +93,47 @@ describe("the theme field", () => {
       operatorFont: { family: "Depart", basename: "depart.woff2" },
       theme: "other",
     });
+  });
+});
+
+// The default face is Atkinson Hyperlegible upstream (2026-11-06). FORK: it is the system face here
+// (lib/design.ts; upstream's new look is off, lib/fork-shape.ts FORK_NEW_LOOK_ON), and Atkinson is an
+// opt-in class. The same three kinds of device must agree with it: one that stored nothing, one that
+// stored `collie` (which is the absence of the field), and one that chose Aldrich on purpose.
+describe("the default face", () => {
+  const classes = () => document.documentElement.className;
+
+  beforeEach(() => {
+    document.documentElement.className = "";
+  });
+
+  it("is the system face, and wears no class", () => {
+    expect(DEFAULT_FONT).toBe("system");
+    expect(fontClass(DEFAULT_FONT)).toBe("");
+    expect(fontClass("aldrich")).toBe("font-aldrich");
+    expect(fontClass("atkinson")).toBe("font-atkinson");
+  });
+
+  it("is what a device with nothing stored renders, before and after mount", () => {
+    localStorage.clear();
+    __resetDesign();
+    expect(designPrefs().font).toBe("system");
+    expect(classes()).toBe("");
+  });
+
+  it("is what a device with theme collie and no font renders", () => {
+    localStorage.setItem(DESIGN_STORAGE_KEY, JSON.stringify({ theme: "collie" }));
+    __resetDesign();
+    expect(designPrefs().font).toBe("system");
+    expect(classes()).toBe("");
+  });
+
+  it("keeps Aldrich for a device that stored it, and puts font-aldrich on the root", () => {
+    localStorage.setItem(DESIGN_STORAGE_KEY, JSON.stringify({ font: "aldrich" }));
+    __resetDesign();
+    expect(designPrefs().font).toBe("aldrich");
+    expect(classes()).toBe("font-aldrich");
+    setDesignFont("system");
+    expect(classes()).toBe("");
   });
 });

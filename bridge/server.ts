@@ -33,7 +33,7 @@ import {
 import { apiError, type ApiErrorBody, type ApiErrorDetail, type ErrorCode } from "./error-codes.ts";
 import { keysDeliverable, MUX_CAPABILITIES, supportsCapability, type MuxCapability, type MuxCapabilityDeclaration } from "./mux/capabilities.ts";
 import { muxUnsupported } from "./mux/types.ts";
-import type { MuxAdapter, MuxAck, MuxGrid, MuxGridRequest, MuxHistoryPage, MuxReadHint, MuxReadPurpose, MuxStarters, MuxWorktreeCreateRequest } from "./mux/types.ts";
+import type { MuxAdapter, MuxAck, MuxGrid, MuxGridRequest, MuxHistoryPage, MuxReadHint, MuxReadPurpose, MuxStarters } from "./mux/types.ts";
 import {
   compressStatic,
   computeEtag,
@@ -54,6 +54,7 @@ import { createCacheRulesReader } from "./operator-cache-rules.ts";
 import { createSessionFolders, createSessionLabels, resolveSessionFolder, withSessionLabels } from "./operator-space-labels.ts";
 import { pluginRoot } from "./root.ts";
 import { parseNotifyPrefsPatch as parsePrefsPatch, type NotifyPrefs, type NotifyPrefsStore } from "./notify-prefs.ts";
+import { paneClears, paneTag } from "./notifications.ts";
 import { browseFolders, type FolderBrowseContext } from "./folder-browse.ts";
 import { MAX_FAVOURITES, MAX_FOLDER_CHARS, type FolderSurface } from "./folders.ts";
 import { isValidWorktreeBranch } from "./worktree-branch.ts";
@@ -71,6 +72,7 @@ import {
   type WorktreeChoiceSurface,
 } from "./worktree-choices.ts";
 import {
+  branchSlug,
   diskFolderFs,
   expandHome,
   herdrDefaultTarget,
@@ -81,6 +83,8 @@ import {
 } from "./worktree-folder.ts";
 import { askGit, parseBase, resolveBase, resolveDefaultBranch, type GitAsk } from "./worktree-base.ts";
 import { memoryWorktreeBases, type WorktreeBaseSurface } from "./worktree-bases.ts";
+import { withSpacesContext } from "./space-view.ts";
+import { addWorktree, targetExistsDetail, type WorktreeAddDeps, type WorktreeAddRequest, worktreeMatchOf } from "./worktree-add.ts";
 import {
   isRequestId,
   memoryWorktreeReceipts,
@@ -181,7 +185,7 @@ import {
 } from "./prompt-binding.ts";
 import { MAX_BIND_COLUMN, type ColumnRange } from "../web/src/lib/column-range.ts";
 import { MAX_TAIL_LINES } from "../web/src/lib/tail-lines.ts";
-import type { Push, PushSubscription } from "./push.ts";
+import type { Push, PushMessage, PushSubscription } from "./push.ts";
 import { RefreshCoalescer } from "./refresh.ts";
 import { herdTagFor, selectView, type SessionRegistry, type SessionRuntime, widenedPanes } from "./sessions.ts";
 import type { Snooze } from "./snooze.ts";
@@ -198,12 +202,15 @@ import {
   type PreflightReport,
 } from "./update-action.ts";
 import { type ReleaseLine, type UpdateLineRecord, withLine } from "./update-line.ts";
+import { parseTelemetryRequest, parseTroubleSignal, type Telemetry } from "./telemetry.ts";
 import { REPORT_SCREEN_ROWS, reportDoctorRows, reportScreen, type DoctorRowSource, type ReportContext, type ReportDoctorRow } from "./report.ts";
 import type { StateEngine } from "./state-engine.ts";
 import { adapterFor, buildJournalRegistry, journalAgentName } from "./journal/registry.ts";
 import { readClaudeSubagent } from "./journal/claude.ts";
 import { chatParams, LiveWindows } from "./journal/live.ts";
 import { JournalSubagents } from "./subagents-journal.ts";
+import { JournalTodos } from "./todos.ts";
+import { JournalJobs } from "./jobs-journal.ts";
 import { parseDurableLog } from "./journal/durable.ts";
 import { maskSurface, surfaceRouteBody, type SurfaceShadow } from "./surface/shadow.ts";
 import type { SurfaceTotals } from "./surface/counters.ts";
@@ -222,6 +229,7 @@ import {
   maskDiff,
   maskFileBody,
   maskHistoryPage,
+  maskJobList,
   maskPaneRead,
   maskSnapshotTitles,
   maskTerminalTitle,
@@ -229,6 +237,9 @@ import {
   maskTodoList,
 } from "./answer-mask.ts";
 import { maskForwardedAnswer } from "./crew/mask.ts";
+import type { LeadMerge } from "./crew/forward.ts";
+import { CWD_PARAM, folderAnswers, leadRowCarry, leadRowMarked, leadRowsRead, ROW_FIELD, rowFromLead, type LeadWrite } from "./crew/launcher-rows.ts";
+import { withCopyRows, type LauncherCopySeam } from "./crew/standby-launchers.ts";
 import { redactAnsi, redactText } from "./redact.ts";
 import { TranscriptStore } from "./journal/store.ts";
 // FORK: the agent-authored status line — one sentence per pane, read through a cache.
@@ -237,7 +248,7 @@ import { SessionFactsStore } from "./session-facts.ts";
 import { StatusLineStore } from "./status-lines.ts";
 import type { AgentSessionRef, DiscoverHints, ForegroundProcess, JournalAdapter, PaneScreen, TranscriptEntry } from "./journal/types.ts";
 import { isBlobHash, resolveBlobPath } from "./journal/pi.ts";
-import { statFile } from "./journal/files.ts";
+import { realpathOf, statFile } from "./journal/files.ts";
 import {
   bearerToken,
   normalizeLabel,
@@ -254,6 +265,7 @@ import type { CrewLead } from "./crew/lead.ts";
 import { crewDeviceOf, crewGate, type GateLevel } from "./crew/peer-gate.ts";
 import { snapshotPlan } from "./crew/merge.ts";
 import { selectHostFrom, type HostSelector } from "./crew/registry.ts";
+import { crewHerdTagFor } from "./crew/tags.ts";
 import { machineHost } from "./crew/machine-host.ts";
 import type { CrewHandler, CrewSurface } from "./crew/router.ts";
 import type { CrewTlsOptions } from "./crew/transport.ts";
@@ -261,7 +273,7 @@ import { createSttAdmission, MAX_STT_AUDIO_BYTES, sttCapability, transcribeReque
 import type { SttProvider } from "./stt/provider.ts";
 import { createWhistleModelStore, type WhistleModelStore } from "./stt/whistle-model.ts";
 import type { CodexDetector } from "./stt/codex-detect.ts";
-import { HOST } from "./host.ts";
+import { HOST, isInside } from "./host.ts";
 import { createHostCodexDetector, sttHostGet, sttHostPut, type SttHostRouteDeps } from "./stt/host-http.ts";
 import {
   modelResponse,
@@ -754,14 +766,14 @@ export function isPaneInput(pathname: string, method: string): boolean {
 }
 
 /**
- * Does this request change what a machine HAS: a launch, a new space or tab, or a pane or tab closed
+ * Does this request change what a machine HAS: a launch, a new space, worktree or tab, or a pane or tab closed
  * or renamed? On the owning host each of those settles itself (`settleTopology`). Forwarded to a
  * member, the member settles and the lead does not: the lead sees the member only through its sweep,
  * which rides the primary engine's tick, so a pane launched on a member stayed a shell, or missing,
  * on the phone for up to one idle interval (12 s; minibuch, 2026-10-14). The forward branch gives
  * these the same hot spell an input buys.
  */
-const TOPOLOGY_CREATES: ReadonlySet<string> = new Set(["/api/launch", "/api/workspace", "/api/tab"]);
+const TOPOLOGY_CREATES: ReadonlySet<string> = new Set(["/api/launch", "/api/workspace", "/api/tab", "/api/worktree"]);
 export function isTopologyWrite(pathname: string, method: string): boolean {
   if (method !== "POST") return false;
   if (TOPOLOGY_CREATES.has(pathname)) return true;
@@ -811,8 +823,13 @@ interface RouteCaller {
    * `(host, session)` → the runtime to act on, or the Response refusing/answering it. For a browser
    * this may resolve to *another machine*, in which case the request is forwarded and the peer's own
    * response comes back here (§9.1). For a crew caller it is always local.
+   *
+   * `merge` is the one way a route changes a forwarded answer on the lead, and one route passes it:
+   * `GET /api/launchers`, which adds the lead's rows to a member's answer (ADR 0127). `write` is the
+   * one way a route changes a forwarded body: `POST /api/launch` and `POST /api/worktree`, which carry
+   * a lead row to the member (ADR 0127 point 3). A local runtime and the crew caller ignore both.
    */
-  resolve(): Promise<SessionRuntime | Response>;
+  resolve(merge?: LeadMerge, write?: LeadWrite): Promise<SessionRuntime | Response>;
   /**
    * The caller's own authorisation at this level, or `null` to proceed. `device-read` is a read that
    * needs the write level's device factors (ADR 0083) without the write level's `Origin` rule.
@@ -1241,6 +1258,13 @@ export interface UpdateLineDeps {
   now: () => number;
 }
 
+/**
+ * The anonymous install ping's state (M86 spec 01), read and changed by `GET`/`POST /api/telemetry`.
+ * A seam like {@link UpdateLineDeps}: the clock, the disk and the `fetch` are index.ts's. Undefined
+ * answers 503.
+ */
+export type TelemetryDeps = Pick<Telemetry, "view" | "choose" | "trouble">;
+
 export function startServer(opts: {
   cfg: Config;
   registry: SessionRegistry;
@@ -1263,6 +1287,8 @@ export function startServer(opts: {
   updateAction?: UpdateActionDeps;
   /** The release line record (M60 spec 01). See {@link UpdateLineDeps}. */
   updateLine?: UpdateLineDeps;
+  /** The anonymous install ping (M86 spec 01). See {@link TelemetryDeps}. */
+  telemetry?: TelemetryDeps;
   /** The doctor's send rows for Report a problem (M71 spec 05). See {@link ReportMachine.sendHealth}. */
   sendHealth?: () => readonly DoctorRowSource[];
   /**
@@ -1348,7 +1374,7 @@ export function startServer(opts: {
    * (CREW_PROTOCOL.md §5), and the lead being the only sender is what makes that fan complete.
    * Structurally typed, not the class: this file needs "fan a pref change, list the live slots".
    */
-  peerNotifier?: { applyPrefs(): void; tags(): string[] };
+  peerNotifier?: { applyPrefs(): void; tags(): string[]; paneClears(): PushMessage[] };
   /**
    * Device pairing (bridge/pairing.ts). Always supplied by index.ts — it is not an opt-in feature
    * flag: the store reads its own registry off disk, and pairing is always on (ADR 0086), so an empty
@@ -1371,6 +1397,13 @@ export function startServer(opts: {
    * `bridge/crew/standby-devices.ts`.
    */
   pairing?: PairingStore;
+  /**
+   * The crew's launcher rows as this machine keeps a copy of them (ADR 0127 point 5,
+   * `bridge/crew/standby-launchers.ts`). Supplied by index.ts when a trust store exists. While this
+   * machine leads in place of the lead it was deputy to, the copy joins its own rows, which win on the
+   * same command. Absent, or serving nothing, the rows are this machine's own, exactly as before.
+   */
+  launcherCopy?: LauncherCopySeam;
   /**
    * The host's own read credential (bridge/local-secret.ts): the hash of the secret this process
    * wrote to `<stateDir>/local-secret` at start. Absent means no local credential is accepted, which
@@ -1638,20 +1671,30 @@ export function startServer(opts: {
    * on the same line). The read-time sweep runs first, so a row whose device was revoked behind this
    * process's back is gone before it can be offered or started.
    */
+  /**
+   * THE ONE SEAM for "this machine's rows" (ADR 0127 point 5): its own merged rows, then, while it leads
+   * in place of the lead it was deputy to, the copy it holds of that lead's rows, its own winning on the
+   * same command. The launch allowlist, the New screen's list, and the lead rows spec 02 and 03 offer
+   * and carry to members all read through here. The copy is never written into either own list.
+   */
+  const crewMerged = async (): Promise<MergedLaunchers> =>
+    withCopyRows(await readMerged(launcherSources), opts.launcherCopy?.served() ?? null, homedir());
   const allowedLaunchers = async (): Promise<Launcher[]> => {
     // A label gone from the registry since the last look takes its rows with it, here and on every
     // member (ADR 0094); then the sweep catches anything this process never saw go.
     await noticeRevokes();
     await sweepRevokedRows(addedLaunchers, pairedLabels(), audit);
-    return (await readMerged(launcherSources)).rows;
+    return (await crewMerged()).rows;
   };
+  // The deputy's copy is the list a launch here matches (ADR 0127 point 5).
+  opts.launcherCopy?.source(allowedLaunchers);
   // The one-off lines run here (ADR 0095): recorded by a run that worked, listed beside the rows.
   const recentRuns = opts.recentRuns ?? memoryRecentRuns();
   // Sent (ADR 0107): kept by a shell pane's blind send (wired in index.ts) and by a one-off run.
   const sent = opts.sent ?? memorySent({ off: cfg.sent === "off", home: homedir() });
   const sentSelf = opts.sentSelf ?? ((): SentSelf => ({ id: "local", name: hostname() }));
   const launchersAdding = {
-    merged: () => readMerged(launcherSources),
+    merged: crewMerged,
     file: cfg.launchersFile,
     recent: () => recentRuns.list(),
   };
@@ -1730,6 +1773,12 @@ export function startServer(opts: {
   // The agents pill's second source: Oh My Pi's and Gentle Shell's ongoing task cards, read from the
   // live windows above. Only for a pane whose journal has no subagent files (bridge/subagents-journal.ts).
   const journalSubagents = live === null || journals === null ? null : new JournalSubagents(journals, live, () => Date.now());
+  // The Tasks mark's third source: a plan call in the same live windows, for a harness that has neither
+  // a tailed nor a loaded todo source (bridge/todos.ts, `JournalTodos`). Any journal that yields plan calls.
+  const journalTodos = live === null || journals === null ? null : new JournalTodos(journals, live, () => Date.now());
+  // The Jobs mark's one source: the background commands in the same live windows, running or ended in
+  // the last ten minutes (bridge/jobs-journal.ts, ADR 0128). Any journal whose calls carry the facts.
+  const journalJobs = live === null || journals === null ? null : new JournalJobs(journals, live, () => Date.now());
   /** Does this agent have a journal at all — the snapshot's History-affordance gate. */
   const hasJournal = (agent: string) => adapterFor(journals ?? {}, agent) !== undefined;
   const discoversSessions = (agent: string) =>
@@ -1876,16 +1925,20 @@ export function startServer(opts: {
       const effort = key === undefined || !journalModelShown(journalModel, hookModel) ? undefined : cache?.effort?.(key);
       const withCache = effort === undefined ? withModel : { ...withModel, effort };
       // The tasks are words the agent wrote, so they take the mirror's mask like the title above.
-      const readTodos = opts.todos?.get(p);
+      const readTodos = opts.todos?.get(p) ?? journalTodos?.get(p);
       const todos = readTodos !== undefined && cfg.redact ? maskTodoList(readTodos) : readTodos;
       const withTodos = todos === undefined ? withCache : { ...withCache, todos };
       // The running subagents' descriptions are words the agent wrote too, so they take the same mask.
       const readSubagents = opts.subagents?.get(p) ?? journalSubagents?.get(p);
       const subagents = readSubagents !== undefined && cfg.redact ? maskSubagentList(readSubagents) : readSubagents;
       const withSubagents = subagents === undefined ? withTodos : { ...withTodos, subagents };
+      // The background jobs' commands are lines the agent ran, the likeliest place for a key, so the same mask.
+      const readJobs = journalJobs?.get(p);
+      const jobs = readJobs !== undefined && cfg.redact ? maskJobList(readJobs) : readJobs;
+      const withJobs = jobs === undefined ? withSubagents : { ...withSubagents, jobs };
       // The usage dots: numbers only, the session's context and the account's windows (ADR 0118).
       const readUsage = opts.usage?.get(p);
-      const withUsage = readUsage === undefined ? withSubagents : { ...withSubagents, usage: readUsage };
+      const withUsage = readUsage === undefined ? withJobs : { ...withJobs, usage: readUsage };
       // The branch rides the same way: from memory, never a wait, and no key when there is none.
       const gitHead = gitHeads?.get(p.cwd);
       const stamped = gitHead === undefined ? withUsage : { ...withUsage, gitHead };
@@ -1997,7 +2050,8 @@ export function startServer(opts: {
       bridge,
       agents: paneList((from) => from.engine.current().agents),
       shellPanes: paneList((from) => from.engine.current().shellPanes),
-      workspaces,
+      // A space's branch and, for a worktree, the base it was cut from: from memory, like a pane's head.
+      workspaces: withSpacesContext(workspaces, { gitHeads, bases: worktreeBases }),
       tabs,
       // A label is display-only: `name` stays the identity the phone sends back as `?session=`.
       sessions: withSessionLabels(registry.list(), sessionLabels.labelOf),
@@ -2132,6 +2186,26 @@ export function startServer(opts: {
     jsonError(apiError("session.unknown", { session: session ?? "" }), 404, acceptEncoding);
 
   /**
+   * A paired device's page read a pane and so closed its own notification for it
+   * (`web/src/lib/pane-notifications.ts`); tell push the slot is shut on that device (rule 2).
+   * Only the read the page itself marks as seen, which is the read it pairs with the close (a
+   * prefetch carries no seen header and closes nothing), and only one that succeeded.
+   */
+  const noteSeenSlot = (
+    device: string,
+    req: Request,
+    res: Response,
+    url: URL,
+    paneId: string,
+    rt: SessionRuntime | null,
+  ): void => {
+    if (req.headers.get(SEEN_HEADER) === null) return;
+    if (!res.ok && res.status !== 304) return;
+    const tag = seenSlotTag(url, paneId, rt);
+    if (tag !== null) push.noteSeen(device, tag);
+  };
+
+  /**
    * Everything session-scoped: the pane family, tab create/rename/close, workspace create.
    *
    * ── ONE BLOCK, TWO CALLERS, NO SECOND HANDLER SET ────────────────────────────
@@ -2193,9 +2267,13 @@ export function startServer(opts: {
     if (pathname === "/api/launch" && req.method === "POST") {
       const denied = caller.gate("write");
       if (denied) return denied;
-      const rt = await caller.resolve();
+      // Forwarded to a member, a lead row rides along as `row` (ADR 0127 point 3); the member takes it
+      // only from this link (`viaCrew`) with the lead's `X-Collie-Lead-Row` mark, and a phone that
+      // sends one itself is refused.
+      const rt = await caller.resolve(undefined, leadRowCarry(allowedLaunchers, homedir()));
       if (rt instanceof Response) return rt;
       return launch(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name, allowedLaunchers, {}, {
+        viaCrew: caller.via === "crew",
         harnesses,
         receipts: launchReceipts,
         launchWindow: opts.launchWindow,
@@ -2207,18 +2285,25 @@ export function startServer(opts: {
         sessionFolder: await sessionFolderOf(rt.name),
       });
     }
-    // Rows must come from the host that runs them: today's `/api/config` (a lead-only body) sent
-    // the LEAD's rows down even for a launch addressed at a peer via `?host=`. Session-scoped like
-    // `/api/launch` beside it, so the same `?host=` forward (§5) reaches the peer's own
-    // `launchers.toml` rather than the lead's. `home` rides along so the client can shorten a
-    // pinned `cwd` with a leading `~` without knowing which machine answered.
+    // Session-scoped like `/api/launch` beside it, so a `?host=` read is forwarded (§5) and the
+    // member answers with its own agents, home, rows and history. `home` rides along so the client
+    // can shorten a pinned `cwd` with a leading `~` without knowing which machine answered. Since ADR
+    // 0127 the lead's rows are the crew's: the lead asks the member whether each pinned folder is
+    // there and adds its own rows to the member's answer (`crew/launcher-rows.ts`).
     if (pathname === "/api/launchers" && req.method === "GET") {
       const denied = caller.gate("read");
       if (denied) return denied;
-      const rt = await caller.resolve();
+      const acceptEncoding = req.headers.get("accept-encoding");
+      const leadRows = leadRowsRead(
+        async () => ({ merged: await launchersAdding.merged(), file: launchersAdding.file, home: homedir() }),
+        (body) => json(body, acceptEncoding),
+      );
+      const rt = await caller.resolve(leadRows);
       if (rt instanceof Response) return rt;
+      // The lead's folder questions are answered to the lead alone: a phone's `?cwd=` asks nothing.
+      const asked = caller.via === "crew" ? url.searchParams.getAll(CWD_PARAM) : undefined;
       // A durable program's starters ride the same list (ADR 0102); every other multiplexer has none.
-      return launchersRoute(allowedLaunchers, req.headers.get("accept-encoding"), harnesses, launchersAdding, rt.herdr.listStarters?.bind(rt.herdr));
+      return launchersRoute(allowedLaunchers, acceptEncoding, harnesses, launchersAdding, rt.herdr.listStarters?.bind(rt.herdr), asked);
     }
     // The folder picker's one read. GATED ON WRITE although it writes nothing: the list exists only
     // to fill in a space create, so a device that may not create one has no use for it, and the
@@ -2391,9 +2476,9 @@ export function startServer(opts: {
       return secure(new Response(preview.body.html, { headers }));
     }
 
-    // Add, remove or rename a row a phone added (ADR 0094). Writes, on the write gate, and
-    // session-scoped for `/api/launchers`' reason: `?host=` reaches THAT machine's own store through
-    // the ordinary forward, and nothing is ever copied to another machine.
+    // Add, remove or rename a row a phone added (ADR 0094). Writes, on the write gate. Since ADR 0127
+    // they are answered by THIS machine's store whatever `?host=` says (the browser caller's resolver
+    // does not forward them), so a lead's phone adds for the whole crew.
     const addedAnswer = await serveAddedLauncherRoute(req, pathname, caller, launcherSources);
     if (addedAnswer !== null) return addedAnswer;
     // Remove one line from this machine's one-off history, or clear it (ADR 0095). Writes, and
@@ -2586,8 +2671,8 @@ export function startServer(opts: {
 
     // ── Worktrees: a branch from a folder (ADR 0093) ──
     // A branch made from a FOLDER (M48, ADR 0093): the New sheet's Where field names the repo by its
-    // folder. Lead-local: neither route is in the crew's FORWARDABLE list, so a `?host=` call answers
-    // 501 before it reaches this.
+    // folder. Both go to the addressed host (ADR 0126 point 6): a `?host=` call is forwarded by
+    // `caller.resolve()` and the member runs these same two handlers with its own receipts.
     if (pathname === "/api/worktree/plan" && req.method === "GET") {
       const denied = caller.gate("read");
       if (denied) return denied;
@@ -2598,10 +2683,14 @@ export function startServer(opts: {
     if (pathname === "/api/worktree" && req.method === "POST") {
       const denied = caller.gate("write");
       if (denied) return denied;
-      const rt = await caller.resolve();
-      if (rt instanceof Response) return rt;
+      // Before `resolve`: on a lead that forwards the create to a member, the forward itself is the
+      // long wait (WORKTREE_WRITE_BUDGET_MS, bridge/crew/peer-client.ts), and it happens inside it.
       server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
+      // A lead row rides along as `launch`'s does (ADR 0127 point 3).
+      const rt = await caller.resolve(undefined, leadRowCarry(allowedLaunchers, homedir()));
+      if (rt instanceof Response) return rt;
       return createWorktreeAt(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name, allowedLaunchers, {
+        viaCrew: caller.via === "crew",
         receipts: worktreeReceipts,
         bases: worktreeBases,
         choices: worktreeChoices,
@@ -2675,8 +2764,15 @@ export function startServer(opts: {
       // `files` is a read that still needs an authorised device (ADR 0083); see paneGateLevel.
       const denied = caller.gate(paneGateLevel(action));
       if (denied) return denied;
+      // The mirror's own poll, from a paired device: stamped here, before a peer's pane is forwarded,
+      // because the push it governs is sent by this collie (bridge/push.ts, rules 1 and 2).
+      const viewer = !action && req.method === "GET" ? pairedLabel(req, pairingGate) : null;
+      if (viewer !== null) push.notePoll(viewer);
       const rt = await caller.resolve();
-      if (rt instanceof Response) return rt;
+      if (rt instanceof Response) {
+        if (viewer !== null) noteSeenSlot(viewer, req, rt, url, paneId, null);
+        return rt;
+      }
       const { herdr, name: session } = rt;
       // You are in this pane: reading it, replying, sending keys, browsing its history. That is
       // the whole definition of "seen" (.adr/0003), and this is the one place every such request
@@ -2709,7 +2805,13 @@ export function startServer(opts: {
       const device = isRead ? null : caller.device();
       const audit_ = caller.audit;
 
-      if (!action && req.method === "GET") return readPaneCached(rt, readsFor(rt), cfg, paneId, url, req, paneReadHint(rt.engine, paneId));
+      if (!action && req.method === "GET") {
+        // FORK: through the session's shared read cache (readPaneCached); upstream's seen-slot note
+        // (1.27.1, rule 2 of bridge/push.ts) rides on its answer — a 304 counts as seen too.
+        const read = await readPaneCached(rt, readsFor(rt), cfg, paneId, url, req, paneReadHint(rt.engine, paneId));
+        if (viewer !== null) noteSeenSlot(viewer, req, read, url, paneId, rt);
+        return read;
+      }
       if (action === "history" && req.method === "GET")
         return paneHistory(cfg, journals, transcripts, rt.engine, herdr, paneId, url, req);
       if (action === "chat" && req.method === "GET")
@@ -2914,6 +3016,7 @@ export function startServer(opts: {
         } catch {
           return text("malformed URL", 400);
         }
+        // Never audited (CREW_PROTOCOL §21): the member merges its siblings' rows as its phone route does, and writes no line.
         return walkyPaneRoute(walky, rt.name, paneId, url.searchParams.get("limit"), req.headers.get("accept-encoding"));
       }
       if (walkyPane && req.method === "POST") {
@@ -3202,7 +3305,7 @@ export function startServer(opts: {
        * The forward is the only asynchrony this adds, and it is why `target()` is async: a local
        * request does not await a thing it did not do — `registry.get` is still one Map lookup.
        */
-      const target = async (): Promise<SessionRuntime | Response> => {
+      const target = async (merge?: LeadMerge, write?: LeadWrite): Promise<SessionRuntime | Response> => {
         if (host.kind !== "local") {
           const resolved = crewLead?.resolve(host, sessionName);
           if (resolved === undefined) {
@@ -3218,12 +3321,20 @@ export function startServer(opts: {
             // engine's tick (CREW_PROTOCOL.md §10.1), so a cold lead would show the member's answer
             // up to one idle interval late. A topology write is the same case (§ isTopologyWrite).
             const input = isPaneInput(pathname, req.method) || isTopologyWrite(pathname, req.method);
+            // A merged read (ADR 0127) asks with the route's own query and no phone headers, so the
+            // member's answer comes back as plain bytes the lead can read.
+            const askUrl = merge === undefined ? url : await merge.ask(url);
+            // A launch of a lead row carries the row (ADR 0127 point 3): only here, on a forward. The
+            // forward marks it `X-Collie-Lead-Row` only when the carry itself set the row.
+            const carried = write === undefined ? { request: req, leadRow: false } : await write.request(req);
+            const askReq = merge === undefined ? carried.request : new Request(askUrl, { method: req.method });
             // The lead's own record of the forward (§12): one line, the same `action` the peer will
             // write, plus the target host — two independent logs of one event, neither depending on
             // the other machine's disk.
             const forwarded = secure(
-              await crewLead!.forward(req, url, resolved, {
+              await crewLead!.forward(askReq, askUrl, resolved, {
                 device: whois(req).device,
+                leadRow: carried.leadRow,
                 // A member's text is masked here too, by the lead's own switch, so a member one
                 // release behind cannot send a key to the phone in clear (CREW_PROTOCOL.md §9.1).
                 mask: cfg.redact ? maskForwardedAnswer : undefined,
@@ -3242,6 +3353,7 @@ export function startServer(opts: {
                 },
               }),
             );
+            if (merge !== undefined) return merge.answer(forwarded);
             // The PRIMARY engine, because that is the one whose tick the sweep rides (index.ts).
             const own = registry.get()?.engine;
             return input && own !== undefined ? afterPaneInput(own, forwarded) : forwarded;
@@ -3264,6 +3376,10 @@ export function startServer(opts: {
         // `/crew/v1/snapshot`, and a lead sweeps on its own clock whether or not anybody is reading
         // it — stamping there would pin every peer at `watched` for the life of the crew).
         registry.get(sessionName)?.engine.noteAttention();
+        // The same fact, per device, for push: a device whose page polls is looking (bridge/push.ts,
+        // rule 1). By pairing label only, so the host's CLI and an unpaired caller stamp nothing.
+        const poller = pairedLabel(req, pairingGate);
+        if (poller !== null) push.notePoll(poller);
         // `?sessions=all` WIDENS the pane lists to every session on ONE machine (see localSnapshot).
         // One exact spelling and nothing else is accepted: the parameter is a switch, not a list, and
         // a typo must read as "no" rather than as some third behaviour. It does NOT replace
@@ -3494,7 +3610,7 @@ export function startServer(opts: {
         } catch {
           return text("malformed URL", 400);
         }
-        return walkyPaneRoute(walky, rt.name, paneId, url.searchParams.get("limit"), req.headers.get("accept-encoding"));
+        return walkyPaneRoute(walky, rt.name, paneId, url.searchParams.get("limit"), req.headers.get("accept-encoding"), { audit, device: whois(req).device });
       }
       // ── Ask v1 (M56 spec 08) ─────────────────────────────────────────────
       // `POST /api/ask/<id>?session=<name>`: a tap on a dialog card, as one Answer to a single-use ask
@@ -3517,7 +3633,13 @@ export function startServer(opts: {
         return askRoute(rt, askId, body, { audit, device: whois(req).device, redact: cfg.redact, acceptEncoding: req.headers.get("accept-encoding") });
       }
       const sessionRouted = await serveSessionRoute(req, url, {
-        resolve: target,
+        // The phone's added rows are the crew's (ADR 0127 point 4): the lead's own store answers them
+        // whichever machine `?host=` names, so they never forward. A member's `?session=` is no name
+        // this registry knows, so it is dropped with the host.
+        resolve: async (merge) =>
+          ADDED_LAUNCHER_PATHS.has(pathname)
+            ? localRuntime(host.kind === "local" ? sessionName : undefined, req.headers.get("accept-encoding"))
+            : target(merge),
         gate: browserGate,
         device: () => whois(req).device,
         audit,
@@ -3719,9 +3841,14 @@ export function startServer(opts: {
         // FORK: answers whether the endpoint was already on file. A device that believed itself
         // registered and hears `known: false` was pruned (its endpoint 404/410'd a send) and must
         // mint a fresh subscription instead of re-registering the dead one — web/src/lib/push.ts.
+        // The device comes from the bearer token, never from the body: it is what joins this row
+        // to the same device's polls (bridge/push.ts § the three rules), and a body could name any.
         const ack = await push.addSubscription(body, {
           replaces: supersededEndpoint(body),
           userAgent: req.headers.get("user-agent") ?? undefined,
+          device: pairedLabel(req, pairingGate) ?? undefined,
+          closesOwn: asJsonRecord(body)?.closesOwn === true,
+          badges: subscribeBadges(body),
         });
         return json(ack, req.headers.get("accept-encoding"));
       }
@@ -3751,6 +3878,14 @@ export function startServer(opts: {
           // raised those alerts and owns the subscription, so an unreachable peer is irrelevant here
           // — there is no policy to deliver and nothing to queue for reconnect (§5).
           for (const tag of peerNotifier?.tags() ?? []) void push.send({ type: "clear", tag });
+          // …and, with "one notification per agent" on, each pane's own notification, which no slot
+          // tag above names.
+          if (notifyPrefs.current().individual) {
+            const own = registry
+              .all()
+              .flatMap((rt) => paneClears(herdTagFor(rt.isPrimary, rt.name), rt.notifications.outstandingPaneIds()));
+            for (const msg of [...own, ...(peerNotifier?.paneClears() ?? [])]) void push.send(msg);
+          }
         }
         return json({ snoozedUntil: snooze.until() }, req.headers.get("accept-encoding"));
       }
@@ -3770,7 +3905,7 @@ export function startServer(opts: {
           let body: JsonValue;
           try {
             // SAFETY: `Request.json()` output IS a JsonValue by construction;
-            // `parseNotifyPrefsPatch` rejects anything that is not three optional booleans.
+            // `parseNotifyPrefsPatch` rejects anything that is not an optional boolean per pref.
             body = (await req.json()) as JsonValue;
           } catch {
             return text("bad request", 400);
@@ -4261,6 +4396,67 @@ export function startServer(opts: {
         };
         if (replay) receipt.replay = true;
         return json(receipt, req.headers.get("accept-encoding"));
+      }
+
+      if (pathname === "/api/telemetry" && (req.method === "GET" || req.method === "POST")) {
+        // ── THE ANONYMOUS INSTALL PING (M86 spec 01) ──────────────────────────
+        // The GET says whether the ping is on, which switch decided, the phone's own switch and the
+        // exact JSON the next ping would send (null when it is off). The POST is the phone's switch,
+        // a write with a request id, answered with the same body; the same id again answers it
+        // unchanged. Neither route sends a ping: the timer in index.ts is the only sender.
+        const ping = opts.telemetry;
+        if (!ping) return text("telemetry unavailable", 503);
+        if (req.method === "GET") {
+          const denied = guard(req, cfg, "read", pairingGate);
+          if (denied) return denied;
+          return json(ping.view(), req.headers.get("accept-encoding"));
+        }
+        const denied = browserGate("write");
+        if (denied) return denied;
+        let body: JsonValue;
+        try {
+          // SAFETY: `Request.json()` output IS a JsonValue by construction, and `parseTelemetryRequest`
+          // re-checks every field of it before any of it is believed.
+          body = (await req.json()) as JsonValue;
+        } catch {
+          return jsonError(apiError("telemetry.setting_invalid"), 400, req.headers.get("accept-encoding"));
+        }
+        const parsed = parseTelemetryRequest(body);
+        if (parsed === null || parsed.setting === null) {
+          return jsonError(apiError("telemetry.setting_invalid"), 400, req.headers.get("accept-encoding"));
+        }
+        if (parsed.requestId === null) {
+          return jsonError(apiError("telemetry.request_id_required"), 400, req.headers.get("accept-encoding"));
+        }
+        const result = ping.choose({ setting: parsed.setting, requestId: parsed.requestId });
+        if (!result.replay) {
+          audit.record({
+            action: "telemetry.setting",
+            device: whois(req).device,
+            detail: { setting: parsed.setting, requestId: parsed.requestId },
+          });
+        }
+        const receipt: JsonObject = { ok: true, ...result.view, requestId: parsed.requestId };
+        if (result.replay) receipt.replay = true;
+        return json(receipt, req.headers.get("accept-encoding"));
+      }
+
+      if (pathname === "/api/telemetry/trouble" && req.method === "POST") {
+        // ── THE TROUBLE TALLY (M86 spec 05) ───────────────────────────────────
+        // The phone showed one of its two trouble cards. A count, not a command: no request id, no
+        // audit line, and the phone never retries it. The bridge the phone talks to counts it under
+        // its own install, a crew member's pane included.
+        const denied = browserGate("write");
+        if (denied) return denied;
+        let body: JsonValue | undefined;
+        try {
+          // SAFETY: `Request.json()` output IS a JsonValue by construction, and `parseTroubleSignal`
+          // re-checks every field of it before any of it is believed.
+          body = (await req.json()) as JsonValue;
+        } catch {
+          body = undefined;
+        }
+        return telemetryTroubleRoute(opts.telemetry, body);
       }
 
       // ── Speech-to-text (bridge/stt/) ─────────────────────────────────────
@@ -5128,12 +5324,16 @@ export async function discoverProcesses(
 export async function discoveryHints(
   adapter: JournalAdapter,
   pane: AgentView,
-  mux: Pick<MuxAdapter, "readGrid" | "foregroundProcesses">,
+  mux: Pick<MuxAdapter, "readGrid" | "foregroundProcesses" | "paneLabels">,
   paneId: string,
 ): Promise<DiscoverHints | undefined> {
   // A reported session is never discovered, so the foreground argv would buy nothing.
   if (adapter.discover === undefined || pane.agentSession !== undefined) return undefined;
-  return { screen: paneScreen(mux, paneId), processes: await discoverProcesses(mux, paneId) };
+  const hints: DiscoverHints = { screen: paneScreen(mux, paneId), processes: await discoverProcesses(mux, paneId) };
+  // The labels come from the last snapshot and cost no call. Which key a journal reads is its own.
+  const labels = mux.paneLabels?.(paneId);
+  if (labels === undefined) return hints;
+  return { ...hints, labels };
 }
 
 /**
@@ -5141,10 +5341,15 @@ export async function discoveryHints(
  * its adapter answers to (`AGENT_ALIASES`): an `omp` pane and a `pi` pane write the same log format,
  * and one adapter's folder walk would find either's session.
  */
-function sharesFolder(adapter: JournalAdapter, pane: AgentView, panes: readonly AgentView[]): boolean {
-  return panes.some(
-    (other) => other.paneId !== pane.paneId && journalAgentName(other.agent) === adapter.agent && other.cwd === pane.cwd,
-  );
+async function sharesFolder(adapter: JournalAdapter, pane: AgentView, panes: readonly AgentView[]): Promise<boolean> {
+  for (const other of panes) {
+    if (other.paneId === pane.paneId || journalAgentName(other.agent) !== adapter.agent) continue;
+    if (other.cwd === pane.cwd) return true;
+    if (adapter.sharedFolderBlind !== true || !isAbsolute(pane.cwd) || !isAbsolute(other.cwd)) continue;
+    const [panePath, otherPath] = await Promise.all([realpathOf(pane.cwd).catch(() => null), realpathOf(other.cwd).catch(() => null)]);
+    if (panePath !== null && otherPath !== null && isInside(HOST, panePath, otherPath) && isInside(HOST, otherPath, panePath)) return true;
+  }
+  return false;
 }
 
 /**
@@ -5153,13 +5358,13 @@ function sharesFolder(adapter: JournalAdapter, pane: AgentView, panes: readonly 
  * (#508). Read only after {@link journalRefOf} answered null; a pane that reports a session never
  * reaches discovery, so it never earns this.
  */
-export function noSessionDetail(
+export async function noSessionDetail(
   adapter: JournalAdapter,
   pane: AgentView,
   panes: readonly AgentView[],
-): "shared-folder" | undefined {
+): Promise<"shared-folder" | undefined> {
   if (pane.agentSession !== undefined || adapter.sharedFolderBlind !== true) return undefined;
-  return sharesFolder(adapter, pane, panes) ? "shared-folder" : undefined;
+  return (await sharesFolder(adapter, pane, panes)) ? "shared-folder" : undefined;
 }
 
 /**
@@ -5181,7 +5386,7 @@ export async function journalRefOf(
   const reported = pane.agentSession;
   // Another pane running the same harness in the same folder: whatever a folder walk finds there
   // could be that pane's session.
-  const neighbour = sharesFolder(adapter, pane, panes);
+  const neighbour = await sharesFolder(adapter, pane, panes);
   if (reported === undefined) {
     // Discovery hears about the neighbour, so a folder-keyed adapter answers no session rather than
     // the neighbour's (#508). The flag rides only when true; otherwise the hints pass untouched.
@@ -5320,7 +5525,7 @@ export async function paneHistory(
   journals: Record<string, JournalAdapter> | null,
   transcripts: TranscriptStore | null,
   engine: StateEngine,
-  mux: Pick<MuxAdapter, "readGrid" | "foregroundProcesses">,
+  mux: Pick<MuxAdapter, "readGrid" | "foregroundProcesses" | "paneLabels">,
   paneId: string,
   url: URL,
   req: Request,
@@ -5479,7 +5684,7 @@ async function paneSubagent(
   cfg: Config,
   journals: Record<string, JournalAdapter> | null,
   engine: StateEngine,
-  mux: Pick<MuxAdapter, "readGrid" | "foregroundProcesses">,
+  mux: Pick<MuxAdapter, "readGrid" | "foregroundProcesses" | "paneLabels">,
   paneId: string,
   agentId: string,
   req: Request,
@@ -5546,7 +5751,7 @@ export async function paneChat(
   journals: Record<string, JournalAdapter> | null,
   live: LiveWindows | null,
   engine: StateEngine,
-  mux: Pick<MuxAdapter, "capabilities" | "readGrid" | "foregroundProcesses">,
+  mux: Pick<MuxAdapter, "capabilities" | "readGrid" | "foregroundProcesses" | "paneLabels">,
   paneId: string,
   url: URL,
   req: Request,
@@ -5574,7 +5779,7 @@ export async function paneChat(
   // runs per poll here, a bounded newest-first walk that costs milliseconds in the common case;
   // the resolved path below is what the live window holds.
   const ref = await journalRefOf(adapter, pane, panes, await discoveryHints(adapter, pane, mux, paneId));
-  if (ref === null) return unavailable("no-session", noSessionDetail(adapter, pane, panes));
+  if (ref === null) return unavailable("no-session", await noSessionDetail(adapter, pane, panes));
 
   const params = chatParams(url);
   try {
@@ -6798,12 +7003,12 @@ async function focusPane(
 // injection the bridge already allows, so it stays within the existing remote-shell threat model.
 // The body's `label` must be a string or null; a blank string clears (so a user can wipe a label by
 // saving an empty field), which we send to Herdr as `label: null`.
-async function renamePane(
-  herdr: MuxAdapter,
-  engine: StateEngine,
+export async function renamePane(
+  herdr: Pick<MuxAdapter, "renamePane" | "renameTab" | "refresh" | "capabilities">,
+  engine: Pick<StateEngine, "current" | "pokeNow">,
   paneId: string,
   req: Request,
-  audit: AuditLog,
+  audit: Pick<AuditLog, "record">,
   device: string | null,
   session: string,
 ): Promise<Response> {
@@ -6828,9 +7033,38 @@ async function renamePane(
       ae,
     );
   }
-  audit.record({ action: "pane.rename", paneId, session, device, detail: { label } });
+  const tabRenamed = label !== null && (await renameSoleTab(herdr, engine, paneId, label));
+  audit.record({ action: "pane.rename", paneId, session, device, detail: { label, tabRenamed } });
   await settleTopology(herdr, engine);
   return json({ ok: true } satisfies ActionResponse, ae);
+}
+
+/**
+ * A pane renamed from the phone also renames its tab when the pane is alone in it. A launcher row names the
+ * tab it starts after the row's label ("cc danger"), and the terminal's tab bar shows the tab name, so a
+ * pane renamed on the phone would keep showing the row's label there. With one pane the tab and the pane are
+ * one thing to the person; a tab with two or more panes keeps its name. Returns whether the tab was renamed.
+ */
+async function renameSoleTab(
+  herdr: Pick<MuxAdapter, "renameTab" | "capabilities">,
+  engine: Pick<StateEngine, "current">,
+  paneId: string,
+  label: string,
+): Promise<boolean> {
+  if (!supportsCapability(herdr.capabilities, "renameTab")) return false;
+  const snapshot = engine.current();
+  const pane = [...snapshot.agents, ...snapshot.shellPanes].find((p) => p.paneId === paneId);
+  if (pane === undefined) return false;
+  const tab = snapshot.tabs.find((t) => t.tabId === pane.tabId);
+  if (tab === undefined || tab.paneCount !== 1) return false;
+  // Best effort: a tab left with its old name costs a label, never the pane rename that already landed.
+  try {
+    const renamed = await herdr.renameTab(tab.tabId, label);
+    return renamed.ok;
+  } catch {
+    // Swallowed: the pane is renamed; the tab name is cosmetic.
+    return false;
+  }
 }
 
 /**
@@ -7099,21 +7333,6 @@ export async function createWorkspace(
 // routes scoped to a SPACE (ADR 0032) had no caller left and were removed in 1.20.0.
 
 /**
- * Which catalogued code a worktree refusal is.
- *
- * Only two refusals change what the phone DOES — a busy multiplexer means try again, an ambiguous
- * branch means type a better one. Everything else is shown, so it shares one code per verb and
- * carries the multiplexer's own sentence in `{reason}` (bridge/error-codes.ts: "a template that is
- * only {reason} is not a mistake").
- */
-function worktreeCode(detail: string, fallback: ErrorCode): ErrorCode {
-  if (detail.includes("worktree_operation_in_progress")) return "worktree.busy";
-  if (detail.includes("ambiguous_worktree_branch")) return "worktree.ambiguous_branch";
-  if (detail.includes("not_git_worktree")) return "worktree.not_a_repo";
-  return fallback;
-}
-
-/**
  * What an earlier create with the same `requestId` answered, rebuilt from its receipt (ADR 0089).
  *
  * The label and tab come off the snapshot when the pane is still there; a pane that is gone keeps the
@@ -7144,14 +7363,20 @@ async function joined(running: Promise<WorktreeCreateResponse>): Promise<Worktre
   return answer.ok ? { ...answer, replayed: true } : answer;
 }
 
-/** The half of a create that touches the multiplexer, run at most once per `requestId`. */
+/**
+ * The half of a create that touches the disk and the multiplexer, run at most once per `requestId`.
+ *
+ * Git makes the checkout on this host (bridge/worktree-add.ts, M81), and the multiplexer is asked
+ * only to open the folder as a space, so the same create works on every multiplexer that opens one.
+ */
 async function runWorktreeCreate(
   herdr: MuxAdapter,
   engine: StateEngine,
   repoRoot: string,
   branch: string,
   base: string | undefined,
-  row: Launcher | undefined,
+  // The row to start once the space is open, and `lead` when it is a lead row this member was sent.
+  launcher: Pick<PickedLaunch, "row" | "source">,
   requestId: string | undefined,
   audit: AuditLog,
   device: string | null,
@@ -7159,36 +7384,39 @@ async function runWorktreeCreate(
   receipts: WorktreeReceiptSurface,
   bases: WorktreeBaseSurface,
   wait: PaneReadyOptions,
-  // The folder the checkout is made in (ADR 0093), already checked; absent is the multiplexer's own.
-  path?: string,
-  // Run once the multiplexer said yes, before the answer: the New sheet's memory of this repo's choices.
+  // The folder the checkout is made in (ADR 0093), already checked; absent is Herdr's default folder.
+  path: string | undefined,
+  // Where Herdr's default folder is read from: the home folder and Herdr's own config.
+  folderDeps: WorktreeAddDeps,
+  // Run once the checkout is open, before the answer: the New sheet's memory of this repo's choices.
   afterCreate?: () => Promise<void>,
 ): Promise<WorktreeCreateResponse> {
-  // `base` and `path` join the request only when there is one, so a call without them is the call
-  // this route always made.
-  let request: MuxWorktreeCreateRequest = { repoRoot, branch };
+  // `base` and `path` join the request only when there is one.
+  let request: WorktreeAddRequest = { repoRoot, branch };
   if (base !== undefined) request = { ...request, base };
   if (path !== undefined) request = { ...request, path };
-  const outcome = await herdr.createWorktree(request);
-  if (!outcome.ok) {
-    // The half-done case gets its OWN code, because the recovery is the opposite one: the branch is
-    // on disk and only the opening failed, so the phone must offer "open it", never "create it
-    // again" (a second create refuses — the path is taken). Probed on herdr 0.8.2, 2026-08-28.
-    const halfDone = outcome.detail.includes("worktree_open_failed");
+  const added = await addWorktree(folderDeps, request);
+  if (!added.ok && added.code === "worktree.target_exists") {
+    return { ok: false, ...apiError(added.code, { path: added.path, reason: added.detail }) };
+  }
+  if (!added.ok) return { ok: false, ...apiError(added.code, { reason: added.detail }) };
+  const opened = await herdr.createSpace({ cwd: added.path, label: branchSlug(branch) });
+  if (!opened.ok) {
+    // The half-done case gets its OWN code, because the recovery is the opposite one: the checkout is
+    // on disk and only the opening failed. It stays, and a retry finds it (`existed`) and only opens.
     return {
       ok: false,
-      ...apiError(
-        halfDone ? "worktree.created_not_opened" : worktreeCode(outcome.detail, "worktree.create_failed"),
-        { reason: outcome.detail },
-      ),
+      ...apiError("worktree.created_not_opened", { reason: `${opened.detail} (the checkout is at ${added.path})` }),
     };
   }
-  const created = outcome.value;
-  // Written only now, once the multiplexer said yes: a refusal leaves no checkout to describe.
-  if (base !== undefined) await bases.record(created.cwd, { base, createdAt: Date.now() });
+  const created = opened.value;
+  // Written only now, once the checkout is open: a half-done create records it on the retry that opens it.
+  // The branch rides with it, so a folder made again later on another branch shows no stale base.
+  if (base !== undefined) await bases.record(created.cwd, { base, branch, createdAt: Date.now() });
   if (afterCreate !== undefined) await afterCreate();
   let launcherStarted = false;
   let launcherError: string | undefined;
+  const row = launcher.row;
   if (row !== undefined) {
     const sent = await typeIntoFreshShell(herdr, created.paneId, row.command, wait, "worktree");
     launcherStarted = sent.ok;
@@ -7209,6 +7437,7 @@ async function runWorktreeCreate(
       launcher: row?.command,
       launcherStarted: row === undefined ? undefined : String(launcherStarted),
       path,
+      source: launcher.source,
     },
   });
   if (requestId !== undefined) {
@@ -7244,8 +7473,8 @@ async function runWorktreeCreate(
 // The New sheet names a FOLDER (typed, or from Recent and Favourites), which may be open in no space
 // at all, so these two find the repo from the folder: the nearest `.git` at or above it, then git's
 // own `--git-common-dir` to reach the MAIN checkout of a linked worktree, the folder Herdr calls the
-// repo root. Git runs hardened and argv only (`askGit`, bridge/worktree-base.ts). Lead-local, like
-// every worktree route.
+// repo root. Git runs hardened and argv only (`askGit`, bridge/worktree-base.ts). On the host the
+// request addresses, like every worktree route (ADR 0126 point 6).
 
 /** The repo a folder belongs to, as real paths. */
 interface FolderRepo {
@@ -7346,13 +7575,13 @@ export async function planWorktree(
     answer.branchValid = await gitAcceptsBranch(repo.repoRoot, branch, ask);
     if (answer.branchValid) {
       const path = await herdrDefaultTarget(repo.repoRoot, branch, home, deps.readHerdrConfig);
-      answer.defaultTarget = { path, exists: await (deps.fs ?? diskFolderFs).exists(path) };
+      answer.defaultTarget = await defaultTargetOf(repo.repoRoot, path, branch, deps.fs ?? diskFolderFs);
       const parent = (url.searchParams.get("parent") ?? "").trim();
       if (parent !== "") {
         const outcome = await resolveParentTarget({ parent, branch, repoRoot: repo.repoRoot, home, fs: deps.fs });
         answer.parentTarget = outcome.ok
           ? { ok: true, path: outcome.path }
-          : { ok: false, ...apiError(outcome.code, { path: outcome.path ?? parent }) };
+          : { ok: false, ...apiError(outcome.code, folderRefusalDetail(outcome, parent)) };
       }
     }
   }
@@ -7360,14 +7589,41 @@ export async function planWorktree(
 }
 
 /**
+ * The plan's verdict on Herdr's default folder, asked of git the way the parent path is (spec 08).
+ * `exists` is true only when the create would refuse the folder: one git lists as the same finished
+ * worktree on this branch reads false, because the create then only opens it, so a retry after a
+ * half-done create is not blocked on the phone. Another state git lists comes with its `reason`; a
+ * plain folder that git does not list has none.
+ */
+async function defaultTargetOf(
+  repoRoot: string,
+  path: string,
+  branch: string,
+  fs: Pick<FolderFs, "exists">,
+): Promise<{ path: string; exists: boolean; reason?: string }> {
+  if (!(await fs.exists(path))) return { path, exists: false };
+  const match = await worktreeMatchOf(repoRoot, path, branch);
+  if (match === null || match.kind === "absent") return { path, exists: true };
+  if (match.kind === "same") return { path, exists: false };
+  return { path, exists: true, reason: targetExistsDetail(match) };
+}
+
+/** The detail of a folder refusal: the folder it names, and git's state of it when there is one. */
+function folderRefusalDetail(outcome: { path?: string; detail?: string }, parent: string): ApiErrorDetail {
+  const path = outcome.path ?? parent;
+  return outcome.detail === undefined ? { path } : { path, reason: outcome.detail };
+}
+
+/**
  * `POST /api/worktree` — a new branch in a new folder, opened as its own space, from the folder the
  * New sheet names, and optionally an agent or a row started in it.
  *
  * The body is `{ cwd, branch, base?, folder?, requestId?, harness? | command? | shell? }`. `base` is
- * `parseBase`'s shape (ADR 0089). `folder` is `{ kind: "default" }` (absent means the same: no `path`
- * is sent and Herdr decides) or `{ kind: "parent", parent }`, which runs the whole folder rule
- * (bridge/worktree-folder.ts) right here, every time. The launch kinds are `POST /api/launch`'s; none
- * at all is a plain shell. `requestId` replays through the worktree receipts (ADR 0089).
+ * `parseBase`'s shape (ADR 0089). `folder` is `{ kind: "default" }` (absent means the same: the
+ * checkout goes in Herdr's default folder, bridge/worktree-add.ts) or `{ kind: "parent", parent }`,
+ * which runs the whole folder rule (bridge/worktree-folder.ts) right here, every time. Git makes the
+ * checkout and the multiplexer opens it as a space (M81). The launch kinds are `POST /api/launch`'s;
+ * none at all is a plain shell. `requestId` replays through the worktree receipts (ADR 0089).
  */
 export async function createWorktreeAt(
   herdr: MuxAdapter,
@@ -7378,6 +7634,11 @@ export async function createWorktreeAt(
   session: string,
   getLaunchers: () => Promise<Launcher[]>,
   deps: FolderWorktreeDeps & {
+    /**
+     * True when the call came over the crew link from this machine's lead. A carried `row` is taken
+     * only then AND with the lead's `X-Collie-Lead-Row` mark on the request (ADR 0127 point 3).
+     */
+    viaCrew?: boolean;
     receipts: WorktreeReceiptSurface;
     bases?: WorktreeBaseSurface;
     choices?: WorktreeChoiceSurface;
@@ -7421,7 +7682,9 @@ export async function createWorktreeAt(
   if (folder === null) return refuse("worktree.folder_invalid");
   // `run` counts as named so a one-off line on a branch is refused (ADR 0095), never read as a shell.
   const named = ["command", "harness", "shell", "run"].some((k) => fields[k] !== undefined && fields[k] !== null && fields[k] !== false);
-  const picked = named ? await pickLaunch(fields, getLaunchers, deps.harnesses, null) : ({ kind: "shell", row: undefined } as const);
+  const picked = named
+    ? await pickLaunch(fields, getLaunchers, deps.harnesses, null, leadRowGate(req, deps.viaCrew, home))
+    : ({ kind: "shell", row: undefined } as const);
   if (picked instanceof Response) return picked;
   const cwd = askedFolder(fields.cwd, home);
   if (cwd === undefined || cwd === false) return refuse("worktree.folder_invalid");
@@ -7437,7 +7700,7 @@ export async function createWorktreeAt(
   let path: string | undefined;
   if (folder.kind === "parent") {
     const outcome = await resolveParentTarget({ parent: folder.parent, branch, repoRoot: repo.repoRoot, home, fs: deps.fs });
-    if (!outcome.ok) return refuse(outcome.code, { path: outcome.path ?? folder.parent });
+    if (!outcome.ok) return refuse(outcome.code, folderRefusalDetail(outcome, folder.parent));
     path = outcome.path;
   }
 
@@ -7465,7 +7728,7 @@ export async function createWorktreeAt(
     repo.repoRoot,
     branch,
     resolved.ref,
-    picked.row,
+    picked,
     requestId,
     audit,
     device,
@@ -7474,6 +7737,7 @@ export async function createWorktreeAt(
     deps.bases ?? memoryWorktreeBases(),
     deps.wait ?? {},
     path,
+    { home, readHerdrConfig: deps.readHerdrConfig },
     remember,
   );
   if (requestId !== undefined) receipts.track(requestId, work);
@@ -7523,14 +7787,18 @@ export async function dirsRoute(req: Request, roots: readonly string[] = []): Pr
 // `harnesses` rides along when the route is built with a probe (ADR 0091): the agents this host can
 // start by id and whether each binary is on its login PATH. A bridge that predates the New sheet
 // sends no such field, and that absence is how the phone recognises an older crew member.
+//
+// `folders` is the lead's folder questions (ADR 0127), passed only for a call over the crew link: each
+// is answered with whether that path is a folder here, `~` read as this machine's home.
 export async function launchersRoute(
   getLaunchers: () => Promise<Launcher[]>,
   acceptEncoding: string | null,
   harnesses?: Pick<HarnessProbe, "list">,
   adding?: LaunchersAdding,
   starters?: () => Promise<MuxStarters>,
+  folders?: readonly string[],
 ): Promise<Response> {
-  return json(await launchersBody(getLaunchers, harnesses, adding, starters), acceptEncoding);
+  return json(await launchersBody(getLaunchers, harnesses, adding, starters, folders), acceptEncoding);
 }
 
 /** What `launchersRoute` needs to answer ADR 0094's `adding` / `items` / `recentRuns`. */
@@ -7543,9 +7811,11 @@ export async function launchersBody(
   harnesses?: Pick<HarnessProbe, "list">,
   adding?: LaunchersAdding,
   starters?: () => Promise<MuxStarters>,
+  folders?: readonly string[],
 ): Promise<LaunchersResponse> {
   const rows = await getLaunchers();
   const body: LaunchersResponse = { launchers: rows, home: homedir(), handoffModels: await readHandoffModels() };
+  if (folders !== undefined && folders.length > 0) body.folders = folderAnswers(folders, body.home);
   if (harnesses !== undefined) body.harnesses = await harnesses.list();
   // ADR 0094: the switches, this machine's `launchers.toml` path, the recipes, the rows held back, and
   // the one list the New page draws, each item with its availability here and its reason code.
@@ -7565,9 +7835,17 @@ export async function launchersBody(
 // ── Rows a phone added (ADR 0094, bridge/launcher-adds.ts) ─────────────────────────────────────────
 //
 // Three writes, one per act: add, remove, rename. The ORDER is the folder routes' and is what makes
-// them safe: the caller's write gate first, then its resolver (which forwards a `?host=` call to the
-// member whose store it is and hands the member's answer back untouched), and only then THIS
-// machine's own store. A member that is not taking writes refuses before the attempt (§10.3).
+// them safe: the caller's write gate first, then its resolver, and only then THIS machine's own store.
+// Since ADR 0127 point 4 the lead answers all three from its own store whatever `?host=` says: the
+// browser's resolver for them never forwards (see `ADDED_LAUNCHER_PATHS`), so the row joins the
+// crew's rows instead of landing on one member. A member a phone reaches directly keeps its own store.
+
+/** The three phone writes the lead answers itself for any `?host=` (ADR 0127 point 4). */
+export const ADDED_LAUNCHER_PATHS: ReadonlySet<string> = new Set([
+  "/api/launchers/added",
+  "/api/launchers/added/remove",
+  "/api/launchers/added/rename",
+]);
 
 /** The crew-only forget: the lead tells a member to drop the rows a revoked device added through it. */
 export const FORGET_DEVICE_PATH = "/api/launchers/added/forget-device";
@@ -8066,10 +8344,13 @@ export async function launch(
   const replay = requestId === undefined ? null : earlierLaunch(receipts, requestId);
   if (replay !== null) return json(await replay, ae);
 
-  const picked = await pickLaunch(fields, getLaunchers, deps.harnesses, {
-    device,
-    switches: deps.switches ?? (() => Promise.resolve({ ...DEFAULT_SWITCHES })),
-  });
+  const picked = await pickLaunch(
+    fields,
+    getLaunchers,
+    deps.harnesses,
+    { device, switches: deps.switches ?? (() => Promise.resolve({ ...DEFAULT_SWITCHES })) },
+    leadRowGate(req, deps.viaCrew, deps.home ?? homedir()),
+  );
   if (picked instanceof Response) return picked;
 
   // The client never sends a command line, except as a one-off `run`, which met its gates above. It
@@ -8122,6 +8403,7 @@ export async function launch(
     wait,
     harness: picked.harness,
     launchWindow: deps.launchWindow,
+    source: picked.source,
   });
   if (requestId !== undefined) receipts.track(requestId, work);
   const answer = await work;
@@ -8155,6 +8437,13 @@ export async function launch(
 
 /** What `launch` needs beyond the route's own arguments. Every field defaults for a test. */
 export interface LaunchDeps {
+  /**
+   * True when the call came over the crew link from this machine's lead (`caller.via === "crew"`).
+   * A carried `row` is then run when this machine's own list has no match AND the request carries the
+   * lead's `X-Collie-Lead-Row` mark (ADR 0127 point 3). Otherwise a body with `row` and no own match
+   * is `launch.row_not_from_lead`.
+   */
+  viaCrew?: boolean;
   /** The agents this host starts by id. Absent: no `harness` body is accepted. */
   harnesses?: Pick<HarnessProbe, "launch">;
   /** Absent: an in-memory store. */
@@ -8199,7 +8488,24 @@ type PickedLaunch = {
   noPrompts?: boolean;
   /** The harness id a `harness` launch named: the launch window's mark ({@link LaunchWindow}). */
   harness?: string;
+  /** `lead` when the row is one the lead carried over the crew link (ADR 0127 point 3). */
+  source?: "lead";
 };
+
+/** Whether a carried lead row is taken, and the home its `~` is read under (ADR 0127 point 3). */
+interface LeadRowGate {
+  fromLead: boolean;
+  home: string;
+}
+
+/**
+ * A body `row` is the lead's only when BOTH hold: the call came over the crew link (`viaCrew`, which on
+ * a member means its lead) AND the lead marked the request with `X-Collie-Lead-Row`. The mark is what
+ * an old lead never adds: it forwards a phone's body, `row` and all, unchanged.
+ */
+function leadRowGate(req: Request, viaCrew: boolean | undefined, home: string): LeadRowGate {
+  return { fromLead: viaCrew === true && leadRowMarked(req.headers), home };
+}
 
 /** What a one-off `run` is checked against: who asks, and the operator's switch (ADR 0095). */
 interface RunGate {
@@ -8213,12 +8519,18 @@ interface RunGate {
  * runs. `run` is checked in its own order, every step before anything runs: a paired device, the
  * operator's switch, then the character rule. `runGate` is `null` where a run is never taken (a new
  * branch), and a body naming one there is refused rather than read as a plain shell.
+ *
+ * A `command` this host does not hold may come with the lead's `row` (ADR 0127 point 3). It is run
+ * only when `leadGate.fromLead` (the crew link and the lead's mark, {@link leadRowGate}); otherwise it
+ * is `launch.row_not_from_lead`. This host's own row on the same `command` wins, and `row` is then not
+ * read.
  */
 async function pickLaunch(
   fields: JsonObject,
   getLaunchers: () => Promise<Launcher[]>,
   harnesses: Pick<HarnessProbe, "launch"> | undefined,
   runGate: RunGate | null,
+  leadGate: LeadRowGate,
 ): Promise<PickedLaunch | Response> {
   const command = typeof fields.command === "string" ? fields.command.trim() : "";
   const harness = typeof fields.harness === "string" ? fields.harness.trim() : "";
@@ -8240,8 +8552,15 @@ async function pickLaunch(
   // `launchers.toml` is live on the bridge without a restart (an already-open tab needs a reload to
   // re-fetch its rows, the same property `commands.toml` has).
   const row = (await getLaunchers()).find((r) => r.command === command);
-  if (!row) return json({ ok: false, ...apiError("launch.not_allowlisted") } satisfies CreateResponse, null, 400);
-  return { kind: "row", row };
+  if (row) return { kind: "row", row };
+  const carried = fields[ROW_FIELD];
+  if (carried === undefined || carried === null) {
+    return json({ ok: false, ...apiError("launch.not_allowlisted") } satisfies CreateResponse, null, 400);
+  }
+  if (!leadGate.fromLead) return json({ ok: false, ...apiError("launch.row_not_from_lead") } satisfies CreateResponse, null, 400);
+  const lead = rowFromLead(carried, command, leadGate.home);
+  if (lead === null) return text("bad body", 400);
+  return { kind: "row", row: lead, source: "lead" };
 }
 
 /** A one-off run's gates, in order, and the line it types (ADR 0095). */
@@ -8308,6 +8627,8 @@ async function runLaunch(
     /** The harness id of a `harness` launch, and where its pane is marked once the line is typed. */
     harness: string | undefined;
     launchWindow: Pick<LaunchWindow, "mark"> | undefined;
+    /** `lead` for a row the lead carried (ADR 0127 point 3): the audit line says so. */
+    source?: "lead" | undefined;
   },
 ): Promise<CreateResponse> {
   const { row, besidePane, cwd } = job;
@@ -8366,7 +8687,7 @@ async function runLaunch(
   let detail: AuditDetail;
   if (row === undefined) detail = { cwd, requestId: job.requestId };
   else if (job.kind === "run") detail = { program: row.label, length: [...row.command].length, cwd, requestId: job.requestId };
-  else detail = { command: row.command, label: row.label, cwd, requestId: job.requestId, harness: job.kind === "harness" ? row.command : undefined };
+  else detail = { command: row.command, label: row.label, cwd, requestId: job.requestId, harness: job.kind === "harness" ? row.command : undefined, source: job.source };
   if (besidePane) detail.besidePaneId = besidePane.paneId;
   job.audit.record({
     action: row === undefined ? `${where}.create` : job.kind === "run" ? `${where}.run` : `${where}.launch`,
@@ -8779,12 +9100,15 @@ function shotRefusal(reason: ShotFailure): string {
  *    rebinding (Host==Origin==evil.example). COLLIE_ALLOW_ANY_HOST=1 is the explicit opt-out.
  *  - Same-origin only (Origin host must equal Host) — defeats cross-site requests/CSRF. Browsers
  *    omit Origin on same-origin GETs (so the snapshot poll passes); they send it on POSTs.
- *    localhost and explicitly-configured origins are also allowed.
+ *    Explicitly-configured origins (COLLIE_ALLOWED_ORIGINS) are the only other ones allowed. A
+ *    loopback Origin is NOT trusted by itself: on a phone, any app can serve a page from its own
+ *    localhost, and that page's requests to this collie carry `Origin: http://localhost…`. Trusting
+ *    the name let such a page drive every collie the phone could reach (2026-10-07).
  *  - Origin required for UNSAFE writes: a `level === "write"` request whose METHOD can change state
  *    (i.e. not GET/HEAD) and which carries no Origin is trusted only from loopback (curl on the
- *    host). Browsers always send Origin on fetch/SW POSTs, so a missing Origin there is a
- *    non-browser or Origin-stripped request — reject it. A write-GATED GET (`/api/dirs`) is exempt,
- *    because browsers omit Origin on same-origin GETs and a safe method is not a CSRF vector.
+ *    host). Browsers always send Origin on fetch/SW POSTs, so a missing Origin on a remote write is
+ *    a non-browser or Origin-stripped request — reject it. FORK: a write-GATED GET (`/api/dirs`) is
+ *    exempt, because browsers omit Origin on same-origin GETs and a safe method is not a CSRF vector.
  *  - Tailscale identity: when a trusted user is configured under `tailscale serve`, the request
  *    must carry a matching `Tailscale-User-Login`. A missing header is rejected too — serve injects
  *    none for tagged nodes. Under COLLIE_SKIP_SERVE=1 or COLLIE_TRUSTED_USER_OPTIONAL=1, only a
@@ -8811,10 +9135,8 @@ export function checkAccess(
     } catch {
       return { ok: false, reason: "bad origin" };
     }
-    const allowed =
-      originHost === host ||
-      LOOPBACK_HOST.test(originHost) ||
-      cfg.allowedOrigins.includes(origin);
+    // The collie's own origin, or one the operator listed. Nothing else, a loopback name included.
+    const allowed = originHost === host || cfg.allowedOrigins.includes(origin);
     if (!allowed) return { ok: false, reason: "cross-origin rejected" };
   } else if (level === "write" && !SAFE_METHOD.test(req.method) && !LOOPBACK_HOST.test(host)) {
     // A state-changing request with no Origin from a non-loopback Host isn't a real browser
@@ -9739,13 +10061,28 @@ export function walkyDropRoute(
  * ones it sent, newest first. A pane id no pane holds now lists nothing: a new session that takes the
  * id starts empty.
  */
-export function walkyPaneRoute(walky: WalkyService | undefined, session: string, paneId: string, limitRaw: string | null, acceptEncoding: string | null): Response {
+export function walkyPaneRoute(
+  walky: WalkyService | undefined,
+  session: string,
+  paneId: string,
+  limitRaw: string | null,
+  acceptEncoding: string | null,
+  context?: { readonly audit: AuditLog; readonly device: string | null },
+): Response {
   if (walky === undefined) return text(WALKY_OFF_TEXT, 404);
   if (!isPaneId(paneId)) return text("bad pane", 400);
   const limit = limitRaw === null ? WALKY_LIST_DEFAULT : Number(limitRaw);
   if (!Number.isInteger(limit) || limit < 1 || limit > WALKY_LIST_MAX) return text("bad limit", 400);
   const instance = walky.instanceOf(session, paneId);
-  return json({ messages: instance === null ? [] : walky.paneList(session, paneId, instance, limit) }, acceptEncoding);
+  const messages = instance === null ? [] : walky.paneList(session, paneId, instance, limit);
+  // A row a sibling instance on this machine recorded (bridge/walky/siblings.ts): one line for the
+  // answer that first merged it, never one per row, and never the body.
+  const fresh = context === undefined ? [] : walky.newSiblingRows(session, paneId, messages);
+  if (context !== undefined && fresh.length > 0) {
+    const recordedBy = [...new Set(fresh.map((entry) => entry.recordedBy))].join(",");
+    context.audit.record({ action: "walky.list.sibling", paneId, session, device: context.device, detail: { merged: fresh.length, recordedBy } });
+  }
+  return json({ messages }, acceptEncoding);
 }
 
 export function sendReceiptsRoute(rt: Pick<SendRouteRuntime, "send" | "driver"> & { readonly name?: string }, pane: string | null, acceptEncoding: string | null): Response {
@@ -9759,6 +10096,8 @@ export function sendReceiptsRoute(rt: Pick<SendRouteRuntime, "send" | "driver"> 
 /** What `reportContextRoute` reads of a session runtime: a {@link SessionRuntime} is one. */
 export interface ReportRouteRuntime extends Pick<SendRouteRuntime, "send" | "engine"> {
   readonly herdr: Pick<MuxAdapter, "controlTurn" | "readGrid" | "mux">;
+  /** The session's Surface shadow, for its cached binary version. Absent with the shadow off and on a program session. */
+  readonly surface?: Pick<SurfaceShadow, "cachedVersion">;
 }
 
 /** What `reportContextRoute` takes of this machine: its version, its release line and its send rows. */
@@ -9805,7 +10144,9 @@ export async function reportContextRoute(
   if (pane !== null && harness === null) return text("no such pane", 404);
   const screenable = pane !== null && rawInputRefusal(rt.herdr) === null;
   const doctor = reportDoctor(machine, harness);
-  const facts: ReportContext = { collie: machine.collie, line: machine.line, os: machine.os, arch: machine.arch, mux: rt.herdr.mux, harness, screenable };
+  // The version cache only: a report never starts a binary read.
+  const harnessVersion = harness === null || harness === "" ? null : (rt.surface?.cachedVersion(harness) ?? null);
+  const facts: ReportContext = { collie: machine.collie, line: machine.line, os: machine.os, arch: machine.arch, mux: rt.herdr.mux, harness, harnessVersion, screenable };
   const context: ReportContext = doctor === undefined ? facts : { ...facts, doctor };
   if (!wantScreen) return json(context, acceptEncoding);
   if (pane === null || !screenable) return text("this pane has no screen to include", 400);
@@ -9814,6 +10155,20 @@ export async function reportContextRoute(
   const read = await rt.herdr.readGrid(pane, { scope: "recent", lines: REPORT_SCREEN_ROWS, styling: "preserve" });
   if (!read.ok) return text(`${rt.herdr.mux} read failed: ${read.detail}`, 502);
   return json({ ...context, screen: reportScreen(stripSgr(read.value.text)) } satisfies ReportContext, acceptEncoding);
+}
+
+/**
+ * `POST /api/telemetry/trouble` once the write gate passed (M86 spec 05): one trouble signal from the
+ * phone. A body that is not exactly `{ kind, harness, version, mux }` in their shapes, plus an optional
+ * `screen` hash on a dialog signal, is a 400, plain text, because the phone never shows it. A good body is a 204 whether or not it was counted: with the
+ * ping off for any reason, nothing is stored. Undefined telemetry answers 503, like the setting route.
+ */
+export function telemetryTroubleRoute(ping: Pick<Telemetry, "trouble"> | undefined, body: JsonValue | undefined): Response {
+  if (!ping) return text("telemetry unavailable", 503);
+  const signal = parseTroubleSignal(body);
+  if (signal === null) return text("telemetry.trouble_invalid", 400);
+  ping.trouble(signal);
+  return secure(new Response(null, { status: 204 }));
 }
 
 /**
@@ -10049,6 +10404,35 @@ function isPushSubscription(v: JsonValue | undefined): v is JsonValue & PushSubs
     typeof keys.p256dh === "string" &&
     typeof keys.auth === "string"
   );
+}
+
+/**
+ * The notification slot a seen pane read stands for, or null when it stands for none this bridge
+ * can name. The slot is the one the notification sink opened for the pane (`paneTag`): of the
+ * session's herd tag for a pane here (`rt`), or of the member's for a pane the lead forwarded (`rt`
+ * null). A named session is matched only when the request named it, and a member's pane only in its
+ * primary session, the only one the lead alerts for. Every other spelling answers null, and the
+ * clear goes out as before. Pure and exported for the test.
+ */
+export function seenSlotTag(
+  url: URL,
+  paneId: string,
+  rt: Pick<SessionRuntime, "isPrimary" | "name"> | null,
+): string | null {
+  const named = url.searchParams.get("session");
+  if (rt !== null) {
+    if (named !== null && rt.isPrimary) return null;
+    return paneTag(herdTagFor(rt.isPrimary, rt.name), paneId);
+  }
+  const host = selectHostFrom(url);
+  if (host.kind !== "member" || named !== null) return null;
+  return paneTag(crewHerdTagFor(host.id, true, ""), paneId);
+}
+
+/** Whether the subscribing page has the Badging API, when it says (bridge/push.ts, `badges`). */
+function subscribeBadges(body: JsonValue | undefined): boolean | undefined {
+  const badges = asJsonRecord(body)?.badges;
+  return typeof badges === "boolean" ? badges : undefined;
 }
 
 /**

@@ -32,7 +32,7 @@ afterAll(async () => {
   await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
 });
 
-const defaults = { blocked: true, done: false, updates: true, cache: false, panes: [], machines: true };
+const defaults = { blocked: true, done: false, individual: true, updates: true, cache: false, panes: [], machines: true };
 
 describe("coerceNotifyPrefs", () => {
   test("fills missing / non-boolean keys from defaults", () => {
@@ -41,6 +41,9 @@ describe("coerceNotifyPrefs", () => {
     expect(coerceNotifyPrefs({})).toEqual(defaults);
     expect(coerceNotifyPrefs({ blocked: false })).toEqual({ ...defaults, blocked: false });
     expect(coerceNotifyPrefs({ done: true })).toEqual({ ...defaults, done: true });
+    // `individual` defaults ON: a file that never named it gets the default, a stored false stays false.
+    expect(coerceNotifyPrefs({ done: true }).individual).toBe(true);
+    expect(coerceNotifyPrefs({ individual: false })).toEqual({ ...defaults, individual: false });
     // `updates` is a first-class key: an explicit false sticks, non-booleans fall back to the default.
     expect(coerceNotifyPrefs({ updates: false })).toEqual({ ...defaults, updates: false });
     // `cache` is the fourth, and the one that defaults OFF: an explicit true sticks.
@@ -224,12 +227,20 @@ describe("NotifyPrefsStore", () => {
     const cfg = await tempCfg();
     const store = new NotifyPrefsStore(cfg);
     const updated = await store.set({ done: true, updates: false, cache: true, machines: false });
-    expect(updated).toEqual({ blocked: true, done: true, updates: false, cache: true, panes: [], machines: false });
+    expect(updated).toEqual({ blocked: true, done: true, individual: true, updates: false, cache: true, panes: [], machines: false });
 
     // Round-trips through disk: a fresh store reloads the same values (survives a restart).
     const reloaded = new NotifyPrefsStore(cfg);
     await reloaded.load();
-    expect(reloaded.current()).toEqual({ blocked: true, done: true, updates: false, cache: true, panes: [], machines: false });
+    expect(reloaded.current()).toEqual({
+      blocked: true,
+      done: true,
+      individual: true,
+      updates: false,
+      cache: true,
+      panes: [],
+      machines: false,
+    });
   });
 
   test("pane rules round-trip through disk and `panes` replaces rather than merges", async () => {
@@ -277,7 +288,7 @@ describe("NotifyPrefsStore", () => {
     await writeFile(join(cfg.stateDir, "notify-prefs.json"), JSON.stringify({ blocked: false }));
     const store = new NotifyPrefsStore(cfg);
     await store.load();
-    expect(store.current()).toEqual({ blocked: false, done: false, updates: true, cache: false, panes: [], machines: true });
+    expect(store.current()).toEqual({ blocked: false, done: false, individual: true, updates: true, cache: false, panes: [], machines: true });
   });
 
   test("load tolerates a missing file (keeps defaults)", async () => {

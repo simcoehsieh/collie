@@ -51,6 +51,7 @@ const KEYS = new Map<string, KeyFate>([
   ["collie:push-endpoint", { area: "local", prefix: false, fate: "wiped", why: "names this phone's push endpoint" }],
   // Cleared with the token (lib/pairing.ts `clearDeviceToken`): it caps the store at this pairing's expiry.
   ["collie:pairing-expires", { area: "local", prefix: false, fate: "wiped", why: "the ended pairing's expiry" }],
+  ["collie:slot:v1:", { area: "local", prefix: true, fate: "wiped", why: "the last pane address and workspace name of each browser tile" }],
   // Written first by the wipe and removed last; present only while a wipe is unfinished (lib/wipe.ts).
   ["collie:wipe-pending", { area: "local", prefix: false, fate: "wiped", why: "a wipe's resume mark" }],
   // FORK: the send queue and the notes (lib/wipe.ts "fork-session", lib/send-queue.ts).
@@ -74,12 +75,14 @@ const KEYS = new Map<string, KeyFate>([
   ["collie:auto-zen-enabled:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
   ["collie:pins:v1", { area: "local", prefix: false, fate: "kept", why: "pinned pane ids, no content" }],
   ["collie:report-episodes:v1", { area: "local", prefix: false, fate: "kept", why: "failed-send episodes for a report: pane ids, request ids, outcome and reason codes, no content (ADR 0123)" }],
+  ["collie:trouble-signalled:v1", { area: "local", prefix: false, fate: "wiped", why: "which trouble cards already signalled today: kind, crew host, pane id and day, no content (lib/report/once.ts)" }],
   ["collie:wide-layout:v1", { area: "local", prefix: false, fate: "kept", why: "large-screen columns per space: pane addresses and widths, no content (ADR 0120)" }],
   ["collie:wide-sidebar:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
   ["collie:wide-layout-mode:v1", { area: "local", prefix: false, fate: "kept", why: "preference: Auto or Off for the large-screen layout (ADR 0120)" }],
   ["collie:pin-hint:v1", { area: "local", prefix: false, fate: "kept", why: "a dismissed hint" }],
   ["collie:masked-hint:v1", { area: "local", prefix: false, fate: "kept", why: "a dismissed hint" }],
   ["collie:pane-nav-hint:v1", { area: "local", prefix: false, fate: "kept", why: "the Two fingers first-arm hint was shown (ADR 0121)" }],
+  ["collie.telemetryNotice.v1", { area: "local", prefix: false, fate: "kept", why: "a dismissed notice, stored as a revision: 1 the 1.27.0 notice, 2 the update notice (M86 spec 02, ADR 0134)" }],
   ["collie:hidden-machines:v1", { area: "local", prefix: false, fate: "kept", why: "machine names hidden here" }],
   ["collie:mirror-native:", { area: "local", prefix: true, fate: "kept", why: "a per-pane colour choice" }],
   ["collie:tour:v1", { area: "local", prefix: false, fate: "kept", why: "the tour was seen" }],
@@ -98,6 +101,7 @@ const KEYS = new Map<string, KeyFate>([
   ["collie:update-mode:v1", { area: "session", prefix: false, fate: "kept", why: "update screen state" }],
   ["collie:auto-reloaded-for=", { area: "session", prefix: true, fate: "kept", why: "reload guard, a build id" }],
   ["collie:pwa:guardReload:v1", { area: "session", prefix: false, fate: "kept", why: "reload guard" }],
+  ["collie.slot.tab", { area: "session", prefix: false, fate: "kept", why: "navigation state, one slot number" }],
   ["collie:preload-reload", { area: "session", prefix: false, fate: "kept", why: "reload guard, a timestamp" }],
   ["collie.nav.booted", { area: "session", prefix: false, fate: "kept", why: "navigation state" }],
   ["collie.nav.seeded", { area: "session", prefix: false, fate: "kept", why: "navigation state, an app path" }],

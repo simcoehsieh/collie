@@ -93,3 +93,17 @@ export const FORK_WIDE_LAYOUT_ON: boolean = true;
 // the method reads "off", no first-use hint shows above the belt and Settings shows no Pane navigation
 // row. The switcher stays the way between panes. Tests run with it.
 export const FORK_PANE_NAV_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO NEW DEFAULT LOOK (2026-11-08, at the 1.27 merge). Upstream 1.27.0 redraws its default theme:
+// warmer greys, square corners, a crossed grain behind the page, the open tab as a folder tab
+// (surface word `tabs = folder`), the composer that opens like a chat box (`composer = box`) and
+// Atkinson Hyperlegible as the default typeface. This install's look is the fork's redesign (skin.css,
+// lib/design.ts), and the new look would draw over it. Off here, the tabs, the composer, the typeface
+// and the page behind them render as they did at 1.25.5. Tests run with upstream's look.
+export const FORK_NEW_LOOK_ON: boolean = import.meta.env.MODE === "test";
+
+// FORK: NO ZOOM PILL CHOICE IN SETTINGS (2026-11-08, at the 1.27 merge). Upstream 1.27.0 adds an
+// Appearance row, "Zoom pill: Screen view / Off". The pill sits in the belt's pinned block, which is
+// off here (lib/belt-pins.ts), and Zoom opens from the pane menu instead, so the row would switch
+// nothing. Off here, Settings draws no Zoom pill row. Tests run with it.
+export const FORK_ZOOM_PILL_CHOICE_ON: boolean = import.meta.env.MODE === "test";

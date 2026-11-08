@@ -103,6 +103,8 @@ describe("push self-healing (fork)", () => {
       endpoint: replacement.endpoint,
       keys: { p256dh: "test-key-2", auth: "test-auth-2" },
       replaces: subscription.endpoint,
+      closesOwn: true,
+      badges: false,
     });
     expect(localStorage.getItem("collie:push-endpoint")).toBe(replacement.endpoint);
   });

@@ -61,6 +61,10 @@ export interface NotifyPrefs {
   blocked: boolean;
   /** Push when an agent finishes its task. Default off. */
   done: boolean;
+  /** Send each alert as its own notification, one per agent, instead of one summary per machine.
+   *  Default ON (from 1.27.0); a stored `false` stays `false`. A delivery shape, not an
+   *  agent status, so it never flows through {@link isNotifiable}; the coordinator reads it live. */
+  individual: boolean;
   /** Push when a newer Collie release is available. Default on — the off-switch for update alerts,
    *  which otherwise bypass snooze (an update isn't quiet-hours material). Not an agent status, so it
    *  never flows through {@link isNotifiable}; the update monitor reads it directly. */
@@ -88,6 +92,7 @@ export interface NotifyPrefs {
 export const DEFAULT_NOTIFY_PREFS: NotifyPrefs = {
   blocked: true,
   done: false,
+  individual: true,
   updates: true,
   cache: false,
   panes: [],
@@ -152,6 +157,7 @@ export function coerceNotifyPrefs(raw: JsonValue | undefined): NotifyPrefs {
   return {
     blocked: typeof o.blocked === "boolean" ? o.blocked : DEFAULT_NOTIFY_PREFS.blocked,
     done: typeof o.done === "boolean" ? o.done : DEFAULT_NOTIFY_PREFS.done,
+    individual: typeof o.individual === "boolean" ? o.individual : DEFAULT_NOTIFY_PREFS.individual,
     updates: typeof o.updates === "boolean" ? o.updates : DEFAULT_NOTIFY_PREFS.updates,
     panes: coercePaneRules(o.panes),
     cache: typeof o.cache === "boolean" ? o.cache : DEFAULT_NOTIFY_PREFS.cache,
@@ -299,6 +305,7 @@ export class NotifyPrefsStore {
     // `Partial<NotifyPrefs>` already types each key `boolean | undefined`, so presence IS the test.
     if (patch.blocked !== undefined) this.prefs.blocked = patch.blocked;
     if (patch.done !== undefined) this.prefs.done = patch.done;
+    if (patch.individual !== undefined) this.prefs.individual = patch.individual;
     if (patch.updates !== undefined) this.prefs.updates = patch.updates;
     if (patch.panes !== undefined) this.prefs.panes = patch.panes.map((r) => ({ ...r }));
     if (patch.cache !== undefined) this.prefs.cache = patch.cache;

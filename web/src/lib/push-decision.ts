@@ -6,6 +6,7 @@
 // in, plain data out.
 
 import { interpolate } from "./i18n/template";
+import { asJsonString, type JsonValue } from "./json";
 import { machinePath, machinesPath } from "./machine-paths";
 import { isPushTitleCode, type PushTitleDetail } from "./push-title-codes";
 import type { PushTitleTemplates } from "./push-title-store";
@@ -38,6 +39,13 @@ export interface PushPayload {
   actions?: PushActionSpec[];
   /** Notification slot. The bridge sends one shared "collie:herd" tag so the herd coalesces. */
   tag?: string;
+  /**
+   * A clear that closes several slots at once (bridge/push.ts, one clear per burst). `tag` is the
+   * first of them, so an older worker that reads only `tag` still closes that one.
+   */
+  tags?: JsonValue;
+  /** Icon counts this worker missed while its device was looking at the app (lib/app-badge.ts). */
+  badgeSlots?: JsonValue;
   /** Re-alert when replacing the slot (a new agent arrived) vs. update it silently (a retraction). */
   renotify?: boolean;
   /** How many alerts this slot holds: its share of the icon's badge (lib/app-badge.ts). */
@@ -97,8 +105,9 @@ export interface NotifData {
 }
 
 export type PushDecision =
-  /** Close any notification on this tag (retraction) — runs regardless of client visibility. */
-  | { kind: "clear"; tag: string; badge?: number }
+  /** Close any notification on these tags (retraction) — runs regardless of client visibility.
+   *  `tag` is the first of `tags`. */
+  | { kind: "clear"; tag: string; tags: string[]; badge?: number }
   /** A Collie tab is already visible and showing this; don't raise a redundant system notification. */
   | { kind: "suppress" }
   /** Show (or replace) the notification on this tag. */
@@ -125,6 +134,9 @@ export type PushDecision =
       renotify: boolean;
       /** FORK: the app icon's badge after this push; absent = leave it. */
       badge?: number;
+      /** FORK: the other slots a retraction named, closed once this replacement is shown — present
+       *  only when a burst's clear reaches a device that must show something (see `decidePush`). */
+      close?: string[];
     };
 
 /**
@@ -203,6 +215,17 @@ export function localisedTitle(payload: PushPayload, templates: PushTitleTemplat
   return interpolate(template, payload.titleDetail);
 }
 
+/** Every slot a clear names: its `tag` first, then each other string of `tags`, once. */
+export function clearTags(tag: string, tags: JsonValue | undefined): string[] {
+  const out = [tag];
+  if (!Array.isArray(tags)) return out;
+  for (const extra of tags) {
+    const name = asJsonString(extra);
+    if (name !== undefined && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
 /**
  * Decide what the SW should do with a push. `hasVisibleClient` = a Collie tab is open and visible
  * (the in-app status already surfaces the alert, so the redundant system notification is suppressed
@@ -230,14 +253,17 @@ export function decidePush(
   // close it — so `clear` and `show` resolve the slot on this single line, before they diverge.
   const tag = payload.tag ?? tagFor(paneId, host);
   if (payload.type === "clear") {
+    const tags = clearTags(tag, payload.tags);
     if (!mustShow) {
-      const cleared: Extract<PushDecision, { kind: "clear" }> = { kind: "clear", tag };
+      const cleared: Extract<PushDecision, { kind: "clear" }> = { kind: "clear", tag, tags };
       if (payload.badge !== undefined) cleared.badge = payload.badge;
       return cleared;
     }
-    // Same tag, so this REPLACES the alert it retracts rather than stacking beside it — the slot
-    // ends up saying the true thing instead of a stale "claude needs you". No `paneId`: the pane it
-    // came from no longer wants anything, so the tap goes to the herd, not to a settled agent.
+    // FORK (iOS): same tag, so this REPLACES the alert it retracts rather than stacking beside it —
+    // the slot ends up saying the true thing instead of a stale "claude needs you". No `paneId`: the
+    // pane it came from no longer wants anything, so the tap goes to the herd, not to a settled agent.
+    // A burst's clear (1.27.1) names several slots; the first is replaced and the rest are closed, so
+    // the push still ends with exactly one notification shown.
     const replaced: Extract<PushDecision, { kind: "show" }> = {
       kind: "show",
       title: payload.title ?? ALL_CLEAR_TITLE,
@@ -249,6 +275,7 @@ export function decidePush(
       renotify: false,
     };
     if (payload.badge !== undefined) replaced.badge = payload.badge;
+    if (tags.length > 1) replaced.close = tags.slice(1);
     return replaced;
   }
   // A machine alert is the one push a visible tab does not stand in for. The in-app status line speaks

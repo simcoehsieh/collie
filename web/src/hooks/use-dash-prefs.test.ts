@@ -52,6 +52,7 @@ describe("coerceDashPrefs", () => {
       showCompactions: false,
       paneOrder: "place",
       paneView: "chat",
+      zoomPill: null,
     });
   });
 
@@ -78,6 +79,7 @@ describe("coerceDashPrefs", () => {
         showToolCalls: true,
         paneOrder: "activity",
           paneView: "terminal",
+        zoomPill: "off",
       }),
     ).toEqual({
       spacesOpen: false,
@@ -101,6 +103,7 @@ describe("coerceDashPrefs", () => {
       showCompactions: false,
       paneOrder: "activity",
       paneView: "terminal",
+      zoomPill: "off",
     });
   });
 
@@ -109,6 +112,11 @@ describe("coerceDashPrefs", () => {
     // The fork's own pins lived here until 1.14 took upstream's (lib/pins.ts, its own key). A blob a
     // device stored before then still carries the list; it is read by nothing and not kept.
     expect(coerceDashPrefs({ pinned: ["w1:p1"] })).not.toHaveProperty("pinned");
+  });
+
+  it("reads an unknown stored zoomPill as never chosen", () => {
+    expect(coerceDashPrefs({ zoomPill: "none" }).zoomPill).toBeNull();
+    expect(coerceDashPrefs({ zoomPill: "screen" }).zoomPill).toBe("screen");
   });
 
   it("ignores a stored chatExperiment, whatever it holds (Chat is the default, ADR 0082)", () => {
@@ -235,6 +243,7 @@ describe("coerceDashPrefs", () => {
       showCompactions: false,
       paneOrder: "place",
       paneView: "chat",
+      zoomPill: null,
     });
     // FORK: toMatchObject, not toEqual — this fork's DashPrefs carries fields upstream's does not
     // (the new-tab launcher, low power, the quota fold). What the case pins is unchanged: the rest of
@@ -276,6 +285,7 @@ describe("useDashPrefs", () => {
       showCompactions: false,
       paneOrder: "place",
       paneView: "chat",
+      zoomPill: null,
     });
   });
 
@@ -303,6 +313,7 @@ describe("useDashPrefs", () => {
     act(() => first.result.current.setShowToolCalls(true));
     act(() => first.result.current.setPaneOrder("activity"));
     act(() => first.result.current.setPaneView("terminal"));
+    act(() => first.result.current.setZoomPill("off"));
 
     // A remount AND a fresh page (the store re-reads storage) both see the same values.
     __resetDashPrefs();
@@ -329,6 +340,7 @@ describe("useDashPrefs", () => {
       showCompactions: false,
       paneOrder: "activity",
       paneView: "terminal",
+      zoomPill: "off",
     });
   });
 

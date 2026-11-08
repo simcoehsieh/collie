@@ -40,6 +40,8 @@ export const forkEn = {
   // The Codex model row in Quick (components/codex-model-group.tsx).
   "fork.quick.codexModel.row": "Model / effort: {current}",
   "fork.quick.codexModel.unknown": "not read yet",
+  // The System row's caption while Updates stays in System (MAINTAINER_MANAGED_UPDATES; routes/settings.tsx).
+  "fork.settings.system.blurb": "Updates, devices, crew",
 } as const;
 
 export type ForkMessageKey = keyof typeof forkEn;
@@ -80,4 +82,5 @@ export const forkZhTW = {
   "fork.diff.workspaceChangesAria": "開啟這個工作區每個 repo 的變更",
   "fork.quick.codexModel.row": "模型／推理強度：{current}",
   "fork.quick.codexModel.unknown": "尚未讀到",
+  "fork.settings.system.blurb": "更新、裝置、crew",
 } satisfies ForkDictionary;

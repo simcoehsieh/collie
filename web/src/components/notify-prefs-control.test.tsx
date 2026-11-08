@@ -20,6 +20,7 @@ import type { CacheWatchListEntry } from "@/lib/types";
 interface Prefs {
   blocked: boolean;
   done: boolean;
+  individual: boolean;
   updates: boolean;
   panes?: PaneNotifyRule[];
   operatorPanes?: PaneNotifyRule[];
@@ -34,7 +35,7 @@ let currentPrefs: Prefs;
 
 beforeEach(() => {
   lastPatch = undefined;
-  currentPrefs = { blocked: true, done: false, updates: true, cache: false, machines: true, panes: [] };
+  currentPrefs = { blocked: true, done: false, individual: true, updates: true, cache: false, machines: true, panes: [] };
   server.use(
     http.get("/api/notifications/prefs", () => HttpResponse.json(currentPrefs)),
     http.post<never, Partial<Prefs>>("/api/notifications/prefs", async ({ request }) => {
@@ -76,6 +77,23 @@ describe("NotifyPrefsControl", () => {
 
     await waitFor(() => expect(lastPatch).toEqual({ done: true }));
     await waitFor(() => expect(finished).toBeChecked());
+  });
+
+  test("the one-notification-per-agent row sits under Finished, on by default, and POSTs {individual: false}", async () => {
+    const user = userEvent.setup();
+    render(<NotifyPrefsControl />);
+    const individual = await screen.findByRole("switch", { name: /one notification per agent/i });
+    const names = screen.getAllByRole("switch").map((s) => s.getAttribute("aria-label"));
+    const at = names.indexOf("One notification per agent");
+    expect(names.slice(at - 2, at)).toEqual(["Needs input", "Finished"]);
+    expect(screen.getByText(/each agent that needs you gets its own notification/i)).toBeInTheDocument();
+    await waitFor(() => expect(individual).not.toBeDisabled());
+    expect(individual).toBeChecked();
+
+    await user.click(individual);
+
+    await waitFor(() => expect(lastPatch).toEqual({ individual: false }));
+    await waitFor(() => expect(individual).not.toBeChecked());
   });
 
   test("reverts the optimistic toggle when the POST fails", async () => {
@@ -164,7 +182,16 @@ describe("NotifyPrefsControl — per pane", () => {
 // apply and says the file's name, and a tap adds a phone rule that wins over it.
 describe("NotifyPrefsControl — rules from notify.toml", () => {
   test("a file rule shows as the applied mode, named after the file; a tap overrides it with a phone rule", async () => {
-    currentPrefs = { blocked: true, done: true, updates: true, cache: false, machines: true, panes: [], operatorPanes: [{ label: "webapp", mode: "blocked" }] };
+    currentPrefs = {
+      blocked: true,
+      done: true,
+      individual: true,
+      updates: true,
+      cache: false,
+      machines: true,
+      panes: [],
+      operatorPanes: [{ label: "webapp", mode: "blocked" }],
+    };
     const user = userEvent.setup();
     const pane = fixtureAgents[0]!;
     render(<NotifyPrefsControl panes={[pane]} />);
@@ -194,10 +221,11 @@ describe("NotifyPrefsControl — the fourth switch and the panes it watches", ()
     );
   });
 
-  test("renders five switch rows, the cache warning last so its watched panes sit under it", async () => {
+  test("renders six switch rows, the cache warning last so its watched panes sit under it", async () => {
     render(<NotifyPrefsControl />);
     expect(await screen.findByRole("switch", { name: /needs input/i })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: /finished/i })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /one notification per agent/i })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: /app updates/i })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: /machine load stays high/i })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: /cache about to go cold/i })).toBeInTheDocument();

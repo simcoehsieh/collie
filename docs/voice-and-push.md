@@ -475,6 +475,12 @@ Five kinds, each with its own switch under **Settings → Alerts → Notify when
 
 Finished fires when an agent goes from working to idle, so an agent you interrupt also counts as finished.
 
+By default each agent that needs you gets its own notification, with its name and its place. Nothing is
+summarised. Switch off **One notification per agent**, below Finished, and Collie keeps one notification
+per machine instead and rewrites it as more agents need you: "claude needs you", then "2 agents need you".
+Answering an agent, or opening a finished one, closes only that notification. The wait before an
+alert is the same in both modes.
+
 Machine load sends nothing until you set a rule on a machine's page. The switch turns off every rule at
 once. One alert is sent each time a value climbs and stays high, and a tap opens that machine's Status view. See
 [Machines](crew.md#machines).
@@ -484,6 +490,9 @@ device that has not opened Collie since it was updated. The body stays as the br
 
 Every switch is bridge-wide. A push fans out to every subscribed device, so there is nothing
 per-device to set.
+
+A device with Collie open on screen gets no notification, because the app already shows the alert.
+Lock the phone in the seconds before an alert, and its notification comes about ten seconds late.
 
 The cache warning can also be switched on for **one pane at a time**, from that pane's own settings:
 open the pane, tap the ⋮, then **Pane settings**. Those panes are listed under the global switch in
@@ -542,6 +551,8 @@ bin/collie push forget <substring>   # or: push forget --all
 and newer allow Web Push only for a web app that you added to the home screen and opened from its
 icon. In a Safari tab, **Settings → Alerts** shows that line. See
 [Put it on your phone](install.md#iphone-and-ipad) for the steps to add Collie.
+
+![Put Collie on the home screen: iPhone and Android steps.](images/install/pwa-install.svg)
 
 **I added the icon. Do I set up again?** Yes. The home screen app keeps its own storage, separate
 from Safari. Pair it again in the app (`collie pair` on the host, then **Settings → System → Paired

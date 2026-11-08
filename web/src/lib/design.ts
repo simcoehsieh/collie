@@ -33,6 +33,13 @@ const STORAGE_KEY = "collie:design:v1";
 // says) and adds no class at all: no class means the `--font-sans` already in index.css's @theme
 // block, the plain system stack. A device that never opens the setting runs no JavaScript and
 // fetches no font before its first paint. Aldrich is an opt-in class, `font-aldrich`.
+//
+// FORK, at the 1.27 merge: upstream 1.27.0 makes Atkinson Hyperlegible the default face, part of its
+// new look (lib/fork-shape.ts FORK_NEW_LOOK_ON, off here). The default stays a literal and not a
+// read of that gate, because three files that cannot import it hold the same default face:
+// public/theme-init.js, index.css's @theme `--font-sans` and the index.html splash. fonts.test.ts
+// holds this module and theme-init.js to the same class for every face, so a gated default here
+// would disagree with them under test. Atkinson is an opt-in class here, `font-atkinson`.
 export { SHIPPED_FONTS, isShippedFont, type ShippedFont };
 
 /** The face a device gets before it says otherwise. */
@@ -61,6 +68,27 @@ export interface DesignPrefs {
    * tomorrow is honoured, and `lib/theme/store.ts` falls back to `collie` while it is gone.
    */
   theme?: string;
+}
+
+/**
+ * The id of the shipped theme that was folded into `collie` (the theme "Collie New" became the
+ * default look under the name "Collie"). A device that stored it is moved to `collie` on first read.
+ */
+export const RETIRED_THEME_ID = "collie-new";
+
+/** The library's storage key (lib/theme/store.ts holds the same string; design.test.ts keeps them equal). */
+const LIBRARY_KEY = "collie:themes:v1";
+
+/** True when the imported library holds a theme with this id. Total: any failure reads as "no". */
+function libraryHas(id: string): boolean {
+  try {
+    const doc = parseJsonObject(localStorage.getItem(LIBRARY_KEY) ?? "");
+    const list = doc?.themes;
+    if (!Array.isArray(list)) return false;
+    return list.some((entry) => asJsonString(asJsonObject(entry)?.id) === id);
+  } catch {
+    return false;
+  }
 }
 
 const DEFAULT_PREFS: DesignPrefs = { font: DEFAULT_FONT };
@@ -107,7 +135,13 @@ function load(): DesignPrefs {
     if (typeof localStorage === "undefined") return DEFAULT_PREFS;
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw === null) return DEFAULT_PREFS;
-    return parseDesignPrefs(raw);
+    const parsed = parseDesignPrefs(raw);
+    if (parsed.theme !== RETIRED_THEME_ID || libraryHas(RETIRED_THEME_ID)) return parsed;
+    // The retired shipped id: `collie` now wears that look. Drop the field and write it back, once.
+    const kept: DesignPrefs = { font: parsed.font };
+    if (parsed.operatorFont !== undefined) kept.operatorFont = parsed.operatorFont;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(kept));
+    return kept;
   } catch {
     return DEFAULT_PREFS; // private mode / SSR
   }

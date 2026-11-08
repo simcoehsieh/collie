@@ -1,13 +1,20 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   NotificationCoordinator,
   makeNotifySink,
+  paneClears,
+  paneTag,
   type HerdSummary,
   type NotifyClock,
   type NotifySink,
 } from "./notifications.ts";
-import type { PushMessage } from "./push.ts";
+import { loadConfig } from "./config.ts";
+import { NotifyPrefsStore, type SessionNotifyRule } from "./notify-prefs.ts";
+import { paneTopic, Push, topicIsSendable, type PushMessage } from "./push.ts";
 import type { AgentStatus, AgentView } from "./types.ts";
 
 // The coordinator decides whether/when a blocked/done transition becomes a push, and collapses the
@@ -36,7 +43,11 @@ class FakeClock implements NotifyClock<number> {
   }
 }
 
-type Event = { kind: "render"; summary: HerdSummary } | { kind: "clear" };
+type Event =
+  | { kind: "render"; summary: HerdSummary }
+  | { kind: "clear" }
+  | { kind: "renderPane"; paneId: string; summary: HerdSummary }
+  | { kind: "clearPane"; paneId: string };
 
 class RecordingSink implements NotifySink {
   readonly events: Event[] = [];
@@ -45,6 +56,12 @@ class RecordingSink implements NotifySink {
   }
   clear(): void {
     this.events.push({ kind: "clear" });
+  }
+  renderPane(paneId: string, summary: HerdSummary): void {
+    this.events.push({ kind: "renderPane", paneId, summary });
+  }
+  clearPane(paneId: string): void {
+    this.events.push({ kind: "clearPane", paneId });
   }
   /** The most recently rendered summary, or undefined if the last event was a clear / none yet. */
   get last(): HerdSummary | undefined {
@@ -80,13 +97,13 @@ const agent = (paneId: string, status: AgentStatus) => agentNamed(paneId, "claud
 // flip a preference and call `coord.applyPrefs()` to exercise the runtime-change path. Defaults to
 // both kinds enabled, matching the coordinator's old static {blocked,done} set (keeps the existing
 // debounce/coalesce/retract suites unchanged).
-function setup(prefs: { blocked: boolean; done: boolean } = { blocked: true, done: true }) {
+function setup(prefs: { blocked: boolean; done: boolean; individual?: boolean } = { blocked: true, done: true }) {
   const clock = new FakeClock();
   const sink = new RecordingSink();
-  const live = { ...prefs };
+  const live = { individual: false, ...prefs };
   const isNotifiable = (s: AgentStatus): boolean =>
     s === "blocked" ? live.blocked : s === "done" ? live.done : false;
-  const coord = new NotificationCoordinator(clock, sink, 30_000, isNotifiable);
+  const coord = new NotificationCoordinator(clock, sink, 30_000, isNotifiable, () => live.individual);
   return { clock, sink, coord, prefs: live };
 }
 
@@ -744,6 +761,64 @@ describe("NotificationCoordinator — per-pane rules", () => {
   });
 });
 
+// ── FORK: A MUTED SESSION PUSHES NOTHING, IN EITHER SHAPE ──────────────────────────────────────
+// notify.toml's `[[sessions]] session = "dev" mode = "mute"` (3969b9b0) is decided by the
+// coordinator's `isNotifiable` before an alert is armed, so upstream's one-notification-per-agent
+// (1.27.0, default ON) must not open a second road around it. Wired exactly as bridge/index.ts wires
+// a session: the real prefs store, the pane stamped with its session's name, the real sink.
+describe("FORK: notify.toml session mute holds with one notification per agent", () => {
+  const dirs: string[] = [];
+  afterAll(async () => {
+    await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
+  });
+
+  async function sessionWiring(session: string) {
+    const stateDir = await mkdtemp(join(tmpdir(), "collie-notify-mute-"));
+    dirs.push(stateDir);
+    const sessions: SessionNotifyRule[] = [{ session: "dev", mode: "mute" }];
+    const store = new NotifyPrefsStore({ ...loadConfig(), stateDir }, Date.now, undefined, () => Promise.resolve(sessions));
+    await store.set({ blocked: true, done: true });
+    await store.refreshOperatorRules();
+    const sent: PushMessage[] = [];
+    const clock = new FakeClock();
+    const sink = makeNotifySink({ send: (m) => void sent.push(m) }, { isMuted: () => false }, `collie:herd:${session}`, {
+      session,
+    });
+    const coord = new NotificationCoordinator(
+      clock,
+      sink,
+      30_000,
+      (status, pane) => store.isNotifiable(status, { ...pane, session }),
+      () => store.current().individual,
+    );
+    return { store, sent, clock, coord };
+  }
+
+  test("a muted session sends no per-agent push — blocked, done, or on a shape switch", async () => {
+    const { store, sent, clock, coord } = await sessionWiring("dev");
+    expect(store.current().individual).toBe(true); // upstream's default: one notification per agent
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    coord.onTransition(agent("p2", "done"), "working", "done");
+    expect(clock.armed).toBe(0); // never even armed
+    clock.fireAll();
+    expect(coord.outstandingPaneIds()).toEqual([]);
+    // Switching the shape either way re-renders what is outstanding — which is nothing.
+    await store.set({ individual: false });
+    coord.applyPrefs();
+    await store.set({ individual: true });
+    coord.applyPrefs();
+    expect(sent).toEqual([]);
+  });
+
+  test("the same wiring in an unmuted session does send each agent its own notification", async () => {
+    const { sent, clock, coord } = await sessionWiring("app");
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    coord.onTransition(agent("p2", "done"), "working", "done");
+    clock.fireAll();
+    expect(sent.map((m) => m.tag)).toEqual(["collie:herd:app:p1", "collie:herd:app:p2"]);
+  });
+});
+
 describe("makeNotifySink — Yes/No buttons", () => {
   class RecordingPush {
     readonly sent: PushMessage[] = [];
@@ -873,6 +948,19 @@ describe("makeNotifySink — the reply's first line", () => {
     expect(push.sent[0]).toMatchObject({ tag: "collie:herd", paneId: "p1", renotify: true });
   });
 
+  test("FORK: a pane's own notification (one per agent) carries the line too, on its own slot", async () => {
+    const push = new RecordingPush();
+    const sink = makeNotifySink(push, { isMuted: () => false }, "collie:herd", {}, undefined, async () => ({
+      text: "All 114 tests pass.",
+      turn: "t1",
+    }));
+    sink.renderPane("p1", done);
+    await flush();
+    expect(push.sent).toHaveLength(1);
+    expect(push.sent[0]).toMatchObject({ tag: "collie:herd:p1", title: "demo · claude", body: "All 114 tests pass." });
+    expect(push.sent[0]!.topic).toBe(paneTopic("collie:herd:p1"));
+  });
+
   test("a peer's line still names the machine it happened on", async () => {
     const push = new RecordingPush();
     const sink = makeNotifySink(
@@ -935,6 +1023,12 @@ describe("makeNotifySink — the reply's first line", () => {
     sink.render({ ...done, paneId: "p2" });
     await flush();
     expect(push.sent).toHaveLength(3);
+    // A silent re-render of a turn already told (the shape moving to one notification per agent)
+    // is not a new announcement, so it is drawn rather than swallowed.
+    sink.renderPane("p2", { ...done, paneId: "p2", renotify: false });
+    await flush();
+    expect(push.sent).toHaveLength(4);
+    expect(push.sent[3]).toMatchObject({ tag: "collie:herd:p2", renotify: false, body: "Deployed." });
   });
 
   test("FORK: a render carries the summary's badge; a clear carries zero", () => {
@@ -964,6 +1058,195 @@ describe("makeNotifySink — the reply's first line", () => {
     await flush();
     expect(peeks).toBe(0);
     expect(push.sent).toEqual([]);
+  });
+});
+
+describe("NotificationCoordinator — one notification per agent", () => {
+  const individual = { blocked: true, done: true, individual: true };
+
+  test("two blocked panes give two separate renders, never a digest", () => {
+    const { clock, sink, coord } = setup(individual);
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    coord.onTransition(agentNamed("p2", "codex", "blocked"), "working", "blocked");
+    clock.fireAll();
+    expect(sink.renders).toEqual([]);
+    const panes = sink.events.flatMap((e) => (e.kind === "renderPane" ? [e] : []));
+    expect(panes.map((e) => e.paneId)).toEqual(["p1", "p2"]);
+    expect(panes.map((e) => e.summary.title)).toEqual(["claude needs you", "codex needs you"]);
+    expect(panes.every((e) => e.summary.renotify && e.summary.badge === 1)).toBe(true);
+    expect(panes.map((e) => e.summary.paneId)).toEqual(["p1", "p2"]);
+    expect(panes[0]!.summary.body).toBe("demo");
+  });
+
+  test("a done pane reads 'is done' in its own notification", () => {
+    const { clock, sink, coord } = setup(individual);
+    coord.onTransition(agent("p1", "done"), "working", "done");
+    clock.fireAll();
+    expect(sink.events.at(-1)).toMatchObject({ kind: "renderPane", paneId: "p1", summary: { title: "claude is done" } });
+  });
+
+  test("resolving one pane closes that pane only and renders nothing else", () => {
+    const { clock, sink, coord } = setup(individual);
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    coord.onTransition(agent("p2", "blocked"), "working", "blocked");
+    clock.fireAll();
+    const before = sink.events.length;
+    coord.onTransition(agent("p1", "working"), "blocked", "working");
+    expect(sink.events.slice(before)).toEqual([{ kind: "clearPane", paneId: "p1" }]);
+  });
+
+  test("the debounce still holds: a pane that resolves inside the window sends nothing", () => {
+    const { clock, sink, coord } = setup(individual);
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    coord.onTransition(agent("p1", "working"), "blocked", "working");
+    clock.fireAll();
+    expect(sink.events).toEqual([]);
+  });
+
+  test("a vanished pane and an opened finished pane each close their own notification", () => {
+    const { clock, sink, coord } = setup(individual);
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    coord.onTransition(agent("p2", "done"), "working", "done");
+    clock.fireAll();
+    coord.onRemove("p1");
+    coord.retractSeen([{ paneId: "p2", lastActiveAt: 1, lastSeenAt: 2 }]);
+    expect(sink.events.slice(2)).toEqual([
+      { kind: "clearPane", paneId: "p1" },
+      { kind: "clearPane", paneId: "p2" },
+    ]);
+  });
+
+  test("disabling a kind retracts its panes one by one", () => {
+    const { clock, sink, coord, prefs } = setup(individual);
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    coord.onTransition(agent("p2", "done"), "working", "done");
+    clock.fireAll();
+    prefs.done = false;
+    coord.applyPrefs();
+    expect(sink.events.slice(2)).toEqual([{ kind: "clearPane", paneId: "p2" }]);
+  });
+
+  test("clearAll closes every pane's notification and never the summary slot", () => {
+    const { clock, sink, coord } = setup(individual);
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    coord.onTransition(agent("p2", "blocked"), "working", "blocked");
+    clock.fireAll();
+    coord.clearAll();
+    expect(sink.events.slice(2)).toEqual([
+      { kind: "clearPane", paneId: "p1" },
+      { kind: "clearPane", paneId: "p2" },
+    ]);
+    expect(sink.clears).toBe(0);
+  });
+
+  test("switching the preference on moves the summary to one notification per pane, silently", () => {
+    const { clock, sink, coord, prefs } = setup();
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    coord.onTransition(agent("p2", "blocked"), "working", "blocked");
+    clock.fireAll();
+    prefs.individual = true;
+    coord.applyPrefs();
+    expect(sink.events.slice(2).map((e) => e.kind)).toEqual(["clear", "renderPane", "renderPane"]);
+    const panes = sink.events.flatMap((e) => (e.kind === "renderPane" ? [e] : []));
+    expect(panes.every((e) => !e.summary.renotify)).toBe(true);
+  });
+
+  test("switching it off closes the panes and brings the summary back, silently", () => {
+    const { clock, sink, coord, prefs } = setup(individual);
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    coord.onTransition(agent("p2", "blocked"), "working", "blocked");
+    clock.fireAll();
+    prefs.individual = false;
+    coord.applyPrefs();
+    expect(sink.events.slice(2).map((e) => e.kind)).toEqual(["clearPane", "clearPane", "render"]);
+    expect(sink.last).toMatchObject({ title: "2 agents need you", renotify: false, badge: 2 });
+  });
+
+  test("summary mode is unchanged: no pane event is ever sent", () => {
+    const { clock, sink, coord } = setup();
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    coord.onTransition(agent("p2", "blocked"), "working", "blocked");
+    clock.fireAll();
+    coord.onRemove("p1");
+    coord.onRemove("p2");
+    expect(sink.events.map((e) => e.kind)).toEqual(["render", "render", "render", "clear"]);
+  });
+
+  test("outstandingPaneIds lists the panes with an alert on screen", () => {
+    const { clock, coord } = setup(individual);
+    coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+    expect(coord.outstandingPaneIds()).toEqual([]);
+    clock.fireAll();
+    expect(coord.outstandingPaneIds()).toEqual(["p1"]);
+  });
+});
+
+describe("makeNotifySink — one notification per agent", () => {
+  const summary: HerdSummary = {
+    title: "claude needs you",
+    titleCode: "agent.blocked",
+    titleDetail: { agent: "claude" },
+    body: "demo",
+    paneId: "p1",
+    renotify: true,
+    badge: 1,
+  };
+  const send = (fn: (sink: ReturnType<typeof makeNotifySink>) => void, muted = false) => {
+    const sent: PushMessage[] = [];
+    fn(makeNotifySink({ send: (m) => void sent.push(m) }, { isMuted: () => muted }, "collie:herd:work", { session: "work" }));
+    return sent;
+  };
+
+  test("renderPane tags the pane under its slot and gives it a topic of its own", () => {
+    const [msg, ...rest] = send((s) => s.renderPane("w1:p1", summary));
+    expect(rest).toEqual([]);
+    expect(msg).toMatchObject({ tag: "collie:herd:work:w1:p1", paneId: "p1", session: "work", renotify: true, badge: 1 });
+    expect(msg!.topic).toBe(paneTopic("collie:herd:work:w1:p1"));
+  });
+
+  test("two panes get distinct tags and distinct topics", () => {
+    const [a, b] = send((s) => {
+      s.renderPane("p1", summary);
+      s.renderPane("p2", { ...summary, paneId: "p2" });
+    });
+    expect(a!.tag).not.toBe(b!.tag);
+    expect(a!.topic).not.toBe(b!.topic);
+  });
+
+  test("clearPane clears that pane's tag, on the topic its alert used", () => {
+    const sent = send((s) => {
+      s.renderPane("p1", summary);
+      s.clearPane("p1");
+    });
+    expect(sent[1]).toEqual({ type: "clear", tag: "collie:herd:work:p1", topic: sent[0]!.topic });
+  });
+
+  test("an active snooze suppresses both", () => {
+    expect(send((s) => (s.renderPane("p1", summary), s.clearPane("p1")), true)).toEqual([]);
+  });
+
+  test("paneClears names one clear per pane, for the snooze route", () => {
+    expect(paneClears("collie:herd", ["p1", "p2"])).toEqual([
+      { type: "clear", tag: paneTag("collie:herd", "p1"), topic: paneTopic("collie:herd:p1") },
+      { type: "clear", tag: paneTag("collie:herd", "p2"), topic: paneTopic("collie:herd:p2") },
+    ]);
+  });
+});
+
+describe("paneTopic", () => {
+  test("starts with herd-, uses the base64url alphabet and stays a topic every push service takes", () => {
+    for (const tag of ["collie:herd:p1", "collie:herd@laptop:w1:p9", `collie:herd:${"x".repeat(300)}`, ""]) {
+      const topic = paneTopic(tag);
+      expect(topic).toMatch(/^herd-[A-Za-z0-9_-]+$/);
+      expect(topic.length).toBeLessThanOrEqual(32);
+      expect(topicIsSendable(topic)).toBe(true);
+    }
+  });
+
+  test("is stable for a tag and differs between tags", () => {
+    expect(paneTopic("collie:herd:p1")).toBe(paneTopic("collie:herd:p1"));
+    expect(paneTopic("collie:herd:p1")).not.toBe(paneTopic("collie:herd:p2"));
+    expect(paneTopic("collie:herd:p1")).not.toBe("collie-herd");
   });
 });
 
@@ -1005,5 +1288,39 @@ describe("NotificationCoordinator — Bidi and C0/C1 control character stripping
     clock.fireAll();
     expect(sink.last?.title).toBe("Triage: Run exe.sh");
     expect(sink.last?.body).toBe("Line one");
+  });
+});
+
+// ── The ten-session case, through the real Push (1.27.1) ─────────────────────────────────────────
+// "One notification per agent" made each agent its own render and its own clear. With ten sessions
+// those clears are what spent Chrome's silent-push budget. Each session's coordinator still retracts
+// its own pane; the device gets them as one push.
+describe("one notification per agent — ten sessions retracting at once", () => {
+  test("ten coordinators clearing in one tick reach each device as ONE clear naming all ten slots", async () => {
+    const sent: { endpoint: string; body: { type?: string; tags?: string[] } }[] = [];
+    const push = new Push({ ...loadConfig(), stateDir: "/nonexistent" }, (s, payload) => {
+      sent.push({ endpoint: s.endpoint, body: JSON.parse(payload) });
+      return Promise.resolve();
+    });
+    push["_enabled"] = true;
+    for (const endpoint of ["phone", "laptop"]) push["subs"].set(endpoint, { endpoint, keys: { p256dh: "p", auth: "a" } });
+    const coords = Array.from({ length: 10 }, (_, i) => {
+      const clock = new FakeClock();
+      const sink = makeNotifySink(push, { isMuted: () => false }, `collie:herd:s${i}`, { session: `s${i}` });
+      const coord = new NotificationCoordinator(clock, sink, 0, (s) => s === "blocked", () => true);
+      coord.onTransition(agent("p1", "blocked"), "working", "blocked");
+      clock.fireAll();
+      return coord;
+    });
+    await Bun.sleep(0);
+    expect(sent.filter((x) => x.body.type === undefined)).toHaveLength(20);
+    sent.length = 0;
+    for (const coord of coords) coord.onTransition(agent("p1", "working"), "blocked", "working");
+    await Bun.sleep(0);
+    expect(sent).toHaveLength(2);
+    for (const { body } of sent) {
+      expect(body.type).toBe("clear");
+      expect(body.tags).toEqual(Array.from({ length: 10 }, (_, i) => paneTag(`collie:herd:s${i}`, "p1")));
+    }
   });
 });

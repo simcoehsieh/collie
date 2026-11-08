@@ -212,6 +212,12 @@ export interface AgentView {
    */
   subagents?: PaneSubagent[];
   /**
+   * The background jobs of this pane's session, running or ended in the last ten minutes. Mirrors
+   * `PaneJob` in bridge/jobs-journal.ts. **Absent, never a placeholder**, when there are none or on
+   * an older bridge. Text only, never markup.
+   */
+  jobs?: PaneJob[];
+  /**
    * How full the context is and how much of the subscription's windows is used, as the harness's own
    * statusLine reported them. Mirrors `PaneWire.usage` in bridge/types.ts. **Absent, never a
    * placeholder**: drawn as dots beside the model (components/model-tag.tsx), and nothing decides on it.
@@ -392,6 +398,21 @@ export interface PaneSubagent {
   transcript?: false;
 }
 
+/** One background job of a pane's session. Mirrors `PaneJob` in bridge/jobs-journal.ts. */
+export interface PaneJob {
+  id: string;
+  /** The call's label, one line. Empty when the call named none. */
+  label: string;
+  /** The command it runs, one line, clipped. */
+  command: string;
+  /** ISO 8601. */
+  startedAt: string;
+  /** Absent while it runs, and on an end that named no code. */
+  exitCode?: number;
+  /** ISO 8601. Absent while it runs: a row with it has ended. */
+  endedAt?: string;
+}
+
 /**
  * One rule as the pane sheet reads it. Mirrors `CacheRuleWire` in bridge/types.ts.
  *
@@ -481,6 +502,18 @@ export interface WorkspaceView {
   isWorktree?: boolean;
   /** The space's own folder, when the multiplexer keeps one (herdr worktree, tmux session_path). */
   folder?: string;
+  /**
+   * What the checkout holding {@link folder} is on. Mirrors `WorkspaceView.gitHead` in bridge/types.ts.
+   *
+   * **Absent, never a placeholder**, by the same rule as {@link AgentView.gitHead}, and read through
+   * `spaceWorktreeContext` (lib/spaces.ts), which drops a malformed one from a peer.
+   */
+  gitHead?: GitHead;
+  /**
+   * The ref a worktree space was cut from, as the machine holding it wrote it down. Mirrors
+   * `WorkspaceView.base` in bridge/types.ts: only on a worktree, absent when unknown.
+   */
+  base?: string;
   /**
    * Which member of the crew this space lives on — the same tag a pane and a session carry.
    *
@@ -1035,6 +1068,51 @@ export interface ReleaseLineReceipt {
   replay?: true;
 }
 
+/** Which switch decided the anonymous install count (`bridge/telemetry.ts`, a closed set). */
+export type TelemetryDecider =
+  | "do_not_track"
+  | "env"
+  | "config"
+  | "settings"
+  | "ci"
+  | "mirror"
+  | "dev_build"
+  | "url"
+  | "default";
+
+/** The phone's own switch: two words. */
+export type TelemetrySetting = "on" | "off";
+
+/** The exact message the next ping would send. A test on the bridge pins its key set. */
+export interface TelemetryPing {
+  v: number;
+  id: string;
+  day: string;
+  version: string;
+  os: string;
+  arch: string;
+  install: string;
+  line: string;
+}
+
+/** `GET /api/telemetry`: whether the count is on, which switch decided, and the next message. */
+export interface TelemetryView {
+  on: boolean;
+  decidedBy: TelemetryDecider;
+  /** The phone's switch as saved on the machine, or null when it never made one. */
+  setting: TelemetrySetting | null;
+  /** The exact JSON of the next ping; null when the count is off. */
+  next: TelemetryPing | null;
+}
+
+/** The answer of `POST /api/telemetry`: the same view, with the request id it answers. */
+export interface TelemetryReceipt extends TelemetryView {
+  ok: true;
+  requestId: string;
+  /** The same request id with the same setting was seen before; nothing changed this time. */
+  replay?: true;
+}
+
 /** The answer of `POST /api/update/back`: the same shape as a rollback's start. */
 export type GoBackStartResponse = RollbackStartResponse;
 
@@ -1372,7 +1450,19 @@ export interface PlanTask {
 export type ToolCall =
   | { kind: "edit"; path: string; added: number; removed: number; diff?: Hunk[]; created?: boolean }
   /** `background`: started and returned at once (`bash_background`, `monitor`). `ongoing`: it has not ended yet, though its start result is in. */
-  | { kind: "execute"; command: string; description?: string; exitCode?: number; background?: true; ongoing?: true }
+  | {
+      kind: "execute";
+      command: string;
+      description?: string;
+      exitCode?: number;
+      background?: true;
+      ongoing?: true;
+      jobId?: string;
+      /** Epoch ms. */
+      startedAt?: number;
+      /** Epoch ms. */
+      endedAt?: number;
+    }
   | { kind: "read"; path: string; range?: [number, number] }
   | { kind: "search"; query: string; where?: string; hits?: number }
   | { kind: "fetch"; url: string }
@@ -1950,9 +2040,7 @@ export const MUX_CAPABILITIES = [
   "renameTab",
   "closeTab",
   "createSpace",
-  "listWorktrees",
   "createWorktree",
-  "openWorktree",
   "pushTopologyEvents",
   "pushPaneEvents",
   // A durable program's own controls, declared from its `caps` (bridge/mux/capabilities.ts). Unlike
@@ -2134,7 +2222,7 @@ export interface LaunchersAdding {
 }
 
 /** Why an item does not start on that machine now. Mirrors `LauncherItem.reason` in bridge/types.ts. */
-export type LauncherItemReason = "not_found" | "adds_off" | "free_text_off";
+export type LauncherItemReason = "not_found" | "adds_off" | "free_text_off" | "no_folder";
 
 /**
  * One thing the New page may start on ONE machine, with its availability there (ADR 0094). Mirrors
@@ -2160,6 +2248,11 @@ export interface LauncherItem {
   branch: boolean;
   available: boolean;
   reason?: LauncherItemReason;
+  /**
+   * `lead`: one of the lead's rows, offered for this machine (ADR 0127). Mirrors `LauncherItem.from`
+   * in bridge/types.ts: set only in a lead's answer for another host, absent on a machine's own items.
+   */
+  from?: "lead";
   id?: string;
   addedBy?: string;
   addedAt?: number;
@@ -2544,6 +2637,9 @@ export interface NotifyPrefs {
   blocked: boolean;
   /** Push when an agent finishes its task. Default off. */
   done: boolean;
+  /** Send each alert as its own notification, one per agent, instead of one summary per machine.
+   *  Default off. */
+  individual: boolean;
   /** Push when a new Collie version is available (a restart or upgrade is waiting). Default on. */
   updates: boolean;
   /** FORK: per-pane overrides. Absent from an older bridge's answer; the phone treats that as none. */
@@ -2950,7 +3046,7 @@ export type WorktreePlanResponse =
       currentBranch: string | null;
       remembered?: { base: "default" | "current"; folder: "default" | "parent"; parent?: string };
       branchValid?: boolean;
-      defaultTarget?: { path: string; exists: boolean };
+      defaultTarget?: { path: string; exists: boolean; reason?: string };
       parentTarget?:
         | { ok: true; path: string }
         | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };

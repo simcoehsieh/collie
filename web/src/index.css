@@ -217,7 +217,12 @@
   /* FORK, at the 1.23 merge: upstream 1.22's theme engine tokens below are taken so the engine's code
      compiles and reads its defaults, which are each "the value the app drew before". The picker that
      would set them is off (lib/fork-shape.ts FORK_THEMES_ON), so this install draws the fork's look:
-     the radius above, the ramp and the elevation in @theme inline, and skin.css over all of it. */
+     the radius above, the ramp and the elevation in @theme inline, and skin.css over all of it.
+     FORK, at the 1.27 merge: upstream 1.27.0 moved these defaults to its new look (flat shadows,
+     bold weights, a grey band, sentence labels, Aldrich titles, a crossed grain on the page, warmer
+     greys and a new terminal palette). That look is off here (lib/fork-shape.ts FORK_NEW_LOOK_ON),
+     so every value in this block is still the 1.25.5 one; src/themes/themes.test.ts skips the
+     tests that hold them equal to the theme file collie.json. */
   /* THE SHAPE A THEME MAY PICK (schema version 2, lib/theme/surface.ts). Tailwind copies a shadow
      step's value and the bare border width into every utility at build time, so `@theme inline`
      below points them here, and a theme's `shadow` and `border` words set these properties. The
@@ -425,6 +430,14 @@
      half; a stronger blue in the light half, where a pale frame would vanish on white. FORK: only
      drawn while FORK_WIDE_LAYOUT_ON is on (lib/fork-shape.ts). */
   --pane-active: light-dark(oklch(0.6 0.14 240), oklch(0.9 0.058 231));
+  /* The open folder tab's top edge and the open pane's ring (theme surface word `tabs: folder`,
+     lib/tab-look.ts). Drawn only under that word. The default is the foreground ink of each half
+     (the same two values as --foreground above), so a theme that sets the word and not the colour
+     draws its folder edge in ink. A pair and not var(--foreground), like --pane-active: the theme
+     file for `collie` holds every optional token, and a theme that sets one half is filled from it.
+     FORK: never drawn in the shipped app, where the folder tab is off (lib/fork-shape.ts
+     FORK_NEW_LOOK_ON); the pair is the fork's --foreground. */
+  --tab-active: light-dark(oklch(0.18 0.012 262), oklch(0.965 0.006 255));
   /* The INERT fill — a well, a disabled track, a quiet chip on a card. Value unchanged (rgb 235
      light / 38 dark), but its old job is gone: it used to be the chrome band behind the header,
      "a step BELOW --background so the band still reads as a distinct surface". The band existed
@@ -818,6 +831,7 @@
   --color-control-on-hover: var(--control-on-hover);
   --color-control-on-pressed: var(--control-on-pressed);
   --color-pane-active: var(--pane-active);
+  --color-tab-active: var(--tab-active);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -1332,7 +1346,9 @@
  * screen plus the bar. A correct WebKit gives `100dvh` either way. iOS never resizes the layout
  * for the keyboard, so nothing here has to track it. Android keeps `dvh`, which is what tracks its
  * keyboard (`interactive-widget=resizes-content`). The expression is its own token so the e2e
- * tier can resolve it in WebKit, which cannot emulate a home-screen launch. */
+ * tier can resolve it in WebKit, which cannot emulate a home-screen launch. A page Android restores
+ * from the background can keep a stale, taller height; lib/viewport-pin.ts then sets `--app-h` inline
+ * to the visible height until the next resize. */
 :root {
   --app-h: 100dvh;
   --app-h-ios-standalone: min(100lvh, calc(100dvh + env(safe-area-inset-top, 0px)));

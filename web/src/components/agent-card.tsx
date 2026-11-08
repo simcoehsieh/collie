@@ -1,6 +1,7 @@
 import { memo, useState } from "react";
 import { Check, TerminalSquare } from "lucide-react";
 
+import { shownStatus } from "@/lib/triage";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { LIST_ROW_CORNERS } from "@/components/ui/list-group";
@@ -460,7 +461,7 @@ function AgentCardImpl({
           <div data-slot="agent-row-title" className="flex min-w-0 items-center gap-2">
             {cornerDot && (
               <StatusDot
-                status={agent.status}
+                status={shownStatus(agent)}
                 // A hollow resting ring must be filled with the colour it actually sits on — a card
                 // is `--card`, a flat row is the page.
                 surface={flat ? "bg-background" : "bg-card"}
@@ -599,9 +600,9 @@ function AgentCardImpl({
           <ShellBadge />
         ) : cornerDot ? (
           /* The mark lives on line 1 and is aria-hidden; give SR users the word. */
-          <span className="sr-only">{stale ? statusLabelPast(agent.status) : statusLabel(agent.status)}</span>
+          <span className="sr-only">{stale ? statusLabelPast(shownStatus(agent)) : statusLabel(shownStatus(agent))}</span>
         ) : (
-          <StatusBadge status={agent.status} past={stale} />
+          <StatusBadge status={shownStatus(agent)} past={stale} />
         )}
         {/* How far a working durable conversation is (WIRE.md 7.12). FORK: inside the row's own
             button, which is the `relative` box here (the fork nests Shell > button). */}

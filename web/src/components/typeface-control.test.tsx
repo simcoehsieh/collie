@@ -34,7 +34,7 @@ beforeEach(() => {
 });
 
 describe("TypefaceControl", () => {
-  it("offers the shipped faces, with Space Grotesk selected and no class on the root", async () => {
+  it("offers the shipped faces, with the system face selected and no class on the root", async () => {
     config({});
     render(<TypefaceControl />);
 

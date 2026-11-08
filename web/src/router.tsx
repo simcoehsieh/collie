@@ -9,6 +9,7 @@ import { UPDATE_MODE_HOLD, isReloadHeldBy, subscribeReloadHeld } from "@/lib/rel
 
 import { BootSplash, RootError, RootLayout } from "@/routes/root";
 import { HomeRoute } from "@/routes/home";
+import { SlotRoute } from "@/routes/slot";
 import { SpaceRoute } from "@/routes/space";
 import { NewRoute } from "@/routes/new";
 import { NewAddRoute } from "@/routes/new-add";
@@ -91,6 +92,7 @@ const settingsVoiceModelRoute = settingsSection((m) => m.SettingsVoiceModelRoute
 const settingsAlertsRoute = settingsSection((m) => m.SettingsAlertsRoute);
 const settingsExperimentsRoute = settingsSection((m) => m.SettingsExperimentsRoute);
 const settingsSystemRoute = settingsSection((m) => m.SettingsSystemRoute);
+const settingsInstallCountRoute = settingsSection((m) => m.SettingsInstallCountRoute);
 // Updates is Settings' own shape one level down — a column of cards — so it borrows that skeleton
 // rather than growing a sixth one for a screen nobody waits on twice.
 const updatesRoute = lazyRoute(
@@ -173,6 +175,8 @@ export const router = createBrowserRouter([
     HydrateFallback: BootSplash,
     children: [
       { index: true, element: <HomeRoute /> },
+      // A permanent address for one browser tab; it replaces itself with that tab's last pane (lib/slots.ts).
+      { path: "slot/:slot", element: <SlotRoute /> },
       { path: "space/:spaceId", element: <SpaceRoute /> },
       // FORK: every agent's last lines on one screen. Eager, like the dashboard: for a herd of
       // long-lived panes it is a first screen, not a once-a-week one.
@@ -221,6 +225,8 @@ export const router = createBrowserRouter([
       // to hold — a revoke or a pair is then the app's standard mutation shape (api call →
       // revalidate), with no second data path.
       { path: "settings/system", loader: devicesLoader, element: settingsSystemRoute },
+      // One level below System, like Voice's two pages: the install count's switch and its explanation.
+      { path: "settings/system/install-count", element: settingsInstallCountRoute },
       // The Updates page, a sibling of settings and crew. No loader of its own: everything on it is
       // either the snapshot (root loader) or the card's own read of /api/update/check. It is
       // deliberately ON the poll loop for `crew`'s stated reason — a run in progress and a member

@@ -3,6 +3,7 @@ import { mkdir, readFile as readFileAsync, realpath as realpathAsync, stat as st
 import { cpus, freemem, homedir, hostname, loadavg, totalmem } from "node:os";
 import { join } from "node:path";
 
+import { liveHookTargets } from "../cli/beacon.ts";
 import { classifyInstall, probeInstall } from "../cli/install-kind.ts";
 import { realLinkFs } from "../cli/link.ts";
 import { packageCommand } from "../cli/package-command.ts";
@@ -26,7 +27,11 @@ import { AuditLog, fileAuditAppender } from "./audit.ts";
 import { beaconReader, fileEdgeSpool, fileSourceStore, hooksInstalledProbe, procBeaconLiveness, registerHookTarget, type HookTargetRegistration } from "./beacon-io.ts";
 import { withAgentBeacons } from "./beacon/decorate.ts";
 import { withAgentHints } from "./beacon/hint.ts";
-import { holdPrivateFile, loadConfig, loadConfigLayer, nonLoopbackBindRefusal, resolveConfigDir, type Config } from "./config.ts";
+import { repoFactsOf } from "./repo-facts.ts";
+import { withRepoFacts } from "./repo-facts-mux.ts";
+import { gitBinary } from "./changes.ts";
+import { withWorktreeCapability } from "./worktree-capability.ts";
+import { holdPrivateFile, interfaceAddresses, listenFailureLine, loadConfig, loadConfigLayer, nonLoopbackBindRefusal, resolveConfigDir, type Config } from "./config.ts";
 import { applyConfigLayer } from "./config-source.ts";
 import { journalAgentOf } from "./types.ts";
 import {
@@ -37,10 +42,10 @@ import {
   privateRoot,
   type PrivateRoot,
 } from "./owner-only.ts";
-import type { AgentView, CrewMode, CrewStatusResponse } from "./types.ts";
+import type { AgentView, CrewMode, CrewStatusResponse, Launcher } from "./types.ts";
 import { EventPoker } from "./event-poker.ts";
 import { durableLogDir, moveFlatLogs, sourceLogDir } from "./durable/log.ts";
-import { GitHeads } from "./git-head.ts";
+import { GitHeads, nodeGitHeadDisk } from "./git-head.ts";
 import { exePathOf, exeReplaced } from "./exe-replaced.ts";
 import {
   herdrActionCommand,
@@ -79,6 +84,7 @@ import { peekBinaryPrompt } from "./prompt-peek.ts";
 import { replyLine, type ReplyLine } from "./reply-peek.ts";
 import { FolderStore } from "./folders.ts";
 import { WorktreeBaseStore } from "./worktree-bases.ts";
+import { spaceFolders } from "./space-view.ts";
 import { WorktreeReceiptStore } from "./worktree-receipts.ts";
 import { LaunchReceiptStore } from "./launch-receipts.ts";
 import { LaunchWindow, foregroundHarnessOf } from "./launch-window.ts";
@@ -176,6 +182,16 @@ import {
   type SyncedDevice,
 } from "./crew/standby-devices.ts";
 import {
+  copiedRowsOf,
+  copyDigest,
+  copyReportOf,
+  copyServed,
+  StandbyLauncherStore,
+  STANDBY_LAUNCHERS_VERSION,
+  type CopyRole,
+  type LauncherCopySeam,
+} from "./crew/standby-launchers.ts";
+import {
   adoptLeadership,
   clearRePin,
   pendingRePin,
@@ -194,7 +210,7 @@ import {
   type Warrant,
 } from "./crew/trust-store.ts";
 import { currentWarrant, discardForeignWarrant, refreshWarrant, type WarrantPush } from "./crew/warrant.ts";
-import { Push } from "./push.ts";
+import { CLEAR_BURST_MS, Push } from "./push.ts";
 import { currentNotesReader } from "./release-notes.ts";
 import { pluginRoot } from "./root.ts";
 import { buildId, startServer } from "./server.ts";
@@ -235,6 +251,12 @@ import {
   writeUpdateLine,
 } from "./update-line.ts";
 import {
+  createTelemetry,
+  telemetryOrigin,
+  TELEMETRY_FIRST_DELAY_MS,
+  TELEMETRY_INTERVAL_MS,
+} from "./telemetry.ts";
+import {
   FreshPreflightGate,
   launchUpdateRunner,
   openRunnerLog,
@@ -269,18 +291,20 @@ import {
   CREW_WALKY_ROUTE,
   leadRouteRemote,
   memberRouteRemote,
+  olderThanWake,
   olderThanWalky,
   WalkyCrew,
   WalkyLeadSide,
   WalkyReport,
   type CrewDialAnswer,
 } from "./walky/crew.ts";
-import type { RouteRemote, SendResult, WalkyHost, WalkyPane } from "./walky/deliver.ts";
+import { isResting, type RouteRemote, type SendResult, type WalkyHost, type WalkyPane } from "./walky/deliver.ts";
 import { INSTANCE_TICK_MS, WalkyInstances } from "./walky/instances.ts";
 import { WalkyLog } from "./walky/log.ts";
 import { RefusalCounter } from "./walky/refusals.ts";
 import { WalkySeen } from "./walky/seen.ts";
 import { WalkyService } from "./walky/service.ts";
+import { siblingDirsOf, SiblingLogs } from "./walky/siblings.ts";
 import { walkySocketPath, WalkyServer } from "./walky/socket.ts";
 
 // How often the registry rescans the filesystem for sessions that appeared/disappeared after boot.
@@ -735,7 +759,9 @@ function crewStoreChanged(): void {
 }
 
 // ── Process-global services, shared across every session ─────────────────────
-const push = new Push(cfg);
+// Clears wait CLEAR_BURST_MS for company, so one retract across many agents is one push per device
+// (bridge/push.ts § the three rules). The CLI's own Push sends at once.
+const push = new Push(cfg, undefined, { clearBurstMs: CLEAR_BURST_MS });
 await push.init();
 
 const snooze = new Snooze(cfg);
@@ -1254,6 +1280,32 @@ updateFirstCheck.unref();
 const updateTimer = setInterval(updateTick, UPDATE_INTERVAL_MS);
 updateTimer.unref();
 
+// The anonymous install ping (M86 spec 01, bridge/telemetry.ts): one tiny POST a day at most, to
+// Collie's own endpoint, and nothing at all when any off switch says so. The state file is settled
+// here at boot (an off ping keeps no ID), the first check comes ten minutes in and then every hour,
+// and each tick only asks `shouldSend`. Both timers are unref()ed and cleared on shutdown.
+const telemetry = createTelemetry({
+  stateDir: cfg.stateDir,
+  env: process.env,
+  origin: telemetryOrigin(process.env, configLayer),
+  version: crewVersion,
+  installKind: installKind,
+  line: () => readUpdateLineSync(cfg.stateDir).line,
+  // Read at ping time. A peer (a member, or a deputy that is not the lead) is a member in the ping.
+  crewMode: () => crew.mode,
+  now: Date.now,
+  fetch: (url, init) => fetch(url, init),
+  os: HOST.platform,
+  arch: process.arch,
+  warn: (line) => console.warn(`[telemetry] ${line}`),
+  log: (line) => console.log(`[telemetry] ${line}`),
+});
+telemetry.observe();
+const telemetryFirstTick = setTimeout(() => void telemetry.tick(), TELEMETRY_FIRST_DELAY_MS);
+telemetryFirstTick.unref();
+const telemetryTimer = setInterval(() => void telemetry.tick(), TELEMETRY_INTERVAL_MS);
+telemetryTimer.unref();
+
 /**
  * What this collie publishes beside its snapshot body when its lead polls it (§19).
  *
@@ -1327,6 +1379,9 @@ function followLeadLine(a: { readonly line?: ReleaseLine; readonly step?: LeadSt
   }
 }
 
+/** The release the lead last stated on a sweep, or null when it stated none yet (walky talky's `--wake` check). */
+let heardLeadRelease: string | null = null;
+
 /**
  * A durable peer names a lead too old to show its panes properly (M50 spec 14, bridge/durable/old-lead.ts).
  * Any peer that runs a durable program counts, as the primary or as a source beside its terminal mux
@@ -1336,9 +1391,11 @@ const oldLead = crew.mode === "peer" && runsPrograms ? new OldLeadNotice() : und
 
 /** The lead's two follow headers, handed to whichever of the follower and the old-lead notice exist. */
 const onFollow =
-  crewFollower === undefined && oldLead === undefined
+  crew.mode !== "peer" && crewFollower === undefined && oldLead === undefined
     ? undefined
     : (a: { readonly leadRelease: string | null; readonly turn: string | null; readonly leadLine?: string | null }): void => {
+        // Walky talky reads it too (`memberRouteRemote`): a lead below 1.26.1 cannot take `--wake`.
+        if (a.leadRelease !== null) heardLeadRelease = a.leadRelease;
         oldLead?.observe(a.leadRelease);
         crewFollower?.observe(a);
       };
@@ -1375,6 +1432,9 @@ for (const source of programs.others) {
 // not of one herd. It is what decides whether a blind adapter's beacon capabilities are lifted —
 // never whether a beacon happens to be on disk, which would make the declaration flicker.
 const hooksInstalled = hooksInstalledProbe({ home: homedir(), env: process.env });
+// The git binary, found once at start: whether this host can make a worktree (bridge/worktree-add.ts)
+// is a fact about git and the multiplexer's `createSpace`, never about a multiplexer verb (M81).
+const worktreeGit = await gitBinary();
 
 /**
  * The adapter, with agent beacons around it when the multiplexer cannot see agents, or cannot see
@@ -1552,7 +1612,11 @@ const sendProfile = createPaneProfile({ versions: sendVersions, binaries: harnes
 const makeSession: SessionFactory = (name, endpoint, isPrimary) => {
   const built = endpoint.kind === "program" ? programAdapter(endpoint.source) : terminalAdapter(endpoint.socketPath);
   const target = built.target;
-  const herdr = withBeaconsIfBlind(built.adapter, target);
+  // The repo facts wrapper sits OUTSIDE the beacon and hint wrappers and is applied once, for every mux:
+  // `repoRoot`, `isWorktree` and `folder` come from the space's folder on disk (M81/03), never a spawn.
+  // The worktree capability sits just inside it, outside the beacon and hint wrappers: it reads their
+  // declaration and lifts `createWorktree` from `createSpace` plus git (bridge/worktree-capability.ts).
+  const herdr = withRepoFacts(withWorktreeCapability(withBeaconsIfBlind(built.adapter, target), { git: worktreeGit }), { facts: (folder) => repoFactsOf(folder, nodeGitHeadDisk, homedir()) });
   const engine = new StateEngine(herdr, cfg.pollMs, { museSessionName: museNames });
 
   // Event-poked polling: a long-lived watch on the multiplexer pokes an immediate re-poll on any
@@ -1577,7 +1641,10 @@ const makeSession: SessionFactory = (name, endpoint, isPrimary) => {
   // The branch of every pane's folder rides the same poll, fired and not awaited, for the cache
   // probe's reason below: a poll never waits on a disk read. The reader keeps its own clocks, so a
   // poll every 1.5 s is not a read every 1.5 s, and it never throws.
-  engine.onUpdate((s) => void gitHeads.refresh([...s.agents, ...s.shellPanes].map((p) => p.cwd)));
+  // The space folders join it, so a space's own branch rides its view the same way (space-view.ts).
+  engine.onUpdate(
+    (s) => void gitHeads.refresh([...[...s.agents, ...s.shellPanes].map((p) => p.cwd), ...spaceFolders(s.workspaces)]),
+  );
 
   // The prompt-cache probe rides the same poll, and for the reason the tracker's header gives:
   // `localSnapshot` is synchronous, so the disk read cannot happen at serialise time. It is fired and
@@ -1662,10 +1729,16 @@ const makeSession: SessionFactory = (name, endpoint, isPrimary) => {
     peek,
     replyPeek,
   );
-  // FORK: the pane rides along so a per-pane rule (notify-prefs.ts) can answer for it.
-  const notifications = new NotificationCoordinator(clock, sink, cfg.notifyDelayMs, (status, pane) =>
+  // FORK: the pane rides along so a per-pane rule (notify-prefs.ts) can answer for it — and that
+  // rule, the notify.toml session/pane mute included, gates BOTH shapes: an alert a rule refuses is
+  // never armed, so it reaches neither the summary nor its own per-agent notification.
+  const notifications = new NotificationCoordinator(
+    clock,
+    sink,
+    cfg.notifyDelayMs,
     // FORK: the pane carries its session's registry name, for a [[sessions]] rule.
-    notifyPrefs.isNotifiable(status, { ...pane, session: name }),
+    (status, pane) => notifyPrefs.isNotifiable(status, { ...pane, session: name }),
+    () => notifyPrefs.current().individual,
   );
   // A pane whose adapter raises asks as data (ADR 0100) does not push on its way into `blocked`: the
   // ask guard decides, once per ask, after each poll. Every other pane, and every other transition,
@@ -1976,7 +2049,9 @@ const walkyRawPanes = (): Omit<WalkyPane, "instance">[] =>
     const of = (view: AgentView, agent: boolean): Omit<WalkyPane, "instance"> => {
       const head = gitHeads.get(view.cwd);
       const facts = { paneId: view.paneId, cwd: view.cwd, branch: head?.kind === "branch" ? head.name : null, paneLabel: view.paneLabel, terminalTitle: view.terminalTitle };
-      return { session: rt.name, paneId: view.paneId, agent, harness: agent ? view.agent : null, label: labelOf(facts, !cfg.redact), state: view.status, terminal: rt.send !== undefined };
+      // The last status change comes from the activity ledger: the engine's views carry no time (it rides the wire at serialise time).
+      const activeAt = activity.get(rt.name, view.paneId)?.activeAt ?? null;
+      return { session: rt.name, paneId: view.paneId, agent, harness: agent ? view.agent : null, label: labelOf(facts, !cfg.redact), state: view.status, activeAt, terminal: rt.send !== undefined };
     };
     const out = agents.map((view) => of(view, true));
     for (const view of shellPanes) out.push(of(view, false));
@@ -2012,7 +2087,12 @@ const walkyHost: WalkyHost = {
   },
 };
 const walkyMemberId = crew.mode === "solo" ? null : (trustStore.current()?.self.memberId ?? null);
-const walkyLog = new WalkyLog(join(cfg.stateDir, "walky"));
+// A sibling instance on this machine (siblings.ts) may have recorded a message typed into a pane both
+// bridges watch: the pane's list merges its rows, read-only, off the hook target registry's live bridges.
+const walkySiblings = new SiblingLogs({
+  dirs: () => siblingDirsOf(liveHookTargets({ ctx: { env: process.env, home: homedir() }, files: realFiles, uid: process.getuid?.() }), cfg.stateDir, (path) => realFiles.realpath(path)),
+});
+const walkyLog = new WalkyLog(join(cfg.stateDir, "walky"), Date.now, walkySiblings);
 // A pane instance that went takes its inbox with it: a new session that takes the id starts empty.
 walkyInstances.onDrop((session, paneId, token) => walkyLog.inboxDrop(session, paneId, token));
 // Look at the panes every 10 seconds even when no message asks, so a closed pane is dropped on time.
@@ -2038,7 +2118,7 @@ const walkyRoute: RouteRemote | undefined =
     ? undefined
     : crew.mode === "lead"
       ? (message, members, panes) => (walkyLeadHalf === null ? Promise.reject(new Error("the crew is not wired yet")) : walkyLeadHalf.route(message, members, panes))
-      : memberRouteRemote({ self: walkyMemberId, post: (payload) => walkyToLead(payload) });
+      : memberRouteRemote({ self: walkyMemberId, post: (payload) => walkyToLead(payload), leadRelease: () => heardLeadRelease, own: crewVersion, compare: compareSemver });
 const walky = new WalkyService({
   log: walkyLog,
   seen: walkySeen,
@@ -2046,6 +2126,7 @@ const walky = new WalkyService({
   host: walkyHost,
   memberId: walkyMemberId,
   enabled: () => cfg.walky,
+  pairLimit: cfg.walkyPairLimit,
   machine: hostname(),
   keyPem: () => (walkyMemberId === null ? null : (trustStore.current()?.self.keyPem ?? null)),
   warn: (line) => console.warn(line),
@@ -2124,6 +2205,7 @@ const peerNotifier =
         mute: snooze,
         delayMs: cfg.notifyDelayMs,
         isNotifiable: (status) => notifyPrefs.isNotifiable(status),
+        individual: () => notifyPrefs.current().individual,
         asks: askPush,
       })
     : undefined;
@@ -2186,6 +2268,69 @@ if (standbyStore !== null) await standbyStore.load();
 const syncedDevices = (): readonly SyncedDevice[] => standbyStore?.current()?.devices ?? [];
 
 /**
+ * The lead's launcher rows, kept as a read-only copy (ADR 0127 point 5, `crew/standby-launchers.ts`).
+ * Constructed for any machine with a trust store: a deputy receives the copy as a peer, and serves it
+ * after a takeover, when this process comes back up as the lead. Constructing it writes nothing; solo
+ * never reaches this line (§11).
+ */
+const launcherCopyStore = bootTrust !== null ? new StandbyLauncherStore(cfg.stateDir) : null;
+
+/** What this machine is in its crew now, for whose copy it may keep. Read through the store per call. */
+function copyRole(): CopyRole {
+  const held = trustStore.current();
+  return {
+    crewId: held?.crew?.crewId ?? null,
+    leads: held !== null && held.crew !== null && held.lead === null,
+    leadMemberId: held?.lead?.memberId ?? null,
+    deputy: holdsOwnWarrant(),
+  };
+}
+
+/**
+ * Remove the copy once it is not this machine's to hold: a demotion, a different lead, another crew.
+ * Run at boot and whenever the trust store changes under this process, with ONE rule both times
+ * (`copyKept`): the copy is loaded from disk and kept while this machine is still its lead's named
+ * deputy, or now leads the crew the copy is from, and cleared otherwise. Never an unconditional clear:
+ * a deputy that reboots while its lead is down is exactly the one about to need the copy. Never
+ * throws: a copy that could not be removed is still never served while this machine is cold, and the
+ * next change tries again.
+ */
+async function reconcileLauncherCopy(): Promise<void> {
+  if (launcherCopyStore === null) return;
+  try {
+    if (await launcherCopyStore.reconcile(copyRole())) {
+      console.log("[crew] this machine is no longer its lead's deputy: removed its copy of the lead's launcher rows");
+    }
+  } catch (err) {
+    console.warn(`[crew] could not remove the copy of the lead's launcher rows: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+await reconcileLauncherCopy();
+
+/**
+ * The read of the rows a launch here matches, handed over by the server once it is built
+ * (`LauncherCopySeam.source`). The lead's sync to its deputy sends exactly that list; `null` before.
+ */
+let crewLauncherRows: (() => Promise<Launcher[]>) | null = null;
+
+/** What the server reads of the copy. The copy is served only while this machine leads its crew. */
+const launcherCopySeam: LauncherCopySeam | undefined =
+  launcherCopyStore === null
+    ? undefined
+    : {
+        served: () => {
+          const held = trustStore.current();
+          return copyServed(launcherCopyStore.current(), {
+            crewId: held?.crew?.crewId ?? null,
+            leads: held !== null && held.crew !== null && held.lead === null,
+          });
+        },
+        source: (read) => {
+          crewLauncherRows = read;
+        },
+      };
+
+/**
  * What the two standby-shaped crew routes need from this process (`router.ts` → `StandbySurface`).
  *
  * `undefined` on a lead and on solo — a lead has no lead to be silent, no warrant naming itself and
@@ -2212,6 +2357,22 @@ const standbySurface: CrewRouterDeps["standby"] =
           const own = readableRegistry();
           return own === null ? [] : collisionReportOf(own, standbyStore.current());
         },
+        // ADR 0127 point 5: the launcher copy's report and its write, beside the device registry's.
+        copyDigest: () => copyReportOf(launcherCopyStore?.current() ?? null),
+        applyCopy:
+          launcherCopyStore === null
+            ? undefined
+            : async (copy) => {
+                // Wholesale, never a merge, and into its own file: never `launchers.toml` or
+                // `launchers-added.json`, which stay this machine's own.
+                await launcherCopyStore.replace({
+                  version: STANDBY_LAUNCHERS_VERSION,
+                  crewId: copy.crewId,
+                  from: copy.from,
+                  at: Date.now(),
+                  rows: copy.rows,
+                });
+              },
         applySync: async (sync) => {
           // Wholesale, never a merge: the lead's registry is the whole truth, so a revocation there
           // has to be able to REMOVE a device here.
@@ -2492,6 +2653,18 @@ const crewLead = (() => {
         pairingCollision = labels === null || labels.length === 0 ? null : { at: Date.now(), labels };
       },
     },
+    // ADR 0127 point 5: the crew's launcher rows to the DEPUTY, beside its device registry. The rows
+    // are the ones a launch on this lead matches, its own and any copy it serves after a takeover.
+    launchersCopy: {
+      deputy: () => trustStore.current()?.deputy ?? null,
+      current: async () => {
+        const held = trustStore.current();
+        if (crewLauncherRows === null || held === null || held.crew === null) return null;
+        const rows = copiedRowsOf(await crewLauncherRows(), homedir());
+        return { rows, digest: copyDigest(rows) };
+      },
+      push: (link, rows) => client.launchersCopy(link, rows),
+    },
     // §18.10's fast path: a member told this lead, in as many words, that it follows somebody else.
     // Best-effort and time-boxed (it works only while this lead is still in that member's anchor
     // list), so it is a shortcut on top of the boot gate and never a replacement for it.
@@ -2513,6 +2686,8 @@ if (crewLead !== undefined && walkyMemberId !== null) {
       self: walkyMemberId,
       // A member whose reported version predates walky talky is refused `older member` without a dial.
       older: (memberId) => olderThanWalky(lead.contributions().find((c) => c.state.memberId === memberId)?.state.version ?? null, crewVersion, compareSemver),
+      // A member below 1.26.1 never rests a pane: a `wake` message goes to it as a plain send.
+      olderThanWake: (memberId) => olderThanWake(lead.contributions().find((c) => c.state.memberId === memberId)?.state.version ?? null, crewVersion, compareSemver),
       members: () => (trustStore.current()?.peers ?? []).filter((member) => member.status === "enrolled").map((member) => member.memberId),
       // A message from another member travels with that member's pinned certificate and this lead's
       // voucher, so the receiving member checks the origin itself (§21, added 2026-10-18).
@@ -2552,6 +2727,7 @@ if (crewLead !== undefined && walkyMemberId !== null) {
       crewSkipped(
         lead.contributions().map((c) => ({ memberId: c.state.memberId, name: c.name, reachable: c.state.health === "reachable", body: c.body })),
         !cfg.redact,
+        (pane) => isResting(pane, Date.now()),
       ),
   };
 }
@@ -2954,10 +3130,34 @@ const standbyDoor = standbyStore === null ? null : createStandbyDoor({
  * one question — *should anything route here?* — and a lead answers it `200` on both of its ports.
  */
 const standbyPort = standbyPortOf(process.env);
+/**
+ * Run a listen, or end the process (issue 699). Bun throws when a door cannot listen, and this
+ * module starts at top level, so the throw would fail the import while the hold socket, the walky
+ * socket, the poll loop and the timers kept a bridge with no listener alive. launchd, systemd and
+ * the Windows task restart only an exit, so the line below is printed and the process exits 1.
+ */
+function listenOrExit<T>(door: "front door" | "standby door", host: string, port: number, listen: () => T): T {
+  try {
+    return listen();
+  } catch (err) {
+    console.error(
+      listenFailureLine({
+        door,
+        host,
+        port,
+        code: err instanceof Error && "code" in err ? String(err.code) : undefined,
+        message: err instanceof Error ? err.message : String(err),
+        interfaces: interfaceAddresses(),
+      }),
+    );
+    process.exit(1);
+  }
+}
+
 const standbyServer =
   standbyPort === null || bootTrust === null
     ? null
-    : Bun.serve({
+    : listenOrExit("standby door", standbyHostOf(process.env), standbyPort, () => Bun.serve({
         hostname: standbyHostOf(process.env),
         port: standbyPort,
         fetch: async (req) => {
@@ -2980,7 +3180,7 @@ const standbyServer =
           // machine mid-update is most likely to meet (M15/05).
           return withStandbyVersion(answered ?? new Response("not found", { status: 404 }), crewVersion);
         },
-      });
+      }));
 
 if (standbyServer !== null && standbyDoor !== null) {
   console.log(
@@ -2995,7 +3195,7 @@ if (standbyServer !== null && standbyDoor !== null) {
   );
 }
 
-const server = startServer({
+const server = listenOrExit("front door", cfg.host, cfg.port, () => startServer({
   cfg,
   registry,
   push,
@@ -3012,6 +3212,8 @@ const server = startServer({
     write: (record) => writeUpdateLine(diskWriter, cfg.stateDir, record),
     now: Date.now,
   },
+  // The anonymous install ping's state and the phone's switch (M86 spec 01).
+  telemetry,
   // The bare `<semver>+<sha>` this process answers `/api/health` and `/crew/v1/hello` with — one
   // string, resolved once, so the detached updater's health gate and a peer can never be told two
   // different things about this machine (M15/04).
@@ -3055,6 +3257,7 @@ const server = startServer({
   machines: machineWatch,
   crew,
   pairing,
+  launcherCopy: launcherCopySeam,
   localCredential,
   stt,
   crewLead,
@@ -3110,7 +3313,11 @@ const server = startServer({
             // compiled that drives no durable program — passes `undefined` and ignores both, which is
             // a correct peer.
             onFollow,
-            onMembershipChange: crewStoreChanged,
+            onMembershipChange: () => {
+              crewStoreChanged();
+              // A warrant naming another deputy, or none, ends this machine's copy (ADR 0127 point 5).
+              void reconcileLauncherCopy();
+            },
             // Gap A (§18.9), and its rotation-shaped sibling. Two receipts, one holder, in memory.
             onLeadDialled: (at) => leadContact.record(at),
             // M20/02: a peer that speaks to us is due. It marks the member due now and dials nothing;
@@ -3158,7 +3365,7 @@ const server = startServer({
     }
     return null;
   },
-});
+}));
 
 /** One line per shutdown step, so a shutdown that hangs names the step it hung in (bridge/shutdown.ts). */
 const step = (name: string) => console.log(`[bridge] shutdown: ${name}`);
@@ -3200,6 +3407,8 @@ const shutdown = async () => {
   clearInterval(sweepTimer);
   clearTimeout(updateFirstCheck);
   clearInterval(updateTimer);
+  clearTimeout(telemetryFirstTick);
+  clearInterval(telemetryTimer);
   step("exit");
   process.exit(0);
 };

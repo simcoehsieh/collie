@@ -38,10 +38,10 @@ describe("theme-init.js and lib/theme agree", () => {
     expect(listOf("SHIPPED")).toEqual(SHIPPED_THEME_IDS.filter((id) => id !== "collie"));
   });
 
-  it("spells the closed token list, all of it and in order, the optional token last", () => {
+  it("spells the closed token list, all of it and in order, the optional tokens last", () => {
     expect(listOf("TOKENS")).toEqual([...ALL_THEME_TOKENS]);
     expect(listOf("TOKENS").slice(0, 43)).toEqual([...THEME_TOKENS]);
-    expect(listOf("TOKENS")).toHaveLength(44);
+    expect(listOf("TOKENS")).toHaveLength(45);
   });
 
   it("holds the same colour pattern and the same length cap", () => {
@@ -74,15 +74,17 @@ describe("theme-init.js and lib/theme agree", () => {
     expect(init).not.toMatch(/removeProperty|removeAttribute|classList\.remove/);
   });
 
-  it("adds fewer than 60 lines for the theme job", () => {
+  it("adds fewer than 64 lines for the theme job", () => {
     const lines = init.split("\n");
     const start = lines.findIndex((l) => l.includes("IT NOW DOES A THIRD THING")) - 1;
     const fn = lines.findIndex((l) => l.startsWith("  function applyColourTheme"));
     const end = lines.findIndex((l, i) => i > fn && l === "  }");
     expect(start).toBeGreaterThan(0);
     expect(end).toBeGreaterThan(fn);
-    // The block, the one call site, and the hand-off line that was not there before.
-    expect(end - start + 1 + 1).toBeLessThan(60);
+    // The block, the one call site, and the hand-off line that was not there before. Four more lines
+    // since the default theme paints Collie's grain from :root: an imported theme names its own ground
+    // or says `flat`, so the budget moved from 60 to 64.
+    expect(end - start + 1 + 1).toBeLessThan(64);
   });
 });
 
@@ -156,13 +158,64 @@ const midnight = (version: number) => ({
   ],
 });
 
+// The default face is Atkinson Hyperlegible (2026-11-06): no class. Aldrich is a choice and wears
+// `font-aldrich`. A blob with no font, or with only `theme: collie`, is a fresh device.
+describe("theme-init.js, the default face", () => {
+  it("adds no face class for nothing stored", () => {
+    expect(runInit({}).classes).toEqual([]);
+  });
+
+  it("adds no face class for a blob with no font, or a stored collie and no font", () => {
+    expect(runInit({ "collie:design:v1": JSON.stringify({}) }).classes).toEqual([]);
+    expect(runInit({ "collie:design:v1": JSON.stringify({ theme: "collie" }) }).classes).toEqual([]);
+  });
+
+  it("adds no face class for a stored atkinson", () => {
+    // FORK: the fork's default face is the system face, so a stored Atkinson is a choice and takes its class (FORK_NEW_LOOK_ON).
+    expect(runInit({ "collie:design:v1": JSON.stringify({ font: "atkinson" }) }).classes).toEqual(["font-atkinson"]);
+  });
+
+  it("keeps Aldrich for a device that stored it", () => {
+    expect(runInit({ "collie:design:v1": JSON.stringify({ font: "aldrich" }) }).classes).toEqual(["font-aldrich"]);
+  });
+});
+
 describe("theme-init.js, run", () => {
   it("applies an imported theme from a version 1 library", () => {
     const seen = runInit({
       "collie:design:v1": JSON.stringify({ theme: "midnight" }),
       "collie:themes:v1": JSON.stringify(midnight(1)),
     });
-    expect(seen.properties).toHaveLength(THEME_TOKENS.length);
+    // The colour tokens, and `--ground-image: none`: a theme that names no ground must not inherit :root's grain.
+    expect(seen.properties).toHaveLength(THEME_TOKENS.length + 1);
+    expect(seen.properties).toContainEqual([GROUND, "none"]);
+  });
+
+  it("paints the default's grain through index.css alone: the script sets nothing for collie or for a blob-less device", () => {
+    expect(runInit({ "collie:design:v1": JSON.stringify({ theme: "collie" }) }).properties).toEqual([]);
+    expect(runInit({}).properties).toEqual([]);
+    const sheet = readFileSync(resolve(import.meta.dirname, "index.css"), "utf8");
+    const grain = wordDeclarations("ground", "grain")[0]?.[1] ?? "";
+    // FORK: no grain behind the fork's page (FORK_NEW_LOOK_ON); index.css paints none.
+    void grain;
+    expect(sheet).toContain("--ground-image: none;");
+  });
+
+  it("paints a stored collie-new as the default: no attribute and no property", () => {
+    const seen = runInit({ "collie:design:v1": JSON.stringify({ font: "system", theme: "collie-new" }) });
+    expect(seen).toEqual({ classes: [], attributes: [], properties: [] });
+  });
+
+  it("still applies an imported theme whose id is collie-new", () => {
+    const entry = { ...midnight(1).themes[0], id: "collie-new" };
+    const seen = runInit({
+      "collie:design:v1": JSON.stringify({ theme: "collie-new" }),
+      "collie:themes:v1": JSON.stringify({ version: 1, themes: [entry] }),
+    });
+    expect(seen.attributes).toEqual([]);
+    // The colour tokens, and `--ground-image: none`: a theme that names no ground must not inherit :root's grain.
+    expect(seen.properties).toHaveLength(THEME_TOKENS.length + 1);
+    expect(seen.properties).toContainEqual([GROUND, "none"]);
   });
 
   it("applies nothing from a library that says version 2", () => {
@@ -197,12 +250,15 @@ function libraryWithSurface(surface: JsonObject) {
   return { version: 1, themes: [{ ...theme, version: 2, surface }] };
 }
 
+/** The property the omitted-ground fill sets; the helpers below leave it out unless a theme names a ground. */
+const GROUND = "--ground-image";
+
 function initSurface(surface: JsonObject): Array<[string, string]> {
   const seen = runInit({
     "collie:design:v1": JSON.stringify({ theme: "midnight" }),
     "collie:themes:v1": JSON.stringify(libraryWithSurface(surface)),
   });
-  return seen.properties.filter(([property]) => SURFACE_PROPERTIES.includes(property));
+  return seen.properties.filter(([property]) => SURFACE_PROPERTIES.includes(property) && (property !== GROUND || "ground" in surface));
 }
 
 function storeSurface(theme: Theme): Array<[string, string]> {
@@ -212,6 +268,7 @@ function storeSurface(theme: Theme): Array<[string, string]> {
   const out: Array<[string, string]> = [];
   for (const property of SURFACE_PROPERTIES) {
     const value = root.style.getPropertyValue(property);
+    if (property === GROUND && theme.surface?.ground === undefined) continue;
     if (value !== "") out.push([property, value]);
   }
   root.removeAttribute("style");
@@ -275,12 +332,14 @@ describe("theme-init.js and lib/theme/surface.ts agree", () => {
     expect(initSurface({})).toEqual([]);
   });
 
-  it("sets nothing for a theme with no surface, so a version 1 theme paints as before", () => {
+  it("sets only a flat ground for a theme with no surface, so a version 1 theme paints as before", () => {
     const seen = runInit({
       "collie:design:v1": JSON.stringify({ theme: "midnight" }),
       "collie:themes:v1": JSON.stringify(midnight(1)),
     });
-    expect(seen.properties).toHaveLength(THEME_TOKENS.length);
+    // The colour tokens, and `--ground-image: none`: a theme that names no ground must not inherit :root's grain.
+    expect(seen.properties).toHaveLength(THEME_TOKENS.length + 1);
+    expect(seen.properties).toContainEqual([GROUND, "none"]);
   });
 });
 
@@ -299,7 +358,7 @@ function initVersionTwo(extra: JsonObject): Array<[string, string]> {
     "collie:design:v1": JSON.stringify({ theme: "midnight" }),
     "collie:themes:v1": JSON.stringify({ version: 1, themes: [{ ...theme, version: 2, ...extra }] }),
   });
-  return seen.properties.filter(([property]) => VERSION_TWO_PROPERTIES.includes(property));
+  return seen.properties.filter(([property]) => VERSION_TWO_PROPERTIES.includes(property) && (property !== GROUND || extra.surface !== undefined));
 }
 
 function storeVersionTwo(theme: Theme): Array<[string, string]> {
@@ -309,6 +368,7 @@ function storeVersionTwo(theme: Theme): Array<[string, string]> {
   const out: Array<[string, string]> = [];
   for (const property of VERSION_TWO_PROPERTIES) {
     const value = root.style.getPropertyValue(property);
+    if (property === GROUND && theme.surface?.ground === undefined) continue;
     if (value !== "") out.push([property, value]);
   }
   root.removeAttribute("style");

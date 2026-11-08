@@ -4,9 +4,12 @@ import { http, HttpResponse } from "msw";
 
 import { __resetOperatorCommands } from "@/lib/operator-config";
 import { server } from "@/test/setup";
+import { cn } from "@/lib/utils";
 import { TabStrip } from "./tab-strip";
+import { STRIP_TAP_TARGET, TAB_ROW_SQUARE_TAP_TARGET } from "./ui/labelled-strip";
 import type { AgentStatus, AgentView, MuxCapability, TabView } from "@/lib/types";
 import { pinnedLauncher } from "@/lib/launchers";
+import type { WidthClass } from "@/lib/wide-layout";
 
 describe("TabStrip — the plus names its resolved launcher", () => {
   const launcher = { command: "/opt/bin/codex --profile work", label: "Work Codex" };
@@ -41,6 +44,39 @@ describe("TabStrip — the plus names its resolved launcher", () => {
     expect(plus).toHaveAttribute("aria-busy", "true");
     expect(plus.querySelector('svg[role="img"]')).not.toBeNull();
   });
+});
+
+// The theme on screen, with its `tabs` word set by the test (lib/tab-look.ts). Left undefined it is the
+// real active theme with no `tabs` word, which is the plain look (the default theme itself names `folder`).
+interface ThemeTabs {
+  word: "plain" | "folder" | undefined;
+}
+const themeTabs = vi.hoisted((): ThemeTabs => ({ word: undefined }));
+vi.mock("@/lib/theme/store", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/theme/store")>();
+  return {
+    ...original,
+    useActiveTheme: () => {
+      const active = original.useActiveTheme();
+      // Left undefined, the theme names no `tabs` word: the plain look, as for a theme without the word.
+      if (themeTabs.word === undefined) return { ...active, theme: { ...active.theme, surface: { ...active.theme.surface, tabs: undefined } } };
+      return { ...active, theme: { ...active.theme, surface: { ...active.theme.surface, tabs: themeTabs.word } } };
+    },
+  };
+});
+afterEach(() => {
+  themeTabs.word = undefined;
+});
+
+// The window's width class (ADR 0120), set by the test. The row steps up with it (tab-strip.tsx § STEP);
+// every case that does not set it runs at compact, the phone, as the cases above always did.
+interface WindowWidth {
+  now: WidthClass;
+}
+const widthClass = vi.hoisted((): WindowWidth => ({ now: "compact" }));
+vi.mock("@/hooks/use-width-class", () => ({ useWidthClass: () => widthClass.now }));
+afterEach(() => {
+  widthClass.now = "compact";
 });
 
 // What the eye reads on a cell: its text without the `aria-hidden` semibold copy each label keeps
@@ -132,7 +168,11 @@ describe("TabStrip", () => {
     const tab = screen.getByRole("button", { name: "tab 2" });
     expect(tab.className).toMatch(/(?:^|\s)before:inset-y-0(?=\s|$)/);
     expect(tab.className).toMatch(/(?:^|\s)h-7\.5(?=\s|$)/);
+    // FORK: the fork's "+" is the 28px dashed circle (upstream's is a bare 24px glyph, its restyle),
+    // centred in the 30px row: its reach is TAB_ROW_SQUARE_TAP_TARGET's `-2px`, ending on the row.
     const plus = screen.getByRole("button", { name: "New tab" });
+    expect(plus.className).toMatch(/(?:^|\s)size-7(?=\s|$)/);
+    expect(plus.className).toMatch(/(?:^|\s)border-dashed(?=\s|$)/);
     expect(plus.className).toMatch(/(?:^|\s)before:-inset-y-\[2px\](?=\s|$)/);
   });
 
@@ -819,5 +859,170 @@ describe("TabStrip new-tab on a program that offers starters", () => {
     await user.click(await screen.findByRole("button", { name: "New tab" }));
     expect(onNewTab).toHaveBeenCalledWith("w1");
     expect(onNewStarters).not.toHaveBeenCalled();
+  });
+});
+
+// THE FOLDER LOOK (theme word `tabs: folder`, lib/tab-look.ts). The plain look is pinned by every test
+// above; these pin what the word adds, that every tab keeps one box, and that plain stays plain.
+describe("TabStrip under the folder look", () => {
+  function renderStrip() {
+    return render(
+      <TabStrip
+        workspaceId="w1"
+        tabs={[
+          { ...tabs[0]!, label: "Alpha" },
+          { ...tabs[1]!, label: "Beta" },
+        ]}
+        agents={[]}
+        selected="w1:t1"
+        onSelect={vi.fn()}
+        onNewTab={vi.fn()}
+        allowAll={false}
+      />,
+    );
+  }
+  const open = () => screen.getByRole("button", { name: "Alpha" });
+  const other = () => screen.getByRole("button", { name: "Beta" });
+
+  it("fills the open tab with the page colour, a rule on each side and a tab-active top edge", () => {
+    themeTabs.word = "folder";
+    renderStrip();
+    const cls = open().className;
+    expect(cls).toMatch(/(?:^|\s)bg-background(?=\s|$)/);
+    expect(cls).toMatch(/(?:^|\s)border-x-\[1px\](?=\s|$)/);
+    expect(cls).toMatch(/(?:^|\s)border-x-rule(?=\s|$)/);
+    expect(cls).toMatch(/shadow-\[inset_0_2px_0_0_var\(--tab-active\)\]/);
+    expect(cls).toMatch(/(?:^|\s)rounded-t-sm(?=\s|$)/);
+    expect(cls).toMatch(/(?:^|\s)text-foreground(?=\s|$)/);
+    expect(cls).toMatch(/(?:^|\s)font-semibold(?=\s|$)/);
+    // No line below: the fill reaches the row's last pixel row and covers the row's rule.
+    expect(cls).not.toMatch(/border-b|border-y|(?:^|\s)border(?=\s|$)/);
+  });
+
+  it("draws one rule under the whole row, on the chrome ground", () => {
+    themeTabs.word = "folder";
+    renderStrip();
+    const nav = screen.getByRole("navigation", { name: "Tabs" });
+    expect(nav.className).toMatch(/shadow-\[inset_0_-1px_0_0_var\(--rule\)\]/);
+    expect(nav.className).toMatch(/(?:^|\s)bg-chrome(?=\s|$)/);
+  });
+
+  it("leaves the other tabs unboxed, with transparent side borders so a selection moves nothing", () => {
+    themeTabs.word = "folder";
+    renderStrip();
+    const cls = other().className;
+    expect(cls).toMatch(/(?:^|\s)border-x-\[1px\](?=\s|$)/);
+    expect(cls).toMatch(/(?:^|\s)border-x-transparent(?=\s|$)/);
+    expect(cls).toMatch(/(?:^|\s)text-muted-foreground(?=\s|$)/);
+    expect(cls).not.toMatch(/bg-background|shadow-|border-x-rule/);
+  });
+
+  it("keeps the 30px tab, its hit box and the stable label", () => {
+    themeTabs.word = "folder";
+    renderStrip();
+    for (const tab of [open(), other()]) {
+      expect(tab.className).toMatch(/(?:^|\s)h-7\.5(?=\s|$)/);
+      expect(tab.className).toMatch(/(?:^|\s)before:inset-y-0(?=\s|$)/);
+      expect(tab.querySelector('[aria-hidden="true"].invisible.font-semibold')).not.toBeNull();
+    }
+  });
+
+  it("keeps the new-tab button 12px clear of the last tab's card, open or not", () => {
+    themeTabs.word = "folder";
+    renderStrip();
+    expect(screen.getByRole("button", { name: "New tab" }).className).toMatch(/(?:^|\s)ml-3(?=\s|$)/);
+  });
+
+  it("draws exactly the plain look when the theme says plain or says nothing", () => {
+    themeTabs.word = "plain";
+    const plain = renderStrip();
+    expect(screen.getByRole("button", { name: "New tab" }).className).not.toMatch(/(?:^|\s)ml-3(?=\s|$)/);
+    plain.unmount();
+    for (const word of ["plain", undefined] as const) {
+      themeTabs.word = word;
+      const { unmount } = renderStrip();
+      expect(open().className).not.toMatch(/border-x|shadow-|bg-background|rounded-t/);
+      expect(other().className).not.toMatch(/border-x|shadow-/);
+      expect(screen.getByRole("navigation", { name: "Tabs" }).className).not.toMatch(/shadow-/);
+      unmount();
+    }
+  });
+});
+
+// THE ROW STEPS UP BY WIDTH CLASS (tab-strip.tsx § STEP). jsdom has no layout, so these pin the classes
+// that draw each step; `e2e/wide-layout.spec.ts` measures the drawn heights.
+describe("TabStrip at each width class", () => {
+  function renderStrip() {
+    return render(
+      <TabStrip
+        workspaceId="w1"
+        tabs={[
+          { ...tabs[0]!, label: "Alpha" },
+          { ...tabs[1]!, label: "Beta" },
+        ]}
+        agents={[]}
+        selected="w1:t1"
+        onSelect={vi.fn()}
+        onNewTab={vi.fn()}
+        allowAll={false}
+      />,
+    );
+  }
+  const classesOf = (el: Element) => el.className.split(/\s+/).filter(Boolean).toSorted();
+  const has = (el: Element, cls: string) =>
+    expect(el.className).toMatch(new RegExp(`(?:^|\\s)${cls.replace(/[.[\]]/g, "\\$&")}(?=\\s|$)`));
+
+  it.each([
+    // FORK: the fork's "+" is 28px on the phone and in the medium row, 32px in the expanded one.
+    ["compact", "h-7.5", "text-[11px]", "min-w-11", "px-1.5", "size-7"],
+    ["medium", "h-9", "text-[12px]", "min-w-13", "px-2", "size-7"],
+    ["expanded", "h-10", "text-[13px]", "min-w-14", "px-2.5", "size-8"],
+  ] as const)("draws the %s step: a %s cell of %s type", (step, height, text, minWidth, px, plus) => {
+    widthClass.now = step;
+    renderStrip();
+    for (const name of ["Alpha", "Beta"]) {
+      const tab = screen.getByRole("button", { name });
+      for (const cls of [height, text, minWidth, px]) has(tab, cls);
+      // The hit box is the drawn cell at every step: nothing reaches below the row or into the header.
+      has(tab, "before:inset-y-0");
+      expect(tab.className).not.toMatch(/before:-inset-y-|before:-bottom-|before:-top-/);
+    }
+    has(screen.getByRole("button", { name: "New tab" }), plus);
+  });
+
+  it("keeps the phone's row exactly as it was at compact, class for class", () => {
+    widthClass.now = "compact";
+    renderStrip();
+    // Today's cell, spelled out as it stood before the row learned to step.
+    const before =
+      "relative flex h-7.5 min-w-11 shrink-0 select-none items-center justify-center gap-1.5 [-webkit-touch-callout:none] whitespace-nowrap px-1.5 text-[11px] transition-colors before:inset-y-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring";
+    const open = cn(STRIP_TAP_TARGET, before, "font-semibold text-foreground");
+    const other = cn(STRIP_TAP_TARGET, before, "font-medium text-muted-foreground hover:text-foreground");
+    expect(classesOf(screen.getByRole("button", { name: "Alpha" }))).toEqual(open.split(" ").toSorted());
+    expect(classesOf(screen.getByRole("button", { name: "Beta" }))).toEqual(other.split(" ").toSorted());
+    const plus = screen.getByRole("button", { name: "New tab" });
+    // FORK: the fork's "+" and its reach, as before the row learned to step.
+    has(plus, "size-7");
+    for (const cls of TAB_ROW_SQUARE_TAP_TARGET.split(" ")) has(plus, cls);
+    expect(screen.getByRole("button", { name: "Alpha" }).parentElement!.className).toMatch(/(?:^|\s)-mx-1\.5(?=\s|$)/);
+  });
+
+  it("grows the folder look's padding and its group margin one step with the row", () => {
+    themeTabs.word = "folder";
+    for (const [step, px, mx] of [
+      ["compact", "px-3", "-mx-3"],
+      ["medium", "px-3.5", "-mx-3.5"],
+      ["expanded", "px-4", "-mx-4"],
+    ] as const) {
+      widthClass.now = step;
+      const { unmount } = renderStrip();
+      const open = screen.getByRole("button", { name: "Alpha" });
+      has(open, px);
+      has(screen.getByRole("button", { name: "Beta" }), px);
+      has(open.parentElement!, mx);
+      // The plain padding gives way to the folder one: one horizontal padding per cell.
+      expect(open.className.split(/\s+/).filter((c) => c.startsWith("px-"))).toEqual([px]);
+      unmount();
+    }
   });
 });

@@ -6,6 +6,7 @@ import { computeEtag } from "../http-cache.ts";
 import { DEFAULT_MAX_UPLOAD_BYTES } from "../uploads.ts";
 import {
   apiPathFor,
+  budgetOf,
   forwardAuditAction,
   forwardHeaders,
   forwardKind,
@@ -22,9 +23,20 @@ import {
   type ForwardErrorCode,
   type ForwardTransport,
 } from "./forward.ts";
+import type { JsonObject } from "../json.ts";
+import { LEAD_ROW_HEADER, LEAD_ROW_MARK, leadRowCarry } from "./launcher-rows.ts";
 import { crewDeviceOf } from "./peer-gate.ts";
 import { HISTORY_READ_BUDGET_MS } from "../mux/herdr-core/adapter.ts";
-import { crewTimeoutBudget, PANE_READ_BUDGET_MS, PANE_WRITE_BUDGET_MS, WRITE_BUDGET_MS, type CrewLink, type PeerOutcome } from "./peer-client.ts";
+import {
+  crewTimeoutBudget,
+  PANE_READ_BUDGET_MS,
+  PANE_WRITE_BUDGET_MS,
+  WORKTREE_WRITE_BUDGET_MS,
+  WRITE_BUDGET_MS,
+  type CrewLink,
+  type CrewParams,
+  type PeerOutcome,
+} from "./peer-client.ts";
 import { member } from "./fixtures.ts";
 import { CrewRegistry, type PeerState } from "./registry.ts";
 import { readSend, readSendReply } from "../../web/src/lib/send-protocol.ts";
@@ -69,7 +81,7 @@ const SKEWED: PeerState = {
 function transportOf(answer: (init: RequestInit) => PeerOutcome<Response>) {
   const calls: {
     route: string;
-    params: Record<string, string>;
+    params: CrewParams;
     init: RequestInit;
     budgetMs: number | undefined;
   }[] = [];
@@ -170,6 +182,18 @@ describe("which routes cross a link", () => {
     // launch or tab.launch, decided by the body) is the accurate record.
     expect(forwardAuditAction("launch")).toBe("launch");
     expect(forwardAuditAction("launchers")).toBeNull();
+  });
+
+  test("the rows read still crosses the link with the lead's rows merged in after (ADR 0127)", async () => {
+    // The member is still asked: only it knows its agents, home, own rows and history. The lead's
+    // folder questions ride the query as a list, and `host=` still never does.
+    const { transport, calls } = transportOf(() => ok(Response.json({ launchers: [], home: "/home/op" })));
+    const [req, url] = get("/api/launchers?host=laptop&cwd=~/src&cwd=/srv/data");
+    const res = await forward(req, url, { transport });
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.route).toBe("launchers");
+    expect(calls[0]!.params).toEqual({ cwd: ["~/src", "/srv/data"] });
   });
 
   test("the folder list and a star on it cross the link — folders live on the member that has them", () => {
@@ -711,6 +735,11 @@ describe("request shaping", () => {
     expect(forwardParams(url)).toEqual({ session: "work", lines: "80" });
   });
 
+  test("a repeated key keeps every value, in order: the lead's folder questions (ADR 0127)", () => {
+    const url = new URL("https://lead.example/api/launchers?host=laptop&cwd=~/a&session=work&cwd=/srv/b");
+    expect(forwardParams(url)).toEqual({ cwd: ["~/a", "/srv/b"], session: "work" });
+  });
+
   test("headers are an allowlist: seen + conditional + content-type, and nothing of the browser's", () => {
     const req = new Request("https://lead.example/api/pane/w1:p1", {
       headers: {
@@ -1026,6 +1055,29 @@ describe("a Stop and a steer over a crew link", () => {
 
 // ── A forwarded write is not a poll (§10.1, amended 2026-09-08) ──────────────
 
+/**
+ * A transport that models the ONE thing the budget decides: whether the peer's work fits inside
+ * it. `workMs` is how long the member takes; over budget is the abort `dial` produces, which
+ * §10.3 then has to call ambiguous. Modelled rather than slept, because the decision under test is
+ * "which number is the deadline", and the real clock is pinned in `peer-client.test.ts`.
+ */
+function budgeted(workMs: number) {
+  const calls: number[] = [];
+  const transport: ForwardTransport = async (_link, route, _params, _init, budgetMs) => {
+    const deadline = budgetMs ?? crewTimeoutBudget(1500, {});
+    calls.push(deadline);
+    if (workMs <= deadline) return ok(new Response("{}"));
+    return {
+      ok: false,
+      state: "unreachable",
+      reason: `${route}: timed out after ${deadline}ms`,
+      timedOut: true,
+      receivedAt: 2,
+    };
+  };
+  return { transport, calls };
+}
+
 describe("a forwarded write carries its own budget (§10.1)", () => {
   test("every write route dials on its budget: a pane's on PANE_WRITE_BUDGET_MS, the rest on WRITE_BUDGET_MS", async () => {
     // §5's write routes, one of each shape `forwardKind` decides on.
@@ -1099,29 +1151,6 @@ describe("a forwarded write carries its own budget (§10.1)", () => {
     expect(PANE_WRITE_BUDGET_MS).toBeGreaterThan(WRITE_BUDGET_MS);
   });
 
-  /**
-   * A transport that models the ONE thing the budget decides: whether the peer's work fits inside
-   * it. `workMs` is how long the member takes; over budget is the abort `dial` produces, which
-   * §10.3 then has to call ambiguous. Modelled rather than slept, because the decision under test is
-   * "which number is the deadline", and the real clock is pinned in `peer-client.test.ts`.
-   */
-  function budgeted(workMs: number) {
-    const calls: number[] = [];
-    const transport: ForwardTransport = async (_link, route, _params, _init, budgetMs) => {
-      const deadline = budgetMs ?? crewTimeoutBudget(1500, {});
-      calls.push(deadline);
-      if (workMs <= deadline) return ok(new Response("{}"));
-      return {
-        ok: false,
-        state: "unreachable",
-        reason: `${route}: timed out after ${deadline}ms`,
-        timedOut: true,
-        receivedAt: 2,
-      };
-    };
-    return { transport, calls };
-  }
-
   test("a launch onto a member that takes 2 s answers `ok`, not `write_outcome_unknown`", async () => {
     // The measured case: a zellij member spawns a process and builds a tab. ~2 s, every time.
     const dial = budgeted(2000);
@@ -1145,6 +1174,185 @@ describe("a forwarded write carries its own budget (§10.1)", () => {
     });
     expect(res.status).toBe(504);
     expect((await failureBody(res)).code).toBe("write_outcome_unknown");
+  });
+});
+
+// ── A worktree goes to the host it addresses (ADR 0126 point 6) ──────────────
+
+describe("the worktree plan and create cross the link to the addressed host", () => {
+  test("the plan is a read audited on neither side; the create is a write the member audits as `worktree.create`", () => {
+    expect(forwardKind("worktree/plan", "GET")).toBe("read");
+    expect(forwardAuditAction("worktree/plan", "GET")).toBeNull();
+    expect(forwardKind("worktree", "POST")).toBe("write");
+    expect(forwardAuditAction("worktree", "POST")).toBe("worktree.create");
+    expect(budgetOf("write", "worktree")).toBe(WORKTREE_WRITE_BUDGET_MS);
+    // The plan rides the read budget like the folder browser beside it.
+    expect(budgetOf("read", "worktree/plan")).toBeUndefined();
+  });
+
+  test("the create carries its body, request id included, byte for byte, and the member's answer comes back", async () => {
+    const body = JSON.stringify({
+      cwd: "~/src/api",
+      branch: "fix-login",
+      base: { kind: "default" },
+      folder: { kind: "default" },
+      requestId: "wt-req-0001",
+      harness: "claude",
+    });
+    const answer = { ok: true, alreadyOpen: false, launcherStarted: true, pane: { paneId: "t3", workspaceId: "s2" } };
+    const { transport, calls } = transportOf(() =>
+      ok(new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } })),
+    );
+    const [req, url] = post("/api/worktree?host=laptop&session=work", body, { "content-type": "application/json" });
+    const res = await forward(req, url, { transport });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.route).toBe("worktree");
+    // `host=` is the lead's; `session=` is the member's to resolve (§5).
+    expect(calls[0]!.params).toEqual({ session: "work" });
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(await new Response(calls[0]!.init.body).text()).toBe(body);
+    expect(calls[0]!.budgetMs).toBe(WORKTREE_WRITE_BUDGET_MS);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(answer);
+  });
+
+  test("a create the member answers after 30 s (git and a new space) is delivered, not a 504", async () => {
+    const dial = budgeted(30_000);
+    const [req, url] = post("/api/worktree?host=laptop", `{"cwd":"~/src/api","branch":"b","requestId":"wt-req-0002"}`);
+    const res = await forward(req, url, { transport: dial.transport });
+    expect(res.status).toBe(200);
+    expect(dial.calls).toEqual([WORKTREE_WRITE_BUDGET_MS]);
+  });
+
+  test("a create past the budget is `write_outcome_unknown`, dialled once: the retry with the same id is the phone's", async () => {
+    const dial = budgeted(WORKTREE_WRITE_BUDGET_MS + 1);
+    const [req, url] = post("/api/worktree?host=laptop", `{"cwd":"~/src/api","branch":"b","requestId":"wt-req-0003"}`);
+    const res = await forward(req, url, { transport: dial.transport });
+    expect(res.status).toBe(504);
+    expect((await failureBody(res)).code).toBe("write_outcome_unknown");
+    expect(dial.calls).toHaveLength(1);
+  });
+
+  test("a member's own refusal passes through unchanged, as a launch's does", async () => {
+    const refusal = { ok: false, code: "worktree.created_not_opened", error: "the multiplexer cannot open a space" };
+    const { transport } = transportOf(() => ok(new Response(JSON.stringify(refusal), { status: 200 })));
+    const [req, url] = post("/api/worktree?host=laptop", `{"cwd":"~/src/api","branch":"b","requestId":"wt-req-0004"}`);
+    const res = await forward(req, url, { transport });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(refusal);
+  });
+
+  test("the plan is asked of the member with its query, and tried against a member not taking writes", async () => {
+    const { transport, calls } = transportOf(() => ok(new Response(`{"ok":true,"repoRoot":"/src/api"}`)));
+    const [req, url] = get("/api/worktree/plan?cwd=%7E%2Fsrc%2Fapi&branch=fix-login&host=laptop");
+    const res = await forward(req, url, { transport, state: DEAD });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.route).toBe("worktree/plan");
+    expect(calls[0]!.params).toEqual({ cwd: "~/src/api", branch: "fix-login" });
+    expect(res.status).toBe(200);
+  });
+
+  test("a create to a member not taking writes is refused before it is attempted", async () => {
+    const { transport, calls } = transportOf(() => ok(new Response("{}")));
+    const [req, url] = post("/api/worktree?host=laptop", `{"cwd":"~","branch":"b"}`);
+    const res = await forward(req, url, { transport, state: DEAD });
+    expect(calls).toHaveLength(0);
+    expect(res.ok).toBe(false);
+  });
+});
+
+describe("a launch of a lead row carries the row to the member (ADR 0127 point 3)", () => {
+  const LEAD_HOME = "/var/home/op";
+  const rows = [
+    { command: "claude --resume", label: "Claude resume", cwd: "/var/home/op/src/app", harness: "claude", noPrompts: false },
+    { command: "make serve", label: "Serve", cwd: "/srv/site", noPrompts: true },
+  ];
+  const carry = leadRowCarry(() => Promise.resolve(rows), LEAD_HOME);
+
+  /** The phone's request as the lead forwards it: the carry, then the forward with its mark, as `target()` does. */
+  async function forwarded(path: string, body: string, headers: Record<string, string> = {}): Promise<{ body: string; headers: Headers }> {
+    const { transport, calls } = transportOf(() => ok(Response.json({ ok: true })));
+    const [req, url] = post(path, body, { "content-type": "application/json", ...headers });
+    const written = await carry.request(req);
+    const res = await forward(written.request, url, { transport, leadRow: written.leadRow });
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    return { body: await new Response(calls[0]!.init.body).text(), headers: new Headers(calls[0]!.init.headers) };
+  }
+
+  /** What the member was sent, parsed. */
+  async function sentBody(path: string, body: JsonObject): Promise<JsonObject> {
+    // SAFETY: the test posted a JSON object, and the carry writes one back.
+    return JSON.parse((await forwarded(path, JSON.stringify(body))).body) as JsonObject;
+  }
+
+  test("a `?host=` launch of the lead's own row carries it, its folder under the member's home", async () => {
+    const sent = await sentBody("/api/launch?host=laptop", { command: "claude --resume", requestId: "r-1" });
+    expect(sent).toEqual({
+      command: "claude --resume",
+      requestId: "r-1",
+      row: { command: "claude --resume", label: "Claude resume", cwd: "~/src/app", harness: "claude", noPrompts: false },
+    });
+    // A folder outside the lead's home is sent as it is.
+    const serve = await sentBody("/api/launch?host=laptop", { command: "make serve" });
+    expect(serve.row).toEqual({ command: "make serve", label: "Serve", cwd: "/srv/site", noPrompts: true });
+  });
+
+  test("a member-only command goes on without `row`, byte for byte", async () => {
+    const body = JSON.stringify({ command: "htop", requestId: "r-2" });
+    expect((await forwarded("/api/launch?host=laptop", body)).body).toBe(body);
+  });
+
+  test("the lead marks a forward `X-Collie-Lead-Row: 1` when it carried a row, on both routes", async () => {
+    for (const path of ["/api/launch?host=laptop", "/api/worktree?host=laptop"]) {
+      const { headers } = await forwarded(path, JSON.stringify({ cwd: "~/src/api", branch: "b", command: "claude --resume" }));
+      expect(headers.get(LEAD_ROW_HEADER)).toBe(LEAD_ROW_MARK);
+    }
+  });
+
+  test("no row carried, no mark: a member-only command, or a phone's `row` the lead dropped", async () => {
+    expect((await forwarded("/api/launch?host=laptop", JSON.stringify({ command: "htop" }))).headers.has(LEAD_ROW_HEADER)).toBe(false);
+    const forged = JSON.stringify({ command: "htop", row: { command: "htop", label: "x", noPrompts: false } });
+    const dropped = await forwarded("/api/launch?host=laptop", forged);
+    expect(JSON.parse(dropped.body)).toEqual({ command: "htop" });
+    expect(dropped.headers.has(LEAD_ROW_HEADER)).toBe(false);
+  });
+
+  test("a phone-sent `X-Collie-Lead-Row` never reaches the member", async () => {
+    const phoneMark = { [LEAD_ROW_HEADER]: LEAD_ROW_MARK };
+    // On a launch the lead carries nothing for: the phone's own `row` and its own mark both stop here.
+    const forged = JSON.stringify({ command: "htop", row: { command: "htop", label: "x", noPrompts: false } });
+    const launch = await forwarded("/api/launch?host=laptop", forged, phoneMark);
+    expect(launch.headers.has(LEAD_ROW_HEADER)).toBe(false);
+    expect(JSON.parse(launch.body)).toEqual({ command: "htop" });
+    // On a body that is not JSON, which the carry passes on untouched.
+    expect((await forwarded("/api/launch?host=laptop", "not json", phoneMark)).headers.has(LEAD_ROW_HEADER)).toBe(false);
+    // On a forward with no carry at all: the allowlist in `forwardHeaders` does not pass it.
+    const { transport, calls } = transportOf(() => ok(new Response(`{"ok":true}`)));
+    const [req, url] = post("/api/pane/w1:p1/reply?host=laptop", `{"text":"hi"}`, phoneMark);
+    await forward(req, url, { transport });
+    expect(new Headers(calls[0]!.init.headers).has(LEAD_ROW_HEADER)).toBe(false);
+    expect(forwardHeaders(req).has(LEAD_ROW_HEADER)).toBe(false);
+  });
+
+  test("a `row` the phone sent never reaches the member: dropped, or replaced by the lead's own", async () => {
+    const forged = { command: "rm -rf ~", label: "x", noPrompts: false };
+    const memberOnly = await sentBody("/api/launch?host=laptop", { command: "htop", row: forged });
+    expect(memberOnly).toEqual({ command: "htop" });
+    const leadRow = await sentBody("/api/launch?host=laptop", { command: "make serve", row: forged });
+    expect(leadRow.row).toEqual({ command: "make serve", label: "Serve", cwd: "/srv/site", noPrompts: true });
+  });
+
+  test("a branch create names its launcher by `command` and carries the row the same way", async () => {
+    const sent = await sentBody("/api/worktree?host=laptop", { cwd: "~/src/api", branch: "b", command: "claude --resume" });
+    expect(sent.row).toMatchObject({ command: "claude --resume", cwd: "~/src/app" });
+  });
+
+  test("a body that is not a JSON object goes on untouched and unmarked, for the member to refuse", async () => {
+    const [req] = post("/api/launch?host=laptop", "not json");
+    const written = await carry.request(req);
+    expect(written.request).toBe(req);
+    expect(written.leadRow).toBe(false);
   });
 });
 
@@ -1311,14 +1519,12 @@ describe("journal, uploads and state stay host-local", () => {
   // This test pins that as a FACT rather than leaving it a surprise. It is not an assertion that the
   // gap is right. If a route is added, this test goes red, and the table in MUX_CONTRACT.md
   // § "Conformance across a crew link" is what has to be corrected in the same change.
-  test("four mux-port verbs have no forwardable crew route, and the contract says which", () => {
-    // The shapes a route for each would take, in this surface's own grammar. The worktree create is
-    // lead-local at `POST /api/worktree` (and its plan); list and open have had no route at all since
-    // the space-scoped ones were removed in 1.20.0, so the old shapes must not forward either.
+  test("listSessions and the old worktree shapes have no forwardable crew route; the worktree routes do, and the contract says so", () => {
+    // The shapes a route for each would take, in this surface's own grammar. List and open have had no
+    // route at all since the space-scoped ones were removed in 1.20.0, so the old shapes must not
+    // forward either.
     const unreachable = [
       "sessions",
-      "worktree",
-      "worktree/plan",
       "workspace/w1/worktrees",
       "workspace/w1/worktree",
       "workspace/w1/worktree/open",
@@ -1327,20 +1533,32 @@ describe("journal, uploads and state stay host-local", () => {
       expect(crewRouteFor(`/api/${route}`)).toBeNull();
       expect(apiPathFor(route)).toBeNull();
     }
+    // The worktree plan and create go to the addressed host (ADR 0126 point 6), where git runs.
+    for (const route of ["worktree", "worktree/plan"]) {
+      expect(crewRouteFor(`/api/${route}`)).toBe(route);
+      expect(apiPathFor(route)).toBe(`/api/${route}`);
+    }
+    expect(crewRouteFor("/api/worktree/plan/x")).toBeNull();
     // And the contract names the gap, so the two cannot drift apart silently.
     const contract = readFileSync(join(import.meta.dir, "..", "..", "MUX_CONTRACT.md"), "utf8");
     expect(contract).toContain("## Conformance across a crew link");
-    expect(contract).toContain("listSessions` and the three worktree verbs have no forwardable route");
+    expect(contract).toContain(
+      "`listSessions` has no forwardable route. The worktree routes (`GET /api/worktree/plan`, `POST /api/worktree`) are forwarded to the addressed host",
+    );
   });
 });
 
-// ADR 0094: a phone's own launcher rows live on ONE machine; `?host=` writes reach that member's store.
-describe("the added-launcher routes cross the link as writes", () => {
-  test("add, remove, rename and the lead's forget are forwardable writes; nothing else under the path is", () => {
-    for (const route of ["launchers/added", "launchers/added/remove", "launchers/added/rename", "launchers/added/forget-device"]) {
-      expect(crewRouteFor(`/api/${route}`)).toBe(route);
-      expect(forwardKind(route)).toBe("write");
+// ADR 0094, amended by ADR 0127 point 4: the lead answers the phone's add, remove and rename itself, so
+// only the lead's own forget crosses the link to a member.
+describe("the added-launcher routes stay on the lead; only the forget crosses the link", () => {
+  test("add, remove and rename are not forwardable; the lead's forget is a forwardable write", () => {
+    for (const route of ["launchers/added", "launchers/added/remove", "launchers/added/rename"]) {
+      expect(crewRouteFor(`/api/${route}`)).toBeNull();
+      expect(apiPathFor(route)).toBeNull();
     }
+    expect(crewRouteFor("/api/launchers/added/forget-device")).toBe("launchers/added/forget-device");
+    expect(apiPathFor("launchers/added/forget-device")).toBe("/api/launchers/added/forget-device");
+    expect(forwardKind("launchers/added/forget-device")).toBe("write");
     expect(crewRouteFor("/api/launchers/added/list")).toBeNull();
     expect(crewRouteFor("/api/launchers/added/")).toBeNull();
   });

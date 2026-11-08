@@ -24,8 +24,8 @@ import type { NotifyPrefs } from "@/lib/api";
 import type { CacheWatchListEntry } from "@/lib/types";
 
 // Which lifecycle events are worth a push. Bridge-wide (fans out to every device, like the snooze),
-// so the copy says so. Five switches: "Needs input" (blocked, default on), "Finished" (done,
-// default off), "App updates" (updates, default on), "Machine load stays high" (machines, default on),
+// so the copy says so. Six switches: "Needs input" (blocked, default on), "Finished" (done,
+// default off), "One notification per agent" (individual, default on), "App updates" (updates, default on), "Machine load stays high" (machines, default on),
 // and "Cache about to go cold" (cache, default off).
 // Optimistic toggle with revert on failure — see useNotifyPrefs.
 //
@@ -40,6 +40,12 @@ import type { CacheWatchListEntry } from "@/lib/types";
 const ROWS: ReadonlyArray<{ key: NotifySwitch; labelKey: MessageKey; hintKey: MessageKey }> = [
   { key: "blocked", labelKey: "settings.notify.blocked.label", hintKey: "settings.notify.blocked.hint" },
   { key: "done", labelKey: "settings.notify.done.label", hintKey: "settings.notify.done.hint" },
+  // How the two above arrive, so it sits right under them: one notification per agent, or the summary.
+  {
+    key: "individual",
+    labelKey: "settings.notify.individual.label",
+    hintKey: "settings.notify.individual.hint",
+  },
   {
     key: "updates",
     labelKey: "settings.notify.updates.label",

@@ -10,7 +10,9 @@ import { UnseenMark } from "@/components/ui/unseen-mark";
 import { useLongPress } from "@/hooks/use-long-press";
 import { useOverflowFade } from "@/hooks/use-overflow-fade";
 import { useRevealActive } from "@/hooks/use-reveal-active";
+import { useWidthClass } from "@/hooks/use-width-class";
 import { cn } from "@/lib/utils";
+import { useTabLook, type TabLook } from "@/lib/tab-look";
 import { TRIAGE_STATUS, worstTriage, type TriageKey } from "@/lib/triage";
 import { hostKey } from "@/lib/hosts";
 import { tabCellTitle, type TabTitle } from "@/lib/pane-name";
@@ -20,6 +22,7 @@ import { useMuxCapability, useMuxDeclared } from "@/lib/mux-capability";
 import type { Scope } from "@/lib/scope";
 import { t as translate } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
+import type { WidthClass } from "@/lib/wide-layout";
 
 interface TabStripProps {
   workspaceId: string;
@@ -86,6 +89,64 @@ interface TabStripProps {
   className?: string;
 }
 
+/** One step of the tab row's size, read off the window's width class. */
+interface Step {
+  /** The cell: its height (the row's whole height), its minimum width, its padding and its text size. */
+  cell: string;
+  /** The folder look's padding, which replaces the plain one on both states. */
+  folderPx: string;
+  /** The tab group's negative margin, the cell's padding cancelled so the first label sits on the gutter. */
+  group: string;
+  folderGroup: string;
+  /**
+   * The "+": its drawn box. FORK: the fork's own "+" (a dashed circle that names its launcher and
+   * holds for a choice) is kept at every step, with TAB_ROW_SQUARE_TAP_TARGET's reach; upstream's
+   * bare-glyph AddButton is its restyle and is not taken. It grows with the row only at expanded.
+   */
+  add: string;
+}
+
+// THE ROW STEPS UP BY WIDTH CLASS, NEVER BY A CONTINUOUS SCALE (2026-11-07). On a foldable held open
+// (about 700px, two columns) the phone's 30px row of 11px type read as "a bit finnicky"; Altan's answer
+// was "a bit larger in steps depending on the device width/size. Not totally responsive." So the window's
+// width class (ADR 0120, `useWidthClass`) picks one of three fixed sizes, read here, so every tab row on
+// screen steps together and no caller passes a size:
+//
+//   compact   30px cell, 11px text, 44px minimum, 6px padding, 28px "+" (the phone, unchanged)
+//   medium    36px cell, 12px text, 52px minimum, 8px padding, 28px "+"
+//   expanded  40px cell, 13px text, 56px minimum, 10px padding, 32px "+"
+//
+// (FORK: upstream's phone "+" is a 24px bare glyph; the fork's is the 28px dashed circle it always was.)
+//
+// The row is as tall as its cell at every step, and the hit box is the drawn cell at every step
+// (`before:inset-y-0`): nothing hangs below the row and nothing reaches into the header (the
+// scroller's comment says why). The folder look's `px-3` grows the same 2px a step, and each group
+// margin is its padding cancelled, so the first label stays on the route's gutter. The scroller's
+// `gap-3` does not step. The wide layout's bar is 48px, so the 40px cell (46px under folder) fits.
+const STEP = {
+  compact: {
+    cell: "h-7.5 min-w-11 px-1.5 text-[11px]",
+    folderPx: "px-3",
+    group: "-mx-1.5",
+    folderGroup: "-mx-3",
+    add: "size-7",
+  },
+  medium: {
+    cell: "h-9 min-w-13 px-2 text-[12px]",
+    folderPx: "px-3.5",
+    group: "-mx-2",
+    folderGroup: "-mx-3.5",
+    add: "size-7",
+  },
+  expanded: {
+    cell: "h-10 min-w-14 px-2.5 text-[13px]",
+    folderPx: "px-4",
+    group: "-mx-2.5",
+    folderGroup: "-mx-4",
+    add: "size-8",
+  },
+} as const satisfies Record<WidthClass, Step>;
+
 // The selected space's tabs, drawn as PLAIN CELLS on the composer's chrome ground — not the
 // file-folder kind this row used to draw.
 //
@@ -95,6 +156,17 @@ interface TabStripProps {
 // rather than as a drawer: Altan, on the compact row this became, "the top tabs area has a lot of
 // weird lines now" — and the call was not to tune the lines but to drop them. "Completely remove
 // horizontal borders and just have vertical ones for tab items."
+//
+// THE FOLDER LOOK IS A THEME'S CHOICE, NOT THE DEFAULT (surface word `tabs`, lib/tab-look.ts). Under
+// `tabs: folder` the open tab is drawn as a folder tab after all, and the paragraphs below describe
+// the PLAIN look, which is what every theme gets that does not ask. The folder is the plain row plus:
+// one 1px `rule` line under the whole row (an inset shadow of the nav, so nothing hangs below it and
+// the scroller's clip never meets it); an open tab filled with the page colour (`bg-background`),
+// so it joins the pane row under it, with a 1px `rule` line on each side, a 2px top edge in the
+// theme's `tab-active` colour (an inset shadow, so the hit box and the label do not move) and no
+// line below, so its fill covers the row's rule; the label stays semibold ink. Every other tab keeps
+// the plain look; it carries the same transparent side borders as the open one, so a selection moves
+// nothing, and `StableLabel` still holds the label's width. The row is exactly as tall as before.
 //
 // So this row now draws NO horizontal rule of its own, top or bottom, on the `<nav>` or on the
 // scroller inside it. It sits on the composer's own chrome ground (`bg-chrome`) rather than on a
@@ -157,6 +229,8 @@ export const TabStrip = memo(function TabStrip({
   className,
 }: TabStripProps) {
   useLocale();
+  const look = useTabLook();
+  const step = STEP[useWidthClass()];
   const [sheetTab, setSheetTab] = useState<TabView | null>(null);
   // Asked of the machine these tabs live on (M22/03); absent scope is the lead, as everywhere.
   const newTab = useMuxCapability("createTab", scope);
@@ -218,7 +292,17 @@ export const TabStrip = memo(function TabStrip({
         // horizontal rule of its own, and a header above it keeps whatever rule it already had.
         // `flex items-stretch` only when something is pinned to the trailing end; otherwise a
         // `flow-root` block.
-        className={cn("shrink-0 bg-chrome px-4", trailing ? "flex items-stretch" : "flow-root", className)}
+        // Under the folder look the row also carries ONE 1px `rule` line along its bottom edge, an
+        // inset shadow and not a border: the open tab fills the last pixel row and paints over it,
+        // which a border (outside the scroller's clip) could not be covered from inside.
+        className={cn(
+          "shrink-0 bg-chrome px-4",
+          trailing ? "flex items-stretch" : "flow-root",
+          // Under `folder` the row keeps 6px of its own ground above the tabs, so the open tab rises out of
+          // the row instead of touching the header's bottom line.
+          look === "folder" && "pt-1.5 shadow-[inset_0_-1px_0_0_var(--rule)]",
+          className,
+        )}
       >
         <div
           // FORK: the overflow fade's two halves — the slot skin.css draws on, and the observer that
@@ -229,8 +313,9 @@ export const TabStrip = memo(function TabStrip({
           // so the last tab scrolls clean off the screen edge while the first still starts on the
           // route's 16px gutter. The two halves are ONE number and must move together.
           //
-          // NOTHING HANGS BELOW THE ROW. A tab draws 30px, the row's whole height, and its hit box
-          // is those 30px (44px wide: `min-w-11`). The tap floor used to hang 14px below the row
+          // NOTHING HANGS BELOW THE ROW. A tab draws the row's whole height (30px on a phone, 36 and
+          // 40 at the larger width classes, STEP above), and its hit box is that height (and at
+          // least 44px wide: `min-w-11` on a phone). The tap floor used to hang 14px below the row
           // (`pb-3.5 -mb-3.5` here, `before:-bottom-3.5 before:z-[1]` on the tab) to reach 44px
           // tall. That 14px lay over the first lines of whatever came next, the chat or the terminal
           // mirror, and took the tap off a file-path link standing there: measured 2026-10-07 at
@@ -261,11 +346,13 @@ export const TabStrip = memo(function TabStrip({
               the group itself has no gap, and `-mx-1.5` pulls the first LABEL back onto the route's
               16px gutter that the first tab's padding would otherwise push it off. It is its own flex
               child of the scroller so the "+" button, a sibling outside this group, keeps the
-              scroller's own `gap-3` from the group: the "+" reaches 8px sideways, and 12px of gap
-              keeps that reach off the last tab. */}
-          <div className="-mx-1.5 flex shrink-0 items-stretch">
+              scroller's own `gap-3` from the group: the "+" reaches 9px sideways, and 12px of gap
+              keeps that reach off the last tab's label (TAB_ROW_SQUARE_TAP_TARGET has the numbers). */}
+          <div className={cn("flex shrink-0 items-stretch", look === "folder" ? step.folderGroup : step.group)}>
             {allowAll && (
               <Tab
+                look={look}
+                step={step}
                 label={translate("space.tabStrip.all")}
                 active={selected === null}
                 onClick={() => onSelect(null)}
@@ -276,6 +363,8 @@ export const TabStrip = memo(function TabStrip({
               return (
               <Tab
                 key={t.tabId}
+                look={look}
+                step={step}
                 label={t.label}
                 title={tabCellTitle(t.label, inTab)}
                 active={selected === t.tabId}
@@ -318,7 +407,14 @@ export const TabStrip = memo(function TabStrip({
                 // select-none + -webkit-touch-callout:none for the same reason the tab pills carry
                 // them: without both, iOS Safari's selection loupe fires `pointercancel` mid-hold
                 // and the long-press never completes (hooks/use-long-press.ts states the pair).
-                "flex size-7 shrink-0 select-none [-webkit-touch-callout:none] items-center justify-center rounded-full border border-dashed border-border text-muted-foreground transition-colors hover:bg-accent active:scale-95 disabled:opacity-100",
+                "flex shrink-0 select-none [-webkit-touch-callout:none] items-center justify-center rounded-full border border-dashed border-border text-muted-foreground transition-colors hover:bg-accent active:scale-95 disabled:opacity-100",
+                // The drawn box at this width class (STEP above): 28px, 32px in the 40px row.
+                step.add,
+                // Under `folder` the group's `-mx-3` cancels the tab's `px-3`, so the last tab's CARD
+                // (its side rule, when it is the open one) ends exactly where the scroller's 12px gap
+                // would start, and the "+" touched it. `ml-3` adds the 12px back (upstream 1.27.0;
+                // the folder look is off in the shipped app, lib/fork-shape.ts FORK_NEW_LOOK_ON).
+                look === "folder" && "ml-3",
               )}
             >
               {/* Same box, same icon size, swapped in place — the button never resizes between its
@@ -362,6 +458,10 @@ export const TabStrip = memo(function TabStrip({
 });
 
 interface TabProps {
+  /** The theme's tab look (lib/tab-look.ts): `plain` is today's row, `folder` draws the open tab as a folder tab. */
+  look: TabLook;
+  /** The row's size at this width class (STEP above). */
+  step: Step;
   /** The tab's raw label — the spoken fallback when the cell has no title to draw. */
   label: string;
   /** What the cell says ({@link tabCellTitle}); the "All" cell passes its word as a plain title. */
@@ -382,6 +482,8 @@ interface TabProps {
 
 // One plain tab cell.
 function Tab({
+  look,
+  step,
   label,
   title: titleProp,
   active,
@@ -439,13 +541,26 @@ function Tab({
         // (the scroller's comment says why). The tab has no border, so the inset resolves against
         // the drawn edge and needs no extra pixel the way a bordered pill's does.
         STRIP_TAP_TARGET,
-        "relative flex h-7.5 min-w-11 shrink-0 select-none items-center justify-center gap-1.5 [-webkit-touch-callout:none] whitespace-nowrap px-1.5 text-[11px] transition-colors before:inset-y-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+        // LARGER WINDOWS: `step.cell` is that compact box, or the medium or expanded one (STEP above).
+        // The hit box rule is the same at every step: `before:inset-y-0`, the drawn height.
+        step.cell,
+        "relative flex shrink-0 select-none items-center justify-center gap-1.5 [-webkit-touch-callout:none] whitespace-nowrap transition-colors before:inset-y-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
         // INK AND WEIGHT ARE THE ONLY MARK. Full ink and semibold for the open tab; the muted ink
         // and medium weight for every other, with the full ink as the hover answer on a device that
         // has one.
         active
           ? "font-semibold text-foreground"
           : "font-medium text-muted-foreground hover:text-foreground",
+        // THE FOLDER LOOK (`tabs: folder`). Both states carry the same 1px side borders, so the
+        // box is one size and only the paint changes; the open tab paints them in `rule`, fills with
+        // the page colour and wears the 2px `tab-active` edge as an inset shadow (no top border, so
+        // the 30px hit box and the label's centre stay where they are). `rounded-t-sm` is the
+        // theme's own step. No bottom border: the fill reaches the row's last pixel row and covers
+        // the nav's rule there.
+        look === "folder" &&
+          (active
+            ? cn("rounded-t-sm border-x-[1px] border-x-rule bg-background shadow-[inset_0_2px_0_0_var(--tab-active)]", step.folderPx)
+            : cn("border-x-[1px] border-x-transparent", step.folderPx)),
         // NO DESKTOP-FOCUS RING. `TabView.focused` (the tab the desktop TUI is looking at) used to
         // paint a dashed outline on its cell. On the phone that read as a second selection beside the
         // solid pill, and the phone's reader does not care where the desktop is looking. It is gone;
@@ -459,7 +574,7 @@ function Tab({
               not, sits on the row's bare chrome ground: no cell draws a fill of its own. */}
           <StatusDot
             status={TRIAGE_STATUS[status]}
-            surface="bg-chrome"
+            surface={look === "folder" && active ? "bg-background" : "bg-chrome"}
             className="size-2.5"
           />
           {/* The mark is a shape and a colour; say it in words for screen readers. */}

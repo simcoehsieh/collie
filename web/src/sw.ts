@@ -11,8 +11,7 @@ import {
   type PushPayload,
 } from "./lib/push-decision";
 import { askInApp, openNotificationTarget, type OpenOutcome, type OpenTargetClient } from "./lib/notification-open";
-import { recordSlot, showBadge, slotCount } from "./lib/app-badge";
-import { asJsonString } from "./lib/json";
+import { recordSlots, showBadge, slotUpdates } from "./lib/app-badge";
 import { readPushTitles } from "./lib/push-title-store";
 import { FONT_URLS, navigationNetworkOnlyUnder } from "./lib/sw-routes";
 import {
@@ -346,12 +345,12 @@ async function handlePush(event: PushEvent): Promise<void> {
     payload = { body: event.data?.text() };
   }
 
-  // Before the decision, because a push a visible tab suppresses still moves the icon's count.
-  const count = slotCount(payload);
-  const slotTag = asJsonString(payload.tag);
-  if (count !== undefined && slotTag !== undefined) {
+  // Before the decision, because a push a visible tab suppresses still moves the icon's count. A push
+  // may carry several slots: a clear of a burst names each, and counts this worker missed ride along.
+  const updates = slotUpdates(payload);
+  if (updates.length > 0) {
     try {
-      await showBadge(self.navigator, await recordSlot(self.caches, self.location.origin, MOUNT, slotTag, count));
+      await showBadge(self.navigator, await recordSlots(self.caches, self.location.origin, MOUNT, updates));
     } catch {
       // Cache Storage refused: the notification below matters more than the count.
     }
@@ -372,11 +371,15 @@ async function handlePush(event: PushEvent): Promise<void> {
   const decision = decidePush(payload, visible, mustShow, templates);
   if (decision.kind === "suppress") return; // a visible Collie tab already surfaces it in-app
   if (decision.kind === "clear") {
-    // Retraction: close the slot and show nothing. Only reached on a push service that tolerates a
-    // silent push (Chrome's budget); Apple's does not, and `decidePush` turns this into a quiet
-    // replacement there instead — showNotification on the same tag closes the stale one for us.
-    const stale = await self.registration.getNotifications({ tag: decision.tag });
-    for (const n of stale) n.close();
+    // Retraction: close every slot it names and show nothing. Each one is a push that may end with
+    // nothing on screen, which Chrome charges to a small budget, so the bridge sends as few as it can
+    // (bridge/push.ts) and names a burst's slots in one. FORK: only reached on a push service that
+    // tolerates a silent push; Apple's does not, and `decidePush` turns this into a quiet replacement
+    // there instead — showNotification on the same tag closes the stale one for us.
+    for (const tag of decision.tags) {
+      const stale = await self.registration.getNotifications({ tag });
+      for (const n of stale) n.close();
+    }
     return;
   }
   // `renotify` and `actions` aren't in this TS lib's NotificationOptions yet, though both are
@@ -400,6 +403,12 @@ async function handlePush(event: PushEvent): Promise<void> {
   };
   if (decision.actions) options.actions = decision.actions;
   await self.registration.showNotification(decision.title, options);
+  // FORK: a burst's retraction shown as a replacement on its first slot closes the rest only AFTER
+  // the replacement is up, so the push never ends with nothing on screen (iOS, `decidePush`).
+  for (const tag of decision.close ?? []) {
+    const stale = await self.registration.getNotifications({ tag });
+    for (const n of stale) n.close();
+  }
 }
 
 // ── FORK: answering from the notification ───────────────────────────────────────────────────────

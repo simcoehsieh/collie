@@ -15,7 +15,7 @@ import { scopeSearch } from "@/lib/scope";
 
 describe("decidePush", () => {
   test("a clear retracts the slot regardless of client visibility", () => {
-    const expected = { kind: "clear", tag: "collie:herd" };
+    const expected = { kind: "clear", tag: "collie:herd", tags: ["collie:herd"] };
     expect(decidePush({ type: "clear", tag: "collie:herd" }, false)).toEqual(expected);
     expect(decidePush({ type: "clear", tag: "collie:herd" }, true)).toEqual(expected);
   });
@@ -141,12 +141,13 @@ describe("decidePush", () => {
     const cleared = decidePush({ type: "clear", data }, true);
     // SAFETY: `shown` is the "show" decision produced two lines above (the input carried a title,
     // not `type: "clear"`), and every show decision carries a `tag`.
-    expect(cleared).toEqual({ kind: "clear", tag: (shown as { tag: string }).tag });
-    expect(cleared).toEqual({ kind: "clear", tag: "collie@box2:w1:p1" });
+    expect(cleared).toMatchObject({ kind: "clear", tag: (shown as { tag: string }).tag });
+    expect(cleared).toEqual({ kind: "clear", tag: "collie@box2:w1:p1", tags: ["collie@box2:w1:p1"] });
     // …and the bridge-supplied tag still wins over the fallback, in both directions.
     expect(decidePush({ type: "clear", tag: "collie:herd@box2", data }, false)).toEqual({
       kind: "clear",
       tag: "collie:herd@box2",
+      tags: ["collie:herd@box2"],
     });
   });
 
@@ -214,6 +215,7 @@ describe("decidePush under a user-visible-only push service", () => {
     expect(decidePush({ type: "clear", tag: "collie:herd" }, false)).toEqual({
       kind: "clear",
       tag: "collie:herd",
+      tags: ["collie:herd"],
     });
     expect(decidePush({ title: "claude needs you" }, true)).toEqual({ kind: "suppress" });
   });
@@ -285,6 +287,7 @@ describe("localisedTitle — the headline in this device's language (ADR 0074)",
     expect(decidePush({ type: "clear", tag: "collie:herd" }, false, false, korean)).toEqual({
       kind: "clear",
       tag: "collie:herd",
+      tags: ["collie:herd"],
     });
   });
 });
@@ -454,8 +457,51 @@ describe("decidePush — badge", () => {
   test("passes the count through on a show, a quiet replacement and a clear; omits it when absent", () => {
     expect(decidePush({ title: "x", badge: 3 }, false)).toMatchObject({ kind: "show", badge: 3 });
     expect("badge" in decidePush({ title: "x" }, false)).toBe(false);
-    expect(decidePush({ type: "clear", badge: 0 }, false)).toEqual({ kind: "clear", tag: "collie", badge: 0 });
-    expect(decidePush({ type: "clear" }, false)).toEqual({ kind: "clear", tag: "collie" });
+    expect(decidePush({ type: "clear", badge: 0 }, false)).toEqual({ kind: "clear", tag: "collie", tags: ["collie"], badge: 0 });
+    expect(decidePush({ type: "clear" }, false)).toEqual({ kind: "clear", tag: "collie", tags: ["collie"] });
     expect(decidePush({ type: "clear", badge: 0 }, false, true)).toMatchObject({ kind: "show", badge: 0 });
+  });
+});
+
+// ONE CLEAR PER BURST (bridge/push.ts, rule 3): the bridge names a burst's slots in `tags`, with the
+// first also in `tag`, so the clear an older worker reads closes that one and this one closes all.
+describe("decidePush — a clear that names several slots", () => {
+  test("closes every slot it names, `tag` first, each once", () => {
+    const tags = ["collie:herd:w1:p1", "collie:herd:w2:p1", "collie:herd@box2:w1:p1"];
+    expect(decidePush({ type: "clear", tag: tags[0], tags: [...tags, tags[1]!] }, true)).toEqual({
+      kind: "clear",
+      tag: tags[0],
+      tags,
+    });
+  });
+
+  test("ignores anything in `tags` that is not a slot name", () => {
+    expect(decidePush({ type: "clear", tag: "collie:herd", tags: [1, null, { a: 1 }, "collie:herd:x"] }, false)).toEqual({
+      kind: "clear",
+      tag: "collie:herd",
+      tags: ["collie:herd", "collie:herd:x"],
+    });
+    expect(decidePush({ type: "clear", tag: "collie:herd", tags: "collie:herd:x" }, false)).toEqual({
+      kind: "clear",
+      tag: "collie:herd",
+      tags: ["collie:herd"],
+    });
+  });
+
+  test("a render carrying `tags` is still one render on its own slot", () => {
+    expect(decidePush({ title: "t", tag: "collie:herd:a", tags: ["collie:herd:b"] }, false)).toMatchObject({
+      kind: "show",
+      tag: "collie:herd:a",
+    });
+  });
+
+  // FORK (iOS): a device that must show something gets the burst as ONE quiet replacement on the
+  // first slot, and the worker closes the rest after it is up — never a silent push.
+  test("on a must-show device a several-slot clear replaces the first slot and closes the rest", () => {
+    const tags = ["collie:herd:w1:p1", "collie:herd:w2:p1"];
+    const shown = decidePush({ type: "clear", tag: tags[0], tags }, false, true);
+    expect(shown).toMatchObject({ kind: "show", tag: tags[0], title: ALL_CLEAR_TITLE, renotify: false, close: [tags[1]] });
+    // One slot: the replacement exactly as before, with no `close`.
+    expect("close" in decidePush({ type: "clear", tag: tags[0] }, false, true)).toBe(false);
   });
 });

@@ -266,6 +266,9 @@ const CARD_FIXTURES = {
       // /resume list is read (session-picker.ts) and lifts as a menu, so it is not here.
       "codex--v0162-picker-model.txt",
       "codex--v0162-picker-permissions.txt",
+      // Codex 0.167.0's agent command center (`codex agents`, `/agents`, `←` on an empty box, and the
+      // trust prompt's `esc back`): a full-screen task list nothing lifts, `esc back` its way out.
+      "codex--v0167-command-center--w120.txt",
     ],
     notModals: [],
   },
@@ -303,13 +306,24 @@ const CARD_FIXTURES = {
   // (no rule anchors it) and a multi-select's focused Write-in field — so the card is the right
   // answer on both: its Escape is the way out of either, which a flat refusal never offered.
   // FORK: upstream lists agy--ask-multi.txt here (no checkbox recipe upstream); the fork's agy
-  // multi-select grammar lifts it, so it gets buttons, not the card.
+  // multi-select grammar lifts it, so it gets buttons, not the card. Upstream 1.27's sub-agent rail
+  // under a permission dialog (#655) stays raw here too, so it gets the card.
   agy: {
-    modals: ["agy--help-overlay.txt", "agy--multi-select-writein.txt", "agy--resume-picker-nomatch.txt"],
+    modals: [
+      "agy--help-overlay.txt",
+      "agy--multi-select-writein.txt",
+      "agy--resume-picker-nomatch.txt",
+      "agy--v1412-subagent-band-permission.txt",
+    ],
     notModals: [],
   },
   antigravity: {
-    modals: ["agy--help-overlay.txt", "agy--multi-select-writein.txt", "agy--resume-picker-nomatch.txt"],
+    modals: [
+      "agy--help-overlay.txt",
+      "agy--multi-select-writein.txt",
+      "agy--resume-picker-nomatch.txt",
+      "agy--v1412-subagent-band-permission.txt",
+    ],
     notModals: [],
   },
   // Every opencode picker: composerReady refuses it (the picker shape) and no grammar reads it, so
@@ -360,7 +374,8 @@ const CARD_FIXTURES = {
       // omp 18.12.2's goal menu, which a bare `/goal` opens in a goal turn (lab, 2026-10-22).
       "omp--v18-12-2-goal-bare-menu--w119.txt",
       "omp--v18-4-resume-nomatch.txt",
-      "omp--v18-4-switch-nerd.txt",
+      // omp 18.17.0's `/usage` dashboard, a full-screen modal nothing lifts (lab, 2026-11-06).
+      "omp--v18-17-0-usage-dashboard--w120.txt",
       "omp--v18-4-switch-nomatch.txt",
       "omp--v18-4-switch-quick-roles.txt",
       "omp--v18-4-switch-task.txt",

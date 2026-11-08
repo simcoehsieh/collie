@@ -57,10 +57,11 @@ function declares(
  * `cn(reach, face)` call, so tailwind-merge drops the same overridden inset it dropped then. The
  * class SET on the primitive's button must equal it, token for token, nothing added or lost.
  */
-function handRolledPlus(reach: string, size: "size-7" | "size-8"): string[] {
+function handRolledPlus(reach: string, size: "size-6" | "size-7" | "size-8", ring = true): string[] {
   return cn(
     reach,
-    `flex ${size} shrink-0 items-center justify-center rounded-full border border-dashed border-border text-muted-foreground transition-colors hover:bg-accent active:scale-95 disabled:opacity-100`,
+    `flex ${size} shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent active:scale-95 disabled:opacity-100`,
+    ring && "border border-dashed border-border",
   )
     .split(/\s+/u)
     .toSorted();
@@ -249,15 +250,17 @@ describe("New tab — createTab", () => {
     expect(screen.queryByText("no tabs here.")).toBeNull();
   });
 
-  it("is the shared dashed '+', at its old 28px and its old tab-row reach", async () => {
+  it("is the shared dashed '+', at its old 28px and its old tab-row reach, plus the folder look's 12px gap", async () => {
     declares({ createTab: true });
     tabStrip();
     const plus = await screen.findByRole("button", { name: "New tab" });
     // FORK: the tab '+' stays the fork's own button rather than upstream's AddButton, because a hold
     // on it opens the launcher picker (components/tab-strip.tsx): the same look, plus the pair a held
-    // control needs so iOS's selection loupe cannot cancel the hold (hooks/use-long-press.ts).
+    // control needs so iOS's selection loupe cannot cancel the hold (hooks/use-long-press.ts). Under
+    // vitest the look is upstream's "folder" (lib/fork-shape.ts FORK_NEW_LOOK_ON), which adds 1.27.0's
+    // 12px (ml-3) off the last tab; the shipped app draws no folder and no ml-3.
     expect(classSet(plus)).toEqual(
-      [...handRolledPlus(TAB_ROW_SQUARE_TAP_TARGET, "size-7"), "select-none", "[-webkit-touch-callout:none]"].toSorted(),
+      [...handRolledPlus(TAB_ROW_SQUARE_TAP_TARGET, "size-7"), "select-none", "[-webkit-touch-callout:none]", "ml-3"].toSorted(),
     );
   });
 });

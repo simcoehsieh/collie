@@ -47,8 +47,10 @@ import { mounted } from "@/lib/base-path";
 import { forgetAllDiffComments } from "@/lib/diff-comment-store";
 import { clearAllDrafts, clearDraft } from "@/lib/drafts";
 import { forgetAgain } from "@/lib/new-page";
+import { forgetSlots } from "@/lib/slots";
 import { forgetNoPromptsConfirms } from "@/lib/no-prompts";
 import { forgetAllNotes } from "@/lib/notes";
+import { forgetTroubleSignals } from "@/lib/report/once";
 import {
   clearDeviceToken,
   EXPIRED_BODY,
@@ -181,6 +183,13 @@ const BUILT_IN: readonly (readonly [string, WipeCleaner])[] = [
     },
   ],
   [
+    // Each browser tile's last pane (lib/slots.ts): its address and its workspace name.
+    "slots",
+    (context) => {
+      if (context.reason !== "password") forgetSlots();
+    },
+  ],
+  [
     // The per-device "No prompts" confirms (ADR 0094): they name machines and command lines.
     "no-prompts",
     (context) => {
@@ -201,6 +210,13 @@ const BUILT_IN: readonly (readonly [string, WipeCleaner])[] = [
       } catch {
         // Locked-down storage: nothing was written there either.
       }
+    },
+  ],
+  [
+    // The once-a-day trouble record (lib/report/once.ts): it names this pairing's hosts and panes.
+    "trouble-signals",
+    (context) => {
+      if (context.reason !== "password") forgetTroubleSignals();
     },
   ],
   [
