@@ -106,7 +106,13 @@ export function applyBrandingToHtml(html: string, title: string): string {
       "branding: index.html has no apple-mobile-web-app-title meta to rewrite — the markup changed",
     );
   }
-  return html.replace(TITLE_RE, `$1${safe}$3`).replace(APPLE_TITLE_RE, `$1${safe}$3`);
+  return (
+    html
+      .replace(TITLE_RE, `$1${safe}$3`)
+      .replace(APPLE_TITLE_RE, `$1${safe}$3`)
+      // FORK: the boot splash's spoken label. Optional — it is a11y text, not the home screen label.
+      .replace(/(aria-label="Loading )Collie(")/, `$1${safe}$2`)
+  );
 }
 
 /**

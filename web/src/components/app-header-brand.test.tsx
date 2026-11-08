@@ -14,7 +14,8 @@ import { AppHeaderHost, RouteHeader, SettingsGear } from "./app-header";
 // case cannot be reached by stubbing a global — the module in front of it is mocked instead, which
 // is the reason src/lib/brand.ts exists as a module at all. app-header.test.tsx covers the stock
 // brand this mock replaces.
-vi.mock("@/lib/brand", () => ({
+vi.mock("@/lib/brand", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/brand")>()),
   BRAND: { shortName: "Meow", hideMux: true },
   BRAND_WORD: "Meow",
 }));

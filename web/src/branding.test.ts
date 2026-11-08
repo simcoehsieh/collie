@@ -43,6 +43,11 @@ describe("applyBrandingToHtml", () => {
     expect(out).not.toContain("<title>Collie</title>");
   });
 
+  it("FORK: names the boot splash's spoken label too", () => {
+    const out = applyBrandingToHtml(shippedHtml, "Meow");
+    expect(out).toContain('aria-label="Loading Meow"');
+  });
+
   it("escapes a name that would otherwise close the attribute", () => {
     const out = applyBrandingToHtml(shippedHtml, 'A & B" <x>');
     expect(out).toContain("<title>A &amp; B&quot; &lt;x&gt;</title>");

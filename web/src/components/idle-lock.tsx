@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { MeowMark } from "@/components/meow-mark";
+import { BRAND_WORD } from "@/lib/brand";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
@@ -65,7 +66,7 @@ export function IdleLock({ onUnlock, catchingUp = false }: IdleLockProps) {
           <span className="grid size-20 shrink-0 place-items-center">
             <MeowMark size={64} weight="header" loading={catchingUp} paper="var(--card)" />
           </span>
-          <span className="text-lg font-semibold tracking-tight">Collie</span>
+          <span className="text-lg font-semibold tracking-tight">{BRAND_WORD}</span>
         </div>
         {catchingUp ? (
           <div className="space-y-1">

@@ -1,3 +1,5 @@
+import { BRAND } from "@/lib/brand";
+
 /**
  * The product's name, "ColliePWA": "Collie" in the text colour, "PWA" in the muted ink at rest, and
  * the herd's three colours (P done, W working, A blocked) under a pointer on the lockup
@@ -13,7 +15,8 @@
  */
 
 /** The product's name outside the app. Written down once; the split below is derived from it. */
-export const PRODUCT_NAME = "ColliePWA";
+// FORK: a branded install shows its own name ("Meow", no suffix); the stock build keeps upstream's.
+export const PRODUCT_NAME = BRAND.shortName ?? "ColliePWA";
 
 const SUFFIX = "PWA";
 

@@ -1,6 +1,7 @@
 import type { Locale } from "./locale";
 import { en, type Dictionary, type MessageKey, type PartialDictionary } from "./messages/en";
 import { forkEn, forkZhTW, type ForkDictionary } from "./fork-messages";
+import { BRAND, rebrand } from "@/lib/brand";
 
 // FORK — THE CAT SPEAKS CAT.
 //
@@ -18,7 +19,8 @@ import { forkEn, forkZhTW, type ForkDictionary } from "./fork-messages";
 // WHAT IS IN SCOPE, and it is deliberately small. Only nouns that name the wrong ANIMAL, and only
 // where the locale actually uses one — "Connecting…" is already animal-free in Spanish, Korean and
 // both Chinese bundles, so those carry no entry for it and inherit upstream's line unchanged. This
-// is not a rebranding sweep: "Collie" is the product's name (the binary is `bin/collie`, the config
+// is not a rebranding sweep — SUPERSEDED for the product name on 2026-11-09: a branded build now says
+// its own name in every message (`brandDictionary` below). The original reasoning: "Collie" is the product's name (the binary is `bin/collie`, the config
 // is `~/.config/collie`, the bridge answers to it), and renaming the product inside its own error
 // messages would make every one of them unsearchable. The cat is this INSTALL's identity, carried
 // by `branding.json`; the dog is the software's name.
@@ -70,9 +72,27 @@ export function withForkOverrides(locale: Locale, dictionary: PartialDictionary)
   // Narrowed by `in`, not by an assertion: most locales carry no entry at all (that is the point of
   // the layer being small), and the guard is what tells the compiler which ones do. `satisfies`
   // above has already proved every key here IS a Locale, so this cannot select something that is not.
-  if (!(locale in OVERRIDES)) return { ...full, ...additions };
+  if (!(locale in OVERRIDES)) return brandDictionary({ ...full, ...additions });
   // SAFETY: the `in` guard on the line above is the check — `locale` is a key of OVERRIDES at this
   // point, and `satisfies` has already proved every key of OVERRIDES is itself a Locale.
   const patch: Partial<Record<MessageKey, string>> = OVERRIDES[locale as keyof typeof OVERRIDES];
-  return { ...full, ...patch, ...additions };
+  return brandDictionary({ ...full, ...patch, ...additions });
 }
+
+/**
+ * FORK (2026-11-09, the operator's call): a branded install says its own name everywhere the copy
+ * says "Collie" — "Meow 無法讀取此畫面", not "Collie 無法讀取此畫面". Done here, once per bundle,
+ * for the same reason as the overrides above: upstream's seven dictionaries stay byte for byte
+ * mergeable. Commands (`collie doctor`), paths and env vars keep `collie` (lib/brand.ts `rebrand`).
+ * This supersedes the "not a rebranding sweep" scope at the top of this file for the product
+ * name only; the animal overrides are unchanged.
+ */
+function brandDictionary(dictionary: ForkRuntimeDictionary, word: string | null = BRAND.shortName): ForkRuntimeDictionary {
+  if (word === null) return dictionary;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(dictionary)) out[key] = rebrand(value, word);
+  // SAFETY: the same keys with the same string values, each passed through `rebrand`.
+  return out as ForkRuntimeDictionary;
+}
+
+export { brandDictionary as __brandDictionary };

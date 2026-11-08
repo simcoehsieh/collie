@@ -97,6 +97,15 @@ upstream's `collie-mark.tsx` and `src/test/collie-mark.ts`; if upstream adds a n
 `<CollieMark/>`, swap that one import too; if upstream rewrites the splash block in `index.html`,
 take theirs and re-apply the mask rule.
 
+**The name in the copy (2026-11-09).** A branded build also says its own name in the text: every
+"Collie" in the dictionaries reads "Meow" (`brandDictionary` in `lib/i18n/fork-overrides.ts`, once per
+bundle, upstream's message files untouched), and so do the idle lock, the large-screen wordmark and the
+boot splash's spoken label. What the operator types keeps `collie`: commands (`collie doctor`), paths,
+`COLLIE_*` and `X-Collie-*` (`rebrand` in `lib/brand.ts`). The bridge's own English (the `/auth/`
+placeholder page, crew/lead errors) is not rebranded: this solo install never shows it, and every
+edit there is a merge conflict. Pinned by `lib/i18n/rebrand.fork.test.ts` and
+`components/brand-name.fork.test.tsx`.
+
 ## The redesign (2026-09-10)
 
 The web UI does not look like upstream's. Upstream's `DESIGN.md` pins every corner to 2px, paints
