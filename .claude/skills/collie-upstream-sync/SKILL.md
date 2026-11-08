@@ -8,7 +8,8 @@ description: >-
   Surveys the gap, sorts every upstream item into infra, new UI capability or restyle, keeps the
   fork's own UI design as the reference, compares any fork patch against an upstream fix of the same
   bug, photographs the phone before and after (changed regions outlined and zoomed) into an HTML
-  report with a recommended scope, then asks before merging, rebuilding and restarting the live service.
+  report with a recommended scope, then asks before merging, rebuilding and restarting the live service,
+  and records each sync in the agentry wiki (collie-upstream-log).
 ---
 
 # Collie upstream sync
@@ -475,8 +476,37 @@ git push origin main
 Then remove the scratch worktrees: `before-after.sh clean v1.6.1`.
 
 Report to the operator: what was merged, what upstream added that matters, which fork patches
-survived, which were dropped and why, and the verification output. If Simcoe is on Telegram, the
-reply must go there too.
+survived, which were dropped and why, and the verification output. Telegram is retired: reply in
+the conversation, and when no one is watching it (a scheduled or delegated run), write an Alfred
+notice through the `alfred-notify` skill.
+
+### 7. Record it in the wiki
+
+The cross-session record of every sync lives in the agentry wiki, not in this repo. Write it after
+phase 6 succeeds, and also after a merge that was declined or rolled back (say so in the entry).
+
+1. Prepend one bullet to `~/git/agentry/knowledge/wiki/entities/projects/collie-upstream-log.md`,
+   directly under the intro paragraph (newest first). Write it in Traditional Chinese, in the same shape as
+   the entries already there:
+
+   ```markdown
+   - **YYYY-MM-DD merged `v1.6.1`**（1.5.3–1.6.1，N 版、N commits、N 個衝突檔），線上 `<collie version>`。
+     基礎層：<what changed under the hood>。介面：採用 <…>；<…> 用 fork gate 關掉。
+     fork patch：<kept / ported / dropped and why>。報告：Meow artifact `<id>`。
+   ```
+
+2. In `~/git/agentry/knowledge/wiki/entities/projects/collie.md`, update the one line under
+   「追版紀錄」 to the new live version and date. Do not add history there: that page holds the
+   current state only, and it grew to 51 KB when each sync appended to it (moved out 2026-11-09).
+3. A change to deployment, config or a fork patch that the next sync must know goes into the
+   matching section of `collie.md` (部署形狀, Fork 帶的 patch, 操作注意), not into the log entry.
+4. Append to `~/git/agentry/knowledge/wiki/log.md`:
+   `## [YYYY-MM-DD] ingest | Collie merged v1.6.1` plus a `觸發更新` line naming the two pages.
+5. Run `~/.claude/skills/wiki/scripts/lint.sh`, then commit **only those files** in `~/git/agentry`
+   (other sessions leave unrelated changes there): `git add <the files> && git commit`.
+
+A fork-only fix that goes live outside a sync (a hotfix on `main`) gets the same bullet, titled
+`**YYYY-MM-DD fork 修正：<what>**（<commit>）`.
 
 ## Facts worth not re-deriving
 
